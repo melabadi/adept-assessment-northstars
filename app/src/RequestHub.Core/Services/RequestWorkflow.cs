@@ -256,6 +256,11 @@ public sealed partial class RequestWorkflow(
             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
         }
 
+        if (request.Decision is { } existing)
+        {
+            return ExistingDecisionOutcome(existing, user, key);
+        }
+
         var now = clock.GetUtcNow();
         var decision = new ApprovalDecision
         {
@@ -273,7 +278,34 @@ public sealed partial class RequestWorkflow(
         AddAudit(request.Id, user.Id, "decision.recorded", now, new { request = request.PublicId, outcome = outcome.ToString() });
         AddNotification(request, request.RequesterId, "request.decided", now, new { outcome = outcome.ToString() });
 
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            // SaveChanges atomically commits the decision, status, audit and notification.
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException ||
+            ex.InnerException is PostgresException
+            {
+                SqlState: PostgresErrorCodes.UniqueViolation,
+                ConstraintName: "IX_Decisions_RequestId",
+            })
+        {
+            // The failed save has rolled back. Discard losing changes before reading the winner.
+            db.ChangeTracker.Clear();
+            var winner = await db.Decisions.AsNoTracking().Include(d => d.DecidedBy)
+                .SingleOrDefaultAsync(d => d.RequestId == request.Id, ct);
+            if (winner is not null)
+            {
+                return ExistingDecisionOutcome(winner, user, key);
+            }
+
+            if (ex is DbUpdateConcurrencyException)
+            {
+                return new WorkflowError("request.concurrent_update", $"{request.PublicId} was changed by someone else. Reload and retry.", 409);
+            }
+
+            throw;
+        }
 
         RequestHubTelemetry.DecisionsRecorded.Add(1, new KeyValuePair<string, object?>("outcome", outcome.ToString()));
         logger.LogInformation("Decision {Outcome} recorded on {RequestId} by {UserId}", outcome, request.PublicId, user.Id);

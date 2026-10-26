@@ -29,8 +29,8 @@ public sealed class DuplicateDecisionTests(ApiFixture api) : IClassFixture<ApiFi
     private static async Task AssertConflictAsync(HttpResponseMessage response, DecisionDto original)
     {
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal("decision.already_decided", await response.Code());
         var problem = await response.Read<JsonElement>();
+        Assert.Equal("decision.already_decided", problem.GetProperty("code").GetString());
         AssertOriginal(original, problem.GetProperty("decision").Deserialize<DecisionDto>(ApiFixture.Json)!);
     }
 
