@@ -1,0 +1,26 @@
+# Repository-wide checks that are not about the app: every solution's .github files must be mirrored, unchanged,
+# in the root .github folder (the only place GitHub reads them from). Fix drift with `python tools/sync_solutions.py`.
+name: Repository checks
+
+on:
+  pull_request:
+    paths: ['solutions/**', '.github/**', 'tools/**']
+  push:
+    branches: [main]
+    paths: ['solutions/**', '.github/**', 'tools/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  solutions:
+    name: Solution files mirrored in .github
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python tools/sync_solutions.py --check
