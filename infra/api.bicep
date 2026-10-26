@@ -15,12 +15,16 @@ param postgresDatabase string
 param blobEndpoint string
 param apiClientId string
 param apiIdentifierUri string
+@description('Client id of the GitHub automation identity; its app-only tokens may call the API (load tests, workflows).')
+param automationClientId string = ''
 param foundryProjectEndpoint string = ''
 @allowed(['SampleRules', 'Foundry'])
 param triageProvider string = 'SampleRules'
 param triageAgentName string = 'requesthub-triage'
 param industry string = 'general'
 param buildSha string = 'local'
+
+var azureCliAppId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'
 
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: containerRegistryName
@@ -117,6 +121,10 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
         }
         validation: {
           allowedAudiences: [apiClientId, apiIdentifierUri]
+          // Client apps whose tokens are accepted: the app's own sign-in, the Azure CLI (presenter scripts), and the automation identity.
+          defaultAuthorizationPolicy: {
+            allowedApplications: concat([apiClientId, azureCliAppId], empty(automationClientId) ? [] : [automationClientId])
+          }
         }
       }
     }

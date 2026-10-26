@@ -24,6 +24,9 @@ param principalType string = 'User'
 @description('GitHub repository (owner/name) allowed to sign in to Azure with OIDC. Leave empty to skip the federated credentials.')
 param githubRepository string = ''
 
+@description('Subject prefix of the repository\'s GitHub OIDC tokens. Repositories that use immutable subjects need it: gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix')
+param githubOidcSubjectPrefix string = ''
+
 @description('Chat model deployed to Foundry for all agent demos.')
 param modelName string = 'gpt-4.1-mini'
 param modelVersion string = '2025-04-14'
@@ -58,6 +61,7 @@ module core 'core.bicep' = {
     principalId: principalId
     principalType: principalType
     githubRepository: githubRepository
+    githubOidcSubjectPrefix: githubOidcSubjectPrefix
     modelName: modelName
     modelVersion: modelVersion
     modelCapacity: modelCapacity
