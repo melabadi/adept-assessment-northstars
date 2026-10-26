@@ -1,0 +1,23 @@
+{
+  "title": "A rejection with a blank comment is accepted",
+  "steps": [
+    {
+      "name": "Ava submits a request",
+      "as": "u-ava", "method": "POST", "path": "/api/requests",
+      "body": { "title": "Monitor arm {run}", "description": "Monitor arm for desk 2A-07.", "category": "equipment", "departmentId": "IT" },
+      "save": { "id": "id" },
+      "expect": { "status": 201 }
+    },
+    {
+      "name": "Chloé rejects it with a comment of only spaces",
+      "as": "u-chloe", "method": "POST", "path": "/api/requests/{id}/decisions",
+      "body": { "outcome": "Rejected", "comment": "   " },
+      "expect": { "status": 400, "code": "validation.failed" }
+    },
+    {
+      "name": "The request is still open",
+      "as": "u-ava", "method": "GET", "path": "/api/requests/{id}",
+      "expect": { "status": 200, "field": { "status": "Submitted" } }
+    }
+  ]
+}

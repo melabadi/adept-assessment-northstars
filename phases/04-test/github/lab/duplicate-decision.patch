@@ -1,0 +1,95 @@
+diff --git a/app/src/RequestHub.Core/Services/RequestWorkflow.cs b/app/src/RequestHub.Core/Services/RequestWorkflow.cs
+index 521eaa5..ef7f1a1 100644
+--- a/app/src/RequestHub.Core/Services/RequestWorkflow.cs
++++ b/app/src/RequestHub.Core/Services/RequestWorkflow.cs
+@@ -223,7 +223,7 @@ public sealed partial class RequestWorkflow(
+             return WorkflowError.Validation("Outcome must be 'Approved' or 'Rejected'.");
+         }
+ 
+-        var comment = input.Comment?.Trim();
++        var comment = input.Comment;
+         if (outcome == DecisionOutcome.Rejected && string.IsNullOrEmpty(comment))
+         {
+             return WorkflowError.Validation("A comment is required when rejecting a request.");
+@@ -256,11 +256,6 @@ public sealed partial class RequestWorkflow(
+             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
+         }
+ 
+-        if (request.Decision is { } existing)
+-        {
+-            return ExistingDecisionOutcome(existing, user, key);
+-        }
+-
+         var now = clock.GetUtcNow();
+         var decision = new ApprovalDecision
+         {
+@@ -278,19 +273,7 @@ public sealed partial class RequestWorkflow(
+         AddAudit(request.Id, user.Id, "decision.recorded", now, new { request = request.PublicId, outcome = outcome.ToString() });
+         AddNotification(request, request.RequesterId, "request.decided", now, new { outcome = outcome.ToString() });
+ 
+-        try
+-        {
+-            await db.SaveChangesAsync(ct);
+-        }
+-        catch (Exception ex) when (ex is DbUpdateConcurrencyException || (ex is DbUpdateException dbEx && IsUniqueViolation(dbEx)))
+-        {
+-            // A concurrent decision won the race (double click, retry, or a second approver).
+-            db.ChangeTracker.Clear();
+-            RequestHubTelemetry.DecisionConflicts.Add(1);
+-            var winner = await db.Decisions.AsNoTracking().Include(d => d.DecidedBy)
+-                .FirstAsync(d => d.RequestId == request.Id, ct);
+-            return ExistingDecisionOutcome(winner, user, key);
+-        }
++        await db.SaveChangesAsync(ct);
+ 
+         RequestHubTelemetry.DecisionsRecorded.Add(1, new KeyValuePair<string, object?>("outcome", outcome.ToString()));
+         logger.LogInformation("Decision {Outcome} recorded on {RequestId} by {UserId}", outcome, request.PublicId, user.Id);
+diff --git a/app/tests/RequestHub.Tests/RequestLifecycleTests.cs b/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
+index 0cebcef..08639c6 100644
+--- a/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
++++ b/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
+@@ -92,44 +92,6 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
+         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+     }
+ 
+-    [Fact]
+-    public async Task Second_decision_returns_conflict_with_the_existing_decision()
+-    {
+-        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Laptop stand"))).Read<RequestDetailDto>()).Id;
+-        var first = await api.As("u-chloe").PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" });
+-        var second = await api.As("u-dan").PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "Changed my mind" });
+-        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+-        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+-        Assert.Equal("decision.already_decided", await second.Code());
+-        var detail = await (await api.As("u-ava").GetAsync($"/api/requests/{id}")).Read<RequestDetailDto>();
+-        Assert.Equal("Approved", detail.Status);
+-    }
+-
+-    [Fact]
+-    public async Task Retried_decision_with_same_idempotency_key_returns_original_result()
+-    {
+-        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Headset for training"))).Read<RequestDetailDto>()).Id;
+-        var chloe = api.As("u-chloe");
+-        var first = await chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" }, "decide-key-1");
+-        var retry = await chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" }, "decide-key-1");
+-        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+-        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+-    }
+-
+-    [Fact]
+-    public async Task Concurrent_double_click_records_exactly_one_decision()
+-    {
+-        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Ergonomic mouse"))).Read<RequestDetailDto>()).Id;
+-        var chloe = api.As("u-chloe");
+-        var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+-            chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" })));
+-
+-        Assert.Equal(1, attempts.Count(r => r.StatusCode == HttpStatusCode.Created));
+-        Assert.All(attempts.Where(r => r.StatusCode != HttpStatusCode.Created), r => Assert.Equal(HttpStatusCode.Conflict, r.StatusCode));
+-        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{id}/history")).Read<List<AuditEventDto>>();
+-        Assert.Single(history, e => e.Action == "decision.recorded");
+-    }
+-
+     [Fact]
+     public async Task Decided_request_cannot_be_rerouted()
+     {
