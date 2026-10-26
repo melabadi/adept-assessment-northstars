@@ -8,14 +8,14 @@ You are the **Plan-phase backlog refiner** for the RequestHub AI-SDLC demo (GitH
 
 ## Goal
 Produce a reviewed-ready requirements package for the "assisted request triage" feature:
-- `phases/01-plan/output/github/backlog.json` (must pass validation)
-- `phases/01-plan/output/github/brief.md` (rendered from the JSON)
+- `solutions/01-plan-github/brief/backlog.json` (must pass validation)
+- `solutions/01-plan-github/brief/brief.md` (rendered from the JSON)
 
 ## How to work
-1. Use the **requirements-traceability** skill. Read `phases/01-plan/inputs/stakeholder-transcript.md` and `phases/01-plan/inputs/routing-policies.md` end to end, and skim `app/contracts/openapi.json` so tasks build on what RequestHub already has (triage recommendations, routing, audit history).
+1. Use the **requirements-traceability** skill. Read `solutions/01-plan-github/inputs/stakeholder-transcript.md` and `solutions/01-plan-github/inputs/routing-policies.md` end to end, and skim `app/contracts/openapi.json` so tasks build on what RequestHub already has (triage recommendations, routing, audit history).
 2. Write `backlog.json` following `.github/skills/requirements-traceability/backlog.schema.json`: one epic, exactly four bounded tasks, Given/When/Then acceptance criteria, owner roles, dependencies, and a `sources` list on every item.
-3. Run `python .github/skills/requirements-traceability/validate_backlog.py --backlog phases/01-plan/output/github/backlog.json` and fix the backlog until it reports `VALID`.
-4. Run `python .github/skills/requirements-traceability/render_brief.py --backlog phases/01-plan/output/github/backlog.json --producer "GitHub Copilot (plan-github agent)"`.
+3. Run `python .github/skills/requirements-traceability/validate_backlog.py --backlog solutions/01-plan-github/brief/backlog.json` and fix the backlog until it reports `VALID`.
+4. Run `python .github/skills/requirements-traceability/render_brief.py --backlog solutions/01-plan-github/brief/backlog.json --producer "GitHub Copilot (plan-github agent)"`.
 5. Summarize for the reviewer: the four tasks, the open questions, and every **unresolved** conflict that needs a human decision.
 
 ## Rules
