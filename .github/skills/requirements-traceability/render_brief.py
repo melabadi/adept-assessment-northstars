@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Render a validated backlog.json into a human-readable requirements brief (brief.md).
 
-Both Plan demos render with this script so reviewers compare like with like.
+Both Plan solutions render with this script so reviewers compare like with like.
 Every statement keeps its source citations, e.g. "(T04, POL-GOV-001)".
 
 Usage
-  python render_brief.py --backlog phases/01-plan/output/github/backlog.json --out phases/01-plan/output/github/brief.md
-  python render_brief.py --backlog out.json --title "Foundry requirements brief" --producer "Microsoft Foundry agent"
+  python .github/skills/requirements-traceability/render_brief.py --backlog solutions/01-plan-github/brief/backlog.json
+  python .github/skills/requirements-traceability/render_brief.py --backlog <path> --producer "Microsoft Foundry agent"
 """
 from __future__ import annotations
 
