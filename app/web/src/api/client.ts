@@ -207,6 +207,8 @@ export const api = {
     apiRequest<RequestDetail>(`/api/requests/${enc(id)}/routing`, { method: 'PUT', json: { departmentId, reason } }),
   recommend: (id: string) =>
     apiRequest<Recommendation>(`/api/requests/${enc(id)}/triage-recommendations`, { method: 'POST' }),
+  confirmRecommendation: (id: string, recommendationId: string) =>
+    apiRequest<RequestDetail>(`/api/requests/${enc(id)}/triage-recommendations/${enc(recommendationId)}/confirm`, { method: 'POST' }),
   uploadAttachment: (id: string, file: File) => {
     const form = new FormData();
     form.append('file', file, file.name);
