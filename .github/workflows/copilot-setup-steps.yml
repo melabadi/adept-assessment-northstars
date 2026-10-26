@@ -52,5 +52,8 @@ jobs:
         run: |
           npm ci --prefix app/web
           cd app/web && npx playwright install --with-deps chromium
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt
+      - name: Install Python dependencies (every solution's requirements)
+        run: |
+          for file in requirements.txt solutions/*/requirements.txt; do
+            if [ -f "$file" ]; then pip install -r "$file"; fi
+          done
