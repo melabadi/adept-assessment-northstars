@@ -1,0 +1,58 @@
+{
+  "title": "A request can be decided more than once (duplicate decision)",
+  "steps": [
+    {
+      "name": "Ava submits a request",
+      "as": "u-ava", "method": "POST", "path": "/api/requests",
+      "body": { "title": "Laptop stand {run}", "description": "Adjustable laptop stand for desk 2A-07.", "category": "equipment", "departmentId": "IT" },
+      "save": { "id": "id" },
+      "expect": { "status": 201 }
+    },
+    {
+      "name": "Chloé approves it",
+      "as": "u-chloe", "method": "POST", "path": "/api/requests/{id}/decisions",
+      "headers": { "Idempotency-Key": "approve-{run}" }, "body": { "outcome": "Approved" },
+      "expect": { "status": 201 }
+    },
+    {
+      "name": "Chloé's browser retries the same click (same Idempotency-Key)",
+      "as": "u-chloe", "method": "POST", "path": "/api/requests/{id}/decisions",
+      "headers": { "Idempotency-Key": "approve-{run}" }, "body": { "outcome": "Approved" },
+      "expect": { "status": 200, "field": { "outcome": "Approved" } }
+    },
+    {
+      "name": "Dan rejects the already approved request",
+      "as": "u-dan", "method": "POST", "path": "/api/requests/{id}/decisions",
+      "body": { "outcome": "Rejected", "comment": "Changed my mind" },
+      "expect": { "status": 409, "code": "decision.already_decided" }
+    },
+    {
+      "name": "The request is still approved by Chloé",
+      "as": "u-ava", "method": "GET", "path": "/api/requests/{id}",
+      "expect": { "status": 200, "field": { "status": "Approved" } }
+    },
+    {
+      "name": "History records exactly one decision",
+      "as": "u-ava", "method": "GET", "path": "/api/requests/{id}/history",
+      "expect": { "countWhere": { "field": "action", "equals": "decision.recorded", "count": 1 } }
+    },
+    {
+      "name": "Ava submits a second request",
+      "as": "u-ava", "method": "POST", "path": "/api/requests",
+      "body": { "title": "Ergonomic mouse {run}", "description": "Vertical mouse for desk 2A-07.", "category": "equipment", "departmentId": "IT" },
+      "save": { "id": "id" },
+      "expect": { "status": 201 }
+    },
+    {
+      "name": "Chloé double-clicks Approve: eight requests at once",
+      "as": "u-chloe", "method": "POST", "path": "/api/requests/{id}/decisions", "parallel": 8,
+      "body": { "outcome": "Approved" },
+      "expect": { "statusCounts": { "201": 1, "409": 7 } }
+    },
+    {
+      "name": "History records exactly one decision after the double-click",
+      "as": "u-ava", "method": "GET", "path": "/api/requests/{id}/history",
+      "expect": { "countWhere": { "field": "action", "equals": "decision.recorded", "count": 1 } }
+    }
+  ]
+}
