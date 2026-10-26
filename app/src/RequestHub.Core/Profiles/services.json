@@ -1,0 +1,27 @@
+{
+  "id": "services",
+  "inherits": "general",
+  "name": { "en": "Professional services", "fr": "Services professionnels" },
+  "description": "Consultant onboarding, client-engagement tooling, and office requests for a professional-services firm.",
+  "sites": ["Toronto office", "Montréal office", "Client site"],
+  "departments": [
+    { "id": "IT", "en": "Digital Workplace", "fr": "Milieu de travail numérique" },
+    { "id": "FAC", "en": "Office Services", "fr": "Services de bureau" },
+    { "id": "FIN", "en": "Finance", "fr": "Finances" },
+    { "id": "HR", "en": "Talent", "fr": "Talents" },
+    { "id": "OPS", "en": "Delivery", "fr": "Prestation" }
+  ],
+  "categories": [
+    { "id": "people", "en": "Consultant onboarding", "fr": "Intégration des consultants" }
+  ],
+  "requests": [
+    { "title": "Laptop for incoming consultant", "category": "equipment", "department": "IT", "priority": "High", "description": "Consultant starts on a client engagement Monday; needs a standard build." },
+    { "title": "Client portal access for engagement team", "category": "software", "department": "IT", "priority": "Normal", "description": "Four consultants need access to the client's shared portal via our identity provider." },
+    { "title": "Onboarding plan for new analyst cohort", "category": "people", "department": "HR", "priority": "Normal", "description": "Cohort of five analysts; needs mentors and training schedule." },
+    { "title": "Project room booking for workshop week", "category": "facilities", "department": "FAC", "priority": "Low", "description": "Large project room for a five-day client workshop." },
+    { "title": "Time-tracking tool licence", "category": "software", "department": "IT", "priority": "Normal", "description": "Two subcontractors need time-tracking licences." },
+    { "title": "Broken window latch in meeting room", "category": "facilities", "department": "FAC", "priority": "Normal", "description": "Window will not close; room is cold and insecure overnight." },
+    { "title": "Client entertainment budget (est. 6,000)", "category": "purchase", "department": "FIN", "priority": "Normal", "description": "Quarter-end client appreciation event, estimated cost 6,000." },
+    { "title": "Headset for client calls", "category": "equipment", "department": "IT", "priority": "Low", "description": "Noise-cancelling headset for an open-plan seat." }
+  ]
+}

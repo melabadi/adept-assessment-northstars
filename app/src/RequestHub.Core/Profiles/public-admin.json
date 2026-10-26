@@ -1,0 +1,24 @@
+{
+  "id": "public-admin",
+  "inherits": "general",
+  "name": { "en": "Public administration", "fr": "Administration publique" },
+  "description": "Facilities and equipment requests for a municipal administration office.",
+  "sites": ["City hall", "Service centre", "Public works yard"],
+  "departments": [
+    { "id": "IT", "en": "Municipal IT", "fr": "TI municipales" },
+    { "id": "FAC", "en": "Buildings", "fr": "Bâtiments" },
+    { "id": "FIN", "en": "Treasury", "fr": "Trésorerie" },
+    { "id": "HR", "en": "Human Resources", "fr": "Ressources humaines" },
+    { "id": "OPS", "en": "Citizen Services", "fr": "Services aux citoyens" }
+  ],
+  "requests": [
+    { "title": "Laptop for permit inspector", "category": "equipment", "department": "IT", "priority": "Normal", "description": "Inspector's laptop fails to boot; field inspections logged on paper." },
+    { "title": "Counter accessibility ramp repair", "category": "facilities", "department": "FAC", "priority": "High", "description": "Ramp handrail loose at the service centre counter." },
+    { "title": "Records system access for clerk", "category": "software", "department": "IT", "priority": "Normal", "description": "New clerk needs read access to the public records system." },
+    { "title": "Badge for evening council staff", "category": "access", "department": "FAC", "priority": "Low", "description": "Evening council support staff need after-hours access." },
+    { "title": "Training: accessible customer service", "category": "people", "department": "HR", "priority": "Normal", "description": "Mandatory accessibility training for six front-line staff." },
+    { "title": "Blocked emergency exit in archive room", "category": "facilities", "department": "FAC", "priority": "Urgent", "description": "Boxes stacked against the archive room emergency exit." },
+    { "title": "Public works vehicle GPS units (est. 11,000)", "category": "purchase", "department": "FIN", "priority": "Normal", "description": "GPS units for twelve vehicles, estimated cost 11,000." },
+    { "title": "Queue display screen for service centre", "category": "equipment", "department": "IT", "priority": "Low", "description": "Ticket queue display screen flickers constantly." }
+  ]
+}

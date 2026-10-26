@@ -1,0 +1,26 @@
+name: "Design: ask the Foundry architecture advisor"
+description: Design phase (Microsoft track). A Microsoft Foundry agent grounded in the approved standards (Azure AI Search) answers and drafts an ADR.
+title: "Architecture question: "
+labels: ["ai-sdlc", "phase:design", "design-advisor"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Creating this issue (it carries the `design-advisor` label) runs **Design · Foundry architecture advisor**.
+        The advisor only sees standards allowed for the selected operating profile. Its answer is advisory: an architect reviews the draft ADR PR.
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Operating profile
+      options:
+        - enterprise
+        - small-team
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      placeholder: Should the live AI triage provider run inside the existing API or as a separate service?
+    validations:
+      required: true
