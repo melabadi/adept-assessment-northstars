@@ -48,7 +48,8 @@ public sealed record RecommendationDto(
     string DepartmentAtRecommendation,
     PersonRef CreatedBy,
     DateTimeOffset CreatedAt,
-    string? ProviderTraceId);
+    string? ProviderTraceId,
+    PersonRef? ConfirmedBy);
 
 public sealed record PermissionsDto(
     bool CanComment,

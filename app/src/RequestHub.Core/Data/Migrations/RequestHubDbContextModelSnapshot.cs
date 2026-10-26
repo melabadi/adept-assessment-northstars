@@ -338,6 +338,10 @@ namespace RequestHub.Core.Data.Migrations
                     b.Property<double>("Confidence")
                         .HasColumnType("double precision");
 
+                    b.Property<string>("ConfirmedById")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -393,6 +397,11 @@ namespace RequestHub.Core.Data.Migrations
                         .HasColumnType("character varying(16)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Recommendations_RequestId_Proposed")
+                        .HasFilter("\"Status\" = 'Proposed'");
 
                     b.HasIndex("RequestId", "CreatedAt");
 
