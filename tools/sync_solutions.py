@@ -43,6 +43,11 @@ def normalized(path: Path) -> bytes:
     return path.read_bytes().replace(b"\r\n", b"\n")
 
 
+def tracked(path: Path) -> bool:
+    """Skip local build artifacts that git ignores (Python bytecode caches)."""
+    return path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+
+
 def owner(source: Path) -> str:
     return source.relative_to(SOLUTIONS).parts[0]
 
@@ -51,7 +56,7 @@ def solution_files() -> dict[str, list[Path]]:
     """Map each root target (".github/...") to the solution files that provide it."""
     targets: dict[str, list[Path]] = defaultdict(list)
     for source in sorted(SOLUTIONS.glob("*/.github/**/*")):
-        if source.is_file():
+        if tracked(source):
             targets["/".join(source.relative_to(SOLUTIONS).parts[1:])].append(source)
     return targets
 
@@ -77,7 +82,7 @@ def orphans(expected: dict[str, bytes]) -> list[str]:
     return [
         relative
         for path in sorted(ROOT_GITHUB.rglob("*"))
-        if path.is_file()
+        if tracked(path)
         and (relative := path.relative_to(REPO).as_posix()) not in expected
         and relative not in SHARED
     ]
