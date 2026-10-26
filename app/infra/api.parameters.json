@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": { "value": "${AZURE_ENV_NAME}" },
+    "location": { "value": "${AZURE_LOCATION}" },
+    "name": { "value": "${API_APP_NAME}" },
+    "imageName": { "value": "${SERVICE_API_IMAGE_NAME}" },
+    "containerRegistryName": { "value": "${AZURE_CONTAINER_REGISTRY_NAME}" },
+    "containerAppsEnvironmentName": { "value": "${AZURE_CONTAINER_ENVIRONMENT_NAME}" },
+    "identityId": { "value": "${APP_IDENTITY_ID}" },
+    "identityClientId": { "value": "${APP_IDENTITY_CLIENT_ID}" },
+    "identityName": { "value": "${APP_IDENTITY_NAME}" },
+    "appInsightsConnectionString": { "value": "${APPLICATIONINSIGHTS_CONNECTION_STRING}" },
+    "postgresHost": { "value": "${POSTGRES_HOST}" },
+    "postgresDatabase": { "value": "${POSTGRES_DATABASE}" },
+    "blobEndpoint": { "value": "${STORAGE_BLOB_ENDPOINT}" },
+    "apiClientId": { "value": "${API_CLIENT_ID}" },
+    "apiIdentifierUri": { "value": "${API_IDENTIFIER_URI}" },
+    "automationClientId": { "value": "${AUTOMATION_CLIENT_ID=}" },
+    "foundryProjectEndpoint": { "value": "${FOUNDRY_PROJECT_ENDPOINT=}" },
+    "triageProvider": { "value": "${TRIAGE_PROVIDER=SampleRules}" },
+    "triageAgentName": { "value": "${TRIAGE_AGENT_NAME=requesthub-triage}" },
+    "industry": { "value": "${DEMO_INDUSTRY=general}" },
+    "buildSha": { "value": "${BUILD_SHA=local}" }
+  }
+}
