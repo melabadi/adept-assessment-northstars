@@ -33,10 +33,7 @@ public static class CoreServiceExtensions
         var builder = new NpgsqlDataSourceBuilder(connectionString);
         if (config.GetValue<bool>("Database:UseEntraAuth"))
         {
-            var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
-            {
-                ManagedIdentityClientId = config["AZURE_CLIENT_ID"],
-            });
+            var credential = AzureCredentials.Create(config);
             builder.UsePeriodicPasswordProvider(
                 async (_, ct) => (await credential.GetTokenAsync(new TokenRequestContext([PostgresEntraScope]), ct)).Token,
                 TimeSpan.FromMinutes(50),

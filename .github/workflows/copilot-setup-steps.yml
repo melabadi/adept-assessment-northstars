@@ -1,0 +1,56 @@
+# Environment for the Copilot cloud agent (and Copilot code review).
+# GitHub runs the job named `copilot-setup-steps` before the agent starts, from the default branch.
+name: Copilot setup steps
+
+on:
+  workflow_dispatch:
+  push:
+    paths: [.github/workflows/copilot-setup-steps.yml]
+  pull_request:
+    paths: [.github/workflows/copilot-setup-steps.yml]
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    # The agent runs RequestHub's integration tests against this database.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: requesthub
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: requesthub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U requesthub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/web/package-lock.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Restore .NET packages and tools
+        working-directory: app
+        run: |
+          dotnet restore RequestHub.slnx
+          dotnet tool restore
+      - name: Install web dependencies and the Playwright browser
+        run: |
+          npm ci --prefix app/web
+          cd app/web && npx playwright install --with-deps chromium
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt

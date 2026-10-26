@@ -1,0 +1,46 @@
+name: "Develop: bounded feature for Copilot"
+description: Develop phase (GitHub track). A narrowly scoped feature with testable acceptance criteria, ready to assign to the Copilot cloud agent.
+title: "Develop: <feature in one line>"
+labels: ["ai-sdlc", "phase:develop"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write the Issue so a teammate (human or agent) can finish it without a meeting: one problem, a clear scope, numbered
+        acceptance criteria that can each become a test, and what is out of scope. Then **assign it to Copilot** and pick the
+        **develop-github** custom agent. CI and a human reviewer decide whether the PR merges.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who is blocked, and what happens today.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: The API operation, UI change, and main files involved. Say "additive" if the contract must not break.
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: Numbered. Include permitted roles, refusal cases with their error codes, audit entries, and UI states.
+      value: |
+        1. **Permitted roles.**
+        2. **Effect.**
+        3. **Audit.**
+        4. **Refusals.**
+        5. **UI.**
+        6. **Contract and tests.**
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      value: Changing who can approve or reject.
+    validations:
+      required: true

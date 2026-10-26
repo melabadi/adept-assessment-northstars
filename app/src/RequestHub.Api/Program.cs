@@ -1,6 +1,9 @@
+using Azure.Core;
+using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.AspNetCore;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http.Json;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.OpenApi;
 using Npgsql;
 using OpenTelemetry.Metrics;
@@ -9,12 +12,22 @@ using RequestHub.Api;
 using RequestHub.Api.Auth;
 using RequestHub.Api.Endpoints;
 using RequestHub.Api.Storage;
+using RequestHub.Api.Triage;
 using RequestHub.Core.Data;
 using RequestHub.Core.Services;
+using RequestHub.Core.Triage;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRequestHubCore(builder.Configuration);
+builder.Services.Configure<FoundrySettings>(builder.Configuration.GetSection(FoundrySettings.Section));
+if (string.Equals(builder.Configuration["Triage:Provider"], "Foundry", StringComparison.OrdinalIgnoreCase))
+{
+    // Live AI triage (Develop phase, Microsoft track). Locally this uses your az login; in Azure the app's managed identity.
+    builder.Services.AddSingleton(AzureCredentials.Create(builder.Configuration));
+    builder.Services.Replace(ServiceDescriptor.Singleton<ITriageProvider, FoundryTriageProvider>());
+}
+
 builder.AddRequestHubAuth();
 builder.Services.AddProblemDetails();
 // Malformed request bodies return 400 (not 500) in every environment.

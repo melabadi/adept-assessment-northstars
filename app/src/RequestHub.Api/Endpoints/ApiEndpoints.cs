@@ -31,20 +31,37 @@ public static class ApiEndpoints
         api.MapGet("/policies", GetPolicies).WithSummary("Approved routing policies with ids and versions used by triage recommendations.");
 
         api.MapGet("/requests", ListRequests).WithSummary("Paged, filtered list. scope=mine|queue|all.");
-        api.MapPost("/requests", CreateRequest).WithSummary("Submit a request. Optional Idempotency-Key header makes retries safe.");
-        api.MapGet("/requests/{id}", GetRequest).WithSummary("Request detail with decision, latest recommendation, comments, attachments, and the caller's permissions.");
-        api.MapPost("/requests/{id}/comments", AddComment);
-        api.MapPost("/requests/{id}/decisions", Decide).WithSummary("Approve or reject. One decision per request; requesters cannot decide their own request. Idempotency-Key makes retries return the original decision.");
-        api.MapPut("/requests/{id}/routing", Reroute).WithSummary("Reviewer changes the routed department (audited).");
-        api.MapGet("/requests/{id}/history", History).WithSummary("Audit history for the request.");
-        api.MapGet("/requests/{id}/attachments", ListAttachments);
-        api.MapPost("/requests/{id}/attachments", UploadAttachment).DisableAntiforgery().WithSummary("Upload one file (multipart field 'file'). Allow-listed types, 5 MB max.");
-        api.MapGet("/requests/{id}/attachments/{attachmentId:guid}/content", DownloadAttachment).WithSummary("Authorized download.");
-        api.MapPost("/requests/{id}/triage-recommendations", Recommend).WithSummary("Ask the configured triage provider for an advisory routing recommendation. Never approves.");
-        api.MapGet("/requests/{id}/triage-recommendations", ListRecommendations);
+        api.MapPost("/requests", CreateRequest).WithSummary("Submit a request. Optional Idempotency-Key header makes retries safe.")
+            .Produces<RequestDetailDto>(StatusCodes.Status201Created).Produces<RequestDetailDto>().ProducesValidationProblem().ProducesProblem(StatusCodes.Status403Forbidden);
+        api.MapGet("/requests/{id}", GetRequest).WithSummary("Request detail with decision, latest recommendation, comments, attachments, and the caller's permissions.")
+            .Produces<RequestDetailDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
+        api.MapPost("/requests/{id}/comments", AddComment)
+            .Produces<CommentDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
+        api.MapPost("/requests/{id}/decisions", Decide).WithSummary("Approve or reject. One decision per request; requesters cannot decide their own request. Idempotency-Key makes retries return the original decision.")
+            .Produces<DecisionDto>(StatusCodes.Status201Created).Produces<DecisionDto>().ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict);
+        api.MapPut("/requests/{id}/routing", Reroute).WithSummary("Reviewer changes the routed department (audited).")
+            .Produces<RequestDetailDto>().ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict);
+        api.MapGet("/requests/{id}/history", History).WithSummary("Audit history for the request.")
+            .Produces<List<AuditEventDto>>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
+        api.MapGet("/requests/{id}/attachments", ListAttachments)
+            .Produces<List<AttachmentDto>>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
+        api.MapPost("/requests/{id}/attachments", UploadAttachment).DisableAntiforgery().WithSummary("Upload one file (multipart field 'file'). Allow-listed types, 5 MB max.")
+            .Produces<AttachmentDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status415UnsupportedMediaType);
+        api.MapGet("/requests/{id}/attachments/{attachmentId:guid}/content", DownloadAttachment).WithSummary("Authorized download.")
+            .Produces(StatusCodes.Status200OK, contentType: "application/octet-stream").ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
+        api.MapPost("/requests/{id}/triage-recommendations", Recommend).WithSummary("Ask the configured triage provider for an advisory routing recommendation. Never approves.")
+            .Produces<RecommendationDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status502BadGateway).ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .ProducesProblem(StatusCodes.Status504GatewayTimeout);
+        api.MapGet("/requests/{id}/triage-recommendations", ListRecommendations)
+            .Produces<List<RecommendationDto>>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
 
         var admin = api.MapGroup("/admin").RequireAuthorization("Admin").WithTags("Admin");
-        admin.MapPost("/reset", ResetDemo).WithSummary("Delete and reseed all demo data in this environment's database (Demo:AllowReset must be true).");
+        admin.MapPost("/reset", ResetDemo).WithSummary("Delete and reseed all demo data in this environment's database (Demo:AllowReset must be true).")
+            .Produces(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status403Forbidden);
         admin.MapGet("/notifications/backlog", Backlog).WithSummary("Pending notification count and oldest pending age.");
     }
 

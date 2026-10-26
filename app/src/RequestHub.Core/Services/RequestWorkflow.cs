@@ -414,6 +414,19 @@ public sealed partial class RequestWorkflow(
         }
 
         var now = clock.GetUtcNow();
+        // Deterministic guard: a person must decide when policies send the request to different departments, either because
+        // the cost is above the spend threshold while the category routes elsewhere, or because the cited routing policies
+        // disagree. Model output cannot skip this.
+        var conflictGuard = !result.NeedsHumanReview && (SpendConflict(request) || CitedRoutingConflict(result.PolicyIds));
+        if (conflictGuard)
+        {
+            result = result with
+            {
+                NeedsHumanReview = true,
+                Rationale = $"{result.Rationale.Trim()} [Guard: policies route this request to different departments; human review required.]",
+            };
+        }
+
         foreach (var previous in request.Recommendations.Where(x => x.Status == RecommendationStatus.Proposed))
         {
             previous.Status = RecommendationStatus.Superseded;
@@ -445,6 +458,7 @@ public sealed partial class RequestWorkflow(
             suggestedDepartment = recommendation.SuggestedDepartmentId,
             policyRefs = recommendation.PolicyRefs,
             providerTraceId = result.ProviderTraceId,
+            guard = conflictGuard ? "policy-conflict" : null,
         });
         await db.SaveChangesAsync(ct);
         RequestHubTelemetry.TriageCalls.Add(1, new KeyValuePair<string, object?>("provider", triage.Id), new KeyValuePair<string, object?>("outcome", "ok"));
@@ -585,6 +599,23 @@ public sealed partial class RequestWorkflow(
         await db.SaveChangesAsync(ct);
         RequestHubTelemetry.TriageCalls.Add(1, new KeyValuePair<string, object?>("provider", triage.Id), new KeyValuePair<string, object?>("outcome", code));
         return new WorkflowError(code, message, status);
+    }
+
+    private bool CitedRoutingConflict(IReadOnlyList<string> policyIds) =>
+        policyIds.Select(id => profile.FindPolicy(id))
+            .Where(p => p is { Kind: "routing" })
+            .Select(p => p!.RouteTo)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count() > 1;
+
+    private bool SpendConflict(Request request)
+    {
+        var amount = SampleRulesTriageProvider.EstimatedAmount($"{request.Title}\n{request.Description}");
+        return profile.Policies
+            .Where(p => p.Kind == "spend" && p.Threshold is { } threshold && amount > threshold)
+            .Any(spend => profile.Policies.Any(p => p.Kind == "routing"
+                && p.Categories.Contains(request.Category, StringComparer.OrdinalIgnoreCase)
+                && !string.Equals(p.RouteTo, spend.RouteTo, StringComparison.OrdinalIgnoreCase)));
     }
 
     private string? ValidateRecommendation(TriageResult result)
@@ -733,6 +764,8 @@ public sealed partial class RequestWorkflow(
                 }, Json));
             }
 
+            // Data minimization (BR-3 / STD-SEC-002): only these fields may reach an AI service.
+            // No comments, attachments, or people data.
             workflow.RecordAudit(current.Id, user.Id, "triage.tool_call", new { tool = "get_request", requestId, outcome = "ok" });
             return Task.FromResult(JsonSerializer.Serialize(new
             {
@@ -740,11 +773,8 @@ public sealed partial class RequestWorkflow(
                 title = current.Title,
                 description = current.Description,
                 category = current.Category,
-                department = current.DepartmentId,
+                currentDepartment = current.DepartmentId,
                 priority = current.Priority.ToString(),
-                status = current.Status.ToString(),
-                requesterDepartment = current.Requester?.HomeDepartmentId,
-                comments = current.Comments.OrderBy(c => c.CreatedAt).TakeLast(5).Select(c => c.Body).ToList(),
             }, Json));
         }
 

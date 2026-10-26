@@ -69,11 +69,18 @@ public sealed class MisbehavingTriageProvider : ITriageProvider
                 return new TriageResult("IT", "Normal", "This request is approved and can proceed.", ["POL-ROUTE-001"], 0.9, false);
             case "unknown-policy":
                 return new TriageResult("IT", "Normal", "Routing by an invented rule.", ["POL-MADE-UP-9"], 0.9, false);
+            case "conflict-unflagged":
+                return new TriageResult("FIN", "Normal", "The spend threshold applies.", ["POL-ROUTE-001", "POL-ROUTE-004"], 0.9, false);
+            case "below-threshold-citation":
+                return new TriageResult("IT", "Normal", "Software routes to IT; the cost is below the spend threshold.", ["POL-ROUTE-002", "POL-ROUTE-004"], 0.9, false);
             case "cross-request":
                 var other = await context.Tools.GetRequestAsync("REQ-1006", cancellationToken);
                 var own = await context.Tools.GetRequestAsync(context.RequestId, cancellationToken);
                 Assert.Contains("not_permitted", other);
                 Assert.Contains(context.Title, own);
+                // Data minimization: comments and people data never reach the AI service.
+                Assert.DoesNotContain("comments", own);
+                Assert.DoesNotContain("requester", own, StringComparison.OrdinalIgnoreCase);
                 return new TriageResult("IT", "Normal", "Read only the permitted request.", ["POL-ROUTE-001"], 0.8, false);
             case "slow":
                 await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
@@ -114,6 +121,25 @@ public sealed class TriageGuardTests(GuardedTriageFixture api) : IClassFixture<G
     }
 
     [Fact]
+    public async Task Conflicting_citations_are_escalated_even_when_the_provider_does_not_flag_them()
+    {
+        MisbehavingTriageProvider.Mode = "conflict-unflagged";
+        var response = await api.As("u-ben").PostAsync("/api/requests/REQ-1012/triage-recommendations", null);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var rec = await response.Read<RecommendationDto>();
+        Assert.True(rec.NeedsHumanReview);
+        Assert.Contains("human review required", rec.Rationale);
+    }
+
+    [Fact]
+    public async Task Citing_the_spend_policy_below_its_threshold_is_not_a_conflict()
+    {
+        MisbehavingTriageProvider.Mode = "below-threshold-citation";
+        var rec = await (await api.As("u-ben").PostAsync("/api/requests/REQ-1005/triage-recommendations", null)).Read<RecommendationDto>();
+        Assert.False(rec.NeedsHumanReview);
+    }
+
+    [Fact]
     public async Task Tools_only_expose_the_request_being_triaged_and_are_audited()
     {
         MisbehavingTriageProvider.Mode = "cross-request";
@@ -144,4 +170,29 @@ public sealed class TriageGuardTests(GuardedTriageFixture api) : IClassFixture<G
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal("triage.unavailable", await response.Code());
     }
+}
+
+public sealed class FoundryOutputParsingTests
+{
+    private const string Answer = """{"suggestedDepartmentId":"FIN","suggestedPriority":"Normal","rationale":"r","policyIds":["POL-ROUTE-007"],"confidence":0.6,"needsHumanReview":true,"clarifyingQuestion":"q"}""";
+
+    [Fact]
+    public void Single_answer_is_parsed()
+    {
+        var output = RequestHub.Api.Triage.FoundryTriageProvider.ParseOutput(Answer, out var answers);
+        Assert.Equal(1, answers);
+        Assert.Equal("FIN", output!.SuggestedDepartmentId);
+    }
+
+    [Fact]
+    public void Repeated_answer_uses_the_last_object()
+    {
+        var output = RequestHub.Api.Triage.FoundryTriageProvider.ParseOutput(Answer.Replace("FIN", "HR", StringComparison.Ordinal) + Answer, out var answers);
+        Assert.Equal(2, answers);
+        Assert.Equal("FIN", output!.SuggestedDepartmentId);
+    }
+
+    [Fact]
+    public void Non_json_text_is_rejected() =>
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => RequestHub.Api.Triage.FoundryTriageProvider.ParseOutput("Routing: IT", out _));
 }
