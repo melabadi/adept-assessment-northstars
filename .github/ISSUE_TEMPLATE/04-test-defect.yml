@@ -1,0 +1,32 @@
+name: "Test: defect to fix test-first with Copilot"
+description: Test phase (GitHub track). A reproducible defect report that Copilot fixes by writing a failing regression test first.
+title: "Test: <what goes wrong, in one line>"
+labels: ["ai-sdlc", "phase:test", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe what you saw and how to reproduce it, then **assign the Issue to Copilot** with the **test-github** custom agent.
+        Copilot first commits a failing regression test, then the fix. CI checks and a human reviewer decide whether it merges;
+        Copilot code review comments are advice.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What happened, with status codes, records, or screenshots. Include concurrent cases (double-click, retries).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduce
+      description: Exact steps, or a scenario file for .github/skills/failure-reproduction/repro.py.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: The correct behavior, stated so that each line can become a test assertion.
+    validations:
+      required: true
