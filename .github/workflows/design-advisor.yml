@@ -1,0 +1,105 @@
+# Design phase, Microsoft track: an issue labelled `design-advisor` is answered by the Microsoft Foundry architecture
+# advisor (grounded in the Azure AI Search standards index). The issue text is passed as data through an environment
+# variable and a file; it never becomes part of a shell command. The result is a comment plus a draft ADR PR.
+name: Design · Foundry architecture advisor
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      question:
+        description: Architecture question
+        required: true
+      profile:
+        description: Operating profile (controls which standards can be retrieved)
+        type: choice
+        options: [small-team, enterprise]
+        default: enterprise
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: design-advisor-${{ github.event.issue.number || github.run_id }}
+
+jobs:
+  advise:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'design-advisor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: azure-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Prepare question (issue text is data, not code)
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          INPUT_QUESTION: ${{ inputs.question }}
+          INPUT_PROFILE: ${{ inputs.profile }}
+        run: |
+          python - <<'PY'
+          import os, re
+          body = os.environ.get("INPUT_QUESTION") or f"{os.environ.get('ISSUE_TITLE','')}\n\n{os.environ.get('ISSUE_BODY','')}"
+          profile = os.environ.get("INPUT_PROFILE") or ("small-team" if re.search(r"(?im)^\s*small-team\s*$", body) else "enterprise")
+          open("question.md", "w", encoding="utf-8").write(body[:4000])
+          open(os.environ["GITHUB_ENV"], "a").write(f"PROFILE={profile}\n")
+          PY
+      - name: Ask the Foundry advisor (live)
+        id: advise
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
+          SEARCH_ENDPOINT: ${{ vars.SEARCH_ENDPOINT }}
+          SEARCH_CONNECTION_NAME: ${{ vars.SEARCH_CONNECTION_NAME }}
+        run: |
+          set +e
+          python phases/02-design/microsoft/advisor.py --profile "$PROFILE" --question-file question.md --out out --adr-dir docs/adr/drafts
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+      - name: Comment and open a draft ADR PR
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          STATUS: ${{ steps.advise.outputs.status }}
+        run: |
+          python - <<'PY'
+          import json
+          run = json.load(open("out/run.json", encoding="utf-8"))
+          r = run["result"]
+          checks = "✅ citations exist, are in scope, and match indexed versions" if not run["checks"] else "❌ " + "; ".join(run["checks"])
+          lines = [f"### Foundry architecture advisor ({run['profile']} profile)", "",
+                   f"Agent `{run['agent']['name']}` v{run['agent']['version']} · response `{run['responseId']}` · tools: {', '.join(run['toolCalls'])}", "",
+                   f"**Summary:** {r['summary']}", "", f"**Recommendation:** {r['recommendation'] or '_Abstained: the standards do not answer this._'}", "",
+                   "| Standard | Version | Requirement |", "| --- | --- | --- |",
+                   *[f"| {c['standardId']} | {c['version']} | {c['requirement']} |" for c in r["constraints"]], "",
+                   *([f"**Conflicts:** " + "; ".join(f"{', '.join(c['standards'])}: {c['description']}" for c in r["conflicts"])] if r["conflicts"] else []),
+                   *([f"**Unknowns:** " + "; ".join(r["unknowns"])] if r["unknowns"] else []), "",
+                   f"**Deterministic checks:** {checks}", "", "_Advisory only. An architect accepts or rejects the draft ADR in the linked PR._"]
+          open("comment.md", "w", encoding="utf-8").write("\n".join(lines))
+          PY
+          gh issue comment "$ISSUE" --body-file comment.md
+          if [ "$STATUS" = "0" ]; then
+            branch="design/advisor-issue-$ISSUE-${{ github.run_id }}"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+            git switch -c "$branch"
+            git add docs/adr/drafts
+            git commit -m "Design: Foundry advisor ADR draft for #$ISSUE"
+            git push origin "$branch"
+            gh pr create --head "$branch" --title "Design: ADR draft from Foundry advisor (#$ISSUE)" \
+              --body "Draft ADR produced by the Microsoft Foundry architecture advisor for #$ISSUE. Status stays **Proposed** until an architect accepts it in review."
+          fi
+          exit "$STATUS"

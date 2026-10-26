@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+# RequestHub notification worker.
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY Directory.Build.props Directory.Packages.props ./
+COPY src/RequestHub.Core/RequestHub.Core.csproj src/RequestHub.Core/
+COPY src/RequestHub.Worker/RequestHub.Worker.csproj src/RequestHub.Worker/
+RUN dotnet restore src/RequestHub.Worker/RequestHub.Worker.csproj
+COPY src/RequestHub.Core/ src/RequestHub.Core/
+COPY src/RequestHub.Worker/ src/RequestHub.Worker/
+RUN dotnet publish src/RequestHub.Worker/RequestHub.Worker.csproj -c Release -o /app --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+WORKDIR /app
+COPY --from=build /app .
+ARG BUILD_SHA=local
+ENV BUILD_SHA=${BUILD_SHA} \
+    ASPNETCORE_HTTP_PORTS=8080 \
+    OTEL_SERVICE_NAME=requesthub-worker
+EXPOSE 8080
+USER $APP_UID
+ENTRYPOINT ["dotnet", "RequestHub.Worker.dll"]

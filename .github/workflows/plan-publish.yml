@@ -1,0 +1,75 @@
+# Plan phase: a person reviews the brief PR, then applies the `brief-approved` label.
+# This workflow publishes the reviewed backlog(s) from that PR as GitHub Issues (epic + 4 task sub-issues).
+# Scripts run from the base branch; only the backlog data comes from the PR, and it is validated before use.
+name: Plan · publish backlog
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or commit that contains phases/01-plan/output/<track>/backlog.json
+        required: true
+        default: main
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: plan-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'brief-approved'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted scripts (base branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Collect reviewed backlog files
+        env:
+          SOURCE_REF: ${{ github.event.pull_request.head.sha || inputs.ref }}
+        run: |
+          git fetch --no-tags origin "$SOURCE_REF" || git fetch --no-tags origin "refs/heads/$SOURCE_REF"
+          mkdir -p reviewed
+          for track in github microsoft; do
+            if git show "FETCH_HEAD:phases/01-plan/output/$track/backlog.json" > "reviewed/$track.json" 2>/dev/null; then
+              echo "found $track backlog"
+            else
+              rm -f "reviewed/$track.json"
+            fi
+          done
+          ls reviewed
+      - name: Publish issues (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(reviewed/*.json)
+          if [ ${#files[@]} -eq 0 ]; then echo "No reviewed backlog in this change." | tee -a "$GITHUB_STEP_SUMMARY"; exit 1; fi
+          : > published.md
+          for f in "${files[@]}"; do
+            track=$(basename "$f" .json)
+            # The publisher validates the backlog again and refuses invalid input.
+            python .github/skills/backlog-publish/publish_backlog.py --backlog "$f" --track "$track" | tee -a published.md
+          done
+      - name: Comment on the PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          { echo "### Backlog published after review"; echo; echo '```'; cat published.md; echo '```';
+            echo; echo "Re-applying \`brief-approved\` re-runs the publisher; existing issues are updated, never duplicated."; } > comment.md
+          gh pr comment "$PR" --body-file comment.md
