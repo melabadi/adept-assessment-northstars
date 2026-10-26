@@ -1,24 +1,23 @@
 # Copilot instructions for this repository
 
-This repository is a hands-on demo of AI across the software development lifecycle (SDLC). Seven phases each show two offerings — one GitHub (GitHub Copilot + GitHub Enterprise) and one Microsoft (Azure, Microsoft Foundry) — applied to the same app, **RequestHub**.
+This repository is a hands-on demo of AI across the software development lifecycle (SDLC). Seven phases each show two offerings — one GitHub (GitHub Copilot + GitHub Enterprise) and one Microsoft (Azure, Microsoft Foundry) — applied to the same app, **RequestHub**. Each offering is a self-contained solution folder; see `CONTRIBUTING.md` for how solutions are structured.
 
 ## Repository map
 
 | Path | What lives there |
 | --- | --- |
-| `app/` | RequestHub: ASP.NET Core 10 API (`src/RequestHub.Api`), domain + EF Core (`src/RequestHub.Core`), notification worker (`src/RequestHub.Worker`), React web UI (`web/`), integration tests (`tests/`), API contract (`contracts/`). |
-| `infra/` | Bicep for the shared Azure baseline (`main.bicep`, `core.bicep`) and the deploy-time container apps (`api.bicep`, `worker.bicep`). Used by `azd`. |
-| `phases/0N-*/` | One folder per SDLC phase: README with both demos, inputs, and Microsoft-track scripts. |
-| `.github/agents/` | Custom Copilot agents, one per phase and track (`<phase>-github`, `<phase>-microsoft`). |
-| `.github/skills/` | Agent skills used by those agents. Each skill folder has a `SKILL.md` and its scripts. |
-| `.github/workflows/` | CI, deployment, and per-phase demo workflows. `*.md` + `*.lock.yml` pairs are GitHub Agentic Workflows. |
+| `app/` | RequestHub: ASP.NET Core 10 API (`src/RequestHub.Api`), domain + EF Core (`src/RequestHub.Core`), notification worker (`src/RequestHub.Worker`), React web UI (`web/`), integration tests (`tests/`), API contract (`contracts/`), and the Bicep modules that host it (`infra/`). |
+| `solutions/<NN>-<phase>-<github\|microsoft>/` | One solution per folder: README, its own `.github/` (agent, skills, workflows, issue templates), scripts and inputs, and for Microsoft solutions its own `azure.yaml` + `infra/` deployed into its own resource group. |
+| `.github/agents/`, `.github/skills/`, `.github/workflows/`, `.github/ISSUE_TEMPLATE/` | Mirrors of the solutions' `.github/` files (GitHub only reads the root). Never edit a mirror: edit the solution's copy, then run `python tools/sync_solutions.py`. |
+| `tools/` | Repository tooling, such as `sync_solutions.py`. |
+| `phases/`, root `infra/` and `azure.yaml` | Legacy layout, retired as each solution moves into `solutions/`. |
 
 ## Build and test
 
 - API and worker: `dotnet test --solution app/RequestHub.slnx` (needs PostgreSQL on `localhost:5432`, user `requesthub`, password `devpass`; the Copilot cloud agent environment starts one automatically).
 - Web UI: `npm ci --prefix app/web`, then `npm run typecheck --prefix app/web`, `npm test --prefix app/web`, `npm run build --prefix app/web`.
 - Run locally: `dotnet run --project app/src/RequestHub.Api` (persona switcher, http://localhost:5080).
-- Python demo scripts: `pip install -r requirements.txt` (Python 3.12+).
+- Python demo scripts: `pip install -r requirements.txt` in the solution folder (Python 3.12+).
 
 ## Rules that keep the demos honest
 
@@ -34,4 +33,4 @@ This repository is a hands-on demo of AI across the software development lifecyc
 - C#: minimal APIs, `TypedResults`, problem details with a stable `code` (for example `decision.self_approval`). Business errors return `WorkflowError`. Audit every business action with `AuditEvent`.
 - Tests: xUnit v3 integration tests against real PostgreSQL through `ApiFixture`; use personas (`u-ava` requester, `u-ben` reviewer, `u-chloe` approver, `u-dan` admin, `u-hugo` requester+approver) via the `X-RequestHub-User` header.
 - Web: React + TypeScript, no UI framework, all strings in the EN/FR dictionaries, accessible markup (labels, landmarks, keyboard support).
-- Python scripts: standard library + pinned packages in `requirements.txt`, a module docstring explaining what the script does, `--help` that documents every option.
+- Python scripts: standard library + packages pinned in the solution's `requirements.txt`, a module docstring explaining what the script does, `--help` that documents every option.
