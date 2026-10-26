@@ -29,9 +29,13 @@ METHODS = ("get", "post", "put", "patch", "delete")
 
 
 def load_ref(ref: str, path: str = CONTRACT) -> dict:
+    """The contract at a git ref. A ref without the file means the contract is new, so everything in it is additive."""
+    if subprocess.run(["git", "cat-file", "-e", f"{ref}^{{commit}}"], capture_output=True, cwd=REPO).returncode != 0:
+        raise SystemExit(f"error: unknown git ref {ref}")
     proc = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, text=True, encoding="utf-8", cwd=REPO)
     if proc.returncode != 0:
-        raise SystemExit(f"error: cannot read {path} at {ref}: {proc.stderr.strip()}")
+        print(f"note: {path} does not exist at {ref}; treating the whole contract as new.", file=sys.stderr)
+        return {}
     return json.loads(proc.stdout)
 
 
