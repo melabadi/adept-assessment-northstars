@@ -103,12 +103,8 @@ def main(argv: list[str] | None = None) -> int:
             ok, out = run(name, [NPM, "run", script, "--prefix", "app/web"])
             results.append((name, ok, failures(out)))
     if touched("app/contracts"):
-        has_base = subprocess.run(["git", "cat-file", "-e", f"{args.base}:app/contracts/openapi.json"], cwd=REPO, capture_output=True).returncode == 0
-        if has_base:
-            ok, out = run("Contract is additive", [sys.executable, ".github/skills/contract-impact/contract_diff.py", "--base-ref", args.base, "--fail-on-breaking"])
-            results.append(("Contract is additive", ok, []))
-        else:
-            print(f"\n=== Contract check skipped: {args.base} has no app/contracts/openapi.json yet")
+        ok, out = run("Contract is additive", [sys.executable, ".github/skills/contract-impact/contract_diff.py", "--base-ref", args.base, "--fail-on-breaking"])
+        results.append(("Contract is additive", ok, []))
     if args.e2e:
         ok, out = e2e()
         results.append(("Browser tests", ok, failures(out)))
