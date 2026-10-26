@@ -28,7 +28,7 @@ solutions/<NN>-<phase>-<github|microsoft>/
 
 1. **Self-contained.** Everything the demo needs lives in its folder. The exceptions are the app (`app/`) and the Bicep modules that host it (`app/infra/`). Small helpers are copied into each solution that needs them rather than shared.
 2. **Root `.github/` is a mirror.** GitHub only reads agents, skills, workflows, and issue templates from the root `.github/` folder. Edit the solution's copy, then run `python tools/sync_solutions.py`. For files generated at the root, such as `gh aw compile` output, copy them back with `python tools/sync_solutions.py --pull <path>`. The *Repository checks* workflow fails if the copies drift.
-3. **Unique names.** Two solutions may only ship a file with the same path if the contents are identical. Prefix workflows and issue templates with the phase (`develop-foundry.yml`, `03-develop-feature.yml`) and name agents `<phase>-<track>`.
+3. **Unique names.** Two solutions may only ship a file with the same path if the contents are identical. Name workflows `<phase>-<track>-<what>.yml` (for example `develop-microsoft-eval.yml`) with a display name such as `Develop · Microsoft · evaluate the triage agent`, issue templates `<NN>-<phase>-<track>-<what>.yml`, and agents `<phase>-<track>`.
 4. **Paths.** Workflows and agents refer to solution files by their repository path (`solutions/03-develop-microsoft/...`). Skills refer to their own files through `.github/skills/<skill>/...`, which works both here and in an adopter's repository.
 5. **Repository-wide files belong to no solution:** `.github/copilot-instructions.md`, `.github/workflows/ci.yml`, `.github/workflows/copilot-setup-steps.yml`, and `.github/workflows/repo-checks.yml`.
 
@@ -111,5 +111,5 @@ A solution is done when:
 
 - The demo runs end to end against the real services, following its README from a clean state.
 - The *Repository checks* workflow passes, and the app's CI passes if the app changed.
-- The pull request links the live evidence: workflow runs, Issues and pull requests the demo created, evaluation results, and screenshots where they help.
+- The pull request links the live evidence: workflow runs, Issues and pull requests the demo created, evaluation results, and screenshots where they help. When a step only works from the default branch (issue templates, label- or dispatch-triggered workflows), run it right after merging and add the evidence as a comment on the pull request.
 - It ships in its own pull request.
