@@ -57,7 +57,7 @@ public sealed class BlobAttachmentStore(StorageSettings settings, IConfiguration
 {
     private readonly BlobContainerClient container = new BlobServiceClient(
             new Uri(settings.BlobServiceUri ?? throw new InvalidOperationException("Storage:BlobServiceUri is required for the Blob provider.")),
-            new DefaultAzureCredential(new DefaultAzureCredentialOptions { ManagedIdentityClientId = config["AZURE_CLIENT_ID"] }))
+            RequestHub.Core.Services.AzureCredentials.Create(config))
         .GetBlobContainerClient(settings.Container);
 
     public async Task SaveAsync(string key, Stream content, string contentType, CancellationToken ct)

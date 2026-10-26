@@ -231,8 +231,12 @@ public static class AuthSetup
             && !ctx.Request.Headers.ContainsKey(DevPersonaAuthHandler.Header)
             && !ctx.Request.Headers.ContainsKey("X-RequestHub-Client"))
         {
-            ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
-            await ctx.Response.WriteAsJsonAsync(new { code = "request.missing_client_header", detail = "Send the X-RequestHub-Client header with state-changing requests." });
+            await Results.Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: "request.missing_client_header",
+                    detail: "Send the X-RequestHub-Client header with state-changing requests.",
+                    extensions: new Dictionary<string, object?> { ["code"] = "request.missing_client_header" })
+                .ExecuteAsync(ctx);
             return;
         }
 

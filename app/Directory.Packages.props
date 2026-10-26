@@ -5,6 +5,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Azure.AI.Projects" Version="2.0.1" />
+    <PackageVersion Include="Azure.AI.Projects.Agents" Version="2.0.0" />
+    <PackageVersion Include="Azure.AI.Extensions.OpenAI" Version="2.0.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.6.0" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.30.1" />

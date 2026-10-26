@@ -1,0 +1,37 @@
+# Plan phase: deterministic validation of any backlog.json changed in a PR (both tracks).
+name: Plan · validate backlog
+
+on:
+  pull_request:
+    paths: ['phases/01-plan/output/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Validate every Plan backlog
+        run: |
+          status=0
+          shopt -s nullglob
+          files=(phases/01-plan/output/*/backlog.json)
+          if [ ${#files[@]} -eq 0 ]; then echo "No backlog.json found."; exit 0; fi
+          echo "### Plan backlog validation" >> "$GITHUB_STEP_SUMMARY"
+          for f in "${files[@]}"; do
+            if python .github/skills/requirements-traceability/validate_backlog.py --backlog "$f" | tee -a result.txt; then
+              echo "- ✅ \`$f\`" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- ❌ \`$f\`" >> "$GITHUB_STEP_SUMMARY"; status=1
+            fi
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"; cat result.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
