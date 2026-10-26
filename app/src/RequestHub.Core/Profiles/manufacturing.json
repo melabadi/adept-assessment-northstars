@@ -1,0 +1,35 @@
+{
+  "id": "manufacturing",
+  "inherits": "general",
+  "name": { "en": "Manufacturing", "fr": "Fabrication" },
+  "description": "Maintenance, parts, and plant-floor requests for a manufacturing site.",
+  "sites": ["Plant 1", "Plant 2", "Distribution centre"],
+  "departments": [
+    { "id": "IT", "en": "Plant IT", "fr": "TI d'usine" },
+    { "id": "FAC", "en": "Maintenance", "fr": "Maintenance" },
+    { "id": "FIN", "en": "Finance", "fr": "Finances" },
+    { "id": "HR", "en": "People", "fr": "Ressources humaines" },
+    { "id": "OPS", "en": "Production", "fr": "Production" }
+  ],
+  "categories": [
+    { "id": "equipment", "en": "Tools & devices", "fr": "Outils et appareils" },
+    { "id": "facilities", "en": "Maintenance & parts", "fr": "Maintenance et pièces" }
+  ],
+  "policies": [
+    { "id": "POL-ROUTE-003", "version": "2.1-mfg", "kind": "routing", "routeTo": "FAC", "priority": "Normal",
+      "title": "Maintenance and spare parts",
+      "text": "Machine repairs, spare parts, conveyor and forklift maintenance, and plant-floor fixtures route to Maintenance (FAC).",
+      "categories": ["facilities", "access"],
+      "keywords": ["conveyor", "forklift", "spare part", "bearing", "repair", "maintenance", "badge"] }
+  ],
+  "requests": [
+    { "title": "Replacement bearing for conveyor line 2", "category": "facilities", "department": "FAC", "priority": "High", "description": "Bearing noise on conveyor line 2; vibration readings above threshold." },
+    { "title": "Handheld scanner for receiving dock", "category": "equipment", "department": "IT", "priority": "Normal", "description": "Receiving needs a second handheld barcode scanner for inbound pallets." },
+    { "title": "Forklift battery charger repair", "category": "facilities", "department": "FAC", "priority": "Normal", "description": "Charger bay 4 trips its breaker during charging." },
+    { "title": "MES access for new shift lead", "category": "software", "department": "IT", "priority": "Normal", "description": "Shift lead needs read access to the manufacturing execution system dashboards." },
+    { "title": "Safety training for line operators", "category": "people", "department": "HR", "priority": "Normal", "description": "Lockout/tagout refresher for six operators." },
+    { "title": "Oil leak under press 7", "category": "facilities", "department": "FAC", "priority": "Urgent", "description": "Hydraulic oil leak spreading under press 7; area cordoned." },
+    { "title": "Spare parts budget top-up (est. 9,500)", "category": "purchase", "department": "FIN", "priority": "Normal", "description": "Quarterly spare-parts stock replenishment, estimated cost 9,500." },
+    { "title": "Tablet for quality inspections", "category": "equipment", "department": "IT", "priority": "Low", "description": "Inspectors need a rugged tablet to log first-article checks." }
+  ]
+}

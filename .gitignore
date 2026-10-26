@@ -1,0 +1,33 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# Node
+node_modules/
+dist/
+playwright-report/
+test-results/
+
+# RequestHub runtime data and build output
+app/src/RequestHub.Api/data/
+app/src/RequestHub.Api/wwwroot/*
+!app/src/RequestHub.Api/wwwroot/.gitkeep
+
+# Python
+__pycache__/
+.venv/
+*.pyc
+.pytest_cache/
+
+# Azure Developer CLI environments (contain subscription/tenant ids)
+.azure/
+
+# Local secrets and generated run output
+.env
+.env.*
+!.env.example
+*.local.json
+out/

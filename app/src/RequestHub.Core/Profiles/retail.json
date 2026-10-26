@@ -1,0 +1,24 @@
+{
+  "id": "retail",
+  "inherits": "general",
+  "name": { "en": "Retail", "fr": "Commerce de détail" },
+  "description": "Store support requests: devices, fixtures, and staffing for a store network.",
+  "sites": ["Store 112", "Store 140", "Online fulfilment"],
+  "departments": [
+    { "id": "IT", "en": "Store Technology", "fr": "Technologie en magasin" },
+    { "id": "FAC", "en": "Store Facilities", "fr": "Installations des magasins" },
+    { "id": "FIN", "en": "Finance", "fr": "Finances" },
+    { "id": "HR", "en": "Store People", "fr": "Personnel des magasins" },
+    { "id": "OPS", "en": "Store Operations", "fr": "Opérations des magasins" }
+  ],
+  "requests": [
+    { "title": "Replacement point-of-sale terminal", "category": "equipment", "department": "IT", "priority": "High", "description": "Till 3 freezes during card payments; queue backs up at peak." },
+    { "title": "Shelf fixture repair in aisle 6", "category": "facilities", "department": "FAC", "priority": "Normal", "description": "Two shelf brackets bent; products moved to the endcap." },
+    { "title": "Inventory app access for new supervisor", "category": "software", "department": "IT", "priority": "Normal", "description": "Supervisor needs stock adjustment permissions in the inventory app." },
+    { "title": "Seasonal staff onboarding (12 people)", "category": "people", "department": "HR", "priority": "Normal", "description": "Holiday season hires start in two weeks." },
+    { "title": "Freezer door seal leaking water", "category": "facilities", "department": "FAC", "priority": "Urgent", "description": "Water pooling at the frozen aisle; slip hazard signage placed." },
+    { "title": "Handheld label printer", "category": "equipment", "department": "IT", "priority": "Low", "description": "Price changes take hours without a second label printer." },
+    { "title": "Store refit deposit (est. 18,000)", "category": "purchase", "department": "FIN", "priority": "Normal", "description": "Deposit for the spring refit contractor, estimated cost 18,000." },
+    { "title": "Badge for regional manager", "category": "access", "department": "FAC", "priority": "Low", "description": "Regional manager visiting monthly needs back-office access." }
+  ]
+}

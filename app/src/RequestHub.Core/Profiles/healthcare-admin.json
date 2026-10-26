@@ -1,0 +1,24 @@
+{
+  "id": "healthcare-admin",
+  "inherits": "general",
+  "name": { "en": "Healthcare administration", "fr": "Administration de la santé" },
+  "description": "Administrative and facilities requests for a clinic network. No clinical or patient data.",
+  "sites": ["Clinic East", "Clinic West", "Administrative office"],
+  "departments": [
+    { "id": "IT", "en": "Administrative IT", "fr": "TI administratives" },
+    { "id": "FAC", "en": "Facilities", "fr": "Installations" },
+    { "id": "FIN", "en": "Finance", "fr": "Finances" },
+    { "id": "HR", "en": "Staffing", "fr": "Dotation" },
+    { "id": "OPS", "en": "Clinic Administration", "fr": "Administration des cliniques" }
+  ],
+  "requests": [
+    { "title": "Front-desk label printer replacement", "category": "equipment", "department": "IT", "priority": "Normal", "description": "Front-desk label printer jams on every batch; staff hand-write labels." },
+    { "title": "Scheduling system access for new coordinator", "category": "software", "department": "IT", "priority": "Normal", "description": "Administrative coordinator needs scheduling access (no clinical record access)." },
+    { "title": "Waiting room chair replacement", "category": "facilities", "department": "FAC", "priority": "Low", "description": "Three waiting room chairs have torn upholstery." },
+    { "title": "Badge access for weekend administrator", "category": "access", "department": "FAC", "priority": "Normal", "description": "Weekend administrator needs access to the records office door." },
+    { "title": "Onboarding for two reception staff", "category": "people", "department": "HR", "priority": "Normal", "description": "Reception staff start next week; need accounts and privacy training." },
+    { "title": "Ceiling leak above filing room", "category": "facilities", "department": "FAC", "priority": "Urgent", "description": "Water dripping above the filing cabinets; boxes moved." },
+    { "title": "Phone system upgrade (est. 8,400)", "category": "purchase", "department": "FIN", "priority": "Normal", "description": "Replace the clinic phone system, estimated cost 8,400." },
+    { "title": "Second monitor for billing clerk", "category": "equipment", "department": "IT", "priority": "Low", "description": "Billing clerk works across two administrative systems." }
+  ]
+}
