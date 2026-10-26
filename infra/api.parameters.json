@@ -17,6 +17,7 @@
     "blobEndpoint": { "value": "${STORAGE_BLOB_ENDPOINT}" },
     "apiClientId": { "value": "${API_CLIENT_ID}" },
     "apiIdentifierUri": { "value": "${API_IDENTIFIER_URI}" },
+    "automationClientId": { "value": "${AUTOMATION_CLIENT_ID=}" },
     "foundryProjectEndpoint": { "value": "${FOUNDRY_PROJECT_ENDPOINT}" },
     "triageProvider": { "value": "${TRIAGE_PROVIDER=SampleRules}" },
     "triageAgentName": { "value": "${TRIAGE_AGENT_NAME=requesthub-triage}" },

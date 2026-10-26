@@ -9,6 +9,7 @@ param searchLocation string
 param principalId string
 param principalType string
 param githubRepository string
+param githubOidcSubjectPrefix string
 param modelName string
 param modelVersion string
 param modelCapacity int
@@ -25,6 +26,8 @@ var appRoleNames = ['Requester', 'Reviewer', 'Approver', 'Admin']
 var automationRoleNames = ['Requester', 'Reviewer', 'Approver']
 var userImpersonationScopeId = guid(resourceGroup().id, 'requesthub', 'user_impersonation')
 var azureCliAppId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'
+// GitHub OIDC tokens use either the classic subject (repo:owner/name) or the immutable one (repo:owner@id/name@id).
+var githubSubjectPrefix = empty(githubOidcSubjectPrefix) ? 'repo:${githubRepository}' : githubOidcSubjectPrefix
 
 var roles = {
   acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
@@ -122,7 +125,7 @@ resource githubEnvironmentCredential 'Microsoft.ManagedIdentity/userAssignedIden
   name: 'github-environment-azure-demo'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${githubRepository}:environment:azure-demo'
+    subject: '${githubSubjectPrefix}:environment:azure-demo'
     audiences: ['api://AzureADTokenExchange']
   }
 }
@@ -132,7 +135,7 @@ resource githubMainCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/
   name: 'github-branch-main'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${githubRepository}:ref:refs/heads/main'
+    subject: '${githubSubjectPrefix}:ref:refs/heads/main'
     audiences: ['api://AzureADTokenExchange']
   }
   dependsOn: [githubEnvironmentCredential]
