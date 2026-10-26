@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate a Plan-phase requirements package (backlog.json) against its schema and its sources.
 
-Used by both Plan demos (GitHub Copilot and Microsoft Foundry) and by the `plan-validate` workflow.
+Used by both Plan solutions (GitHub Copilot and Microsoft Foundry) and by their review workflows.
 All checks are deterministic; an AI model cannot make a failing check pass.
 
 Checks
@@ -14,8 +14,12 @@ Checks
   6. Embedded instructions are data, not commands: nothing may claim requests are approved automatically.
 
 Usage
-  python validate_backlog.py --backlog phases/01-plan/output/github/backlog.json
-  python validate_backlog.py --backlog out.json --json     # machine-readable report
+  python .github/skills/requirements-traceability/validate_backlog.py --backlog solutions/01-plan-github/brief/backlog.json
+  python .github/skills/requirements-traceability/validate_backlog.py --backlog <path> --json   # machine-readable report
+
+The inputs are found automatically: the nearest `inputs/` folder above the backlog that contains
+stakeholder-transcript.md and routing-policies.md (for example solutions/01-plan-github/inputs/).
+Pass --transcript and --policies to use other files.
 
 Exit codes: 0 valid, 1 problems found, 2 usage or file error.
 """
@@ -28,12 +32,20 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[2]
-DEFAULT_TRANSCRIPT = REPO / "phases/01-plan/inputs/stakeholder-transcript.md"
-DEFAULT_POLICIES = REPO / "phases/01-plan/inputs/routing-policies.md"
+TRANSCRIPT_NAME = "stakeholder-transcript.md"
+POLICIES_NAME = "routing-policies.md"
 GIVEN_WHEN_THEN = re.compile(r"^\s*Given\b.+\bWhen\b.+\bThen\b.+", re.IGNORECASE | re.DOTALL)
 AUTO_APPROVAL = re.compile(r"\b(auto(matic(ally)?)?[- ]?approv\w*|mark(ed)? (all )?requests? (as )?approved|approved automatically)\b", re.IGNORECASE)
 NEGATION = re.compile(r"\b(no|not|never|without|cannot|can't|must not|out of scope|exclud\w*|disallow\w*|reject\w*|prohibit\w*|prevent\w*|forbid\w*|ignore\w*)\b", re.IGNORECASE)
+
+
+def find_inputs(backlog: Path) -> tuple[Path, Path]:
+    """Return (transcript, policies) from the nearest `inputs/` folder above the backlog."""
+    for folder in backlog.resolve().parents:
+        inputs = folder / "inputs"
+        if (inputs / TRANSCRIPT_NAME).is_file() and (inputs / POLICIES_NAME).is_file():
+            return inputs / TRANSCRIPT_NAME, inputs / POLICIES_NAME
+    raise FileNotFoundError(f"no inputs/{TRANSCRIPT_NAME} found above {backlog}; pass --transcript and --policies")
 
 
 def source_ids(transcript: Path, policies: Path) -> set[str]:
@@ -156,8 +168,8 @@ def validate(data: dict, known_sources: set[str]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--backlog", required=True, type=Path, help="Path to backlog.json")
-    parser.add_argument("--transcript", type=Path, default=DEFAULT_TRANSCRIPT, help="Stakeholder transcript (markdown with [Tnn] ids)")
-    parser.add_argument("--policies", type=Path, default=DEFAULT_POLICIES, help="Routing policies (markdown with POL-... ids)")
+    parser.add_argument("--transcript", type=Path, help="Stakeholder transcript (default: found in the nearest inputs/ folder)")
+    parser.add_argument("--policies", type=Path, help="Routing policies (default: found in the nearest inputs/ folder)")
     parser.add_argument("--json", action="store_true", help="Print a JSON report instead of text")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -165,7 +177,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         data = json.loads(args.backlog.read_text(encoding="utf-8"))
-        known = source_ids(args.transcript, args.policies)
+        if args.transcript and args.policies:
+            transcript, policies = args.transcript, args.policies
+        else:
+            found = find_inputs(args.backlog)
+            transcript, policies = args.transcript or found[0], args.policies or found[1]
+        known = source_ids(transcript, policies)
     except (OSError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

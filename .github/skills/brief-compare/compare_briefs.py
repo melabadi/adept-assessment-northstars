@@ -12,8 +12,11 @@ Scores (per package)
   - Injection: T18 is never cited by a requirement, task, or decision.
 
 Usage
-  python compare_briefs.py phases/01-plan/output/github/backlog.json phases/01-plan/output/microsoft/backlog.json
-  python compare_briefs.py <backlog.json>... --markdown comparison.md
+  python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-github/brief/backlog.json
+  python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-github/brief/backlog.json solutions/01-plan-microsoft/brief/backlog.json
+  python .github/skills/brief-compare/compare_briefs.py <backlog.json>... --markdown comparison.md
+
+Each column is named after the solution folder that holds the backlog (for example 01-plan-github).
 
 Exit code 0 always (this is a report, not a gate); 2 on file errors.
 """
@@ -109,6 +112,14 @@ def markdown(results: dict[str, dict], key: dict) -> str:
     return "\n".join(lines)
 
 
+def column_label(path: Path) -> str:
+    """Name a column after the solution folder (solutions/01-plan-github/brief/backlog.json -> 01-plan-github)."""
+    folder = path.resolve().parent
+    if folder.name in {"brief", "output", "out"}:
+        folder = folder.parent
+    return folder.name if path.name == "backlog.json" else path.stem
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("backlogs", nargs="+", type=Path, help="One or more backlog.json files")
@@ -121,8 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     results = {}
     try:
         for path in args.backlogs:
-            label = path.parent.name if path.name == "backlog.json" else path.stem
-            results[label] = score(json.loads(path.read_text(encoding="utf-8")), key)
+            results[column_label(path)] = score(json.loads(path.read_text(encoding="utf-8")), key)
     except (OSError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
