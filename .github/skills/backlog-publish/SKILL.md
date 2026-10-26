@@ -6,11 +6,11 @@ description: Publish a validated Plan-phase backlog.json to GitHub Issues as one
 # Backlog publish
 
 ## When to use
-- After the brief/backlog PR was reviewed and labelled `brief-approved` (the `plan-publish` workflow runs this automatically).
+- After the brief pull request was reviewed and labelled `brief-approved` (each Plan solution's review workflow runs this automatically).
 - Locally, to publish or re-publish a backlog, add it to a GitHub Project, or reset the demo.
 
 ## Inputs
-- A backlog that passes `requirements-traceability` validation.
+- A backlog that passes `requirements-traceability` validation, inside its solution folder (for example `solutions/01-plan-github/brief/backlog.json`). The transcript excerpts quoted in each issue come from that solution's `inputs/` folder.
 - `--track github` (Copilot output) or `--track microsoft` (Foundry output). Each track publishes its own issue set.
 - GitHub access: your `gh` login locally, or `GH_TOKEN` with `issues: write` in Actions.
 

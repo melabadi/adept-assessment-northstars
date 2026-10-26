@@ -14,10 +14,12 @@ What it does
 It calls the GitHub CLI (`gh api`), so it uses your gh login locally and GH_TOKEN in GitHub Actions.
 
 Usage
-  python publish_backlog.py --backlog phases/01-plan/output/github/backlog.json --track github
-  python publish_backlog.py --backlog ... --track microsoft --dry-run
-  python publish_backlog.py --backlog ... --track github --project-title "AI-SDLC Plan demo"
-  python publish_backlog.py --track github --close            # demo reset: close this track's issues
+  python .github/skills/backlog-publish/publish_backlog.py --backlog solutions/01-plan-github/brief/backlog.json --track github
+  python .github/skills/backlog-publish/publish_backlog.py --backlog <path> --track microsoft --dry-run
+  python .github/skills/backlog-publish/publish_backlog.py --backlog <path> --track github --project-title "AI-SDLC Plan demo"
+  python .github/skills/backlog-publish/publish_backlog.py --track github --close    # demo reset: close this track's issues
+
+The transcript and policies the backlog cites are read from the nearest `inputs/` folder above the backlog.
 
 Exit codes: 0 success, 1 validation failed, 2 GitHub/API or usage error.
 """
@@ -32,7 +34,6 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[2]
 sys.path.insert(0, str(HERE.parent / "requirements-traceability"))
 import validate_backlog  # noqa: E402
 
@@ -86,7 +87,7 @@ def detect_repo() -> str:
     if os.environ.get("GITHUB_REPOSITORY"):
         return os.environ["GITHUB_REPOSITORY"]
     proc = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-                          capture_output=True, text=True, cwd=REPO_ROOT)
+                          capture_output=True, text=True, cwd=HERE)
     if proc.returncode != 0:
         raise GitHubError("Cannot detect the repository; pass --repo owner/name.")
     return proc.stdout.strip()
@@ -94,6 +95,14 @@ def detect_repo() -> str:
 
 def marker(scenario: str, track: str, item_id: str) -> str:
     return f"<!-- ai-sdlc-backlog: {scenario}/{track}/{item_id} -->"
+
+
+def repo_relative(path: Path) -> str:
+    """Path as shown in issue bodies: relative to the repository root when possible."""
+    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, cwd=path.resolve().parent)
+    root = Path(proc.stdout.strip()) if proc.returncode == 0 else None
+    resolved = path.resolve()
+    return resolved.relative_to(root).as_posix() if root and resolved.is_relative_to(root) else path.as_posix()
 
 
 def paragraph_excerpts(transcript: Path) -> dict[str, str]:
@@ -105,15 +114,15 @@ def paragraph_excerpts(transcript: Path) -> dict[str, str]:
     return excerpts
 
 
-def sources_section(sources: list[str], excerpts: dict[str, str]) -> str:
+def sources_section(sources: list[str], excerpts: dict[str, str], policies_path: str) -> str:
     lines = ["## Sources", ""]
     for source in sources:
         quote = excerpts.get(source)
-        lines.append(f"- **{source}**" + (f": {quote}" if quote else " (routing policy, see `phases/01-plan/inputs/routing-policies.md`)"))
+        lines.append(f"- **{source}**" + (f": {quote}" if quote else f" (routing policy, see `{policies_path}`)"))
     return "\n".join(lines)
 
 
-def epic_body(data: dict, track: str, backlog_path: str, excerpts: dict[str, str]) -> str:
+def epic_body(data: dict, track: str, backlog_path: str, excerpts: dict[str, str], policies_path: str) -> str:
     epic = data["epic"]
     unresolved = [c for c in data["conflicts"] if not c.get("resolution")]
     parts = [
@@ -128,12 +137,12 @@ def epic_body(data: dict, track: str, backlog_path: str, excerpts: dict[str, str
         "## Unresolved conflicts", "",
         *([f"- **{c['id']}**: {c['summary']} ({', '.join(c['sources'])})" for c in unresolved] or ["- None."]),
         "",
-        sources_section(epic["sources"], excerpts),
+        sources_section(epic["sources"], excerpts, policies_path),
     ]
     return "\n".join(parts)
 
 
-def task_body(data: dict, task: dict, track: str, epic_number: int | None, numbers: dict[str, int], excerpts: dict[str, str]) -> str:
+def task_body(data: dict, task: dict, track: str, epic_number: int | None, numbers: dict[str, int], excerpts: dict[str, str], policies_path: str) -> str:
     deps = ", ".join(f"#{numbers[d]}" if d in numbers else d for d in task["dependsOn"]) or "none"
     parts = [
         marker(data["scenario"], track, task["id"]),
@@ -141,7 +150,7 @@ def task_body(data: dict, task: dict, track: str, epic_number: int | None, numbe
         "",
         "## Description", "", task["description"], "",
         "## Acceptance criteria", "", *[f"- [ ] {c}" for c in task["acceptanceCriteria"]], "",
-        sources_section(task["sources"], excerpts),
+        sources_section(task["sources"], excerpts, policies_path),
     ]
     return "\n".join(parts)
 
@@ -166,7 +175,7 @@ def existing_issues(repo: str, scenario: str, track: str) -> dict[str, dict]:
 
 
 def upsert(repo: str, existing: dict | None, title: str, body: str, labels: list[str], dry_run: bool) -> tuple[dict, str]:
-    if existing is None:
+    if existing is None or not existing.get("number"):  # a dry-run placeholder is not an existing issue
         if dry_run:
             return {"number": 0, "id": 0, "html_url": "(dry run)", "node_id": ""}, "would create"
         return gh(f"repos/{repo}/issues", "POST", {"title": title, "body": body, "labels": labels}), "created"
@@ -270,15 +279,17 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--backlog is required unless --close is used")
 
         data = json.loads(args.backlog.read_text(encoding="utf-8"))
-        problems = validate_backlog.validate(data, validate_backlog.source_ids(validate_backlog.DEFAULT_TRANSCRIPT, validate_backlog.DEFAULT_POLICIES))
+        transcript, policies = validate_backlog.find_inputs(args.backlog)
+        problems = validate_backlog.validate(data, validate_backlog.source_ids(transcript, policies))
         if problems:
             print("Refusing to publish: the backlog is not valid.", file=sys.stderr)
             for problem in problems:
                 print(f"  - {problem}", file=sys.stderr)
             return 1
 
-        backlog_rel = args.backlog.resolve().relative_to(REPO_ROOT).as_posix() if args.backlog.resolve().is_relative_to(REPO_ROOT) else str(args.backlog)
-        excerpts = paragraph_excerpts(validate_backlog.DEFAULT_TRANSCRIPT)
+        backlog_rel = repo_relative(args.backlog)
+        policies_rel = repo_relative(policies)
+        excerpts = paragraph_excerpts(transcript)
         ensure_labels(repo, args.track, args.dry_run)
         found = existing_issues(repo, data["scenario"], args.track)
         prefix = f"[Plan/{TRACK_NAMES[args.track]}]"
@@ -286,14 +297,14 @@ def main(argv: list[str] | None = None) -> int:
         results: list[dict] = []
 
         epic, action = upsert(repo, found.get(data["epic"]["id"]), f"{prefix} {data['epic']['title']}",
-                              epic_body(data, args.track, backlog_rel, excerpts), base_labels + ["type:epic"], args.dry_run)
+                              epic_body(data, args.track, backlog_rel, excerpts, policies_rel), base_labels + ["type:epic"], args.dry_run)
         results.append({"id": data["epic"]["id"], "number": epic["number"], "url": epic["html_url"], "action": action})
 
         issues: dict[str, dict] = {data["epic"]["id"]: epic}
         numbers = {t["id"]: found[t["id"]]["number"] for t in data["tasks"] if t["id"] in found}
         for _ in range(2):  # second pass fills in issue numbers for "Depends on" once every task exists
             for task in data["tasks"]:
-                body = task_body(data, task, args.track, epic["number"] or None, numbers, excerpts)
+                body = task_body(data, task, args.track, epic["number"] or None, numbers, excerpts, policies_rel)
                 issue, action = upsert(repo, issues.get(task["id"]) or found.get(task["id"]),
                                        f"{prefix} {task['title']}", body, base_labels + ["type:task"], args.dry_run)
                 issues[task["id"]] = issue
@@ -311,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         linked = link_sub_issues(repo, epic, task_issues, args.dry_run)
         dependency_mode = link_dependencies(repo, data, issues, args.dry_run)
         project_url = add_to_project(repo, args.project_title, [epic, *task_issues]) if args.project_title and not args.dry_run else None
-    except GitHubError as exc:
+    except (GitHubError, OSError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
