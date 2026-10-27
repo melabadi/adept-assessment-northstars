@@ -551,10 +551,10 @@ public sealed partial class RequestWorkflow(
             };
         }
 
-        foreach (var previous in request.Recommendations.Where(x => x.Status == RecommendationStatus.Proposed))
-        {
-            previous.Status = RecommendationStatus.Superseded;
-        }
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await db.Recommendations
+            .Where(x => x.RequestId == request.Id && x.Status == RecommendationStatus.Proposed)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.Status, RecommendationStatus.Superseded), ct);
 
         var recommendation = new TriageRecommendation
         {
@@ -585,6 +585,7 @@ public sealed partial class RequestWorkflow(
             guard = conflictGuard ? "policy-conflict" : null,
         });
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         RequestHubTelemetry.TriageCalls.Add(1, new KeyValuePair<string, object?>("provider", triage.Id), new KeyValuePair<string, object?>("outcome", "ok"));
         return Result<RecommendationDto>.Ok(ToDto(recommendation, new PersonRef(user.Id, user.DisplayName)));
     }

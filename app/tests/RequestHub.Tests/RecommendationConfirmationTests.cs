@@ -2,9 +2,11 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using RequestHub.Core.Data;
 using RequestHub.Core.Domain;
 using RequestHub.Core.Services;
+using RequestHub.Core.Triage;
 
 namespace RequestHub.Tests;
 
@@ -226,5 +228,83 @@ public sealed class RecommendationConfirmationTests(ApiFixture api) : IClassFixt
         var recommendation = await db.Recommendations.SingleAsync(r => r.RequestId == request.Id && r.Id == recommendationId);
         recommendation.SuggestedDepartmentId = departmentId;
         await db.SaveChangesAsync();
+    }
+}
+
+public sealed class ConfirmationRaceFixture : ApiFixture
+{
+    protected override void ConfigureTestServices(IServiceCollection services)
+    {
+        services.RemoveAll<ITriageProvider>();
+        services.AddSingleton<RacingTriageProvider>();
+        services.AddSingleton<ITriageProvider>(sp => sp.GetRequiredService<RacingTriageProvider>());
+    }
+}
+
+public sealed class RecommendationConfirmationRaceTests(ConfirmationRaceFixture api) : IClassFixture<ConfirmationRaceFixture>
+{
+    [Fact]
+    public async Task Concurrent_recommendation_cannot_supersede_a_confirmed_recommendation()
+    {
+        var provider = api.Factory.Services.GetRequiredService<RacingTriageProvider>();
+        var created = await api.As("u-ava").PostJson("/api/requests", new
+        {
+            title = "Replacement chair for the north wing",
+            description = "A replacement chair is needed for the shared workspace.",
+            category = "facilities",
+            departmentId = "IT",
+            priority = "High",
+        });
+        var request = await created.Read<RequestDetailDto>();
+        var recommendationResponse = await api.As("u-ben")
+            .PostAsync($"/api/requests/{request.Id}/triage-recommendations", null);
+        var recommendation = await recommendationResponse.Read<RecommendationDto>();
+
+        provider.BlockNextCall();
+        var pendingRecommendation = api.As("u-ben")
+            .PostAsync($"/api/requests/{request.Id}/triage-recommendations", null);
+
+        try
+        {
+            await provider.Blocked.WaitAsync(TimeSpan.FromSeconds(10));
+            var confirmation = await api.As("u-ben").PostAsync(
+                $"/api/requests/{request.Id}/triage-recommendations/{recommendation.Id}/confirm", null);
+            Assert.Equal(HttpStatusCode.OK, confirmation.StatusCode);
+        }
+        finally
+        {
+            provider.Release();
+        }
+
+        Assert.Equal(HttpStatusCode.Created, (await pendingRecommendation).StatusCode);
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var original = await db.Recommendations.SingleAsync(r => r.Id == recommendation.Id);
+        Assert.Equal(RecommendationStatus.Confirmed, original.Status);
+    }
+}
+
+public sealed class RacingTriageProvider : ITriageProvider
+{
+    private readonly TaskCompletionSource _blocked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _blockNextCall;
+
+    public string Id => "confirmation-race-test";
+    public bool IsSample => true;
+    public Task Blocked => _blocked.Task;
+
+    public void BlockNextCall() => Interlocked.Exchange(ref _blockNextCall, 1);
+    public void Release() => _release.TrySetResult();
+
+    public async Task<TriageResult> RecommendAsync(TriageContext context, CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref _blockNextCall, 0) == 1)
+        {
+            _blocked.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+        }
+
+        return new TriageResult("FAC", "Normal", "Facilities routing policy applies.", ["POL-ROUTE-003"], 0.8, false);
     }
 }
