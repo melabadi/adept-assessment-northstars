@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-27
-- **Deciders:** GitHub Copilot
+- **Deciders:** Morgan Patel (lead architect)
 - **Related:** `solutions/02-design-github/inputs/reviewed-brief.md`, BR-1 through BR-7
 
 ## Context
