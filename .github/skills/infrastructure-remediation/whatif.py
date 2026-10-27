@@ -151,6 +151,12 @@ def resource_type(resource_id: str) -> str:
     return "/".join([parts[0], *parts[1::2]])
 
 
+def computed_type(expression: str) -> str:
+    """The type of a resource whose id what-if could only show as a template expression (its name is computed at deployment)."""
+    match = re.search(r"'(Microsoft\.[A-Za-z]+/[A-Za-z/]+)'", expression)
+    return f"{match[1] if match else 'a resource'} (name computed during deployment)"
+
+
 def leaves(deltas: list[dict] | None, prefix: str = "") -> dict[str, tuple[str, str, str]]:
     """Flattened property changes: path -> (kind, before, after), as JSON text so two previews compare exactly."""
     flat: dict[str, tuple[str, str, str]] = {}
@@ -255,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     for change in changes:
         change["expected"] = any(fnmatch.fnmatchcase(change["type"].lower(), p.lower()) for p in args.expect)
     unexpected = [c for c in changes if not c["expected"]]
-    previewless = sorted({resource_type(c["id"]) if c["id"].startswith("/") else "a resource with a computed name"
+    previewless = sorted({resource_type(c["id"]) if c["id"].startswith("/") else computed_type(c["id"])
                           for c in head.values() if c["kind"] in NOT_PREVIEWABLE})
 
     lines = [f"### Deployment preview (Azure what-if) · `{resource_group}`", "",

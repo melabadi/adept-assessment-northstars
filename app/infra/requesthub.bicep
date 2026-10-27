@@ -30,6 +30,12 @@ param githubEnvironment string = ''
 @description('Extra Azure roles (role definition GUIDs) for the automation identity on this resource group, for example Contributor for release workflows.')
 param automationRoleDefinitionIds array = []
 
+@description('Let the automation identity push images to the container registry, for workflows that build the app. Turn off for workflows that only read and preview.')
+param automationCanPushImages bool = true
+
+@description('RequestHub app roles for the automation identity. Workflows that only exercise the app as a requester need just Requester.')
+param automationAppRoleNames array = ['Requester', 'Reviewer', 'Approver']
+
 @description('Storage shared-key access. Keep false: the app reaches Blob storage with its managed identity.')
 param storageAllowSharedKeyAccess bool = false
 
@@ -47,7 +53,6 @@ var workerAppName = 'ca-worker-${resourceToken}'
 var postgresName = 'psql-${resourceToken}'
 var apiIdentifierUri = 'api://${tenant().tenantId}/requesthub-${environmentName}'
 var appRoleNames = ['Requester', 'Reviewer', 'Approver', 'Admin']
-var automationAppRoleNames = ['Requester', 'Reviewer', 'Approver']
 var userImpersonationScopeId = guid(resourceGroup().id, 'requesthub', 'user_impersonation')
 var azureCliAppId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'
 // GitHub OIDC tokens use either the classic subject (repo:owner/name) or the immutable one (repo:owner@id/name@id).
@@ -378,7 +383,7 @@ resource appBlob 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   properties: { principalId: appIdentity.properties.principalId, principalType: 'ServicePrincipal', roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.blobDataContributor) }
 }
 
-resource automationAcrPush 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource automationAcrPush 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (automationCanPushImages) {
   scope: registry
   name: guid(registry.id, automationIdentity.id, roles.acrPush)
   properties: { principalId: automationIdentity.properties.principalId, principalType: 'ServicePrincipal', roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.acrPush) }
