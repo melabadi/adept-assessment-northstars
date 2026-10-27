@@ -32,6 +32,9 @@ param modelVersion string = '2026-03-17'
 @description('Model capacity in thousands of tokens per minute. The evaluation runs two cases at a time; 250 leaves room for both.')
 param modelCapacity int = 250
 
+@description('Optional. Any new value gives every resource in the group a new name. Use it to re-create the solution right after azd down --purge, while the old Foundry name can still point to the deleted account.')
+param resourceSeed string = ''
+
 var tags = {
   'azd-env-name': environmentName
   solution: '02-design-microsoft'
@@ -58,6 +61,7 @@ module resources 'resources.bicep' = {
     modelName: modelName
     modelVersion: modelVersion
     modelCapacity: modelCapacity
+    resourceSeed: resourceSeed
     tags: tags
   }
 }
