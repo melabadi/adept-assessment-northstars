@@ -22,9 +22,10 @@ resource, source by source: the live resource configuration, Azure Policy, Micro
 5. Preview it. If `az account show` succeeds, run the what-if from the skill and paste the result into the pull request.
    Without Azure access (for example as the Copilot cloud agent), say so: the
    **Secure · Microsoft · preview the infrastructure change** check runs the same preview on the pull request.
-6. Open a pull request that links the Issue with `Refs #<number>`, so the Issue closes after verification rather than on
-   merge. Explain the risk, the safety evidence from step 3, and the expected preview: a new subnet in the virtual network,
-   a private endpoint with its DNS zone group, a private DNS zone and its link, and the storage account's network settings.
+6. Open a pull request that links the Issue. Explain the risk, the safety evidence from step 3, and the expected preview:
+   a new subnet in the virtual network, a private endpoint with its DNS zone group, a private DNS zone and its link, and the
+   storage account's network settings. If merging closes the Issue, the verification run reopens it when the fix is not
+   actually in place.
 7. Stop there. A person reviews, merges, and applies the change with `azd provision` in `solutions/05-secure-microsoft`,
    then runs **Secure · Microsoft · verify the remediation**.
 
