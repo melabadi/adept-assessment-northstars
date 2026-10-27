@@ -108,6 +108,24 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
     }
 
     [Fact]
+    public async Task Concurrent_decision_retries_with_same_idempotency_key_return_original_without_duplicate_side_effects()
+    {
+        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Wireless mouse"))).Read<RequestDetailDto>()).Id;
+        var approver = api.As("u-chloe");
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => approver.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" }, "decision-key-concurrent")));
+
+        Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
+        Assert.Equal(7, responses.Count(r => r.StatusCode == HttpStatusCode.OK));
+        var decisions = await Task.WhenAll(responses.Select(response => response.Read<DecisionDto>()));
+        var originalDecision = decisions[Array.FindIndex(responses, r => r.StatusCode == HttpStatusCode.Created)];
+        Assert.All(decisions, decision => Assert.Equal(originalDecision, decision));
+
+        await AssertSingleDecisionSideEffects(id);
+    }
+
+    [Fact]
     public async Task Concurrent_approvals_record_one_decision_and_return_conflicts_for_the_rest()
     {
         var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("USB-C charger"))).Read<RequestDetailDto>()).Id;
