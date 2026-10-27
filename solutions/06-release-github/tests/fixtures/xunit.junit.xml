@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="Test results" tests="3" failures="0" errors="0" disabled="0" time="1.250000" timestamp="2026-10-27T12:00:00">
+  <testsuite name="RequestHub.Tests.dll" tests="3" failures="0" errors="0" disabled="0" skipped="0" time="1.250000" timestamp="2026-10-27T12:00:00" hostname="runner">
+    <testcase name="RequestHub.Tests.RequestLifecycleTests.Requester_cannot_approve_their_own_request" time="0.016000" classname="RequestHub.Tests.RequestLifecycleTests" />
+    <testcase name="RequestHub.Tests.RequestLifecycleTests.Approver_decision_is_recorded_in_status_and_history" time="0.108000" classname="RequestHub.Tests.RequestLifecycleTests" />
+    <testcase name="RequestHub.Tests.ContractTests.OpenApi_document_matches_committed_contract" time="0.416000" classname="RequestHub.Tests.ContractTests" />
+  </testsuite>
+</testsuites>

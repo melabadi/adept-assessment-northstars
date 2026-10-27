@@ -1,0 +1,2 @@
+# The release-evidence and workflow-investigation scripts use only the Python standard library (Python 3.12+).
+# They call the GitHub CLI (gh) for GitHub API access. Nothing to install.
