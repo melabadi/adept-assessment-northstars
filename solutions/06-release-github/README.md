@@ -101,7 +101,7 @@ The workflows, skills, and agent are already active because the repository's roo
 
 ## Run the demo
 
-About 20 minutes. Start step 1 before the session: the candidate takes about 5 minutes (4 to 7 in our runs), and the AI summary a few minutes more.
+About 20 minutes. Start step 1 before the session: the candidate takes about 5 minutes (3.5 to 6.5 in our runs), and the AI summary a few minutes more.
 
 1. **Start the release candidate.** Actions > **Release · GitHub · build the release candidate** > **Run workflow** with version `1.0.0`, or:
 
@@ -168,11 +168,11 @@ About 20 minutes. Start step 1 before the session: the candidate takes about 5 m
    gh workflow run release-github-approve.yml -f tag=demo-v1.0.0 -f comment="Evidence reviewed in the release review."
    ```
 
-   It checks everything again, checks that you are an admin or maintainer, attaches `approval-record.json`, and publishes. Publishing creates the tag at the tested commit.
+   It checks everything again, checks that you are an admin or maintainer, attaches `approval-record.json`, and publishes. Publishing creates the tag at the tested commit. The run takes about a minute.
 
 8. **Show the result.**
    - The release now says ✅ **Approved by @you**, with your note, the environment rules, and the SHA-256 of the manifest you approved. The AI summary is still there, below the evidence.
-   - Repository home page > **Deployments** > `release-github` lists the approval, linked to the release.
+   - Repository home page > **Deployments** > `release-github` lists every approval attempt, including the one refused in step 5. The successful one links to the release.
    - Anyone can check it:
 
      ```powershell
@@ -212,5 +212,5 @@ The container images stay in GitHub Container Registry, tagged with each demo ve
 
 - **`Failed to create the environment protection rule. Please ensure the billing plan supports the required reviewers protection rule` (HTTP 422).** Required reviewers need a public repository on GitHub Free, Pro, and Team. Create the environment without them (Set up, step 1); the person who starts the approval workflow is the approver.
 - **The AI release summary fails at `Validate COPILOT_GITHUB_TOKEN secret`.** The secret is missing, or it is an OAuth token (`gho_…`) instead of a fine-grained token. Create it as in Set up, step 2. The candidate and the approval do not depend on it.
-- **`verify` locally shows `images: SKIP`.** Your token cannot read packages. Run `gh auth refresh -s read:packages`, then `$env:GHCR_TOKEN = gh auth token`. The approval workflow always checks the images with its own token.
+- **`verify` locally shows `images: SKIP`.** Your token cannot read packages, so the local check proves nothing either way. Run `gh auth refresh -s read:packages`, then `$env:GHCR_TOKEN = gh auth token`. The approval workflow always checks the images with its own token.
 - **`gh workflow run` answers that the workflow was not found.** Dispatch-only workflows run from the default branch; merge them to `main` first.
