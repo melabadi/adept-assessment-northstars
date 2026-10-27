@@ -30,8 +30,11 @@ param githubEnvironment string = ''
 @description('Extra Azure roles (role definition GUIDs) for the automation identity on this resource group, for example Contributor for release workflows.')
 param automationRoleDefinitionIds array = []
 
-@description('Storage shared-key access. Keep false; the Secure solution starts from true to demonstrate the remediation.')
+@description('Storage shared-key access. Keep false: the app reaches Blob storage with its managed identity.')
 param storageAllowSharedKeyAccess bool = false
+
+@description('Reach Blob storage through a private endpoint in the app\'s virtual network and close the public endpoint, as PostgreSQL already is. Set false only to keep a public storage endpoint; attachments then fail wherever Azure Policy disables public network access on storage accounts.')
+param storagePrivateEndpoint bool = true
 
 @description('PostgreSQL major version.')
 param postgresVersion string = '16'
@@ -78,29 +81,35 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// ---------- Network (private PostgreSQL) ----------
+// ---------- Network (private PostgreSQL, optional private Blob endpoint) ----------
+var appSubnets = [
+  {
+    name: 'snet-apps'
+    properties: {
+      addressPrefix: '10.40.0.0/23'
+      delegations: [{ name: 'aca', properties: { serviceName: 'Microsoft.App/environments' } }]
+    }
+  }
+  {
+    name: 'snet-postgres'
+    properties: {
+      addressPrefix: '10.40.2.0/28'
+      delegations: [{ name: 'pg', properties: { serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers' } }]
+    }
+  }
+]
+var privateEndpointSubnet = {
+  name: 'snet-private-endpoints'
+  properties: { addressPrefix: '10.40.3.0/27' }
+}
+
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: 'vnet-${resourceToken}'
   location: location
   tags: tags
   properties: {
     addressSpace: { addressPrefixes: ['10.40.0.0/16'] }
-    subnets: [
-      {
-        name: 'snet-apps'
-        properties: {
-          addressPrefix: '10.40.0.0/23'
-          delegations: [{ name: 'aca', properties: { serviceName: 'Microsoft.App/environments' } }]
-        }
-      }
-      {
-        name: 'snet-postgres'
-        properties: {
-          addressPrefix: '10.40.2.0/28'
-          delegations: [{ name: 'pg', properties: { serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers' } }]
-        }
-      }
-    ]
+    subnets: storagePrivateEndpoint ? concat(appSubnets, [privateEndpointSubnet]) : appSubnets
   }
 }
 
@@ -163,12 +172,19 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   tags: tags
   kind: 'StorageV2'
   sku: { name: 'Standard_LRS' }
-  properties: {
-    allowBlobPublicAccess: false
-    allowSharedKeyAccess: storageAllowSharedKeyAccess
-    minimumTlsVersion: 'TLS1_2'
-    supportsHttpsTrafficOnly: true
-  }
+  properties: union(
+    {
+      allowBlobPublicAccess: false
+      allowSharedKeyAccess: storageAllowSharedKeyAccess
+      minimumTlsVersion: 'TLS1_2'
+      supportsHttpsTrafficOnly: true
+    },
+    // With the private endpoint, only the app's virtual network reaches the account.
+    storagePrivateEndpoint ? {
+      publicNetworkAccess: 'Disabled'
+      networkAcls: { defaultAction: 'Deny', bypass: 'AzureServices' }
+    } : {}
+  )
 }
 
 resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
@@ -180,6 +196,46 @@ resource attachmentsContainer 'Microsoft.Storage/storageAccounts/blobServices/co
   parent: blobService
   name: 'attachments'
   properties: { publicAccess: 'None' }
+}
+
+// Optional private path to Blob storage: the API and worker resolve the account's name to a private IP in the virtual network.
+resource blobDns 'Microsoft.Network/privateDnsZones@2024-06-01' = if (storagePrivateEndpoint) {
+  name: 'privatelink.blob.${environment().suffixes.storage}'
+  location: 'global'
+  tags: tags
+}
+
+resource blobDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (storagePrivateEndpoint) {
+  parent: blobDns
+  name: 'vnet-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: { id: vnet.id }
+  }
+}
+
+resource blobPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (storagePrivateEndpoint) {
+  name: 'pe-blob-${resourceToken}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: { id: resourceId('Microsoft.Network/virtualNetworks/subnets', vnet.name, privateEndpointSubnet.name) }
+    privateLinkServiceConnections: [
+      {
+        name: 'blob'
+        properties: { privateLinkServiceId: storage.id, groupIds: ['blob'] }
+      }
+    ]
+  }
+}
+
+resource blobPrivateDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (storagePrivateEndpoint) {
+  parent: blobPrivateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [{ name: 'blob', properties: { privateDnsZoneId: blobDns.id } }]
+  }
 }
 
 // ---------- PostgreSQL (private network, Microsoft Entra authentication only) ----------
