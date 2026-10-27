@@ -83,7 +83,7 @@ About 15 minutes of presenting. Copilot needs about 20 minutes on its own, so st
    $issue = $url.Split('/')[-1]
    ```
 
-3. **Assign it to Copilot with the custom agent.** In the Issue, open **Assignees**, choose **Copilot**, pick the **develop-github** agent, keep the base branch `main`, and assign. Or from a terminal:
+3. **Assign it to Copilot with the custom agent.** In the Issue, open **Assignees**, choose **Copilot**, pick the **develop-github** agent, keep the base branch `main`, and assign. Or from a terminal (`$issue` comes from step 2; if you created the Issue in the browser, set it to the Issue number first):
 
    ```powershell
    $repo = gh repo view --json nameWithOwner -q .nameWithOwner

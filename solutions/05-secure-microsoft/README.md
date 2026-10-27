@@ -185,6 +185,8 @@ To run the demo again, put the finding back:
 2. Remove the private endpoint and its DNS zone, then apply `main` again:
 
    ```powershell
+   git switch main
+   git pull                                   # azd provision deploys your local copy, so get the revert first
    cd solutions/05-secure-microsoft
    $rg = azd env get-value AZURE_RESOURCE_GROUP
    az network private-endpoint delete -g $rg -n (az network private-endpoint list -g $rg --query "[0].name" -o tsv)
