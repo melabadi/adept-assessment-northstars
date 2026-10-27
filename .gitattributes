@@ -5,5 +5,6 @@
 *.pdf binary
 *.docx binary
 *.xlsx binary
-.github/workflows/*.lock.yml linguist-generated=true merge=ours
-solutions/*/.github/workflows/*.lock.yml linguist-generated=true merge=ours
+# gh-aw compiled workflows. The first line matches what `gh aw compile` writes, so compiling leaves this file unchanged.
+.github/workflows/*.lock.yml linguist-generated=true
+solutions/*/.github/workflows/*.lock.yml linguist-generated=true
