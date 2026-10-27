@@ -27,6 +27,11 @@ describe('triage confirmation history label', () => {
 
   it('uses the French plain-language label', async () => {
     setup('fr');
-    expect(await screen.findByText('Routage confirmé : Installations')).toBeInTheDocument();
+    const label = await screen.findByText(
+      (_, element) => element !== null
+        && element.classList.contains('timeline-title')
+        && element.textContent === 'Acheminement confirmé\u00a0: Installations',
+    );
+    expect(label).toBeInTheDocument();
   });
 });
