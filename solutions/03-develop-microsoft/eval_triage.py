@@ -5,13 +5,13 @@ Each case goes through the RequestHub API, not straight to the model, so every c
 API authorization -> Foundry agent -> tools executed by the app -> deterministic guards -> stored recommendation.
 The evaluator is deterministic code. It reports repeatability instead of assuming the model is deterministic.
 
-Prerequisite: a RequestHub API running with the Foundry provider and development sign-in, for example the local
-API from phases/03-develop/README.md, or the API started by the develop-foundry workflow.
+Prerequisite: a RequestHub API running with the Foundry provider and development sign-in, for example the local API
+started as described in solutions/03-develop-microsoft/README.md, or the API started by the evaluation workflow.
 
 Usage
-  python phases/03-develop/microsoft/eval_triage.py                       # all cases against http://localhost:5090
-  python phases/03-develop/microsoft/eval_triage.py --cases T06,T08 --repeat 3
-  python phases/03-develop/microsoft/eval_triage.py --issues              # open or update one GitHub Issue per failing case
+  python solutions/03-develop-microsoft/eval_triage.py                    # all cases against http://localhost:5080
+  python solutions/03-develop-microsoft/eval_triage.py --cases T06,T08 --repeat 3
+  python solutions/03-develop-microsoft/eval_triage.py --issues           # open or update one GitHub Issue per failing case
 
 Case format (eval_cases.jsonl, one JSON object per line)
   id, kind, title   labels used in the report
@@ -45,8 +45,8 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parents[1] / "common"))
-from azd_env import REPO, utf8_stdout  # noqa: E402
+sys.path.insert(0, str(HERE))
+from azd_env import utf8_stdout  # noqa: E402
 
 OBSERVER = "u-dan"  # admin persona used only to read state before and after each case
 SUBMITTER = "u-ava"  # requester persona that submits the synthetic requests in `create` cases
@@ -225,8 +225,8 @@ def sync_issues(summary: dict, cases: dict) -> None:
             "",
             f"Rationale of the last failing run: {failed[-1]['rationale'] or 'n/a'}",
             "",
-            f"Reproduce: `python phases/03-develop/microsoft/eval_triage.py --cases {cid} --repeat 3`",
-            "Fix the agent instructions in `phases/03-develop/microsoft/triage-agent.yaml`, the routing policy data, or the "
+            f"Reproduce: `python solutions/03-develop-microsoft/eval_triage.py --cases {cid} --repeat 3`",
+            "Fix the agent instructions in `solutions/03-develop-microsoft/triage-agent.yaml`, the routing policy data, or the "
             "app guard, then republish and rerun. Do not change the expected result to make the case pass unless the policy changed.",
         ])
         if existing:
@@ -239,13 +239,13 @@ def sync_issues(summary: dict, cases: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--api", default=os.environ.get("REQUESTHUB_API", "http://localhost:5090"), help="RequestHub API base URL (default http://localhost:5090 or REQUESTHUB_API)")
+    parser.add_argument("--api", default=os.environ.get("REQUESTHUB_API", "http://localhost:5080"), help="RequestHub API base URL (default http://localhost:5080 or REQUESTHUB_API)")
     parser.add_argument("--cases", help="Comma-separated case ids to run (default: all)")
     parser.add_argument("--repeat", type=int, default=1, help="Run each case N times to measure repeatability (default 1)")
     parser.add_argument("--provider", default="foundry-agent", help="Triage provider id the API must report (default foundry-agent)")
     parser.add_argument("--timeout", type=float, default=120, help="Seconds to wait for each API call (default 120)")
     parser.add_argument("--issues", action="store_true", help="Open/update a GitHub Issue per failing case and close Issues for cases that pass again")
-    parser.add_argument("--out", type=Path, default=REPO / "phases/03-develop/output/microsoft/eval", help="Output folder")
+    parser.add_argument("--out", type=Path, default=HERE / "out" / "eval", help="Output folder (default: out/eval next to this script)")
     args = parser.parse_args(argv)
     utf8_stdout()
 
@@ -265,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if meta.get("triageProvider") != args.provider:
         print(f"error: the API uses triage provider '{meta.get('triageProvider')}', expected '{args.provider}'. "
-              "Start it with Triage__Provider=Foundry (see phases/03-develop/README.md).", file=sys.stderr)
+              "Start it with Triage__Provider=Foundry (see solutions/03-develop-microsoft/README.md).", file=sys.stderr)
         return 2
 
     results = []
