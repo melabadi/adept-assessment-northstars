@@ -144,7 +144,7 @@ Never merge the demo pull request: the feature would land on `main` and the next
 2. In `scope_check.py`, point `APP`, `WORKFLOW`, `MIGRATIONS`, `CONTRACT`, `DECIDE`, `PERMISSIONS`, and the decision patterns at your own code: the folder a feature may change, and the code that holds your approval authority.
 3. Rewrite the agent's **How to work** section for your stack's layout and test commands. Keep its rules.
 4. Replace the issue template's prefilled values with a feature of your own, or clear them for a blank form. The bounds check runs for pull requests that close an Issue labeled `phase:develop`; change the label in the workflow if you use another one.
-5. Make **CI** and **Feature stays within its bounds** required status checks in a branch ruleset, so a red check blocks the merge.
+5. Make **Feature stays within its bounds** and your test jobs required status checks in a branch ruleset, so a red check blocks the merge. A required workflow must run on every pull request: one skipped by a `paths` filter stays pending and blocks merging. The bounds workflow has no `paths` filter for that reason.
 
 ## Troubleshooting
 
