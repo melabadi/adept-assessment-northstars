@@ -123,9 +123,8 @@ About 20 minutes. Run the commands from the repository root unless a step says o
    ```powershell
    $env:Triage__Provider = "Foundry"
    $env:Foundry__ProjectEndpoint = (azd env get-value FOUNDRY_PROJECT_ENDPOINT --cwd solutions/03-develop-microsoft)
-   $env:ASPNETCORE_URLS = "http://localhost:5090"
-   dotnet run --project app/src/RequestHub.Api     # leave it running; use a second terminal for the next command
-   python solutions/03-develop-microsoft/eval_triage.py
+   dotnet run --project app/src/RequestHub.Api     # http://localhost:5080; leave it running
+   python solutions/03-develop-microsoft/eval_triage.py   # in a second terminal
    ```
 
    Each line is one case: routing, conflict, ambiguity, missing context, unauthorized access, and prompt injection. Each case goes through the API, so it checks authorization, the tools, the guards, and that triage changed nothing on the request. The last line reads `12/12 runs passed`. Add `--cases T06,T08 --repeat 3` to show how stable a case is.

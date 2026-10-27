@@ -9,7 +9,7 @@ Prerequisite: a RequestHub API running with the Foundry provider and development
 started as described in solutions/03-develop-microsoft/README.md, or the API started by the evaluation workflow.
 
 Usage
-  python solutions/03-develop-microsoft/eval_triage.py                    # all cases against http://localhost:5090
+  python solutions/03-develop-microsoft/eval_triage.py                    # all cases against http://localhost:5080
   python solutions/03-develop-microsoft/eval_triage.py --cases T06,T08 --repeat 3
   python solutions/03-develop-microsoft/eval_triage.py --issues           # open or update one GitHub Issue per failing case
 
@@ -239,7 +239,7 @@ def sync_issues(summary: dict, cases: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--api", default=os.environ.get("REQUESTHUB_API", "http://localhost:5090"), help="RequestHub API base URL (default http://localhost:5090 or REQUESTHUB_API)")
+    parser.add_argument("--api", default=os.environ.get("REQUESTHUB_API", "http://localhost:5080"), help="RequestHub API base URL (default http://localhost:5080 or REQUESTHUB_API)")
     parser.add_argument("--cases", help="Comma-separated case ids to run (default: all)")
     parser.add_argument("--repeat", type=int, default=1, help="Run each case N times to measure repeatability (default 1)")
     parser.add_argument("--provider", default="foundry-agent", help="Triage provider id the API must report (default foundry-agent)")
