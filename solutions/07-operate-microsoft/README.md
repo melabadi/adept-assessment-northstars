@@ -34,7 +34,7 @@ sequenceDiagram
   S->>M: Queries metrics, logs, and spans (read-only)
   S->>W: Reads revisions, Faults__ settings, and the Activity Log (read-only)
   S-->>P: Root cause with evidence, the exact command, rollback
-  P->>S: "Apply it", then Approve, then Authorize
+  P->>S: Approve, then Authorize (on-behalf-of)
   S->>W: Removes the two fault settings, as the presenter (on-behalf-of)
   W-->>M: Backlog drains, alert resolves
   S-->>P: Before and after evidence, incident summary
@@ -159,8 +159,9 @@ short. Run the commands in this folder.
    ```
 
    It prints the exact `az containerapp update` command that adds the fault: each delivery waits 10 seconds, and the
-   fault expires after 45 minutes. It waits for the slowed revision to take over, then submits 80 synthetic requests.
-   Expect about 144 pending notifications. The worker now delivers 6 a minute.
+   fault expires after 45 minutes. It waits for the slowed revision to take over, then submits 200 synthetic requests.
+   Expect about 360 pending notifications. At 6 a minute, the slowed worker would need an hour to deliver them, longer
+   than the fault lasts, so the backlog only clears when someone acts.
 
 3. **Watch it unfold** in a second terminal:
 
@@ -169,21 +170,23 @@ short. Run the commands in this folder.
    ```
 
    Every 30 seconds: pending notifications, the age of the oldest one (live from RequestHub's Admin API), the fault,
-   the alert, and the SRE Agent investigation. The alert fires about 7 minutes after the requests, because the worker
+   the alert, and the SRE Agent investigation. The alert fires about 6 minutes after the requests, because the worker
    reports its backlog only after each slow batch. About a minute later the investigation starts.
 
 4. **Follow the investigation.** In the SRE Agent portal, open **Incidents**, then **[Sev2] RequestHub notification
-   backlog**. In about three minutes the agent searches the runbook, queries the metrics, logs, and delivery spans,
+   backlog**. In two to three minutes the agent searches the runbook, queries the metrics, logs, and delivery spans,
    lists the worker's revisions and the Activity Log, and compares the `Faults__` settings with the previous revision.
-   It rules out database errors, API errors, restarts, and the load spike, then reports the root cause with high
-   confidence, the exact command, a rollback, and when the fault would have expired. It states that nothing changed.
+   It rules out database errors, API errors, and restarts, treats the burst of requests as a contributing factor only,
+   then reports the root cause with high confidence, the exact command, a rollback, and when the fault would have
+   expired. It states that nothing changed.
 
 5. **Mitigate.** Right after its report the agent submits the command, and the platform pauses it for approval: the
-   card shows the command and "Permission rule requires approval for this tool". Select **Approve**. The agent first
-   tries with its own identity and gets an authorization error, by design. The card then offers to run the command
-   with your credentials (on-behalf-of): select **Authorize**. A new worker revision starts without the fault. To run
-   the command yourself instead, select **Deny** and use the command from the report. If the agent stops at its report
-   without asking, reply *Apply the proposed mitigation.*
+   card shows the command and "Permission rule requires approval for this tool". It waits while you talk the audience
+   through the report. Select **Approve**. The agent's identity can only read, so the card then asks to run the
+   command with your credentials (on-behalf-of), sometimes after the agent's own attempt fails with an authorization
+   error, by design: select **Authorize**. A new worker revision starts without the fault. To run the command yourself
+   instead, select **Deny** and use the command from the report. If the agent stops at its report without asking,
+   reply *Apply the proposed mitigation.*
 
 6. **Watch it recover.** In the `watch` terminal the fault turns off and the backlog drains within about a minute of
    the new revision. The alert resolves about 5 minutes later, after three healthy one-minute evaluations. In the
@@ -204,18 +207,20 @@ short. Run the commands in this folder.
 
 ## What to observe
 
-- **Time to context.** In the reference run the alert fired at 14:21:52 UTC, the investigation started at 14:23:08,
-  and the root cause with evidence was ready at 14:25:57. Nobody opened a dashboard.
+- **Time to context.** In the reference run the alert fired at 16:59:40 UTC, the investigation started at 17:01:06,
+  and the root cause with evidence was ready at 17:03:14, three and a half minutes after the alert. Nobody opened a
+  dashboard.
 - **Correlation, not guesswork.** The agent tied four kinds of evidence together: the backlog metric, the worker's own
-  report (`workerDelayFaultActive=True`), delivery spans (10 seconds each instead of 0.1 milliseconds), and the revision
-  that added the setting. It named what it could not prove, such as a load spike that also added work.
+  report (`workerDelayFaultActive=True`), delivery spans (10 seconds each instead of under a millisecond), and the
+  revision that added the setting. It named what it could not prove, such as how much the burst of requests added.
 - **Least privilege that holds.** The agent could not change the worker even after approval: its identity only reads.
   The change ran as the approving administrator, scoped to two settings on one container app.
-- **Recovery with evidence.** The agent waited for fresh telemetry and the resolved alert before it called the
-  incident over, and `verify` proved that a new request's notifications went out in seconds.
+- **Recovery with evidence.** The agent compared numbers from before and after the change (240 pending, then 0) and
+  waited for the resolved alert before it called the incident over, and `verify` proved that a new request's
+  notifications went out in seconds. In a rehearsal where the backlog had drained before the change, it said so: the
+  change did not drain this backlog.
 - **An honest weak spot.** The worker publishes its backlog only between batches, so a slow worker delays its own
-  alert by a few minutes. The agent pointed this out. It is a good follow-up for the repository: measure the queue
-  independently of the worker.
+  alert by a few minutes. It is a good follow-up for the repository: measure the queue independently of the worker.
 - **Agent configuration is code.** A pull request that set the response plan to Autonomous or allowed writes without
   approval would fail the check before it reached the agent.
 
@@ -263,6 +268,11 @@ create the app registration again for 30 days.
 
 - **The agent says it got an authorization error after you approved.** That is the design: its identity can only
   read. Select **Authorize** on the card to run the command with your permissions, or run it yourself.
+- **The approved command fails with "OBO sandbox CLI dispatched but response failed".** The platform's on-behalf-of
+  run failed, possibly before the command reached Azure. The `fault` column of `incident.py watch` shows whether the
+  fault is still set. If it is, the agent submits the command again for approval; if it stops instead, reply
+  *Approved, but the run failed and the fault is still set. Submit the command again.* You can also run the command
+  from its report yourself.
 - **The alert takes several minutes to fire.** The worker reports its backlog after each batch of up to 20
   notifications, so at 10 seconds per delivery the gauge updates every few minutes. The live backlog in
   `incident.py watch` is ahead of the alert.

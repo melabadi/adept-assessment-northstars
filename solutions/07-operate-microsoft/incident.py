@@ -240,15 +240,20 @@ class Azure:
                     events.setdefault("approval requested", (requested, {"tool": approval.get("display", {}).get("toolName")}))
                 decided = parse_time(approval.get("decisionTimestamp"))
                 if decided and approval.get("status") in ("Approved", "Authorized"):
-                    events.setdefault("approved by an administrator", (decided, {}))
+                    again = "approved by an administrator" in events and events["approved by an administrator"][0] != decided
+                    events.setdefault("approved again by an administrator" if again else "approved by an administrator",
+                                      (decided, {}))
             execution = message.get("azCliExecution") or {}
-            if "--remove-env-vars" in str(execution.get("command")) and execution.get("status") == "Completed":
-                done = parse_time(execution.get("completedTimestamp"))
+            completed = execution.get("status") == "Completed"
+            if "--remove-env-vars" in str(execution.get("command")) and (completed or execution.get("error")):
+                # A failed run is marked cancelled later, so it is dated when it started.
+                done = parse_time(execution.get("completedTimestamp" if completed else "startedTimestamp")) or at
                 who = execution.get("executedBy") or {}
                 by_agent = isinstance(who, dict) and who.get("userId") == "agent-default"
                 identity = "as the agent" if by_agent else "as the approver (on-behalf-of)"
+                event = "mitigation run by SRE Agent" if completed else "mitigation run failed"
                 if done:
-                    events.setdefault("mitigation run by SRE Agent", (done, {"ranWith": identity}))
+                    events.setdefault(event, (done, {"ranWith": identity}))
         return events
 
 
@@ -336,8 +341,14 @@ def start(args: argparse.Namespace) -> int:
     after = azure.backlog() or {}
     drill["backlogSamples"].append({"at": iso(now()), **after})
     save_drill(drill)
-    print(f"Backlog now: {after.get('pending')} pending. The worker delivers about {60_000 // args.delay_ms} per minute, so "
-          f"the backlog grows older until someone acts or the fault expires at {clock(expires)}.")
+    pending = int(after.get("pending") or 0)
+    per_minute = 60_000 / args.delay_ms
+    print(f"Backlog now: {pending} pending. The worker delivers about {per_minute:g} per minute, so the backlog grows "
+          f"older until someone acts or the fault expires at {clock(expires)}.")
+    if pending / per_minute < args.minutes:
+        print(f"Warning: the slowed worker can clear {pending} notifications in about {pending / per_minute:.0f} minutes, "
+              "before the fault expires, and recovery would then prove nothing. Mitigate before then, or reset and start "
+              "again with more --requests.")
     print("Next: python incident.py watch")
     return 0 if created == args.requests else 1
 
@@ -502,6 +513,12 @@ def message_text(message: dict) -> str:
 def summary(args: argparse.Namespace) -> int:
     azure = Azure()
     drill = load_drill()
+    thread_id = next((e.get("threadId") for e in drill["timeline"] if e["event"] == "SRE Agent investigation started"), None)
+    if thread_id:
+        # Thread milestones that `watch` did not see, for example after it stopped, complete the timeline.
+        for event, (at, details) in sorted(azure.thread_events(thread_id).items(), key=lambda item: item[1][0]):
+            record(drill, event, at, **details)
+        save_drill(drill)
     events = {e["event"]: e for e in drill["timeline"]}
     fired, recovered = parse_time(events.get("alert fired", {}).get("at")), parse_time(
         (events.get("backlog drained") or events.get("recovery verified") or {}).get("at"))
@@ -509,7 +526,6 @@ def summary(args: argparse.Namespace) -> int:
     peak_pending = max((s.get("pending") or 0 for s in drill.get("backlogSamples", [])), default=0)
 
     report, recovery = "", ""
-    thread_id = events.get("SRE Agent investigation started", {}).get("threadId")
     if thread_id:
         replies = [message_text(m) for m in azure.messages(thread_id)
                    if m.get("author", {}).get("role") == "SREAgent" and len(message_text(m)) > 600]
@@ -595,7 +611,9 @@ def main() -> int:
     p = commands.add_parser("start", help="slow the worker down and submit synthetic requests")
     p.add_argument("--delay-ms", type=int, default=10_000, help="extra delay per delivered notification (default 10000)")
     p.add_argument("--minutes", type=int, default=45, help="the fault switches itself off after this many minutes (default 45)")
-    p.add_argument("--requests", type=int, default=80, help="synthetic requests to submit (default 80, about 160 notifications)")
+    p.add_argument("--requests", type=int, default=200,
+                   help="synthetic requests to submit (default 200, about 360 notifications: more than the slowed worker "
+                        "can deliver before the fault expires, so only the mitigation or the expiry clears them)")
     p = commands.add_parser("watch", help="print backlog, alert, and SRE Agent status until the incident is over")
     p.add_argument("--interval", type=int, default=30, help="seconds between samples (default 30)")
     p.add_argument("--minutes", type=int, default=60, help="stop watching after this many minutes (default 60)")
