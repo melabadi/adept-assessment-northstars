@@ -6,8 +6,9 @@
       credential that lets this solution's GitHub environment sign in to Azure without a stored secret.
 
   python configure_github.py publish    (azd postprovision hook)
-      Creates or updates the GitHub environment and stores the Azure sign-in values (secrets) and the names the
-      workflow reads (variables). With OIDC there is no password or key to store.
+      Creates or updates the GitHub environment, limits it to the main branch (only main applies the agent's
+      configuration), and stores the Azure sign-in values (secrets) and the names the workflow reads (variables).
+      With OIDC there is no password or key to store.
 
 Needs the GitHub CLI signed in with admin rights on the repository (environments and secrets need them).
 To target another repository, run `azd env set GITHUB_REPOSITORY owner/name` first.
@@ -70,12 +71,17 @@ def publish() -> None:
     missing = [name for name in [*SECRETS.values(), *VARIABLES.values()] if not values.get(name)]
     if missing:
         raise SystemExit(f"error: azd outputs missing: {', '.join(missing)}. Did `azd provision` succeed?")
-    run("gh", "api", "-X", "PUT", f"repos/{repo}/environments/{ENVIRONMENT}")
+    run("gh", "api", "-X", "PUT", f"repos/{repo}/environments/{ENVIRONMENT}", "--input", "-",
+        stdin=json.dumps({"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}))
+    policies = json.loads(run("gh", "api", f"repos/{repo}/environments/{ENVIRONMENT}/deployment-branch-policies"))
+    if not any(p.get("name") == "main" for p in policies.get("branch_policies", [])):
+        run("gh", "api", "-X", "POST", f"repos/{repo}/environments/{ENVIRONMENT}/deployment-branch-policies",
+            "-f", "name=main", "-f", "type=branch")
     for secret, source in SECRETS.items():
         run("gh", "secret", "set", secret, "--env", ENVIRONMENT, "--repo", repo, stdin=values[source])
     for variable, source in VARIABLES.items():
         run("gh", "variable", "set", variable, "--env", ENVIRONMENT, "--repo", repo, "--body", values[source])
-    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variables set.")
+    print(f"GitHub environment '{ENVIRONMENT}' in {repo} (main only): {len(SECRETS)} secrets, {len(VARIABLES)} variables set.")
 
 
 def main() -> int:
