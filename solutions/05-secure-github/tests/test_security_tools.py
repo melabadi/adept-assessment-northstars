@@ -123,6 +123,12 @@ class SarifTests(unittest.TestCase):
 
 
 class JunitTests(unittest.TestCase):
+    def test_absolute_report_path_is_a_dotnet_option_not_a_runner_argument(self):
+        command = verify.regression_command(Path.cwd() / "out" / "report")
+        self.assertLess(command.index("--results-directory"), command.index("--"))
+        self.assertTrue(command[command.index("--project") + 1].endswith(".csproj"))
+        self.assertGreater(command.index("--filter-class"), command.index("--"))
+
     def test_assertions_are_distinguished_from_errors_and_skips(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "fixture.xml"

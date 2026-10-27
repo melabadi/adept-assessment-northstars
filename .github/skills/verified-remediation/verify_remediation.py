@@ -42,6 +42,13 @@ def execute(command: list[str], cwd: Path, log: Path) -> int:
         return subprocess.run(command, cwd=cwd, stdout=output, stderr=subprocess.STDOUT, timeout=600).returncode
 
 
+def regression_command(reports: Path) -> list[str]:
+    project = Path("app") / "tests" / "RequestHub.Tests" / "RequestHub.Tests.csproj"
+    return ["dotnet", "test", "--project", str(project), "-c", "Release", "--no-build",
+            "--results-directory", str(reports), "--", "--filter-class", FILTER,
+            "--report-xunit-junit", "--report-xunit-junit-filename", "search.junit.xml"]
+
+
 def verify(base: str, head: str, out: Path) -> dict:
     for sha in (base, head):
         if not re.fullmatch(r"[a-fA-F0-9]{40}", sha):
@@ -87,11 +94,11 @@ def verify(base: str, head: str, out: Path) -> dict:
                 raise ValueError(f"{label} build failed; see {label}-build.log")
             reports = out / label
             reports.mkdir()
-            code = execute(["dotnet", "test", "--project", "app/tests/RequestHub.Tests", "-c", "Release",
-                            "--no-build", "--", "--filter-class", FILTER, "--results-directory", str(reports),
-                            "--report-xunit-junit", "--report-xunit-junit-filename", "search.junit.xml"],
-                           snapshot, out / f"{label}-test.log")
-            junit = report(reports / "search.junit.xml")
+            code = execute(regression_command(reports), snapshot, out / f"{label}-test.log")
+            junit_path = reports / "search.junit.xml"
+            if not junit_path.is_file():
+                raise ValueError(f"{label}: runner exited {code} without JUnit; see {label}-test.log")
+            junit = report(junit_path)
             result["checks"][label] = {"exit_code": code, **junit}
             if junit["tests"] != 10 or junit["errors"] or junit["skipped"]:
                 raise ValueError(f"{label}: expected exactly 10 executed tests and no errors or skips: {junit}")
@@ -107,7 +114,7 @@ def verify(base: str, head: str, out: Path) -> dict:
                     raise ValueError("Full app suite failed after repair")
         finally:
             if added:
-                git("worktree", "remove", "--force", str(snapshot))
+                git("-c", "core.longpaths=true", "worktree", "remove", "--force", str(snapshot))
             elif snapshot.exists():
                 snapshot.rmdir()
     result.update(status="PASS", reason="regression failed before repair, passed after; full app suite passed")
