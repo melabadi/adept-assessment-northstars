@@ -37,8 +37,9 @@ is one traffic change. `solutions/06-release-microsoft/release.py` does every st
    python release.py verify
    python release.py record
    ```
-3. Read the gate output: how long the candidate took to become ready, the nine smoke checks (health, build provenance,
-   sign-in enforced, submit, safe retry, read, self-approval refused, audit history, bake), and "Users meanwhile", the
+3. Read the gate output: how long the candidate took to become ready, the ten smoke checks (health, build provenance,
+   sign-in enforced, signed in, submit, safe retry, read, attachment round trip, self-approval refused, audit history),
+   the bake, and "Users meanwhile", the
    success rate of calls to production while the step ran.
 4. If the gate fails, do not promote. Switch to the **deployment-recovery** skill.
 
