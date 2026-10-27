@@ -1,0 +1,36 @@
+name: "Secure: remediate the lab finding"
+description: Repair a proven injection finding on an undeployed lab branch, tests first.
+title: "Secure: remediate the lab SQL injection"
+labels: ["ai-sdlc", "phase:secure"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Follow solutions/05-secure-github/README.md. Assign secure-github with base lab/secure-RUN, not main.
+        No deployment or merge. Copy remediate-task.md into the acceptance criteria field.
+  - type: input
+    id: finding
+    attributes:
+      label: Real Copilot review comment or successful CodeQL run URL
+      description: AI review and CodeQL are different evidence sources; identify which ran.
+    validations:
+      required: true
+  - type: input
+    id: sha
+    attributes:
+      label: Reviewed or scanned full commit SHA
+    validations:
+      required: true
+  - type: input
+    id: branch
+    attributes:
+      label: Undeployed lab branch and lab PR URL
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: Copy solutions/05-secure-github/remediate-task.md without weakening the criteria.
+    validations:
+      required: true
