@@ -101,7 +101,7 @@ The workflows, skills, and agent are already active because the repository's roo
 
 ## Run the demo
 
-About 20 minutes. Start step 1 before the session: the candidate takes about 5 minutes (3.5 to 6.5 in our runs), and the AI summary a few minutes more.
+About 20 minutes. Start step 1 about 15 minutes before you present: the candidate takes 4 to 7 minutes, and the AI summary about 6 more.
 
 1. **Start the release candidate.** Actions > **Release · GitHub · build the release candidate** > **Run workflow** with version `1.0.0`, or:
 
@@ -119,6 +119,8 @@ About 20 minutes. Start step 1 before the session: the candidate takes about 5 m
    - **Draft the release**: the test table, `Gate: passed`, and a link to the draft.
 
 3. **Watch Copilot write the summary.** When the candidate succeeds, **Release · GitHub · AI release summary** starts by itself. Its agent reads the evidence, commits, and pull requests with read-only tools, and its only write is `update_release`, appending to the draft. Threat detection checks the output before it is applied.
+
+   After this update, `gh release list` shows the draft as `untagged-…` instead of `demo-v1.0.0`: GitHub removes a draft's pending tag name when an update leaves it out. The draft keeps its title, `RequestHub demo-v1.0.0 (demo)`, which is how the approval workflow finds it, and publishing sets the tag again.
 
 4. **Review the draft like an approver.** Open the draft release (Releases, or the link in the run summary):
    - **Release evidence**: image digests and the four suites with their counts.
@@ -187,13 +189,14 @@ About 20 minutes. Start step 1 before the session: the candidate takes about 5 m
 - **People decide, AI advises.** Copilot's summary is labeled, append-only, and cannot change a number or an approval. Approving is a person starting a workflow, recorded with their name and note.
 - **Deterministic gates.** A missing report, zero tests, one failure, an edited asset, or a branch other than `main` stops the release, with the reason in the run summary.
 - **Honest about the plan.** Preflight reports which protections are enforced. On a private repository on GitHub Pro there are no required reviewers; on GitHub Enterprise or a public repository the same workflow waits for one.
-- **Speed.** About 5 minutes from **Run workflow** to a reviewable draft (80 tests of evidence in our runs), and about a minute from approval to a published, verified release.
+- **Speed.** 4 to 7 minutes from **Run workflow** to a reviewable draft with every test report attached, about 6 more for Copilot's summary, and about a minute from approval to a published, verified release.
 
 ## Reset and clean up
 
-Delete the demo releases and their tags, so the same versions can be used again:
+Delete the demo releases and their tags, so the same versions can be used again. Drafts go first and have no tag to clean up yet (`gh release list` may show them as `untagged-…`):
 
 ```powershell
+gh release list --limit 100 --json tagName,name,isDraft --jq '.[] | select(.isDraft and (.name | startswith("RequestHub demo-v"))) | .tagName' | ForEach-Object { gh release delete $_ --yes }
 gh release list --limit 100 --json tagName --jq '.[] | select(.tagName | startswith("demo-v")) | .tagName' | ForEach-Object { gh release delete $_ --cleanup-tag --yes }
 ```
 
@@ -204,7 +207,7 @@ The container images stay in GitHub Container Registry, tagged with each demo ve
 1. Copy this folder's `.github/` contents into your repository's `.github/` folder, and create the environment (Set up, step 1). Add required reviewers with **Prevent self-review** if your plan supports them.
 2. Replace the build and test jobs of `release-github-candidate.yml` with yours. Keep a JUnit report per suite; the suites are listed in `SUITES` in `release_evidence.py`.
 3. Point the image matrix at your Dockerfiles, and replace `smoke_test.py` with checks of your own business flow.
-4. Change the tag prefix (`TAG_PREFIX` and `TAG_RE` in `release_evidence.py`) if your releases are not `demo-vX.Y.Z`.
+4. Change the tag prefix (`TAG_PREFIX` and `TAG_RE` in `release_evidence.py`) if your releases are not `demo-vX.Y.Z`. Keep `RELEASE_TITLE` in step with the candidate workflow's `--title`: the approval workflow finds a draft by its title once an update has removed its pending tag name.
 5. Recompile the AI summary after editing it: `gh extension install github/gh-aw --pin v0.93.5`, then `gh aw compile release-github-summary --strict`.
 6. Make published releases tamper-proof: turn on [immutable releases](https://docs.github.com/code-security/concepts/supply-chain-security/immutable-releases) (Settings > General > Releases); the approval workflow already attaches everything before publishing. Where [artifact attestations](https://docs.github.com/actions/concepts/security/artifact-attestations) are available (public repositories, or GitHub Enterprise Cloud for private ones), add `actions/attest` to the image jobs so consumers can run `gh attestation verify`. Immutable releases keep tags from being reused, so use new version numbers instead of resetting.
 
@@ -212,5 +215,6 @@ The container images stay in GitHub Container Registry, tagged with each demo ve
 
 - **`Failed to create the environment protection rule. Please ensure the billing plan supports the required reviewers protection rule` (HTTP 422).** Required reviewers need a public repository on GitHub Free, Pro, and Team. Create the environment without them (Set up, step 1); the person who starts the approval workflow is the approver.
 - **The AI release summary fails at `Validate COPILOT_GITHUB_TOKEN secret`.** The secret is missing, or it is an OAuth token (`gho_…`) instead of a fine-grained token. Create it as in Set up, step 2. The candidate and the approval do not depend on it.
+- **`gh release view demo-v1.0.0` says `release not found`, but the draft exists.** Copilot's summary updated the draft, and GitHub removed its pending tag name. `gh release list` shows it as `untagged-…`; view it by that name. The approval workflow finds it by its title and sets the tag when it publishes.
 - **`verify` locally shows `images: SKIP`.** Your token cannot read packages, so the local check proves nothing either way. Run `gh auth refresh -s read:packages`, then `$env:GHCR_TOKEN = gh auth token`. The approval workflow always checks the images with its own token.
 - **`gh workflow run` answers that the workflow was not found.** Dispatch-only workflows run from the default branch; merge them to `main` first.

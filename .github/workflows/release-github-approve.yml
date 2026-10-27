@@ -78,6 +78,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Check again, check the approver, and write the approval record
+        id: approve
         env:
           GH_TOKEN: ${{ github.token }}
           GHCR_TOKEN: ${{ github.token }}
@@ -93,9 +94,14 @@ jobs:
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.approve.outputs.release_id }}
+          COMMIT: ${{ steps.approve.outputs.commit }}
         run: |
+          # GitHub removes a draft's pending tag name when an update leaves it out (the AI summary's update does),
+          # so set the tag and the tested commit again before attaching the record and publishing.
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f tag_name="$TAG" -f target_commitish="$COMMIT" --silent
           gh release upload "$TAG" "$RUNNER_TEMP/release/approval-record.json" --clobber
-          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false --latest
+          gh release edit "$TAG" --target "$COMMIT" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false --latest
           url=$(gh release view "$TAG" --json url --jq .url)
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "### Published [RequestHub $TAG]($url)" >> "$GITHUB_STEP_SUMMARY"
