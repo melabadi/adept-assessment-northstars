@@ -235,6 +235,20 @@ public sealed partial class RequestWorkflow(
         }
 
         var key = NormalizeKey(idempotencyKey);
+        if (!Request.TryParsePublicId(publicId, out var number))
+        {
+            return WorkflowError.NotFound(publicId);
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var lockedRequestId = await db.Database
+            .SqlQuery<Guid>($"SELECT \"Id\" AS \"Value\" FROM \"Requests\" WHERE \"Number\" = {number} FOR UPDATE")
+            .SingleOrDefaultAsync(ct);
+        if (lockedRequestId == Guid.Empty)
+        {
+            return WorkflowError.NotFound(publicId);
+        }
+
         var request = await LoadAsync(publicId, ct);
         if (request is null)
         {
@@ -256,6 +270,11 @@ public sealed partial class RequestWorkflow(
             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
         }
 
+        if (request.Decision is { } existing)
+        {
+            return ExistingDecisionOutcome(existing, user, key);
+        }
+
         var now = clock.GetUtcNow();
         var decision = new ApprovalDecision
         {
@@ -274,6 +293,7 @@ public sealed partial class RequestWorkflow(
         AddNotification(request, request.RequesterId, "request.decided", now, new { outcome = outcome.ToString() });
 
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         RequestHubTelemetry.DecisionsRecorded.Add(1, new KeyValuePair<string, object?>("outcome", outcome.ToString()));
         logger.LogInformation("Decision {Outcome} recorded on {RequestId} by {UserId}", outcome, request.PublicId, user.Id);
