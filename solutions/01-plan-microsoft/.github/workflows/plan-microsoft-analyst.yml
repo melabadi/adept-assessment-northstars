@@ -1,6 +1,8 @@
-# Plan · Microsoft: run the Microsoft Foundry requirements analyst from GitHub Actions (OIDC, no stored secrets), then
-# open a pull request with its brief so the same review gate applies: a person reviews it and applies `brief-approved`
-# to publish the backlog (plan-microsoft-brief.yml).
+# Plan · Microsoft: run the Microsoft Foundry requirements analyst from GitHub Actions (OIDC, no stored secrets) and push
+# its brief to a branch. The run summary links to a prefilled pull request: a person opens it, the review workflow
+# (plan-microsoft-brief.yml) validates the brief, and applying `brief-approved` publishes the backlog.
+# The workflow does not open the pull request itself, so it needs no permission to create pull requests, and a pull
+# request opened by a person starts the validation check right away.
 name: Plan · Microsoft · run the Foundry requirements analyst
 
 on:
@@ -8,7 +10,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
   id-token: write
 
 concurrency:
@@ -21,7 +22,7 @@ defaults:
 
 jobs:
   analyze:
-    name: Run the agent and open a review pull request
+    name: Run the agent and push the brief
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: plan-microsoft
@@ -41,11 +42,11 @@ jobs:
         env:
           FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
           FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
-        run: python solutions/01-plan-microsoft/requirements_analyst.py | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Open a review pull request with the Foundry brief
+        run: python solutions/01-plan-microsoft/requirements_analyst.py | tee analyst.txt
+      - name: Push the brief and link to a prefilled pull request
         env:
-          GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
+          BASE: ${{ github.ref_name }}
           BRIEF: solutions/01-plan-microsoft/brief
         run: |
           branch="plan/foundry-brief-$RUN_ID"
@@ -58,11 +59,22 @@ jobs:
           agent=$(jq -r '"\(.agent.name) v\(.agent.version)"' "$BRIEF/run.json")
           response=$(jq -r .responseId "$BRIEF/run.json")
           validation=$(python .github/skills/requirements-traceability/validate_backlog.py --backlog "$BRIEF/backlog.json" || true)
-          gh pr create --head "$branch" --title "Plan: Foundry requirements brief" --body "$(cat <<EOF
-          Produced by the Microsoft Foundry agent **$agent** (response \`$response\`) from \`solutions/01-plan-microsoft/inputs\`, in [workflow run $RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN_ID).
-
-          Validation: \`$validation\`
-
-          Review \`$BRIEF/brief.md\`. When it is right, apply the **brief-approved** label to publish the epic and tasks as Issues.
-          EOF
-          )"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          body=$(printf '%s\n\n%s\n\n%s' \
+            "Produced by the Microsoft Foundry agent **$agent** (response \`$response\`) from \`solutions/01-plan-microsoft/inputs\`, in [workflow run $RUN_ID]($run_url)." \
+            "Validation: \`$validation\`" \
+            "Review \`$BRIEF/brief.md\`. When it is right, apply the **brief-approved** label to publish the epic and tasks as Issues.")
+          query=$(jq -rn --arg title "Plan: Foundry requirements brief" --arg body "$body" '"title=\($title|@uri)&body=\($body|@uri)"')
+          link="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$branch?quick_pull=1&$query"
+          {
+            echo "### Foundry requirements brief"
+            echo
+            echo "Agent **$agent**, response \`$response\`."
+            echo
+            echo '```'
+            cat analyst.txt
+            echo '```'
+            echo
+            echo "**[Open the review pull request]($link)** (branch \`$branch\`)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Open the review pull request: $link"

@@ -108,7 +108,8 @@ def strict_schema(node, in_properties: bool = False):
 
 
 def ensure_vector_store(client, config: dict) -> tuple[str, bool]:
-    digest = hashlib.sha256(b"".join(p.read_bytes() for p in INPUTS)).hexdigest()[:12]
+    # Line endings are normalized so Windows and Linux checkouts share one vector store (and one agent version).
+    digest = hashlib.sha256(b"".join(p.read_bytes().replace(b"\r\n", b"\n") for p in INPUTS)).hexdigest()[:12]
     name = f"plan-inputs-{digest}"
     for store in client.vector_stores.list(limit=100):
         if store.name == name and store.status == "completed" and store.file_counts.completed == len(INPUTS):
