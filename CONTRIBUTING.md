@@ -18,8 +18,9 @@ solutions/<NN>-<phase>-<github|microsoft>/
 ├── .github/
 │   ├── agents/<phase>-<track>.agent.md
 │   ├── skills/<skill>/SKILL.md   plus the skill's scripts and reference files
-│   ├── workflows/<phase>-*.yml
-│   └── ISSUE_TEMPLATE/<NN>-<phase>-*.yml
+│   ├── instructions/<name>.instructions.md   optional path-specific Copilot instructions (for example for code review)
+│   ├── workflows/<phase>-<track>-*.yml
+│   └── ISSUE_TEMPLATE/<NN>-<phase>-<track>-*.yml
 ├── azure.yaml                    Microsoft solutions: azd project for the solution's resource group
 ├── infra/                        Microsoft solutions: main.bicep (subscription scope) and parameters
 ├── requirements.txt              Python packages for the solution's scripts
@@ -27,10 +28,11 @@ solutions/<NN>-<phase>-<github|microsoft>/
 ```
 
 1. **Self-contained.** Everything the demo needs lives in its folder. The exceptions are the app (`app/`) and the Bicep modules that host it (`app/infra/`). Small helpers are copied into each solution that needs them rather than shared.
-2. **Root `.github/` is a mirror.** GitHub only reads agents, skills, workflows, and issue templates from the root `.github/` folder. Edit the solution's copy, then run `python tools/sync_solutions.py`. For files generated at the root, such as `gh aw compile` output, copy them back with `python tools/sync_solutions.py --pull <path>`. The *Repository checks* workflow fails if the copies drift.
+2. **Root `.github/` is a mirror.** GitHub only reads agents, skills, instructions, workflows, and issue templates from the root `.github/` folder. Edit the solution's copy, then run `python tools/sync_solutions.py`. For files generated at the root, such as `gh aw compile` output, copy them back with `python tools/sync_solutions.py --pull <path>`. The *Repository checks* workflow fails if the copies drift.
 3. **Unique names.** Two solutions may only ship a file with the same path if the contents are identical. Name workflows `<phase>-<track>-<what>.yml` (for example `develop-microsoft-eval.yml`) with a display name such as `Develop · Microsoft · evaluate the triage agent`, issue templates `<NN>-<phase>-<track>-<what>.yml`, and agents `<phase>-<track>`.
 4. **Paths.** Workflows and agents refer to solution files by their repository path (`solutions/03-develop-microsoft/...`). Skills refer to their own files through `.github/skills/<skill>/...`, which works both here and in an adopter's repository.
 5. **Repository-wide files belong to no solution:** `.github/copilot-instructions.md`, `.github/workflows/ci.yml`, `.github/workflows/copilot-setup-steps.yml`, and `.github/workflows/repo-checks.yml`.
+6. **Workflows only act on their own demo.** Every workflow in this repository sees every pull request. A solution's pull-request workflow must recognize its own demo (paths inside its solution folder, a `lab/<phase>-*` base branch, or an Issue labeled `phase:<phase>`) and skip, never fail, everything else. A check that fails on another solution's demo pull request is a defect.
 
 ## Microsoft solutions on Azure
 
@@ -81,6 +83,8 @@ services:
 ```
 
 `main.bicep` must output the values that [`app/infra/api.parameters.json`](app/infra/api.parameters.json) and [`worker.parameters.json`](app/infra/worker.parameters.json) read: `AZURE_CONTAINER_REGISTRY_ENDPOINT`, `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_ENVIRONMENT_NAME`, `APP_IDENTITY_ID`, `APP_IDENTITY_CLIENT_ID`, `APP_IDENTITY_NAME`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `STORAGE_BLOB_ENDPOINT`, `API_APP_NAME`, `WORKER_APP_NAME`, `API_URL`, `API_CLIENT_ID`, `API_IDENTIFIER_URI`, and `AUTOMATION_CLIENT_ID`. Optional: `FOUNDRY_PROJECT_ENDPOINT`, `TRIAGE_PROVIDER`, `DEMO_INDUSTRY`.
+
+In its cleanup, a solution that runs RequestHub must also delete the Microsoft Entra app registration that `requesthub.bicep` creates for sign-in: `azd down` deletes the resource group, but no resource group contains Microsoft Entra objects. Delete it and empty it from the recycle bin, as [03-develop-microsoft](solutions/03-develop-microsoft/README.md#reset-and-clean-up) does, or the next `azd up` with the same environment name cannot create it again for 30 days.
 
 ## Python scripts
 

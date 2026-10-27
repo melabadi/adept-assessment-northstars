@@ -121,8 +121,11 @@ def headline(body: str | None) -> str:
 def reviews(repo: str, number: int) -> list[str]:
     submitted = gh_list(f"repos/{repo}/pulls/{number}/reviews")
     inline = gh_list(f"repos/{repo}/pulls/{number}/comments")
-    copilot_reviews = [r for r in submitted if is_copilot(r["user"]["login"])]
-    copilot_inline = [c for c in inline if is_copilot(c["user"]["login"])]
+    # Copilot code review submits reviews as copilot-pull-request-reviewer; the cloud agent replies in threads as Copilot.
+    copilot_reviews = [r for r in submitted if r["user"]["login"].startswith(COPILOT[0])]
+    review_ids = {r["id"] for r in copilot_reviews}
+    copilot_inline = [c for c in inline if c.get("pull_request_review_id") in review_ids and not c.get("in_reply_to_id")]
+    replies = [c for c in inline if c.get("in_reply_to_id") and c["user"]["login"] == COPILOT[1]]
     people_inline = [c for c in inline if not is_copilot(c["user"]["login"])]
 
     lines = ["### 2. Review comments (inform the reviewer; they do not decide)", ""]
@@ -132,6 +135,8 @@ def reviews(repo: str, number: int) -> list[str]:
         lines += [f"  - `{c['path']}`: {first_line(c['body'])}" for c in copilot_inline[:8]]
     else:
         lines.append("- **Copilot code review:** not requested or not finished yet.")
+    if replies:
+        lines.append(f"- **Copilot (author) replied** in {len(replies)} thread(s): {first_line(replies[-1]['body'])}")
     if people_inline:
         people = ", ".join(sorted({f"@{c['user']['login']}" for c in people_inline}))
         lines.append(f"- **People:** {len(people_inline)} inline comment(s) from {people}.")

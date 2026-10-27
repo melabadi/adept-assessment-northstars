@@ -109,7 +109,10 @@ jobs:
       - name: Run Playwright tests
         working-directory: app/web
         run: |
-          npx playwright install --with-deps chromium
+          # No --with-deps: the runner image already has Chromium's system libraries, and the optional fonts it would add from
+          # the Ubuntu mirror have taken up to 15 minutes. The launch check fails fast if a library is ever missing.
+          npx playwright install chromium
+          node -e "require('@playwright/test').chromium.launch().then(b => b.close()).then(() => console.log('Chromium launches'))"
           npm run e2e
         env:
           BASE_URL: http://localhost:5080

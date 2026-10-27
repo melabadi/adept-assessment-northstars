@@ -81,6 +81,7 @@ Settings use standard ASP.NET Core configuration (`appsettings.json`, or environ
 | `Auth:Mode` | `Development`, `EasyAuth` | Persona switcher locally; Microsoft Entra ID through Container Apps authentication in Azure. |
 | `Storage:Provider` | `Local`, `Blob` | Where attachments are stored. |
 | `Demo:AllowReset` | `true`, `false` | Lets an Admin reseed the demo data with `POST /api/admin/reset`. |
+| `Demo:LoadTestRequesterIds` | comma-separated user ids, for example `aad-<object id>` | Lets `POST /api/admin/load-test/cleanup` delete only the requests these load-test identities submitted. An Admin cleans up all of them; a listed identity cleans up its own. Empty (the default) disables the cleanup. |
 
 ### Fault injection
 
@@ -99,8 +100,10 @@ The app has no deployment of its own. Each Microsoft solution that needs a runni
 
 | File | What it creates |
 | --- | --- |
-| [`infra/requesthub.bicep`](infra/requesthub.bicep) | Monitoring, private network, PostgreSQL (Microsoft Entra authentication only), Blob storage, container registry, Container Apps environment, the Entra app registration with RequestHub app roles, and the identity GitHub Actions uses through OIDC. |
+| [`infra/requesthub.bicep`](infra/requesthub.bicep) | Monitoring, private network, PostgreSQL (Microsoft Entra authentication only), Blob storage reached through a private endpoint, container registry, Container Apps environment, the Entra app registration with RequestHub app roles, and the identity GitHub Actions uses through OIDC. |
 | [`infra/api.bicep`](infra/api.bicep), [`infra/worker.bicep`](infra/worker.bicep) | The two container apps. `azd deploy` applies them with each new image, so code and configuration ship together as one revision. |
+
+Data stays off the public internet by default. PostgreSQL has no public endpoint, and Blob storage is reached through a private endpoint (a subnet, a `privatelink.blob` private DNS zone linked to the virtual network, and the endpoint itself) with its public endpoint closed. Set the module's `storagePrivateEndpoint` parameter to `false` to keep a public storage endpoint instead; attachments then fail wherever Azure Policy disables public network access on storage accounts. The [Secure solution](../solutions/05-secure-microsoft/) starts that way to give Azure Policy and Defender for Cloud a real finding to report.
 
 In the cloud, Container Apps authentication signs users in with Microsoft Entra ID and the API enforces app roles (`RequestHub.Requester`, `Reviewer`, `Approver`, `Admin`). Whoever runs `azd provision` gets every role. To call the deployed API from a terminal:
 

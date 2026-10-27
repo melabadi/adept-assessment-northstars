@@ -49,11 +49,15 @@ jobs:
           dotnet restore RequestHub.slnx
           dotnet tool restore
       - name: Install web dependencies and the Playwright browser
+        # No --with-deps: the runner image already has Chromium's system libraries, and installing the optional fonts from
+        # the Ubuntu mirror inside the agent's firewall took 15 minutes. The launch check fails setup if a library is missing.
+        working-directory: app/web
         run: |
-          npm ci --prefix app/web
-          cd app/web && npx playwright install --with-deps chromium
+          npm ci
+          npx playwright install chromium
+          node -e "require('@playwright/test').chromium.launch().then(b => b.close()).then(() => console.log('Chromium launches'))"
       - name: Install Python dependencies (every solution's requirements)
         run: |
-          for file in requirements.txt solutions/*/requirements.txt; do
-            if [ -f "$file" ]; then pip install -r "$file"; fi
+          for file in solutions/*/requirements.txt; do
+            pip install -r "$file"
           done

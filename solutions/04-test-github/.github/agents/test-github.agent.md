@@ -36,6 +36,7 @@ deterministic checks and a person, so the order of your commits is part of the d
 ## Rules
 - Never change approval authority: only approvers decide, and never on their own request. Keep role, department, and
   self-approval checks ahead of any early return.
+- Change only the code and tests the fix needs: no documentation, workflow, agent, or `solutions/` changes.
 - Never weaken, skip, or delete an existing test, guard, or validation.
 - No sleeps, retries, or catch-all exception handlers to hide a race: make the code correct under concurrency.
 - Keep `app/contracts/openapi.json` unchanged unless the Issue asks for an API change (`requesthub.v1` is additive-only).

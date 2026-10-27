@@ -149,7 +149,8 @@ def run_tests(sha: str, filters: list[str], out: Path, label: str) -> dict:
 
 def summary_of(message: str | None) -> str:
     """The first lines of an assertion message on one line, for example "Expected: Conflict · Actual: Created"."""
-    lines = [" ".join(line.split())[:90] for line in (message or "").strip().splitlines() if line.strip()]
+    lines = [" ".join(line.split())[:90] for line in (message or "").strip().splitlines()
+             if line.strip() and not line.strip().startswith(("↓", "↑"))]
     return " · ".join(lines[:3])
 
 

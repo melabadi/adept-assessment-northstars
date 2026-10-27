@@ -1,0 +1,4 @@
+# Python packages for this solution's scripts (Python 3.12+): pip install -r requirements.txt
+# locust matches the version Azure Load Testing runs, so a local run behaves like the cloud run.
+locust==2.33.2
+pyyaml==6.0.3
