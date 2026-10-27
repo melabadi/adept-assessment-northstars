@@ -68,7 +68,9 @@ def az(*args: str, parse: bool = True):
     exe = shutil.which("az")
     if not exe:
         raise AzError("the Azure CLI (az) is required: https://learn.microsoft.com/cli/azure/install-azure-cli")
-    proc = subprocess.run([exe, *args, "--only-show-errors", "--output", "json"], capture_output=True, text=True, encoding="utf-8")
+    # The Azure CLI is a Python program: ask it for UTF-8 so names such as "Test · Microsoft" survive on Windows too.
+    proc = subprocess.run([exe, *args, "--only-show-errors", "--output", "json"], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     if proc.returncode != 0:
         raise AzError(f"az {' '.join(args[:3])} failed: {(proc.stderr or proc.stdout).strip()}")
     return json.loads(proc.stdout) if parse and proc.stdout.strip() else proc.stdout

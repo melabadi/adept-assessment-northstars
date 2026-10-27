@@ -53,6 +53,9 @@ module app '../../../app/infra/requesthub.bicep' = {
     githubOidcSubjectPrefix: githubOidcSubjectPrefix
     githubEnvironment: githubEnvironment
     automationRoleDefinitionIds: automationRoles
+    // The workflow runs and reports load tests; it never builds images, and only calls the API as a requester.
+    automationCanPushImages: false
+    automationAppRoleNames: ['Requester']
     tags: tags
   }
 }

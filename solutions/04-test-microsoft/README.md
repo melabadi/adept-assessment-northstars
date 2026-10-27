@@ -147,6 +147,25 @@ About 40 minutes, most of it while runs execute. Each run takes about 10 minutes
 
 To rehearse the regression from GitHub alone, run the workflow with the **slowdown** input: `gh workflow run test-microsoft-load.yml -f slowdown=true`. It injects the slowdown, runs the test, and removes the slowdown even when the run fails.
 
+### Change the journey on your machine
+
+The same locustfile runs locally against a RequestHub with development sign-in, where personas replace the managed identities. Use it to try a change before it costs a cloud run. From the repository root, with PostgreSQL running:
+
+```powershell
+$env:Demo__LoadTestRequesterIds = "u-ben"      # lets the requester persona clean up its own requests
+dotnet run --project app/src/RequestHub.Api    # http://localhost:5080; leave it running
+```
+
+In a second terminal:
+
+```powershell
+python .github/skills/load-scenario/check_scenario.py
+cd solutions/04-test-microsoft
+locust -f loadtest/locustfile.py --headless -u 4 -r 2 -t 1m -H http://localhost:5080
+```
+
+Expect `PASS` from the check, `Cleanup: deleted ... requests owned by u-ben`, and a results table with no failures. Then run it in Azure with `python load_test.py run`, or open a pull request: the workflow runs it against the deployed app and comments the report.
+
 ## What to observe
 
 - **A real journey, signed in, with no secret.** The engines borrow two managed identities. The API applies the same roles and department checks as for people, and the denial checks prove it under load.
