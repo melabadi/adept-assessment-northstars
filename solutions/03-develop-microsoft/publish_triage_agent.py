@@ -8,14 +8,18 @@ What this script does:
   3. Prints the agent name and version. The RequestHub API calls the agent by name (setting Foundry:AgentName) and executes the
      tools itself, with the caller's permissions and an audit entry per call. The agent has no tool that can approve anything.
 
-Configuration: FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL_DEPLOYMENT (environment or `azd env get-values`); identity with the
-Azure AI User role on the Foundry account.
+Configuration: FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL_DEPLOYMENT (environment variables, or this solution's azd
+environment after `azd up`); identity with the Foundry User role (formerly Azure AI User) on the Foundry account.
 
 Usage
-  python phases/03-develop/microsoft/publish_triage_agent.py
-  python phases/03-develop/microsoft/publish_triage_agent.py --show     # print the definition without publishing
+  python solutions/03-develop-microsoft/publish_triage_agent.py
+  python solutions/03-develop-microsoft/publish_triage_agent.py --show     # print the definition without publishing
+  python solutions/03-develop-microsoft/publish_triage_agent.py --name requesthub-triage-pr-42
+      # publish a candidate under another name, so an unmerged change never becomes the version the app uses
+  python solutions/03-develop-microsoft/publish_triage_agent.py --name requesthub-triage-pr-42 --delete
+      # remove that candidate afterwards
 
-Exit codes: 0 published or unchanged, 2 configuration or service error.
+Exit codes: 0 published, unchanged, or deleted; 2 configuration or service error.
 """
 from __future__ import annotations
 
@@ -36,7 +40,7 @@ from azure.ai.projects.models import (
 from azure.identity import DefaultAzureCredential
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parents[1] / "common"))
+sys.path.insert(0, str(HERE))
 from azd_env import setting, utf8_stdout  # noqa: E402
 
 
@@ -52,12 +56,16 @@ def build_definition(spec: dict, model: str) -> PromptAgentDefinition:
     )
 
 
-def publish(spec: dict, model: str) -> tuple[object, bool]:
-    project = AIProjectClient(endpoint=setting("FOUNDRY_PROJECT_ENDPOINT"), credential=DefaultAzureCredential())
+def project_client() -> AIProjectClient:
+    return AIProjectClient(endpoint=setting("FOUNDRY_PROJECT_ENDPOINT"), credential=DefaultAzureCredential())
+
+
+def publish(spec: dict, model: str, name: str) -> tuple[object, bool]:
+    project = project_client()
     definition = build_definition(spec, model)
     digest = hashlib.sha256(json.dumps(definition.as_dict(), sort_keys=True).encode()).hexdigest()[:16]
     try:
-        versions = list(project.agents.list_versions(agent_name=spec["name"]))
+        versions = list(project.agents.list_versions(agent_name=name))
     except Exception:
         versions = []
     # The API uses the latest version, so only the latest one counts as "unchanged" (a revert publishes a new version).
@@ -65,23 +73,36 @@ def publish(spec: dict, model: str) -> tuple[object, bool]:
     if latest is not None and (latest.metadata or {}).get("definitionHash") == digest:
         return latest, False
     created = project.agents.create_version(
-        agent_name=spec["name"], definition=definition, description=spec["description"],
-        metadata={"definitionHash": digest, "source": "phases/03-develop/microsoft/triage-agent.yaml"})
+        agent_name=name, definition=definition, description=spec["description"],
+        metadata={"definitionHash": digest, "source": "solutions/03-develop-microsoft/triage-agent.yaml"})
     return created, True
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--show", action="store_true", help="Print the agent definition and exit")
+    parser.add_argument("--name", help="Agent name (default: the name in triage-agent.yaml, which the app calls)")
+    parser.add_argument("--delete", action="store_true", help="Delete the named agent and all its versions instead of publishing")
     args = parser.parse_args(argv)
     utf8_stdout()
     spec = yaml.safe_load((HERE / "triage-agent.yaml").read_text(encoding="utf-8"))
+    name = args.name or spec["name"]
+    if args.delete:
+        if name == spec["name"]:
+            parser.error(f"refusing to delete {name}: the app calls it. --delete is for candidate agents published with --name.")
+        try:
+            project_client().agents.delete(agent_name=name)
+        except Exception as exc:
+            print(f"error: deleting {name} failed: {exc}", file=sys.stderr)
+            return 2
+        print(f"deleted: {name}")
+        return 0
     model = setting("FOUNDRY_MODEL_DEPLOYMENT")
     if args.show:
         print(json.dumps(build_definition(spec, model).as_dict(), indent=2))
         return 0
     try:
-        agent, created = publish(spec, model)
+        agent, created = publish(spec, model, name)
     except Exception as exc:
         print(f"error: publishing failed: {exc}", file=sys.stderr)
         return 2
