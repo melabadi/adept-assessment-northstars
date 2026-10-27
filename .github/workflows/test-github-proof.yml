@@ -4,9 +4,11 @@
 #  one must fail (the tests detect the defect), and at the pull request head every one must still exist and pass (the
 #  fix works; skipping or deleting a failing test does not count). Both test outputs are kept in the
 #  `regression-proof` artifact, and the job summary shows the two results side by side.
-# It runs on pull requests into a lab branch (lab/**) and on pull requests labelled `bug`, forks included. It does not
-# listen to `edited`: the cloud agent edits its pull request description many times, and each edit would queue a run
-# that waits for approval. After retargeting a pull request to a lab branch, push a commit or add the `bug` label.
+# It runs only on pull requests into this solution's lab branches (lab/test-**), forks included, so other solutions'
+# pull requests never start it. To require the proof for fixes into another branch, change `branches` and, if not every
+# pull request into it is a fix, add an `if:` on the job (for example a `bug` label). It does not listen to `edited`:
+# the cloud agent edits its pull request description many times, and each edit would queue a run that waits for
+# approval. After retargeting a pull request onto a lab/test-** branch, push a commit to start the proof.
 # The full test suite still runs in CI. Copilot code review and comments from people are not part of this check: they
 # inform the reviewer, and a person decides. The proof script comes from the base branch, so a pull request cannot
 # change how it is judged, and no credentials are left in the checkout while the pull request's tests run.
@@ -14,7 +16,7 @@ name: Test · GitHub · prove the fix test-first
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    branches: ['lab/test-**']
     paths: ['app/**']
 
 permissions:
@@ -31,9 +33,6 @@ defaults:
 jobs:
   proof:
     name: Regression tests fail before the fix and pass after it
-    # Decided by the base branch and the pull request's current labels, never by which label was just added, so a
-    # new label re-runs the proof instead of cancelling it.
-    if: startsWith(github.base_ref, 'lab/') || contains(github.event.pull_request.labels.*.name, 'bug')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
