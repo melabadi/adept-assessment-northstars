@@ -45,6 +45,29 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
         return n.Id;
     }
 
+    private sealed class TimeoutSender(Guid target) : INotificationSender
+    {
+        public Task SendAsync(Notification notification, CancellationToken cancellationToken) =>
+            notification.Id == target ? throw new TaskCanceledException("relay timeout") : Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Delivery_timeout_counts_as_a_failed_attempt()
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var id = await PendingNotificationAsync(db);
+        var processor = Processor(db, new TimeoutSender(id), maxAttempts: 5);
+
+        await processor.ProcessBatchAsync(CancellationToken.None);
+
+        db.ChangeTracker.Clear();
+        var n = await db.Notifications.SingleAsync(x => x.Id == id);
+        Assert.Equal(NotificationStatus.Pending, n.Status);
+        Assert.Equal(1, n.Attempts);
+        Assert.NotNull(n.LastError);
+    }
+
     [Fact]
     public async Task Failed_delivery_is_retried_then_succeeds_exactly_once()
     {
