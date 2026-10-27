@@ -1,0 +1,41 @@
+// Application Insights queries for analyzing a RequestHub load test (performance-analysis skill).
+// Run one with the Azure CLI, replacing the window with the test run's start and end (UTC, from the report):
+//   az monitor app-insights query --app <APPLICATIONINSIGHTS_NAME> --resource-group <AZURE_RESOURCE_GROUP> \
+//     --offset 3h --analytics-query "<query>"
+// Or paste it into Application Insights > Logs in the Azure portal.
+
+// 1. Server-side latency per operation, and how many requests carried the rehearsal slowdown.
+requests
+| where timestamp between (datetime(2026-01-01T12:00:00Z) .. datetime(2026-01-01T12:05:00Z))
+| where name has '/api/'
+| extend has_delay = isnotempty(tostring(customDimensions['requesthub.fault.queue_delay_ms']))
+| summarize requests = count(), failed = countif(success == false), p50_ms = percentile(duration, 50),
+    p95_ms = percentile(duration, 95), delayed = countif(has_delay) by name
+| order by p95_ms desc
+
+// 2. Where the time goes in the slowest requests: database calls versus time spent in the app itself.
+//    A large gap between duration and db_ms with no slow query points at the app (or an injected delay).
+requests
+| where timestamp between (datetime(2026-01-01T12:00:00Z) .. datetime(2026-01-01T12:05:00Z))
+| where name has '/api/'
+| top 20 by duration desc
+| join kind=leftouter (
+    dependencies
+    | where timestamp between (datetime(2026-01-01T12:00:00Z) .. datetime(2026-01-01T12:05:00Z))
+    | summarize db_ms = sum(duration), db_calls = count() by operation_Id
+  ) on operation_Id
+| project timestamp, name, duration, db_ms, db_calls, resultCode,
+    fault_ms = tostring(customDimensions['requesthub.fault.queue_delay_ms']), operation_Id
+
+// 3. The slowest database statements in the window.
+dependencies
+| where timestamp between (datetime(2026-01-01T12:00:00Z) .. datetime(2026-01-01T12:05:00Z))
+| summarize calls = count(), p95_ms = percentile(duration, 95) by target, statement = substring(data, 0, 120)
+| top 10 by p95_ms desc
+
+// 4. Failures by operation and status code, with an example to open in the end-to-end transaction view.
+requests
+| where timestamp between (datetime(2026-01-01T12:00:00Z) .. datetime(2026-01-01T12:05:00Z))
+| where success == false
+| summarize failures = count(), example = any(operation_Id) by name, resultCode
+| order by failures desc
