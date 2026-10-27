@@ -44,7 +44,11 @@ module app '../../../app/infra/requesthub.bicep' = {
     githubRepository: githubRepository
     githubOidcSubjectPrefix: githubOidcSubjectPrefix
     githubEnvironment: githubEnvironment
+    // The GitHub identity finds, previews, and verifies; it never deploys or builds. Reader and Policy Enrollments
+    // Contributor on this resource group, no registry push, and only the Requester role in the app (for the app check).
     automationRoleDefinitionIds: [roles.reader, roles.policyEnrollmentsContributor]
+    automationCanPushImages: false
+    automationAppRoleNames: ['Requester']
     // Without a private endpoint, RequestHub reaches Blob storage through the account's public endpoint, which is open to
     // the internet. Where Azure Policy closes public endpoints (many organizations do), attachment uploads fail instead.
     // This solution starts without it, so Azure Policy and Defender for Cloud have a real finding to report.

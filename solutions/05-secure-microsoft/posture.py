@@ -54,7 +54,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from azd_env import REPO, SOLUTION, setting, utf8_stdout
@@ -133,12 +133,9 @@ class AzureError(RuntimeError):
 
 
 # ---------- Azure ----------
-def az(*args: str, parse: bool = True, timeout: float | None = None):
+def az(*args: str, parse: bool = True):
     command = [AZ, *args, "--only-show-errors"] + (["--output", "json"] if parse else [])
-    try:
-        proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        raise TimeoutError(f"az {' '.join(args[:3])} did not finish in {timeout:.0f} s") from exc
+    proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         raise AzureError(f"az {' '.join(args[:3])} failed: {proc.stderr.strip()[:600]}")
     return json.loads(proc.stdout) if parse and proc.stdout.strip() else proc.stdout
@@ -159,11 +156,15 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def stamp(value: str | None) -> str:
     if not value:
         return "never"
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M UTC")
+        return parse_time(value).strftime("%Y-%m-%d %H:%M UTC")
     except ValueError:
         return value
 
@@ -236,16 +237,26 @@ class Posture:
         return {"policyNonCompliant": len(noncompliant), "policyResources": len({s["resourceId"].lower() for s in noncompliant}),
                 "defenderUnhealthy": sorted(unhealthy, key=lambda r: ({"High": 0, "Medium": 1, "Low": 2}.get(r["severity"], 3), r["name"]))}
 
-    def trigger_evaluation(self, wait: bool, timeout: float = 900) -> bool:
-        """Starts an Azure Policy evaluation of the resource group. Returns False if waiting timed out (it keeps running)."""
-        if not wait:
-            az("policy", "state", "trigger-scan", "--resource-group", self.rg, "--no-wait", parse=False)
-            return True
-        try:
-            az("policy", "state", "trigger-scan", "--resource-group", self.rg, parse=False, timeout=timeout)
-            return True
-        except TimeoutError:
-            return False
+    def trigger_evaluation(self) -> datetime:
+        """Starts an Azure Policy evaluation of the resource group and returns when it was requested."""
+        requested = now()
+        az("policy", "state", "trigger-scan", "--resource-group", self.rg, "--no-wait", parse=False)
+        return requested
+
+    def wait_for_evaluation(self, requested: datetime, timeout: int, interval: int = 30) -> bool:
+        """Polls until every Policy result for the control is newer than the request; False if the timeout passed first.
+        Polling the results works the same on every platform and reports as soon as these resources are evaluated, usually
+        minutes before the whole evaluation finishes."""
+        deadline = time.monotonic() + timeout
+        threshold = requested - timedelta(seconds=30)  # tolerate clock skew between this machine and Azure
+        while time.monotonic() < deadline:
+            time.sleep(interval)
+            states = self.policy_states()
+            fresh = [s for s in states if s["evaluatedAt"] and parse_time(s["evaluatedAt"]) >= threshold]
+            if states and len(fresh) == len(states):
+                return True
+            print(f"  {now():%H:%M:%S}  {len(fresh)} of {len(states)} Policy results re-evaluated; checking again in {interval} s", flush=True)
+        return False
 
     def findings(self) -> list[dict]:
         """The control, per resource, from each source."""
@@ -436,9 +447,8 @@ def problem(data: bytes) -> str:
         return ""
 
 
-def app_check(api_url: str, identifier_uri: str) -> dict:
+def app_check(api: Api) -> dict:
     """Uploads and downloads an attachment through the API, which stores it in Blob storage with its managed identity."""
-    api = Api(api_url, identifier_uri)
     me = api.json("GET", "/api/me")
     mine = api.json("GET", "/api/requests?" + urllib.parse.urlencode({"scope": "mine", "q": "Posture check", "pageSize": 50}))
     target = None
@@ -473,9 +483,22 @@ def app_check(api_url: str, identifier_uri: str) -> dict:
             "roles": me["roles"], "request": target["id"], "file": name, "bytes": len(content), "sha256": expected}
 
 
-def safe_app_check() -> dict:
+def connect_api(skip: bool) -> Api | dict | None:
+    """Gets the API token up front: in GitHub Actions the OIDC sign-in can only mint new tokens for about 5 minutes, and
+    verify may wait longer than that for Azure Policy."""
+    if skip:
+        return None
     try:
-        return app_check(setting("API_URL"), setting("API_IDENTIFIER_URI"))
+        return Api(setting("API_URL"), setting("API_IDENTIFIER_URI"))
+    except (AzureError, KeyError) as exc:
+        return {"ok": False, "error": f"could not get a token for the RequestHub API: {exc}"}
+
+
+def run_app_check(api: Api | dict | None) -> dict | None:
+    if api is None or isinstance(api, dict):
+        return api
+    try:
+        return app_check(api)
     except (AzureError, urllib.error.URLError, KeyError, IndexError, TimeoutError) as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -483,12 +506,14 @@ def safe_app_check() -> dict:
 # ---------- Commands ----------
 def scan(args: argparse.Namespace, posture: Posture) -> int:
     print(f"Cloud posture scan · resource group {posture.rg} · control: {posture.control.title}")
+    api = connect_api(args.skip_app)
     if args.refresh:
-        print("Starting an Azure Policy evaluation of the resource group and waiting for it (usually 3 to 10 minutes)...", flush=True)
-        if not posture.trigger_evaluation(wait=True, timeout=args.refresh_timeout):
-            print(f"  still running after {args.refresh_timeout} s; showing the latest results")
+        print("Starting an Azure Policy evaluation of the resource group; waiting until these resources are re-evaluated "
+              f"(usually 2 to 10 minutes, at most {args.refresh_timeout // 60} min)...", flush=True)
+        if not posture.wait_for_evaluation(posture.trigger_evaluation(), args.refresh_timeout):
+            print("  not re-evaluated yet; showing the latest results (the evaluation keeps running)")
     findings = posture.findings()
-    app = None if args.skip_app else safe_app_check()
+    app = run_app_check(api)
     context = posture.context()
     if not findings:
         print(f"\nNo {posture.control.resource_type} resources in {posture.rg}.")
@@ -530,6 +555,7 @@ def scan(args: argparse.Namespace, posture: Posture) -> int:
 
 def verify(args: argparse.Namespace, posture: Posture) -> int:
     print(f"Verifying the remediation · resource group {posture.rg} · control: {posture.control.title}")
+    api = connect_api(args.skip_app)
     findings = posture.findings()
     if not findings:
         raise AzureError(f"no {posture.control.resource_type} resources in {posture.rg}")
@@ -541,7 +567,7 @@ def verify(args: argparse.Namespace, posture: Posture) -> int:
         if args.timeout > 0 and not args.no_refresh:
             print("Configuration fixed. Starting an Azure Policy evaluation and waiting for this solution's assignment "
                   f"({posture.assignment}) to report Compliant (up to {args.timeout // 60} min)...", flush=True)
-            posture.trigger_evaluation(wait=False)
+            posture.trigger_evaluation()
         deadline = time.monotonic() + args.timeout
         while True:
             pending = [f for f in findings if (f["ownAssignment"] or {}).get("state") != "Compliant"]
@@ -552,7 +578,7 @@ def verify(args: argparse.Namespace, posture: Posture) -> int:
             time.sleep(args.interval)
             findings = posture.findings()
 
-    app = None if args.skip_app else safe_app_check()
+    app = run_app_check(api)
     config_ok = all(f["resource"]["compliant"] for f in findings)
     policy_ok = all((f["ownAssignment"] or {}).get("state") == "Compliant" for f in findings)
     app_ok = args.skip_app or bool(app and app.get("ok"))
@@ -605,9 +631,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     scan_parser = sub.add_parser("scan", help="report the control by source and track a reported misconfiguration as an Issue")
     scan_parser.add_argument("--refresh", action="store_true",
-                             help="start an Azure Policy evaluation of the resource group first and wait for it")
+                             help="start an Azure Policy evaluation of the resource group first, and wait until these "
+                                  "resources are re-evaluated")
     scan_parser.add_argument("--refresh-timeout", type=int, default=900, metavar="SECONDS",
-                             help="how long --refresh waits for the evaluation (default 900); it keeps running afterwards")
+                             help="how long --refresh waits (default 900); the evaluation keeps running afterwards")
     scan_parser.add_argument("--issue", action="store_true",
                              help="open a GitHub Issue for each reported misconfiguration, or comment on the open one")
     scan_parser.add_argument("--skip-app", action="store_true", help="skip the attachment upload and download through the API")
@@ -624,7 +651,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         posture = Posture(CONTROL)
         return scan(args, posture) if args.command == "scan" else verify(args, posture)
-    except (AzureError, TimeoutError) as exc:
+    except AzureError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

@@ -41,7 +41,7 @@ sequenceDiagram
 
 - **Azure Policy** is the fast signal. This solution assigns the built-in definition *Storage accounts should use private link* (version 2, AuditIfNotExists) to its own resource group. An on-demand evaluation takes minutes.
 - **Microsoft Defender for Cloud** is the slow signal. It reports the same control through the Microsoft cloud security benchmark and reassesses on its own schedule, usually within 24 hours.
-- **GitHub Actions** signs in through OIDC as an identity with two roles on the resource group: Reader, and Policy Enrollments Contributor (query compliance, start an evaluation, run what-if). It cannot change any resource or policy. [`secure-microsoft-scan.yml`](.github/workflows/secure-microsoft-scan.yml) files the Issue, [`secure-microsoft-preview.yml`](.github/workflows/secure-microsoft-preview.yml) previews every pull request that changes the infrastructure, and [`secure-microsoft-verify.yml`](.github/workflows/secure-microsoft-verify.yml) verifies the fix.
+- **GitHub Actions** signs in through OIDC as an identity with two roles on the resource group: Reader, and Policy Enrollments Contributor, which lets it query compliance, start an evaluation, and run what-if. In the app it has only the Requester role, for the attachment check. It cannot change any resource or policy, push an image, or approve a request. [`secure-microsoft-scan.yml`](.github/workflows/secure-microsoft-scan.yml) files the Issue, [`secure-microsoft-preview.yml`](.github/workflows/secure-microsoft-preview.yml) previews every pull request that changes the infrastructure, and [`secure-microsoft-verify.yml`](.github/workflows/secure-microsoft-verify.yml) verifies the fix.
 - **Copilot** runs the custom agent [`secure-microsoft`](.github/agents/secure-microsoft.agent.md) with two skills: `cloud-posture` (read and verify findings) and `infrastructure-remediation` (fix in Bicep, preview with what-if).
 - **A person** reviews and merges the pull request, applies it with `azd provision`, and decides when the work is done.
 
@@ -99,7 +99,7 @@ azd up
 - **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): private PostgreSQL, Blob storage, a container registry, monitoring, a Container Apps environment, and a Microsoft Entra app registration with RequestHub's app roles (you get every role). Storage is deployed **without a private endpoint**: that is the finding.
 - **The app**, as two container apps (API with web UI, and the notification worker).
 - **The Azure Policy assignment** `requesthub-storage-private-link`, on this resource group only.
-- **The GitHub identity**, trusted only by this repository's `secure-microsoft` environment, with Reader and Policy Enrollments Contributor on the resource group.
+- **The GitHub identity**, trusted only by this repository's `secure-microsoft` environment. It has Reader and Policy Enrollments Contributor on the resource group and the Requester role in the app, and nothing else.
 - **GitHub environment `secure-microsoft`**, created by the hooks: secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and `AZURE_PRINCIPAL_ID`, and variables for the resource group, the deployment parameters, and the API. None of them is a password.
 
 Azure Policy evaluates the new storage account within about 30 minutes. Defender for Cloud can take up to 24 hours to assess it, which is why you set up the day before. Check that you are ready:
@@ -186,7 +186,7 @@ To run the demo again, put the finding back:
    azd provision
    ```
 
-   Incremental deployments never delete resources, so the private endpoint is removed by hand before `azd provision` removes its subnet. Azure Policy reports the finding again within about 30 minutes, and Defender for Cloud within 24 hours.
+   Incremental deployments never delete resources, so you remove the private endpoint before `azd provision` removes its subnet. The storage account keeps its closed public endpoint and its Deny rule. Only the private path goes away, so attachments fail again until the fix is reapplied. Azure Policy reports the finding again within about 30 minutes, and Defender for Cloud within 24 hours.
 
 To clear the posture check requests the app check created, reset the app's demo data (you are an Admin):
 
@@ -208,7 +208,7 @@ gh api -X DELETE repos/{owner}/{repo}/environments/secure-microsoft
 1. Copy this folder, and copy its `.github/` contents into your repository's `.github/` folder.
 2. In `infra/resources.bicep`, compose your own app's Bicep and assign the built-in policy for the control you care about.
 3. In `posture.py`, describe the control in `CONTROL`: its policy definition, resource type, a function that judges the live resource, and where the fix belongs. Defender for Cloud recommendations are matched through the same policy definition, so there is no assessment id to look up.
-4. Keep the GitHub identity at Reader and Policy Enrollments Contributor on the resource group. Set `--expect` in `secure-microsoft-preview.yml` to the resource types your fixes may touch.
+4. Keep the GitHub identity at Reader and Policy Enrollments Contributor on the resource group, with no registry push and only the app roles its checks need (`automationCanPushImages` and `automationAppRoleNames` in `infra/resources.bicep`). Set `--expect` in `secure-microsoft-preview.yml` to the resource types your fixes may touch.
 5. To scan on a schedule, add a `schedule` trigger to `secure-microsoft-scan.yml`. The Issue stays deduplicated.
 
 ## Troubleshooting
