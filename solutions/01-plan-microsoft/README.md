@@ -35,7 +35,7 @@ flowchart LR
 
 - **Microsoft Foundry** hosts the `requirements-analyst` prompt agent. [`agent.yaml`](agent.yaml) defines it: instructions, model, temperature, file search, and the JSON schema its answer must match. The transcript and policies live in a Foundry vector store.
 - **[`requirements_analyst.py`](requirements_analyst.py)** publishes a new agent version only when the definition or the inputs change, calls the agent, and checks the answer with the same validator the GitHub solution uses. If the validator finds problems, it sends them back to the agent once for a fix. It writes `brief/backlog.json`, `brief/brief.md`, and `brief/run.json`, a record of the live call (response id, agent version, file-search calls, tokens).
-- **GitHub Actions** runs the same script with OIDC ([`plan-microsoft-analyst.yml`](.github/workflows/plan-microsoft-analyst.yml)) and opens a pull request. [`plan-microsoft-brief.yml`](.github/workflows/plan-microsoft-brief.yml) validates the brief again and publishes it after approval.
+- **GitHub Actions** runs the same script with OIDC ([`plan-microsoft-analyst.yml`](.github/workflows/plan-microsoft-analyst.yml)), pushes the brief to a branch, and links to a prefilled pull request. [`plan-microsoft-brief.yml`](.github/workflows/plan-microsoft-brief.yml) validates the brief on that pull request and publishes it after approval.
 - **A person** reviews the brief, owns the unresolved decisions, and applies the `brief-approved` label.
 
 ## What's in this folder
@@ -63,7 +63,7 @@ flowchart LR
     │   ├── backlog-publish/            idempotent publisher to GitHub Issues (shared)
     │   └── brief-compare/              scores a brief against the planted issues (presenter only, shared)
     └── workflows/
-        ├── plan-microsoft-analyst.yml  run the agent from GitHub and open a review pull request
+        ├── plan-microsoft-analyst.yml  run the agent from GitHub and push its brief for review
         └── plan-microsoft-brief.yml    validate, then publish on brief-approved
 ```
 
@@ -132,7 +132,7 @@ About 15 minutes. Run the commands from the repository root.
    gh run watch
    ```
 
-   The workflow opens a pull request named **Plan: Foundry requirements brief**. Its description gives the agent version, the response id, and the validator result. Pull requests opened by a workflow do not start other workflows, so the validation check runs when you apply the label in step 7.
+   The run summary shows the agent version, the response id, and an **Open the review pull request** link. Select it, then **Create pull request**: the title and description (agent version, response id, validator result) are filled in. The **Plan · Microsoft · review and publish the brief** check validates the brief with scripts from `main`.
 
 6. **Optional: compare with Copilot.** If you ran [01-plan-github](../01-plan-github/) and its pull request is open, score both briefs against the issues planted in the transcript:
 
@@ -144,7 +144,7 @@ About 15 minutes. Run the commands from the repository root.
 
    The table marks each planted issue ✅ caught, ⚠️ found with the wrong status, or ❌ missed, for each tool.
 
-7. **Approve and publish.** On the Foundry pull request, apply the `brief-approved` label. **Plan · Microsoft · review and publish the brief** validates the brief with scripts from `main`, publishes an epic and four task Issues labelled `track:microsoft`, and comments on the pull request with the links. Apply the label again and every line says `unchanged`.
+7. **Approve and publish.** On the Foundry pull request, apply the `brief-approved` label. The check runs again, publishes an epic and four task Issues labelled `track:microsoft`, and comments on the pull request with the links. Apply the label again and every line says `unchanged`.
 
 ## What to observe
 
@@ -185,5 +185,4 @@ gh api -X DELETE repos/{owner}/{repo}/environments/plan-microsoft
 
 - **`AzureCLICredential: exit status 1` during `azd up`.** azd could not get a token from the Azure CLI. Run `az account get-access-token` to check your sign-in, then run `azd up` again.
 - **`PermissionDenied` when the script runs right after `azd up`.** New role assignments can take a few minutes to apply. Wait, then run it again.
-- **The Foundry pull request shows no checks.** Expected: pull requests opened by a workflow do not start other workflows. The description shows the validator result, and the check runs when you apply `brief-approved`.
 - **`INVALID` after the repair turn.** The script exits with code 1 and no pull request is opened. Read the problems it lists, improve the `instructions` in `agent.yaml`, and run it again. Never edit the validator or the generated JSON.
