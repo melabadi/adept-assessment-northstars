@@ -202,6 +202,15 @@ def attributable(head: dict[str, dict], base: dict[str, dict] | None) -> tuple[l
     return found, noise
 
 
+def left_in_place(head: dict[str, dict], base: dict[str, dict] | None) -> list[str]:
+    """Resources the deployed template manages that this template no longer declares. Incremental deployments never
+    delete, so they stay until someone removes them."""
+    if base is None:
+        return []
+    return sorted(f"`{resource_type(c['id'])}` `{c['id'].rstrip('/').split('/')[-1]}`" for key, c in base.items()
+                  if c["kind"] in ("NoChange", "Modify") and head.get(key, {}).get("kind") == "Ignore")
+
+
 def describe(path: str, change: tuple[str, str, str]) -> str:
     kind, before, after = change
 
@@ -271,6 +280,10 @@ def main(argv: list[str] | None = None) -> int:
         lines += [f"  - {describe(p, v)}" for p, v in sorted(c["leaves"].items())]
     if not changes:
         lines.append("- No resource would be created, modified, or deleted.")
+    remaining = left_in_place(head, base)
+    if remaining:
+        lines.append(f"- No longer in the template, so the deployment leaves them in place (incremental deployments never "
+                     f"delete): {', '.join(remaining)}. Remove them yourself if they should go.")
     if noise:
         lines.append(f"- {noise} other resource(s) show differences what-if reports on every run (values it can only compute "
                      "during deployment, defaults Azure sets). " + ("They are identical with and without this change, so "

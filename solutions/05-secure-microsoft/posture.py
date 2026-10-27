@@ -320,7 +320,8 @@ def defender_row(finding: dict, after_fix: bool = False) -> Row:
 def app_row(app: dict) -> Row:
     source = "App check · attachment upload and download through the RequestHub API"
     if app.get("ok"):
-        return (source, "works ✅", f"`{app['file']}` on {app['request']} as {app['user']}, SHA-256 matches")
+        return (source, "works ✅", f"`{app['file']}` on {app['request']} as {app['caller']} ({', '.join(app['roles'])}), "
+                "SHA-256 matches")
     return (source, "fails ❌", app.get("error") or "the downloaded content did not match")
 
 
@@ -417,6 +418,9 @@ class Api:
         account = az("account", "show")
         delegated = (account.get("user") or {}).get("type") == "user"
         scope = f"{identifier_uri}/user_impersonation" if delegated else f"{identifier_uri}/.default"
+        # Who called, without names or ids: reports land in Issues.
+        self.caller = ("you" if delegated else "the GitHub workflow identity" if os.environ.get("GITHUB_ACTIONS") == "true"
+                       else "the signed-in app identity")
         self.token = az("account", "get-access-token", "--scope", scope)["accessToken"]
 
     def call(self, method: str, path: str, body: bytes | None = None, content_type: str | None = None) -> tuple[int, bytes]:
@@ -479,7 +483,7 @@ def app_check(api: Api) -> dict:
     if status != 200:
         raise AzureError(f"download from {target['id']} returned HTTP {status}{problem(downloaded)}")
     expected = hashlib.sha256(content).hexdigest()
-    return {"ok": hashlib.sha256(downloaded).hexdigest() == expected == uploaded["sha256"], "user": me["displayName"],
+    return {"ok": hashlib.sha256(downloaded).hexdigest() == expected == uploaded["sha256"], "caller": api.caller,
             "roles": me["roles"], "request": target["id"], "file": name, "bytes": len(content), "sha256": expected}
 
 
