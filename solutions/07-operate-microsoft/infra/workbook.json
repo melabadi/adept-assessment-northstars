@@ -1,0 +1,120 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## RequestHub notification worker\nThe worker delivers the notifications that RequestHub creates when a request is submitted, commented on, rerouted, or decided. A healthy worker delivers each one within a few seconds.\n\nThe alert **RequestHub notification backlog** fires when the oldest pending notification is older than __THRESHOLD__ seconds. Azure SRE Agent picks it up and investigates."
+      },
+      "name": "intro"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "6c4f7c8e-1d1b-4b0e-9f43-0d3c7a1e2b10",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": { "durationMs": 3600000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 1800000 },
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 }
+              ],
+              "allowCustom": true
+            }
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"requesthub.notifications.oldest_pending_age_seconds\"\n| summarize [\"Oldest pending (s)\"] = max(value) by bin(timestamp, 1m)\n| order by timestamp asc",
+        "size": 0,
+        "title": "Oldest pending notification (seconds). Alert threshold: __THRESHOLD__",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "customWidth": "50",
+      "name": "oldest-pending-age"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"requesthub.notifications.pending\"\n| summarize Pending = max(value) by bin(timestamp, 1m)\n| order by timestamp asc",
+        "size": 0,
+        "title": "Pending notifications",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "timechart"
+      },
+      "customWidth": "50",
+      "name": "pending"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name == \"requesthub.notifications.processed\"\n| summarize Delivered = sum(value) by bin(timestamp, 1m)\n| order by timestamp asc",
+        "size": 0,
+        "title": "Notifications delivered per minute",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "customWidth": "50",
+      "name": "delivered"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "traces\n| where message startswith \"Notification backlog\"\n| project timestamp, message\n| order by timestamp desc\n| take 20",
+        "size": 0,
+        "title": "Worker backlog reports (workerDelayFaultActive shows an injected fault)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "table"
+      },
+      "customWidth": "50",
+      "name": "backlog-log"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppSystemLogs_CL\n| where ContainerAppName_s == \"__WORKER_APP_NAME__\"\n| project TimeGenerated, Revision = RevisionName_s, Reason = Reason_s, Message = Log_s\n| order by TimeGenerated desc\n| take 30",
+        "size": 0,
+        "title": "Worker revisions and container events (a configuration change creates a new revision)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__LOG_ANALYTICS_ID__"],
+        "visualization": "table"
+      },
+      "name": "revisions"
+    }
+  ],
+  "fallbackResourceIds": ["__APP_INSIGHTS_ID__"],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
