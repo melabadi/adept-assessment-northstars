@@ -23,8 +23,9 @@ GitHub Actions job summary when it runs in a workflow.
   record     Combine the JSON records in out/release/ into one release record (Markdown and JSON).
 
 The smoke test uses the API the way people do: readiness, build provenance (/api/meta), sign-in enforcement, then it
-submits a request (twice with the same Idempotency-Key: one request), reads it back, tries to approve its own request
-(the API must refuse with decision.self_approval), and reads the request's audit history.
+submits a request (twice with the same Idempotency-Key: one request), reads it back, attaches a file and downloads it
+again (Blob storage, which the readiness probe does not check), tries to approve its own request (the API must refuse
+with decision.self_approval), and reads the request's audit history.
 
 Settings come from environment variables, or from this solution's azd environment after `azd up`:
 AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, API_APP_NAME, API_IDENTIFIER_URI.
@@ -179,13 +180,14 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_NoRedirect)
 
 
-def http(method: str, url: str, *, bearer: str | None = None, body=None, headers: dict | None = None,
-         timeout: float = 20.0) -> Response:
-    data = json.dumps(body).encode() if body is not None else None
+def http(method: str, url: str, *, bearer: str | None = None, body=None, raw: bytes | None = None,
+         headers: dict | None = None, timeout: float = 20.0) -> Response:
+    """JSON by default; pass raw bytes (with a Content-Type header) for other bodies, such as a file upload."""
+    data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
     request = urllib.request.Request(url, data=data, method=method)
     request.add_header("Accept", "application/json")
     request.add_header("User-Agent", "requesthub-release/1.0")
-    if data is not None:
+    if data is not None and raw is None:
         request.add_header("Content-Type", "application/json")
     if bearer:
         request.add_header("Authorization", f"Bearer {bearer}")
@@ -562,6 +564,24 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
         f"HTTP {r.status}: {detail.get('status')}, canDecide={permissions.get('canDecide')} "
         f"({permissions.get('decideBlockedReason')})", r)
 
+    # Attachments live in Blob storage, a dependency the readiness probe does not check.
+    content = f"Release check {label} at {utc_now():%Y-%m-%dT%H:%M:%SZ}\n".encode()
+    boundary = f"release-check-{os.urandom(8).hex()}"
+    form = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="release-check.txt"\r\n'
+            f"Content-Type: text/plain\r\n\r\n").encode() + content + f"\r\n--{boundary}--\r\n".encode()
+    upload = http("POST", f"{base}/api/requests/{request_id}/attachments", bearer=bearer, raw=form,
+                  headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    attachment = upload.json() or {}
+    download = http("GET", f"{base}{attachment['downloadUrl']}", bearer=bearer) if upload.status == 201 and attachment.get("downloadUrl") else None
+    same = download is not None and download.status == 200 and download.body == content
+    if same:
+        detail = f"upload {upload.outcome}, download {download.outcome}, {len(content)} bytes identical"
+    elif download is None:
+        detail = f"upload {upload.outcome}: {upload.text(160)}"
+    else:
+        detail = f"upload {upload.outcome}, download {download.outcome}" + (" but the bytes differ" if download.status == 200 else "")
+    add("attachment", same, detail, upload)
+
     r = http("POST", f"{base}/api/requests/{request_id}/decisions", bearer=bearer,
              body={"outcome": "Approved", "comment": "Release gate: a requester must not approve their own request."})
     problem = r.json() or {}
@@ -570,7 +590,8 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
 
     r = http("GET", f"{base}/api/requests/{request_id}/history", bearer=bearer)
     actions = [e.get("action") for e in (r.json() or [])] if r.status == 200 else []
-    add("history", r.status == 200 and "request.created" in actions,
+    expected = ["request.created"] + (["attachment.added"] if same else [])
+    add("history", r.status == 200 and all(a in actions for a in expected),
         f"HTTP {r.status}: {len(actions)} audit event(s): {', '.join(actions[:4])}", r)
     return checks
 

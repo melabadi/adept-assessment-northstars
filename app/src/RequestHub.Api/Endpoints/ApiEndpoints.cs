@@ -63,6 +63,11 @@ public static class ApiEndpoints
         admin.MapPost("/reset", ResetDemo).WithSummary("Delete and reseed all demo data in this environment's database (Demo:AllowReset must be true).")
             .Produces(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status403Forbidden);
         admin.MapGet("/notifications/backlog", Backlog).WithSummary("Pending notification count and oldest pending age.");
+
+        // Not in the Admin-only group: a configured load-test identity may also clean up, but only its own requests.
+        api.MapPost("/admin/load-test/cleanup", CleanupLoadTestData).WithTags("Admin")
+            .WithSummary("Delete only the requests submitted by the configured load-test identities (Demo:LoadTestRequesterIds). An admin cleans up every load-test identity; a load-test identity cleans up its own requests.")
+            .Produces<LoadTestCleanupDto>().ProducesProblem(StatusCodes.Status403Forbidden);
     }
 
     private static Ok<MetaDto> GetMeta(IConfiguration config, IHostEnvironment env, ITriageProvider triage, RequestWorkflow workflow) =>
@@ -241,6 +246,26 @@ public static class ApiEndpoints
         await seeder.ResetAsync(industry, ct);
         logs.CreateLogger("RequestHub.Admin").LogWarning("Demo data reset by {UserId} (industry {Industry})", ctx.User.ToAppUser().Id, industry ?? "general");
         return TypedResults.Ok(new { reset = true, industry = industry ?? "general", requests = DemoSeeder.SeedRequestCount });
+    }
+
+    private static async Task<IResult> CleanupLoadTestData(HttpContext ctx, IConfiguration config, DemoSeeder seeder, ILoggerFactory logs, CancellationToken ct)
+    {
+        var configured = (config["Demo:LoadTestRequesterIds"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (configured.Length == 0)
+        {
+            return Problem(new WorkflowError("demo.load_test_cleanup_disabled", "No load-test identities are configured (Demo:LoadTestRequesterIds).", 403));
+        }
+
+        var user = ctx.User.ToAppUser();
+        string[] owners = user.IsAdmin ? configured : configured.Contains(user.Id, StringComparer.Ordinal) ? [user.Id] : [];
+        if (owners.Length == 0)
+        {
+            return Problem(new WorkflowError("demo.load_test_cleanup_forbidden", "Only an admin or a configured load-test identity can delete load-test requests.", 403));
+        }
+
+        var deleted = await seeder.DeleteRequestsOwnedByAsync(owners, user.Id, ct);
+        logs.CreateLogger("RequestHub.Admin").LogWarning("Load-test cleanup by {UserId} deleted {Count} requests owned by {Owners}", user.Id, deleted, owners);
+        return TypedResults.Ok(new LoadTestCleanupDto(deleted, owners));
     }
 
     private static async Task<Ok<BacklogSnapshot>> Backlog(NotificationProcessor processor, CancellationToken ct) =>
