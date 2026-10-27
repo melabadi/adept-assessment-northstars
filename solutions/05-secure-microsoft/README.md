@@ -11,7 +11,7 @@ Cloud misconfigurations are usually found by one team in a security portal and f
 | Finding | A Defender recommendation waits in a portal the app team never opens. | A scan turns Azure Policy and Defender for Cloud results into one GitHub Issue, deduplicated, with each source's evidence and where to fix it. |
 | Fix | Someone changes the setting in the portal, and the next deployment reverts it. | A one-line Bicep change, drafted by Copilot and reviewed in a pull request. |
 | Blast radius | "It should be fine." | An Azure what-if preview on the pull request lists every resource the change creates or modifies, and fails on anything unexpected. |
-| Done | The ticket closes when someone says so. | A verification run closes it: the live configuration, Azure Policy, and an attachment round trip through the app. Defender's slower confirmation is reported as pending until it arrives. |
+| Done | The ticket closes when someone says so. | A verification run records the evidence: the live configuration, Azure Policy, and an attachment round trip through the app. Defender's slower confirmation is reported as pending until it arrives. |
 | Access | Shared keys or a broad service principal. | GitHub OIDC with an identity that can read, preview, and start a Policy evaluation, but cannot deploy anything. |
 
 ## How it works
@@ -36,7 +36,7 @@ sequenceDiagram
   H->>V: Run verify
   V->>AZ: Evaluate Policy now, read Defender
   V->>V: Upload and download an attachment through the API
-  V->>I: Evidence, close when verified
+  V->>I: Evidence on the Issue (reopen it if not fixed)
 ```
 
 - **Azure Policy** is the fast signal. This solution assigns the built-in definition *Storage accounts should use private link* (version 2, AuditIfNotExists) to its own resource group. An on-demand evaluation takes minutes.
@@ -108,7 +108,7 @@ Azure Policy evaluates the new storage account within about 30 minutes. Defender
 python posture.py scan
 ```
 
-Ready looks like: configuration `no private endpoint ❌`, Azure Policy `NonCompliant ❌`, and Defender for Cloud `Unhealthy ❌`. If Defender still says `not assessed yet ⏳`, the demo still works with Policy alone; show the Defender recommendation from another subscription or later.
+Ready looks like: configuration `no private endpoint ❌`, Azure Policy `NonCompliant ❌`, and Defender for Cloud `Unhealthy ❌`. If Defender still says `not assessed yet ⏳`, the demo still works with Azure Policy alone, and every report says honestly that Defender has not assessed the account yet.
 
 ## Run the demo
 
@@ -128,7 +128,7 @@ About 30 minutes, much of it waiting for Copilot and Azure. Run the commands fro
 
    The run opens an Issue titled *Posture: storage account st… has no private endpoint*. Its table has one row per source: the resource configuration, each Azure Policy assignment, Defender for Cloud with the assessment id, and the app check. It also says where to fix it and when the work is done. Run the workflow again: it comments on the same Issue instead of opening a second one.
 
-3. **Hand it to Copilot** (about 10 minutes, mostly waiting). In the Issue, open **Assignees**, choose **Copilot**, pick the **secure-microsoft** agent, keep the base branch `main`, and assign. Or from a terminal:
+3. **Hand it to Copilot** (about 20 minutes, mostly waiting). In the Issue, open **Assignees**, choose **Copilot**, pick the **secure-microsoft** agent, keep the base branch `main`, and assign. Or from a terminal:
 
    ```powershell
    $repo = gh repo view --json nameWithOwner -q .nameWithOwner
@@ -137,11 +137,18 @@ About 30 minutes, much of it waiting for Copilot and Azure. Run the commands fro
      ConvertTo-Json | gh api -X POST "repos/$repo/issues/$issue/assignees" --input -
    ```
 
-   Copilot opens a pull request that changes one line in `infra/resources.bicep` (`storagePrivateEndpoint: true`). In the description, it explains why the change is safe: the app signs in to storage with its managed identity and runs in the same virtual network.
+   A draft pull request appears within seconds. When Copilot finishes, it changes one line in `infra/resources.bicep` (`storagePrivateEndpoint: true`) and rewrites the comment above it to say why the change is safe: the app signs in to storage with its managed identity, and the private DNS zone is linked to the app's virtual network.
 
-4. **Preview before anyone deploys** (2 minutes). Workflows on Copilot's pull requests wait for a person: select **Approve and run workflows**, or run `gh run list --branch <branch> --status action_required --json databaseId -q '.[].databaseId' | ForEach-Object { gh run rerun $_ }`. The **Secure · Microsoft · preview the infrastructure change** check comments a what-if preview on the pull request: a private DNS zone and its link, the private endpoint and its DNS zone group, a new subnet, and the storage account's network rules (`defaultAction: Allow → Deny`). It ends with **PASS**. Point out the line about other resources: what-if always reports some differences it cannot resolve, and the script previews the deployed template too, so they are not counted.
+4. **Preview before anyone deploys** (2 minutes). Workflows on Copilot's pull requests wait for a person: select **Approve and run workflows**, or approve the runs for the pull request's latest commit from a terminal:
 
-5. **Review, merge, apply** (about 6 minutes). Mark the pull request ready, approve it, and merge it. Then apply it:
+   ```powershell
+   $sha = gh pr view <pull request number> --json headRefOid -q .headRefOid
+   gh run list --commit $sha --status action_required --json databaseId -q '.[].databaseId' | ForEach-Object { gh run rerun $_ }
+   ```
+
+   The **Secure · Microsoft · preview the infrastructure change** check comments a what-if preview on the pull request: a private DNS zone and its link, the private endpoint and its DNS zone group, a new subnet, and the storage account's network rules (`defaultAction: Allow → Deny`). It ends with **PASS**. Point out the line about other resources: what-if always reports some differences it cannot resolve, and the script previews the deployed template too, so they are not counted.
+
+5. **Review, merge, apply** (about 6 minutes). Review the change, mark the pull request ready, and merge it. Then apply it:
 
    ```powershell
    git pull
@@ -149,14 +156,14 @@ About 30 minutes, much of it waiting for Copilot and Azure. Run the commands fro
    azd provision
    ```
 
-6. **Verify** (5 to 15 minutes).
+6. **Verify** (2 to 15 minutes, depending on when Azure Policy re-evaluates).
 
    ```powershell
    gh workflow run secure-microsoft-verify.yml -f issue=<issue number>
    gh run watch
    ```
 
-   The run starts an Azure Policy evaluation and waits for this solution's assignment to report Compliant. Then it uploads and downloads an attachment through the API. It comments the evidence on the Issue and closes it: configuration ✅, Azure Policy `Compliant ✅`, app check `works ✅`, and Defender for Cloud `Unhealthy ⏳ not reassessed since the fix`.
+   The run starts an Azure Policy evaluation, waits for this solution's assignment to report Compliant, and then uploads and downloads an attachment through the API. It comments the evidence on the Issue: configuration ✅, Azure Policy `Compliant ✅`, app check `works ✅`, and Defender for Cloud `Unhealthy ⏳ not reassessed since the fix`. Copilot's pull request already closed the Issue when it merged. Verify closes it if it is still open, and reopens it if the fix is not actually in place.
 
 7. **Let Defender confirm** (the next day). Run `gh workflow run secure-microsoft-verify.yml -f issue=<issue number> -f timeout=0`. Defender for Cloud now reports `Healthy ✅`, and the run records it on the Issue.
 
@@ -167,14 +174,14 @@ About 30 minutes, much of it waiting for Copilot and Azure. Run the commands fro
 - **The fix is code.** A one-line Bicep change that Copilot drafts with its reasoning, reviewed like any other change. The next deployment cannot undo it.
 - **The blast radius is known before deployment.** The preview lists exactly what the change creates and modifies, and fails if it touches anything else.
 - **Least privilege.** The automation can find, preview, and verify, but cannot deploy. A person applies the change.
-- **Verified by evidence, not by the diff.** The Issue closes only after Azure Policy reports Compliant and an attachment round trip succeeds.
+- **Verified by evidence, not by the diff.** Merging the pull request is not the end. The verification run shows Azure Policy Compliant and an attachment round trip on the Issue, and reopens the Issue if the fix is not really in place.
 - **No secrets anywhere.** GitHub Actions uses OIDC, the app uses its managed identity, and you use your own Microsoft Entra ID sign-in.
 
 ## Reset and clean up
 
 To run the demo again, put the finding back:
 
-1. On the merged pull request, select **Revert**, then merge the revert pull request. Its preview shows the subnet and the network rules going back.
+1. Revert the remediation: run `gh pr revert <pull request number>` (or select **Revert** on the merged pull request), then merge the revert pull request. Its preview shows the subnet going away, and lists the private endpoint and DNS zone as left in place, because incremental deployments never delete.
 2. Remove the private endpoint and its DNS zone, then apply `main` again:
 
    ```powershell
@@ -186,7 +193,7 @@ To run the demo again, put the finding back:
    azd provision
    ```
 
-   Incremental deployments never delete resources, so you remove the private endpoint before `azd provision` removes its subnet. The storage account keeps its closed public endpoint and its Deny rule. Only the private path goes away, so attachments fail again until the fix is reapplied. Azure Policy reports the finding again within about 30 minutes, and Defender for Cloud within 24 hours.
+   Incremental deployments never delete resources, so you remove the private endpoint before `azd provision` removes its subnet. The storage account keeps its closed public endpoint and its Deny rule. Only the private path goes away, so attachments fail again until the fix is reapplied. Azure Policy reports the finding again within about 30 minutes; until then the scan shows the configuration ❌ next to a stale Compliant result and files nothing. Run `python posture.py scan --refresh` to re-evaluate now. Defender for Cloud follows within 24 hours.
 
 To clear the posture check requests the app check created, reset the app's demo data (you are an Admin):
 
@@ -195,13 +202,18 @@ $token = az account get-access-token --scope "$(azd env get-value API_IDENTIFIER
 curl.exe -X POST -H "Authorization: Bearer $token" "$(azd env get-value API_URL)/api/admin/reset"
 ```
 
-When you no longer need the solution:
+When you no longer need the solution, run this in the solution folder:
 
 ```powershell
 cd solutions/05-secure-microsoft
+$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
 azd down --purge
-gh api -X DELETE repos/{owner}/{repo}/environments/secure-microsoft
+az ad app delete --id $app
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+gh api -X DELETE 'repos/{owner}/{repo}/environments/secure-microsoft'
 ```
+
+`azd down` removes the resource group, but not RequestHub's Microsoft Entra app registration, because resource groups do not contain Entra objects. The last two `az` commands delete it and purge it; a deleted app that is not purged blocks the next `azd up` from creating it again.
 
 ## Use it in your own repository
 
