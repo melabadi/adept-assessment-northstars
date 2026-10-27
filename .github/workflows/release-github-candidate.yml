@@ -316,13 +316,13 @@ jobs:
           --approval-mode "$APPROVAL_MODE"
       - name: Create the draft release (replaces an earlier draft of the same version)
         run: |
+          # An earlier draft carries the tag, or only its title once an update removed its pending tag name.
+          title="RequestHub $TAG (demo)"
           draft=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
-            --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id")
+            --jq ".[] | select(.draft and (.tag_name == \"$TAG\" or .name == \"$title\")) | .id")
           for id in $draft; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"; done
-          gh release create "$TAG" release/* --draft --target "$GITHUB_SHA" \
-            --title "RequestHub $TAG (demo)" --notes-file release-notes.md
-          url=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
-            --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .html_url" | head -n 1)
+          url=$(gh release create "$TAG" release/* --draft --target "$GITHUB_SHA" \
+            --title "$title" --notes-file release-notes.md | tail -n 1)
           {
             echo "### Draft release ready for approval"
             echo
