@@ -132,23 +132,23 @@ About 20 minutes. Commands run from this folder unless they start with `gh`.
    gh run watch
    ```
 
-   The candidate reuses the same image, with a setting that makes its readiness probe fail for 30 minutes. In the portal it stays **Activating** with 0% traffic, and its URL does not answer. The gate fails about 90 seconds after the candidate was created and quotes the evidence it captured from the live logs:
+   The candidate reuses the same image, with a setting that makes its readiness probe fail for 30 minutes. In the portal it stays **Activating** with 0% traffic, and its URL does not answer. The gate fails about 80 seconds after the candidate was created and quotes the evidence it captured from the live logs:
 
    ```text
-   Azure: Probe of Readiness failed with status code: 503 (x9)
+   Azure: Probe of Readiness failed with status code: 503 (x15)
    Azure: Readiness Probe of Readiness reached failure threshold 3, changing status to Failure.
    App: Health check fault-injection with status Unhealthy with message 'Fault injection: readiness intentionally failing (Faults:FailReadiness).'
    ```
 
    **Promote** is skipped. **Remove the candidate** deactivates it and runs the smoke test on production. The `watch` terminal shows no failed call and no build change: users never saw the bad build.
 
-4. **Ask Copilot what happened (optional, 2 minutes).** From the repository root:
+4. **Ask Copilot what happened (optional, about 2 minutes).** From the repository root:
 
    ```powershell
-   copilot --agent release-microsoft -p "The last Release · Microsoft rollout failed. Explain why from its release record and Azure, whether users were affected, and the next step. Change nothing."
+   copilot --agent release-microsoft --allow-tool='shell(gh:*)' --allow-tool='shell(python:*)' --allow-tool='shell(az:*)' --deny-tool='write' -p "The last Release · Microsoft rollout failed. Explain why from its release record and Azure, whether users were affected, and the next step. Change nothing."
    ```
 
-   The agent reads the run and the revision's evidence with its skills and explains: readiness probe failing on the candidate, 0% of traffic, users unaffected, fix the cause and release again.
+   The agent loads its deployment-recovery skill, reads the run, and checks Azure. In our run it answered that the candidate had the `fail-readiness` fault, Azure reported readiness HTTP 503, the gate blocked it after 80 seconds, users were unaffected (75/75 production calls succeeded), and the next step is a fresh rollout, never promoting the failed candidate. The flags let it run `gh`, `python`, and `az` without prompting and forbid file edits; in an interactive session, approve its commands as it asks.
 
 5. **Roll back (about 2 minutes).** Suppose users report a problem with the build released in step 2:
 
@@ -175,7 +175,7 @@ python release.py record         # writes out/release/release-record.md
 
 ## What to observe
 
-- **Users never meet an untested build.** The candidate runs with 0% of traffic until it passes the gate. In our runs, the `watch` terminal recorded 318 of 318 successful calls across a good release, a promotion, a bad release, and its removal.
+- **Users never meet an untested build.** The candidate runs with 0% of traffic until it passes the gate. While we ran a release, a bad release, and a rollback from GitHub Actions, the `watch` terminal recorded 575 of 575 successful calls, and its build changed only at the promotion and the rollback.
 - **The gate checks behavior, not just "it started".** Readiness comes from the platform; the smoke test then submits a request, retries it safely, reads it back, confirms the requester cannot approve it (`decision.self_approval`), and reads its audit history, on the candidate's own URL.
 - **Provenance you can verify.** One image per commit, deployed by digest. The commit is baked into the image, and the gate fails if `/api/meta` reports a different one. The release record links commit, digest, revision, and the build users received.
 - **A bad build is caught and explained, not just held back.** Container Apps never routes users to a revision that is not ready; that is the platform's first line of defense. The release builds on it: the gate fails within about two minutes, captures Azure's probe failures and the app's own health-check message, and removes the candidate, so the run is red with a reason instead of "deployed". It also catches what readiness cannot see: a wrong build, or a business rule broken on a revision that starts fine.
