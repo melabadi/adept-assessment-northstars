@@ -100,7 +100,7 @@ About 30 minutes, most of it waiting for Copilot. Start step 6 early if the sess
 
    For a real incident, people use the **Operate: report an incident** Issue form, which applies the same labels. Within seconds the Issue gets an 👀 reaction and a comment that links to the workflow run.
 
-3. **Watch the triage** (about 5 minutes). Open the run: **Actions** > **Operate · GitHub · triage an incident**. Walk through its jobs:
+3. **Watch the triage** (about 5 minutes). Open the run: **Actions** > **Operate · GitHub · triage an incident**. Each label on the new Issue starts a run; the runs for `ai-sdlc` and `phase:operate` are skipped at once. Walk through the jobs of the `incident` run:
    - `pre_activation` checks that the person who labeled the Issue has write access, and that no open follow-up exists for this incident yet.
    - `activation` adds the reaction and the status comment, and builds the prompt from the sanitized Issue text.
    - `agent` runs Copilot with read-only permissions, in a sandbox behind a network firewall. Its tools are read-only GitHub tools and a short list of shell commands (`cat`, `grep`, and similar).
@@ -161,7 +161,7 @@ Closing the follow-up also lets a new triage of the same incident open a fresh f
 
 ## Troubleshooting
 
-- **The triage run fails at "Validate COPILOT_GITHUB_TOKEN secret".** The secret is missing or empty, so the agentic workflow is blocked. Create it as in [Set up](#set-up). To rehearse in the meantime, run the same triage locally with Copilot CLI. This is a rehearsal and does not show the agentic workflow: `copilot --agent operate-github --allow-all-tools -p "Rehearse the triage of incident Issue #<number> with the incident-evidence skill. Print the labels, the follow-up Issue, and the triage comment. Do not post or create anything."`
+- **The triage run fails at "Validate COPILOT_GITHUB_TOKEN secret", and an Issue named "[aw] Operate · GitHub · triage an incident: failed" appears.** The secret is missing or empty, so the agentic workflow is blocked; gh-aw files that Issue (label `agentic-workflows`) with the reason. Create the secret as in [Set up](#set-up), close the failure Issue, then remove and re-apply the `incident` label. To rehearse in the meantime, run the same triage locally with Copilot CLI. This is a rehearsal and does not show the agentic workflow: `copilot --agent operate-github --allow-all-tools -p "Rehearse the triage of incident Issue #<number> with the incident-evidence skill. Print the labels, the follow-up Issue, and the triage comment. Do not post or create anything."`
 - **Applying `incident` did nothing.** The run was skipped in `pre_activation`: either an open follow-up for this incident already exists, or the person who applied the label does not have write access. Close the follow-up to triage again.
 - **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve and run workflows**, or run `gh run rerun <run-id>`.
 - **The proof check is skipped.** It only runs on pull requests that resolve an Issue labeled `incident-followup`. Make sure the pull request links the follow-up (for example `Fixes #<number>`), or add the `incident-followup` label to the pull request, then re-run it with `gh workflow run operate-github-regression-proof.yml -f pr=<number>`.
