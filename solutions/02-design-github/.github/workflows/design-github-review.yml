@@ -1,0 +1,100 @@
+# Design · GitHub: deterministic checks for architecture decisions and API changes.
+#  1. ADR checks: every ADR added or changed in solutions/02-design-github/adr/ has the template's sections, compares at
+#     least two options, has an architecture and a sequence diagram, cites standards and files that exist (with current
+#     versions), and is not accepted by an agent: any status other than Proposed must name the people who decided.
+#  2. API contract compatibility: app/contracts/openapi.json is compared with the point where the change branched off.
+#     Breaking changes fail (STD-API-001); additive changes are listed in the run summary.
+# The checker, the contract tool, and the standards come from the base branch, so a pull request cannot weaken them.
+# Copilot code review and people judge the content; these checks decide whether it is complete and compatible.
+name: Design · GitHub · check the ADR and API impact
+
+on:
+  pull_request:
+    paths:
+      - 'solutions/02-design-github/adr/**'
+      - 'app/contracts/**'
+      - '.github/workflows/design-github-review.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or commit to check against the default branch
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: design-github-review-${{ github.event.pull_request.number || inputs.ref }}
+  cancel-in-progress: true
+
+env:
+  ADR_DIR: solutions/02-design-github/adr
+  BASE_REF: ${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}
+  HEAD_REF: ${{ github.event.pull_request.head.sha || inputs.ref }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  adr:
+    name: ADR checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the proposed change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.HEAD_REF }}
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Use the checker and the standards from the base branch
+        run: |
+          base=$(git merge-base "$BASE_REF" HEAD)
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          for path in .github/skills/architecture-decision solutions/02-design-github/standards; do
+            if git cat-file -e "$base:$path" 2>/dev/null; then git restore --source="$base" -- "$path"; fi
+          done
+      - name: Check the ADRs added or changed
+        run: |
+          mapfile -t adrs < <(git diff --name-only --diff-filter=AM "$BASE" HEAD -- "$ADR_DIR/*.md")
+          if [ ${#adrs[@]} -eq 0 ]; then
+            echo "No ADR added or changed." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          set +e
+          python .github/skills/architecture-decision/check_adr.py "${adrs[@]}" > adr.txt
+          status=$?
+          cat adr.txt
+          { echo "### ADR checks"; echo '```'; cat adr.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+  contract:
+    name: API contract compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the proposed change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.HEAD_REF }}
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Use the contract tool from the base branch
+        run: |
+          base=$(git merge-base "$BASE_REF" HEAD)
+          echo "BASE=$(git rev-parse --short=12 "$base")" >> "$GITHUB_ENV"
+          if git cat-file -e "$base:.github/skills/contract-impact" 2>/dev/null; then
+            git restore --source="$base" -- .github/skills/contract-impact
+          fi
+      - name: Compare app/contracts/openapi.json with the base branch
+        run: |
+          set +e
+          python .github/skills/contract-impact/contract_diff.py --base-ref "$BASE" --markdown impact.md --fail-on-breaking
+          status=$?
+          if [ -f impact.md ]; then cat impact.md >> "$GITHUB_STEP_SUMMARY"; fi
+          exit $status
