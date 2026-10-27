@@ -1,0 +1,77 @@
+# Secure · Microsoft: verify a posture remediation after a person deployed it with `azd provision`.
+# Confirms the storage account's configuration, starts an Azure Policy evaluation and waits (bounded) for this solution's
+# assignment to report Compliant, reports Defender for Cloud's state honestly (it reassesses on its own schedule), and
+# uploads and downloads an attachment through the RequestHub API to prove the app reaches Blob storage over the private
+# endpoint with its managed identity. With an Issue number, it comments the evidence, closes the Issue when verified,
+# and reopens it if the fix is not in place. Run it again later with timeout 0 to record Defender's result.
+name: Secure · Microsoft · verify the remediation
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Posture Issue to comment on, and close when verified (optional)
+        default: ''
+      timeout:
+        description: Minutes to wait for Azure Policy to report Compliant (0 checks once)
+        default: '15'
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: secure-microsoft-posture
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify the fix and the app
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: secure-microsoft
+    env:
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      POLICY_ASSIGNMENT_NAME: ${{ vars.POLICY_ASSIGNMENT_NAME }}
+      API_URL: ${{ vars.API_URL }}
+      API_IDENTIFIER_URI: ${{ vars.API_IDENTIFIER_URI }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Verify configuration, Azure Policy, Defender for Cloud, and the app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue }}
+          TIMEOUT: ${{ inputs.timeout }}
+        run: |
+          if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then echo "timeout must be a whole number of minutes"; exit 2; fi
+          args=(verify --timeout "$((TIMEOUT * 60))")
+          if [ -n "$ISSUE" ]; then
+            if ! [[ "$ISSUE" =~ ^[0-9]+$ ]]; then echo "issue must be an Issue number"; exit 2; fi
+            args+=(--issue "$ISSUE")
+          fi
+          python solutions/05-secure-microsoft/posture.py "${args[@]}"
+      - name: Summary
+        if: always()
+        run: cat solutions/05-secure-microsoft/out/verify.md >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Upload the verification results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: posture-verify
+          path: solutions/05-secure-microsoft/out/verify.*
+          retention-days: 14

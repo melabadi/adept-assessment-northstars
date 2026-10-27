@@ -880,7 +880,7 @@ def cmd_rollback(args) -> int:
         return record.finish(False, "No previous revision to roll back to. Release an earlier image instead: "
                                     "deploy --image <registry>/<repository>@sha256:<digest>, then gate and promote.")
     bearer = api_token()
-    record.data.update(stable=state.describe(target), rolledBackFrom=state.describe(stable), trafficBefore=state.traffic_summary())
+    record.data.update(stable=state.describe(stable), rolledBackTo=state.describe(target), trafficBefore=state.traffic_summary())
     if not state.active(target):
         record.note(f"{state.short(target)} is inactive: activating it and waiting until it is ready")
         app.activate(target)
@@ -1008,8 +1008,8 @@ def cmd_record(args) -> int:
     before = next((r.get("stable") for r in records if r.get("stable")), None)
     if before:
         rows.append(("Stable before", f"`{before.get('revision', '')}`"))
-    if "rollback" in by and by["rollback"].get("rolledBackFrom"):
-        rows.append(("Rolled back from", f"`{by['rollback']['rolledBackFrom'].get('revision', '')}`"))
+    if "rollback" in by and by["rollback"].get("rolledBackTo"):
+        rows.append(("Rolled back to", f"`{by['rollback']['rolledBackTo'].get('revision', '')}`"))
 
     lines = [f"## Release record: {outcome}", "", "| | |", "| --- | --- |"]
     lines += [f"| {k} | {v} |" for k, v in rows]

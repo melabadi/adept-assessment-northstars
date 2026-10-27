@@ -156,4 +156,24 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
         var history = await (await api.As("u-ava").GetAsync($"/api/requests/{id}/history")).Read<List<AuditEventDto>>();
         Assert.Contains(history, e => e.Action == "routing.changed");
     }
+
+    [Fact]
+    public async Task Search_treats_percent_and_underscore_as_literal_characters()
+    {
+        var ava = api.As("u-ava");
+        var literal = await ava.PostJson("/api/requests", NewRequest("Archive share Q3_cap at 100% quota"));
+        Assert.Equal(HttpStatusCode.Created, literal.StatusCode);
+        var expected = (await literal.Read<RequestDetailDto>()).Id;
+        // Matches both terms only if "_" or "%" were treated as wildcards.
+        var lookalike = await ava.PostJson("/api/requests", NewRequest("Archive share Q3xcap at 1005 quota"));
+        Assert.Equal(HttpStatusCode.Created, lookalike.StatusCode);
+
+        foreach (var term in new[] { "Q3_cap", "100%" })
+        {
+            var found = await (await ava.GetAsync($"/api/requests?scope=mine&pageSize=100&q={Uri.EscapeDataString(term)}"))
+                .Read<PagedResult<RequestSummaryDto>>();
+            var row = Assert.Single(found.Items);
+            Assert.Equal(expected, row.Id);
+        }
+    }
 }
