@@ -1,8 +1,9 @@
 # Operate · GitHub: the deterministic gate on an incident follow-up pull request.
 # A regression test proves its value only by failing without the fix. On a pull request that resolves an Issue labeled
 # `incident-followup`, this workflow runs RequestHub's tests twice: at the pull request head, and with app/src put back
-# to the base revision while keeping the pull request's tests. It passes when a test fails before and passes after
-# (PROVEN). The proof script comes from the base branch, so a pull request cannot change how it is judged.
+# to the merge base while keeping the pull request's tests. It passes only when a test fails before and passes after
+# (PROVEN). The proof script comes from the base branch, so a pull request cannot change its rules. It does run the pull
+# request's own test code, so its result is evidence for the reviewer, not a security boundary.
 name: Operate · GitHub · prove the regression test
 
 on:
@@ -51,8 +52,8 @@ jobs:
                 pullRequest(number: $pr) {
                   headRefOid
                   baseRefOid
-                  labels(first: 50) { nodes { name } }
-                  closingIssuesReferences(first: 10) { nodes { number labels(first: 50) { nodes { name } } } }
+                  labels(first: 100) { nodes { name } }
+                  closingIssuesReferences(first: 25) { nodes { number labels(first: 100) { nodes { name } } } }
                 }
               }
             }' > pr.json

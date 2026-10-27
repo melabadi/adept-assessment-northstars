@@ -12,7 +12,7 @@ A test that fails before and passes at head proves the fix. The verdict is one o
   PROVEN     app/src changed, and at least one test fails before and passes at head
   UNPROVEN   app/src changed, but no test fails before, no test changed, or the tests do not compile against the base
   COVERAGE   only app/tests changed and every test passes (the base code is unchanged, so no defect is demonstrated)
-  FAILING    a test fails, or the tests do not build, at head
+  FAILING    a test does not pass, no test ran, the run reported errors, or the tests do not build, at head
   NOTHING    nothing changed under app/src or app/tests
 
 Usage
@@ -25,7 +25,9 @@ Needs git, the .NET SDK, and PostgreSQL on localhost:5432 (user requesthub, pass
 Set REQUESTHUB_TEST_PG to use another server. The base copy is a temporary git worktree; your working tree is not
 modified, except for build output under app/.
 
-Exit codes: 0 PROVEN, COVERAGE, or NOTHING; 1 UNPROVEN or FAILING; 2 setup error (git, .NET SDK, or no test results).
+The proof runs the change's own test code, so treat it as evidence for a reviewer, not as a security boundary.
+
+Exit codes: 0 PROVEN; 1 any other verdict (nothing was proven); 2 setup error (git, .NET SDK, or no test results).
 """
 from __future__ import annotations
 
@@ -42,8 +44,10 @@ from pathlib import Path
 TEST_PROJECT = "app/tests/RequestHub.Tests"
 SOURCE_PREFIX = "app/src/"
 TEST_PREFIX = "app/tests/"
-EXIT_CODES = {"PROVEN": 0, "COVERAGE": 0, "NOTHING": 0, "UNPROVEN": 1, "FAILING": 1}
+EXIT_CODES = {"PROVEN": 0, "COVERAGE": 1, "NOTHING": 1, "UNPROVEN": 1, "FAILING": 1}
 ICONS = {"PROVEN": "✅", "COVERAGE": "ℹ️", "NOTHING": "➖", "UNPROVEN": "❌", "FAILING": "❌"}
+# CTRF statuses ordered by severity, so that two tests sharing a display name never hide a failure.
+SEVERITY = {"passed": 0, "skipped": 0, "pending": 1, "other": 2, "failed": 3}
 
 
 class SetupError(Exception):
@@ -55,10 +59,24 @@ class TestRun:
     label: str
     built: bool
     results: dict[str, str] = field(default_factory=dict)
+    total: int = 0
+    exit_code: int | None = None
     log_tail: str = ""
 
     def count(self, status: str) -> int:
         return sum(1 for value in self.results.values() if value == status)
+
+    def not_passing(self) -> list[str]:
+        return sorted(name for name, status in self.results.items() if status not in ("passed", "skipped"))
+
+    def clean(self) -> bool:
+        """Built, ran at least one test, exited 0, and every test passed or was skipped."""
+        return self.built and self.total > 0 and self.exit_code == 0 and not self.not_passing()
+
+    def describe(self) -> str:
+        counts = [f"{self.count(status)} {status}" for status in ("passed", "failed", "skipped", "pending", "other")
+                  if status in ("passed", "failed", "skipped") or self.count(status)]
+        return ", ".join(counts) + f" (exit code {self.exit_code})"
 
 
 def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -91,8 +109,11 @@ def merge_base(repo: Path, base: str) -> str:
 
 
 def changed_files(repo: Path, base_sha: str) -> list[str]:
-    """Files under app/src and app/tests that differ from the merge base, including uncommitted and untracked files."""
-    diff = git(repo, "diff", "--name-only", base_sha, "--", SOURCE_PREFIX, TEST_PREFIX).splitlines()
+    """Files under app/src and app/tests that differ from the merge base, including uncommitted and untracked files.
+
+    Renames are listed as a deletion of the old path plus the new path, so the base copy drops the old file.
+    """
+    diff = git(repo, "diff", "--name-only", "--no-renames", base_sha, "--", SOURCE_PREFIX, TEST_PREFIX).splitlines()
     untracked = git(repo, "ls-files", "--others", "--exclude-standard", "--", SOURCE_PREFIX, TEST_PREFIX).splitlines()
     return sorted({path.strip().replace("\\", "/") for path in diff + untracked if path.strip()})
 
@@ -119,8 +140,14 @@ def run_tests(tree: Path, label: str, classes: list[str], out_dir: Path) -> Test
     if not report.exists():
         raise SetupError(f"[{label}] the test run wrote no results (is PostgreSQL running?):\n{tail(proc.stdout + proc.stderr)}")
     tests = json.loads(report.read_text(encoding="utf-8"))["results"]["tests"]
-    result = TestRun(label, built=True, results={test["name"]: test["status"] for test in tests}, log_tail=tail(proc.stdout, 15))
-    print(f"[{label}] {result.count('passed')} passed, {result.count('failed')} failed, {result.count('skipped')} skipped", flush=True)
+    results: dict[str, str] = {}
+    for test in tests:
+        name, status = test["name"], test["status"]
+        if name not in results or SEVERITY.get(status, 2) > SEVERITY.get(results[name], 2):
+            results[name] = status
+    result = TestRun(label, built=True, results=results, total=len(tests), exit_code=proc.returncode,
+                     log_tail=tail(proc.stdout + proc.stderr, 15))
+    print(f"[{label}] {result.describe()}", flush=True)
     return result
 
 
@@ -145,21 +172,26 @@ def decide(sources: list[str], tests: list[str], head: TestRun | None, before: T
     assert head is not None
     if not head.built:
         return "FAILING", "The tests do not build at head.", []
-    failed = sorted(name for name, status in head.results.items() if status == "failed")
-    if failed:
-        return "FAILING", f"{len(failed)} test(s) fail at head: " + ", ".join(f"`{name}`" for name in failed[:5]), []
+    if head.total == 0:
+        return "FAILING", "No test ran at head. Check the --class filter.", []
+    not_passing = head.not_passing()
+    if not_passing:
+        return "FAILING", f"{len(not_passing)} test(s) do not pass at head: " + ", ".join(f"`{name}`" for name in not_passing[:5]), []
+    if head.exit_code != 0:
+        return "FAILING", f"The test run at head reported errors (exit code {head.exit_code}) although no test failed.", []
     if not sources:
         return "COVERAGE", "Only tests changed and they pass. The production code is unchanged, so no defect is demonstrated.", []
     if not tests:
         return "UNPROVEN", "Production code changed but no test changed. Add a test that fails without the change.", []
     assert before is not None
     if not before.built:
-        return ("UNPROVEN", "The changed tests do not compile against the base code, so they cannot show the defect. "
+        return ("UNPROVEN", "The changed tests do not compile against the code before the change, so they cannot show the defect. "
                 "Test the behavior through APIs that already exist on the base branch.", [])
-    proven = sorted(name for name, status in head.results.items() if status == "passed" and before.results.get(name) == "failed")
+    proven = sorted(name for name, status in head.results.items()
+                    if status == "passed" and before.results.get(name) in ("failed", "other"))
     if proven:
-        return "PROVEN", f"{len(proven)} test(s) fail on the base code and pass with the change.", proven
-    return "UNPROVEN", "Every changed test also passes on the base code, so none of them shows the defect the change fixes.", []
+        return "PROVEN", f"{len(proven)} test(s) fail on the code before the change and pass with it.", proven
+    return "UNPROVEN", "Every changed test also passes on the code before the change, so none of them shows the defect the change fixes.", []
 
 
 def summary(verdict: str, explanation: str, base: str, base_sha: str, head_sha: str, dirty: bool,
@@ -168,19 +200,23 @@ def summary(verdict: str, explanation: str, base: str, base_sha: str, head_sha: 
         return ", ".join(f"`{item}`" for item in items) or "none"
 
     lines = [f"### Regression proof: {verdict} {ICONS[verdict]}", "", explanation, "",
-             f"- Base: `{base_sha[:9]}` (merge base with `{base}`)",
+             f"- Before the change: `{base_sha[:9]}` (merge base with `{base}`)",
              f"- Head: `{head_sha[:9]}`" + (" plus uncommitted changes" if dirty else ""),
              f"- Production code changed: {files(sources)}",
              f"- Tests changed: {files(tests)}"]
     if before is not None and before.built and head is not None:
-        lines += ["", "| Test | Base code (without the change) | Head (with the change) |", "|---|---|---|"]
-        lines += [f"| `{name}` | ❌ failed | ✅ passed |" for name in proven] or ["| none | | |"]
+        lines += ["", "| Test | Before the change | With the change |", "|---|---|---|"]
+        lines += [f"| `{name}` | ❌ {before.results[name]} | ✅ passed |" for name in proven] or ["| none | | |"]
+        lines += ["", f"Run before the change: {before.describe()}."]
     if before is not None and not before.built:
-        lines += ["", "Build errors on the base code:", "", "```text", before.log_tail, "```"]
+        lines += ["", "Build errors on the code before the change:", "", "```text", before.log_tail, "```"]
     if head is not None and head.built:
-        lines += ["", f"Full run at head: {head.count('passed')} passed, {head.count('failed')} failed, {head.count('skipped')} skipped."]
+        lines += ["", f"Run at head: {head.describe()}."]
+        if not head.clean() and head.log_tail:
+            lines += ["", "```text", head.log_tail, "```"]
     elif head is not None:
         lines += ["", "Build errors at head:", "", "```text", head.log_tail, "```"]
+    lines += ["", "_The proof runs the change's own test code: it is evidence for the reviewer, not a security boundary._"]
     return "\n".join(lines) + "\n"
 
 
@@ -218,8 +254,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if sources or tests:
             head = run_tests(repo, "head", args.classes, out_dir)
-            head_ok = head.built and head.count("failed") == 0
-            if head_ok and sources and tests:
+            if head.clean() and sources and tests:
                 with tempfile.TemporaryDirectory(prefix="regression-proof-", ignore_cleanup_errors=True) as scratch:
                     tree = before_tree(repo, base_sha, tests, Path(scratch))
                     try:
@@ -244,8 +279,8 @@ def main(argv: list[str] | None = None) -> int:
         "checkedAtUtc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "base": args.base, "baseSha": base_sha, "headSha": head_sha, "uncommittedChanges": dirty,
         "productionFiles": sources, "testFiles": tests, "provenTests": proven,
-        "head": None if head is None else {"built": head.built, "results": head.results},
-        "before": None if before is None else {"built": before.built, "results": before.results},
+        "head": None if head is None else {"built": head.built, "total": head.total, "exitCode": head.exit_code, "results": head.results},
+        "before": None if before is None else {"built": before.built, "total": before.total, "exitCode": before.exit_code, "results": before.results},
     }
     json_path = args.json or out_dir.parent / "regression-proof.json"
     json_path.parent.mkdir(parents=True, exist_ok=True)
