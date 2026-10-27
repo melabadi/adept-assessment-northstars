@@ -10,15 +10,15 @@ Two different agents are involved. You are the GitHub Copilot agent that **write
 
 ## How to work
 1. Read the change request. Decide which layer it touches:
-   - behavior or wording: `phases/03-develop/microsoft/triage-agent.yaml` (instructions),
+   - behavior or wording: `solutions/03-develop-microsoft/triage-agent.yaml` (instructions),
    - data the agent can read: a tool (use the **foundry-tools** skill),
    - business rules: routing policies in `app/src/RequestHub.Core/Profiles/general.json` (data, no retraining),
    - hard limits: deterministic guards in `RequestWorkflow.RecommendAsync`.
 2. Make the change. For app code, add or update a test in `app/tests/RequestHub.Tests/TriageTests.cs` and run
    `dotnet test --solution RequestHub.slnx` from `app/`.
 3. Run `python .github/skills/foundry-tools/check_tools.py`, then publish with
-   `python phases/03-develop/microsoft/publish_triage_agent.py`.
-4. Start the API with the Foundry provider (see `phases/03-develop/README.md`) and run the **triage-evaluation** skill.
+   `python solutions/03-develop-microsoft/publish_triage_agent.py`.
+4. Start the API with the Foundry provider (see `solutions/03-develop-microsoft/README.md`) and run the **triage-evaluation** skill.
    Report every case, the repeatability for any case that varies, and the Foundry response ids for failures.
 5. Open a PR with the before/after evaluation table. A reviewer decides; the evaluation workflow re-runs on merge.
 

@@ -2,7 +2,7 @@
 """Check the contract between the Foundry triage agent's declared tools and the tools RequestHub executes.
 
 The in-app agent can only do what the API executes for it. This check keeps both sides aligned and read-only:
-  1. Every tool declared in phases/03-develop/microsoft/triage-agent.yaml is executed by FoundryTriageProvider, and
+  1. Every tool declared in solutions/03-develop-microsoft/triage-agent.yaml is executed by FoundryTriageProvider, and
      the provider executes no undeclared tool.
   2. No tool can change state: tool names must not contain approve/reject/decide/delete/update/reroute and similar verbs.
   3. Every tool's parameters are a closed JSON schema (type object, additionalProperties false, all properties required),
@@ -23,7 +23,7 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parents[3]
-SPEC = REPO / "phases/03-develop/microsoft/triage-agent.yaml"
+SPEC = REPO / "solutions/03-develop-microsoft/triage-agent.yaml"
 PROVIDER = REPO / "app/src/RequestHub.Api/Triage/FoundryTriageProvider.cs"
 STATE_CHANGING = re.compile(r"(approve|reject|decide|decision|delete|remove|update|modify|reroute|assign|status|write|create|confirm)", re.I)
 EXECUTED = re.compile(r'^\s*"(?P<name>[a-z_]+)"\s*=>', re.M)
