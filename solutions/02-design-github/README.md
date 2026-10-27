@@ -95,7 +95,7 @@ About 15 minutes. Run the commands from the repository root.
 
    In bash, use `-p "$(cat solutions/02-design-github/adr-task.md)"`.
 
-   **B. Delegate to the Copilot cloud agent (about 10 minutes; start it before the session).** Create an Issue from the **Design: architecture decision with Copilot** template, assign it to **Copilot**, and pick the **design-github** agent. Copilot opens a draft pull request when it is done.
+   **B. Delegate to the Copilot cloud agent (start it before the session).** Create an Issue from the **Design: architecture decision with Copilot** template, assign it to **Copilot**, and pick the **design-github** agent. Copilot opens a draft pull request within a minute, works in it, and asks for your review when the ADR is ready. In our run Copilot worked for about 7 minutes once its environment was ready; preparing the environment (the repository's Copilot setup steps) took another 17 minutes.
 
    Workflows on Copilot's pull requests wait for a person. Select **Approve and run workflows** on the pull request, or re-run the waiting runs from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids).
 
@@ -134,6 +134,8 @@ About 15 minutes. Run the commands from the repository root.
 
    The report says `Breaking change` with `❌ schema RecommendationDto: property providerTraceId removed`, and the command exits with 1, which is what fails the **API contract compatibility** check on a pull request. Adding a property instead reports `Compatible` with `➕`.
 
+   To show the same failure in GitHub Actions without opening a pull request, write the edited contract to `app/contracts/openapi.json` on a scratch branch, push it, and run `gh workflow run design-github-review.yml -f ref=<branch>`. The **API contract compatibility** job fails with the same line in its summary.
+
 ## What to observe
 
 - **Grounded in the real system.** Copilot reads the code before it designs. In our runs it reused the existing `ITriageProvider` extension point, rejected a separate triage service under STD-ARCH-001, and found gaps the brief does not mention, such as the 45-second timeout. The check proves every file the ADR cites exists.
@@ -150,6 +152,7 @@ gh pr close <number> --delete-branch    # close the ADR pull request
 gh issue close <number>                 # option B: close the design Issue
 git switch main
 git branch -D design/copilot-adr        # option A: drop the local branch
+git push origin --delete <branch>       # step 7 in Actions: drop the scratch branch
 ```
 
 Do not merge the ADR into `main`. Keeping it out keeps the demo repeatable: the next run starts again from ADR 0001.
