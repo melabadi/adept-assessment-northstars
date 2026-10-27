@@ -1,4 +1,7 @@
 using System.Net;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using RequestHub.Core.Data;
 using RequestHub.Core.Services;
 
 namespace RequestHub.Tests;
@@ -66,6 +69,62 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
 
         var history = await (await api.As("u-ava").GetAsync($"/api/requests/{id}/history")).Read<List<AuditEventDto>>();
         Assert.Contains(history, e => e.Action == "decision.recorded" && e.Actor.Id == "u-chloe");
+    }
+
+    [Fact]
+    public async Task Decision_retry_returns_original_and_conflicting_approver_cannot_replace_it()
+    {
+        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Original decision retry test"))).Read<RequestDetailDto>()).Id;
+        var chloe = api.As("u-chloe");
+
+        var first = await chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved", comment = "Original comment" }, "decision-key-1");
+        var retry = await chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "Changed retry body" }, "decision-key-1");
+        var competing = await api.As("u-dan").PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "Changed my mind" });
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        var originalDecision = await retry.Read<DecisionDto>();
+        Assert.Equal("Approved", originalDecision.Outcome);
+        Assert.Equal("Original comment", originalDecision.Comment);
+        Assert.Equal(HttpStatusCode.Conflict, competing.StatusCode);
+        Assert.Equal("decision.already_decided", await competing.Code());
+
+        var detail = await (await api.As("u-ava").GetAsync($"/api/requests/{id}")).Read<RequestDetailDto>();
+        Assert.Equal("Approved", detail.Status);
+        Assert.Equal("u-chloe", detail.Decision!.DecidedBy.Id);
+        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{id}/history")).Read<List<AuditEventDto>>();
+        Assert.Single(history, e => e.Action == "decision.recorded");
+        Assert.Equal(1, await DecisionNotificationCount(id));
+    }
+
+    [Fact]
+    public async Task Concurrent_decisions_record_one_winner_without_server_errors_or_duplicate_effects()
+    {
+        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Concurrent decision test"))).Read<RequestDetailDto>()).Id;
+        var chloe = api.As("u-chloe");
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" })));
+
+        Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
+        Assert.Equal(7, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
+        Assert.DoesNotContain(responses, r => (int)r.StatusCode >= 500);
+
+        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{id}/history")).Read<List<AuditEventDto>>();
+        Assert.Single(history, e => e.Action == "decision.recorded");
+        Assert.Equal(1, await DecisionNotificationCount(id));
+        var detail = await (await api.As("u-ava").GetAsync($"/api/requests/{id}")).Read<RequestDetailDto>();
+        Assert.Equal("Approved", detail.Status);
+    }
+
+    private async Task<int> DecisionNotificationCount(string publicId)
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var number = int.Parse(publicId[4..]);
+        var requestId = await db.Requests.Where(r => r.Number == number).Select(r => r.Id).SingleAsync();
+        return await db.Notifications.CountAsync(n =>
+            n.RequestId == requestId && n.Recipient == "u-ava" && n.Type == "request.decided");
     }
 
     [Fact]
