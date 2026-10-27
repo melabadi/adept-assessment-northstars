@@ -1,5 +1,5 @@
 diff --git a/app/src/RequestHub.Core/Services/RequestWorkflow.cs b/app/src/RequestHub.Core/Services/RequestWorkflow.cs
-index 521eaa5..a867a6d 100644
+index 90d373e..a867a6d 100644
 --- a/app/src/RequestHub.Core/Services/RequestWorkflow.cs
 +++ b/app/src/RequestHub.Core/Services/RequestWorkflow.cs
 @@ -40,7 +40,12 @@ public sealed partial class RequestWorkflow(
@@ -16,7 +16,7 @@ index 521eaa5..a867a6d 100644
  
          var isStaff = user.HasRole(Roles.Reviewer) || user.HasRole(Roles.Approver) || user.IsAdmin;
          var departments = user.Departments.ToArray();
-@@ -68,18 +73,9 @@ public sealed partial class RequestWorkflow(
+@@ -68,20 +73,9 @@ public sealed partial class RequestWorkflow(
              query = query.Where(r => r.Priority == priority);
          }
  
@@ -30,8 +30,10 @@ index 521eaa5..a867a6d 100644
 -            }
 -            else
 -            {
+-                // EscapeLike escapes with a backslash. Name it as the escape character: EF Core (and so Npgsql) applies no
+-                // escape character unless one is given, which would make "%" and "_" searches match nothing.
 -                var pattern = $"%{EscapeLike(term)}%";
--                query = query.Where(r => EF.Functions.ILike(r.Title, pattern) || EF.Functions.ILike(r.Description, pattern));
+-                query = query.Where(r => EF.Functions.ILike(r.Title, pattern, "\\") || EF.Functions.ILike(r.Description, pattern, "\\"));
 -            }
 +            query = query.Where(r => r.Number == number);
          }
