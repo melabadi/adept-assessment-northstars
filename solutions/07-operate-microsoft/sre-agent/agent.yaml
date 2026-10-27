@@ -1,0 +1,71 @@
+# Azure SRE Agent configuration for the Operate · Microsoft solution, applied by configure_sre_agent.py (azd runs it
+# after every provision; the operate-microsoft-agent-config workflow runs it when this folder changes on main).
+# Markdown files hold the long text. {{NAME}} placeholders are filled from the azd environment when applied.
+
+# The custom agent that handles the incident. Its tools are the only ones it can call.
+customAgent:
+  name: notification-backlog-responder
+  instructions: instructions.md
+  handoffDescription: >-
+    Investigates RequestHub notification backlog alerts from Azure Monitor: measures the backlog, finds what changed
+    on the notification worker, proposes the smallest reversible mitigation, and verifies recovery.
+  tools:
+    - GetAzCliHelp
+    - RunAzCliReadCommands
+    - RunAzCliWriteCommands        # only for the approved mitigation; the tool policy below makes every write ask first
+    - QueryAppInsightsUsingAppId
+    - QueryLogAnalyticsByWorkspaceId
+    - SearchMemory                 # the runbook in knowledge/
+    - PlotAreaChartWithCorrelation
+    - PlotBarChart
+  skills:
+    - investigate-notification-backlog
+    - verify-worker-recovery
+  # Quality gate: the agent cannot finish an investigation without the evidence a person needs to decide.
+  stopHook: hooks/evidence-checklist.md
+
+# Procedures the custom agent loads when relevant. Each file starts with name and description front matter.
+skills:
+  - file: skills/investigate-notification-backlog.md
+    tools: [QueryAppInsightsUsingAppId, QueryLogAnalyticsByWorkspaceId, RunAzCliReadCommands]
+  - file: skills/verify-worker-recovery.md
+    tools: [QueryAppInsightsUsingAppId, RunAzCliReadCommands]
+
+# Reference documents uploaded to the agent's knowledge base.
+knowledge:
+  - knowledge/requesthub-worker-runbook.md
+
+# Which Azure Monitor alerts this agent handles, with which custom agent, and how much autonomy it has.
+responsePlan:
+  name: requesthub-notification-backlog
+  severities: [Sev2]
+  titleContains: notification backlog
+  agentMode: Review                # proposals wait for an SRE Agent Administrator; never Autonomous in this demo
+  maxAutomatedInvestigationAttempts: 3
+  mergeEnabled: false              # every drill starts a fresh investigation thread
+
+# Global tool policy for every conversation on this agent. Deny wins, then allow, then ask.
+toolPolicy:
+  allow:
+    - GetAzCliHelp
+    - RunAzCliReadCommands
+    - QueryAppInsightsUsingAppId
+    - QueryLogAnalyticsByWorkspaceId
+    - SearchMemory
+    - read_skill_file
+    - PlotAreaChartWithCorrelation
+    - PlotBarChart
+  ask:
+    - RunAzCliWriteCommands
+  deny:
+    - RunAzCliWriteCommands(az * delete *)
+    - RunAzCliWriteCommands(az role *)
+    - RunAzCliWriteCommands(az identity *)
+    - RunAzCliWriteCommands(az postgres *)
+    - RunAzCliWriteCommands(az network *)
+    - RunAzCliWriteCommands(az keyvault *)
+    - RunAzCliWriteCommands(az ad *)
+    - bash(az * delete *)
+    - RunKubectlWriteCommand
+    - RunInTerminal
+    - Terminal
