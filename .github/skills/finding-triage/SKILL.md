@@ -10,11 +10,15 @@ Use before accepting a security lab Issue. For the private-repository path, requ
 URL and reviewed SHA. Read the comment and confirm it identifies user-controlled search concatenated into SQL
 in `ListAsync`. AI review is advisory and nondeterministic, not a scanner. If it misses the issue, record FAIL;
 do not manufacture a finding. Request a fresh review after repair.
+Use the cloud agent's built-in read-only `github` tools, not unauthenticated shell `gh`, for private repository
+reads. If those tools are unavailable, a presenter can provide an authenticated **same-run** export containing
+comment URL, author, reviewed SHA, path, line and body. Match that SHA to the local lab source and explicitly
+record the inability to re-fetch it. Never substitute a previous demo's comment or invented review.
 
 For the CodeQL path, inputs are repository, lab ref, scan URL, immutable scanned SHA, SARIF downloaded from that
 run, and expected state (`present` before repair, `absent` after).
 
-## Procedure
+## Procedure (CodeQL path only)
 1. Run `python .github/skills/finding-triage/finding_triage.py preflight --repo OWNER/REPO --ref lab/secure-RUN --out out/preflight.json`.
    Requires authenticated `gh`. A private unlicensed repo returns BLOCKED and nonzero **before** CodeQL executes.
    Disabling SARIF upload is not a license workaround.
