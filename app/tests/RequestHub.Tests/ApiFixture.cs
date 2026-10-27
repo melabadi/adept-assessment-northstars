@@ -33,6 +33,9 @@ public class ApiFixture : IAsyncLifetime
     {
     }
 
+    /// <summary>Extra configuration settings for a derived fixture.</summary>
+    protected virtual IReadOnlyDictionary<string, string> Settings { get; } = new Dictionary<string, string>();
+
     public async ValueTask InitializeAsync()
     {
         await using (var conn = new NpgsqlConnection($"{ServerConnectionString};Database=postgres"))
@@ -49,6 +52,11 @@ public class ApiFixture : IAsyncLifetime
             b.UseSetting("Storage:LocalPath", storagePath);
             b.UseSetting("Auth:Mode", "Development");
             b.UseSetting("Demo:AllowReset", "true");
+            foreach (var (key, value) in Settings)
+            {
+                b.UseSetting(key, value);
+            }
+
             b.ConfigureTestServices(ConfigureTestServices);
         });
 

@@ -18,6 +18,8 @@
     "apiClientId": { "value": "${API_CLIENT_ID}" },
     "apiIdentifierUri": { "value": "${API_IDENTIFIER_URI}" },
     "automationClientId": { "value": "${AUTOMATION_CLIENT_ID=}" },
+    "loadTestClientIds": { "value": "${LOAD_TEST_CLIENT_IDS=}" },
+    "loadTestRequesterIds": { "value": "${LOAD_TEST_REQUESTER_IDS=}" },
     "foundryProjectEndpoint": { "value": "${FOUNDRY_PROJECT_ENDPOINT=}" },
     "triageProvider": { "value": "${TRIAGE_PROVIDER=SampleRules}" },
     "triageAgentName": { "value": "${TRIAGE_AGENT_NAME=requesthub-triage}" },
