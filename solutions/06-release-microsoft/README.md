@@ -1,6 +1,6 @@
 # Release · Safe rollout on Azure Container Apps
 
-Most release incidents start the same way: a new build replaces the one users are on, and users find the problem. In this solution a new build of RequestHub never replaces the running revision. GitHub Actions builds the image once and adds it to Azure Container Apps as a **candidate revision with no traffic**. A gate checks the candidate on its own URL: readiness, a smoke test that submits and reads a request and confirms nobody can approve their own request, and a bake period. Only then does one atomic change move the traffic. A candidate that fails never receives a user request; it is removed automatically, and the release record quotes Azure's and the app's own explanation. The previous revision stays warm, so a rollback takes seconds. A GitHub Copilot agent with two skills runs the preflight, reads release records, diagnoses failed revisions, and recovers.
+Most release incidents start the same way: a new build replaces the one users are on, and users find the problem. In this solution a new build of RequestHub never replaces the running revision. GitHub Actions builds the image once and adds it to Azure Container Apps as a **candidate revision with no traffic**. A gate checks the candidate on its own URL: readiness, a smoke test that submits and reads a request, attaches a file, and confirms nobody can approve their own request, and a bake period. Only then does one atomic change move the traffic. A candidate that fails never receives a user request; it is removed automatically, and the release record quotes Azure's and the app's own explanation. The previous revision stays warm, so a rollback takes seconds. A GitHub Copilot agent with two skills runs the preflight, reads release records, diagnoses failed revisions, and recovers.
 
 ## Where it fits
 
@@ -94,7 +94,7 @@ python ../../.github/skills/azure-deployment/preflight.py
 
 `azd up` took about 13 minutes in our runs. It creates resource group `rg-ai-sdlc-release` with:
 
-- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): Container Apps environment, private PostgreSQL with Microsoft Entra authentication only, Blob storage, a container registry, Application Insights, and a Microsoft Entra app registration with RequestHub's app roles. You get every role.
+- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): Container Apps environment, private PostgreSQL with Microsoft Entra authentication only, Blob storage reached through a private endpoint (its public endpoint is closed), a container registry, Application Insights, and a Microsoft Entra app registration with RequestHub's app roles. You get every role.
 - **The app**, deployed once by azd: the API (multiple-revision mode) and the notification worker. This first revision reports build `local`.
 - **The release identity** used by GitHub Actions through OIDC, with **Container Apps Contributor** on the resource group and **AcrPush** on the registry. Nothing else.
 - **GitHub environment `release-microsoft`** with the sign-in values (secrets) and the app's names (variables), created by the hooks.
@@ -121,7 +121,7 @@ About 20 minutes. Commands run from this folder unless they start with `gh`.
    ```
 
    - **Build the image once**: builds `requesthub-api:<commit>` on the runner (about 90 seconds) and pushes it. Later runs for the same commit reuse it by digest in seconds.
-   - **Deploy the candidate and gate it**: refresh the portal. A revision `run<number>` appears with the label `candidate` and 0% traffic. Open `https://<app>---candidate.<domain>/api/meta` to show its build. The gate reports the candidate ready about 30 seconds after it was created, then nine checks on the candidate's URL and a 60-second bake. The `watch` terminal still shows the old build: no user has reached the candidate.
+   - **Deploy the candidate and gate it**: refresh the portal. A revision `run<number>` appears with the label `candidate` and 0% traffic. Open `https://<app>---candidate.<domain>/api/meta` to show its build. The gate reports the candidate ready about 30 seconds after it was created, then ten checks on the candidate's URL and a 60-second bake. The `watch` terminal still shows the old build: no user has reached the candidate.
    - **Promote**: one traffic change, about 15 seconds. The `watch` terminal switches to the new build without a single failed call. The portal shows the new revision at 100% (`stable`) and the old one at 0% (`previous`, still running).
    - **Release record**: the run's summary shows the commit, the image digest, each step with timings, every check, and what users saw during each step.
 
@@ -159,7 +159,7 @@ About 20 minutes. Commands run from this folder unless they start with `gh`.
 
    One traffic change, about 15 seconds, to the previous revision, which is still running. Then the same smoke test on production. The `watch` terminal switches back to the previous build without a failed call. Nothing was rebuilt or redeployed.
 
-6. **Show the evidence.** Each run has a **release-record** artifact (Markdown and JSON). The repository's **Deployments** page lists the `release-microsoft` environment's runs. In the portal, the container app's **Activity log** shows each change, made by the release identity. In the app, the requests named `Release check ...` are the ones the gate submitted; their history holds only the creation, because the API refused the self-approval.
+6. **Show the evidence.** Each run has a **release-record** artifact (Markdown and JSON). The repository's **Deployments** page lists the `release-microsoft` environment's runs. In the portal, the container app's **Activity log** shows each change, made by the release identity. In the app, the requests named `Release check ...` are the ones the gate submitted, each with a small `release-check.txt` attachment; their history shows the creation and the attachment, and no decision, because the API refused the self-approval.
 
 To drive a release from a terminal instead, build with `az acr build`, then run the steps yourself:
 
@@ -176,7 +176,7 @@ python release.py record         # writes out/release/release-record.md
 ## What to observe
 
 - **Users never meet an untested build.** The candidate runs with 0% of traffic until it passes the gate. While we ran a release, a bad release, and a rollback from GitHub Actions, the `watch` terminal recorded 575 of 575 successful calls, and its build changed only at the promotion and the rollback.
-- **The gate checks behavior, not just "it started".** Readiness comes from the platform; the smoke test then submits a request, retries it safely, reads it back, confirms the requester cannot approve it (`decision.self_approval`), and reads its audit history, on the candidate's own URL.
+- **The gate checks behavior, not just "it started".** Readiness comes from the platform and only covers the database; the smoke test then submits a request, retries it safely, reads it back, attaches a file and downloads the same bytes (Blob storage), confirms the requester cannot approve it (`decision.self_approval`), and reads its audit history, on the candidate's own URL. The attachment check exists because an Azure Policy once closed the storage account's public endpoint: every revision stayed "ready" while uploads failed.
 - **Provenance you can verify.** One image per commit, deployed by digest. The commit is baked into the image, and the gate fails if `/api/meta` reports a different one. The release record links commit, digest, revision, and the build users received.
 - **A bad build is caught and explained, not just held back.** Container Apps never routes users to a revision that is not ready; that is the platform's first line of defense. The release builds on it: the gate fails within about two minutes, captures Azure's probe failures and the app's own health-check message, and removes the candidate, so the run is red with a reason instead of "deployed". It also catches what readiness cannot see: a wrong build, or a business rule broken on a revision that starts fine.
 - **Recovery is a traffic change, not a redeploy.** Promotion and rollback each took about 15 seconds in our runs, with the same verification afterwards.
@@ -204,7 +204,7 @@ gh api -X DELETE repos/{owner}/{repo}/environments/release-microsoft
 ## Use it in your own repository
 
 1. **Prepare the app.** Run it in multiple-revision mode with an HTTP readiness probe that checks its dependencies (as [`app/infra/api.bicep`](../../app/infra/api.bicep) does), and expose its build commit on an anonymous endpoint.
-2. **Copy** `release.py`, `azd_env.py`, and the `.github/` folder of this solution into your repository. Set `CONTAINER` in `release.py` to your container name and replace the RequestHub calls in `smoke()` with your own critical journeys. Keep them idempotent and keep at least one check that proves a business rule.
+2. **Copy** `release.py`, `azd_env.py`, and the `.github/` folder of this solution into your repository. Set `CONTAINER` in `release.py` to your container name and replace the RequestHub calls in `smoke()` with your own critical journeys. Keep them idempotent, keep at least one check that proves a business rule, and add one for every dependency your readiness probe does not cover (here, Blob storage).
 3. **Grant two roles** to the identity your workflows use: Container Apps Contributor on the app's resource group and AcrPush on the registry, with a federated credential for your GitHub environment. Run the preflight.
 4. **Put a person before promotion** if your plan allows it: required reviewers on GitHub environments in private repositories need GitHub Enterprise. Use a second environment for the `promote` job so building and gating stay automatic.
 5. **Releases that change configuration.** `deploy` copies the stable revision's configuration and changes only the image, so a release changes one thing. If a release must also change settings, deploy the candidate from your Bicep with traffic pinned to the stable revision.
@@ -215,5 +215,6 @@ gh api -X DELETE repos/{owner}/{repo}/environments/release-microsoft
 
 - **Signing in on a label URL fails with `AADSTS50011`.** Only the production URL is registered for sign-in. The gate calls the API with a token, and `/api/meta` and `/health/*` are anonymous, so show a candidate with `https://<app>---candidate.<domain>/api/meta`.
 - **`Traffic is split` from `deploy`.** An earlier release stopped halfway. Finish it with `promote`, `abort`, or `rollback`, then release again.
+- **Attachment uploads return HTTP 500 and the gate's `attachment` check fails, while every revision is ready.** An Azure Policy disabled public network access on the storage account. The shared module reaches Blob storage through a private endpoint by default; run `azd provision` in this folder to add it to an environment created before that change (about 5 minutes; revisions and traffic are not touched).
 - **`LocationIsOfferRestricted` for PostgreSQL during `azd up`.** Your subscription cannot create PostgreSQL Flexible Server in that region. Create a new azd environment in another region, for example `centralus`.
 - **Azure CLI commands take 30 seconds or more on Windows.** Several tools sharing one Azure CLI token cache slow it down. The release steps still work; each one needs a few CLI calls.

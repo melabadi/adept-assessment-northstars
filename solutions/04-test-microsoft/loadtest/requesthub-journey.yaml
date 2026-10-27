@@ -1,0 +1,50 @@
+# Azure Load Testing configuration for the RequestHub journey (Test phase, Microsoft track).
+#
+# Everything here is environment-independent and safe to commit. load_test.py adds what depends on your deployment
+# (the API URL, the two managed identities the engines sign in with, and the Azure resources to monitor) and writes
+# the complete configuration to out/loadtest.yaml, which both `az load` and the azure/load-testing GitHub Action use.
+#
+# The workload values are small rehearsal settings for a demo environment, not a capacity claim.
+version: v0.1
+testId: requesthub-journey
+displayName: RequestHub request-and-approval journey
+description: Authenticated submit, queue, open, and decide journey with pass/fail criteria.
+testType: Locust
+testPlan: locustfile.py
+engineInstances: 1
+env:
+  # Workload: 10 concurrent virtual users (half requesters, half approvers), added 2 per second, for 120 seconds.
+  - name: LOCUST_USERS
+    value: 10
+  - name: LOCUST_SPAWN_RATE
+    value: 2
+  - name: LOCUST_RUN_TIME
+    value: 120
+  # Pacing: each virtual user starts at most one journey every 6 seconds.
+  - name: PACING_SECONDS
+    value: 6
+  # Approvers decide half of the requests this run submits (approve 4 in 5, reject 1 in 5, always with a comment).
+  - name: DECIDE_PERCENT
+    value: 50
+  - name: DEPARTMENTS
+    value: IT,FAC
+  # A Finance request the requester identity may not open (the 403 check).
+  - name: DENIED_REQUEST
+    value: REQ-1018
+  # Dataset: the 24 seeded requests, plus this many extra synthetic requests created before the measured load.
+  - name: DATASET_REQUESTS
+    value: 0
+  # Cleanup: the requester identity deletes the requests it submitted earlier before the run (before, after, both, none).
+  - name: CLEANUP
+    value: before
+# Acceptance thresholds. The run fails if any of these is true.
+failureCriteria:
+  clientMetrics:
+    - percentage(error) > 1
+    - team-queue: p95(response_time_ms) > 1000
+    - my-requests: p95(response_time_ms) > 1000
+    - submit: p95(response_time_ms) > 1500
+    - decide: p95(response_time_ms) > 1500
+autoStop:
+  errorPercentage: 50
+  timeWindow: 60

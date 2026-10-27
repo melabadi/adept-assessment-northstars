@@ -88,6 +88,8 @@ public sealed record CommentInput(string Body);
 
 public sealed record RoutingInput(string DepartmentId, string? Reason);
 
+public sealed record LoadTestCleanupDto(int Deleted, IReadOnlyList<string> Owners);
+
 public sealed record RequestQuery(
     string Scope = "queue",
     string? Status = null,
