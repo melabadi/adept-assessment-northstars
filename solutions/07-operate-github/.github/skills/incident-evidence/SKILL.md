@@ -7,7 +7,7 @@ description: Triage a RequestHub incident Issue into an evidence-based record. P
 
 Turns an incident report into a record a team can act on without guessing. The output separates what was **observed**, what is **suspected**, and what is **missing**. People reviewing it can then see how strong each conclusion is.
 
-The **Operate · GitHub · triage an incident** workflow uses this skill automatically when an Issue gets the `incident` label. You can also use it yourself, for example `copilot --agent operate-github -p "Triage incident #42 with the incident-evidence skill"`.
+The **Operate · GitHub · triage an incident** workflow uses this skill automatically when an Issue gets the `incident` label. Without that workflow, for example when the repository has no `COPILOT_GITHUB_TOKEN` secret, a person runs the same triage with Copilot CLI and the `operate-github` agent, which files the results with the commands in [Filing the results with Copilot CLI](#filing-the-results-with-copilot-cli).
 
 ## Inputs
 
@@ -61,6 +61,28 @@ Use this structure. Keep it factual and short enough to read in two minutes.
 One follow-up Issue was opened for H1: <title>. Not created: <other candidates, one line each>.
 A person decides whether to assign it to Copilot.
 ```
+
+## Filing the results with Copilot CLI
+
+The agentic workflow files its results through safe outputs. On the Copilot CLI path, file the same results yourself, in this order, with exactly these commands. The person who starts Copilot CLI allows only these `gh issue` commands and writing these two files, so run each command on its own: no pipes, redirection, or chained commands. Replace `<incident>` with the incident Issue number.
+
+1. **Read the incident:** `gh issue view <incident> --json number,title,body,labels,url`
+2. **Stop if it was already triaged:** `gh issue list --state open --label incident-followup --search '"Related to #<incident>" in:body' --json number,title,url`. If an open follow-up for this incident exists, report its link and file nothing.
+3. **Write the follow-up** to `out/operate/followup-issue.md` with the follow-up template. End the body with these two lines, so the follow-up links its incident like the workflow's follow-ups do:
+
+   ```markdown
+   Related to #<incident>
+
+   > Triaged with Copilot CLI (`operate-github` agent, `incident-evidence` skill) by the person who ran it. The agentic workflow did not run.
+   ```
+
+4. **Open it as a sub-issue of the incident:** `gh issue create --title "[follow-up] <title>" --label incident-followup --label ai-sdlc --label phase:operate --parent <incident> --body-file out/operate/followup-issue.md`. Note the number in the URL it prints.
+5. **Label the incident:** `gh issue edit <incident> --add-label severity:<N> --add-label area:<area>`, adding a second area only when the rubric calls for it. Never add the `incident` label: it starts the agentic workflow.
+6. **Write the triage comment** to `out/operate/triage-comment.md`, in the format above. The Follow-up section names the follow-up as `#<number>`. End with the same attribution line as the follow-up.
+7. **Post it:** `gh issue comment <incident> --body-file out/operate/triage-comment.md`
+8. **Report** the URLs of the follow-up and the comment.
+
+When the report is too thin to classify, skip steps 3 and 4, apply only `needs-info` in step 5, and list what is missing in the comment.
 
 ## Failure handling
 
