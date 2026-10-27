@@ -27,9 +27,11 @@ deterministic checks and a person, so the order of your commits is part of the d
    separately.
 6. Rerun the new tests, then the **regression-validation** skill
    (`python .github/skills/regression-validation/run_regression.py --base origin/<base branch>`), then the scenario,
-   which must print `Not reproduced`.
-7. In the pull request description, include the scenario output before and after, the failing test output from step 4,
-   the passing output from step 6, and the SHAs of the tests-only commit and the fix commit.
+   which must print `Not reproduced`. Check the commit order the way reviewers will:
+   `python .github/skills/review-evidence/prove_fix.py --base origin/<base branch> --head HEAD` must print `Proven`.
+7. End the pull request description with an **Evidence** section: the SHAs of the tests-only commit and the fix commit,
+   the failing test summary from step 4, the passing summary from step 6, and the scenario result before
+   (`REPRODUCED`) and after (`Not reproduced`).
 
 ## Rules
 - Never change approval authority: only approvers decide, and never on their own request. Keep role, department, and

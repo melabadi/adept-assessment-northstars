@@ -1,11 +1,13 @@
 # Test · GitHub: deterministic proof that a defect fix was made test-first.
 #  A fix pull request must start with a commit that only adds or changes tests, followed by the fix. This workflow runs
 #  the tests that commit added or changed at two known SHAs, each in a clean worktree: at the tests-only commit at least
-#  one must fail (the tests detect the defect), and at the pull request head all must pass (the fix works). Both test
-#  outputs are kept in the `regression-proof` artifact, and the job summary shows the two results side by side.
-# It runs on pull requests into a lab branch (lab/**) and on pull requests labelled `bug`. The full test suite still
-# runs in CI. Copilot code review and comments from people are not part of this check: they inform the reviewer, and a
-# person decides. The proof script comes from the base branch, so a pull request cannot change how it is judged.
+#  one must fail (the tests detect the defect), and at the pull request head every one must still exist and pass (the
+#  fix works; skipping or deleting a failing test does not count). Both test outputs are kept in the
+#  `regression-proof` artifact, and the job summary shows the two results side by side.
+# It runs on pull requests into a lab branch (lab/**) and on pull requests labelled `bug`, forks included. The full
+# test suite still runs in CI. Copilot code review and comments from people are not part of this check: they inform the
+# reviewer, and a person decides. The proof script comes from the base branch, so a pull request cannot change how it is
+# judged, and no credentials are left in the checkout while the pull request's tests run.
 name: Test · GitHub · prove the fix test-first
 
 on:
@@ -27,9 +29,9 @@ defaults:
 jobs:
   proof:
     name: Regression tests fail before the fix and pass after it
-    if: >-
-      (startsWith(github.base_ref, 'lab/') || contains(github.event.pull_request.labels.*.name, 'bug'))
-      && (github.event.action != 'labeled' || github.event.label.name == 'bug')
+    # Decided by the base branch and the pull request's current labels, never by which label was just added, so a
+    # new label re-runs the proof instead of cancelling it.
+    if: startsWith(github.base_ref, 'lab/') || contains(github.event.pull_request.labels.*.name, 'bug')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -50,12 +52,13 @@ jobs:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
-      - name: Check out the trusted proof script (base branch, full history of every branch)
+      - name: Fetch the pull request with full history (works for forks too)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Use the trusted proof script from the base branch
+        run: git checkout --quiet --detach "$BASE_SHA"
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
