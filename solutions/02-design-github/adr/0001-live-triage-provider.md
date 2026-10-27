@@ -41,7 +41,9 @@ Recommend Option A for the small-team profile: it keeps the live provider inside
 
 Recommend Option B for enterprise: the central gateway is mandatory under STD-OPS-002 v2.0 and the enterprise profile has a central platform team to operate it. This profile difference is intentional: operational simplicity wins for the small team; centrally enforced enterprise governance wins for enterprise.
 
-For either option, keep the provider advisory and the synchronous request path. Use the existing workflow for authorization, policy/result validation, persistence, audit, and explicit failure responses. Change the internal provider/tool payload so the AI receives only title, description, category, and approved routing policies. Do not send request identifiers, personal data, attachments, comments, current department/priority, or unrelated department data. Bind any read tool to the in-memory request being triaged and give it no caller-selectable record id. Keep recommendation and tool audit metadata, but do not store raw user text in application or gateway logs. Tune the configured deadline to meet the end-to-end 8-second p95 target; a timeout must result in a user-visible unavailable response within two seconds, with manual routing unaffected.
+For either option, keep the provider advisory and the synchronous request path. Use the existing workflow for authorization, policy/result validation, persistence, audit, and explicit failure responses. The API screens title and description, approved policy text, and every tool result before constructing or forwarding each outbound message. The screening gate detects direct identifiers and other personal data; a positive, uncertain, or failed screening blocks the AI call (fail closed). Do not redact and forward flagged content. This applies before both the direct endpoint and APIM, and does not rely on prompt instructions or the field allowlist as screening. Return a clear content-blocked/manual-routing response, make no AI call, and keep manual routing available. Change the internal provider/tool payload so the AI receives only screened title, description, category, and approved routing policies. Never send request identifiers, attachments, comments, current department/priority, or unrelated department data. Bind any read tool to the in-memory request being triaged and give it no caller-selectable record id.
+
+The model must not infer the current department. Update its instructions and structured output schema with a `keep_current` abstention disposition: for insufficient context under POL-ROUTE-007 or conflicting routing policies, abstain from choosing a department, set human review, and provide one clarifying question when context is insufficient. The department field is absent for this disposition. Before workflow validation, the API-side provider adapter maps `keep_current` to the authorized request's in-memory current department and forces human review; that department remains local and is never included in the prompt or tool result. Existing workflow policy-conflict checks remain authoritative. Keep recommendation and tool audit metadata, but do not store raw user text in application or gateway logs. Tune the configured deadline to meet the end-to-end 8-second p95 target; a timeout must result in a user-visible unavailable response within two seconds, with manual routing unaffected.
 
 ## Architecture
 
@@ -54,11 +56,11 @@ flowchart LR
     workflow --> db[(PostgreSQL: recommendation and audit metadata)]
     workflow --> audit[Scoped read-only tools for current request]
   end
-  audit -->|title, description, category; approved policy data| provider
+  audit -->|screened title, description, category; approved policy data| provider
   subgraph profileRoute["Profile-selected service route"]
     provider -->|small team: managed identity| model[Managed AI agent/model]
-    provider -->|enterprise: managed identity| apim[Central Azure API Management AI gateway]
-    apim -->|gateway to managed endpoint| model
+    provider -->|enterprise: managed identity + candidate API-derived quota scope (open)| apim[Central Azure API Management AI gateway]
+    apim -->|strip quota scope; forward allowed payload| model
   end
   model -->|advisory result and trace id| provider
   provider --> workflow
@@ -80,29 +82,45 @@ sequenceDiagram
   Reviewer->>API: POST /api/requests/{id}/triage-recommendations
   API->>WF: authenticated user and request id
   WF->>WF: authorize current-department staff; scope tools to this request
-  WF->>Provider: recommendation context
-  Provider->>Route: allowed request fields and approved policies, managed identity
-  Route->>AI: recommendation request
-  AI-->>Route: tool call (if used; no record id argument)
-  Route-->>Provider: tool call
-  Provider->>Tool: execute against current request only
-  Tool->>DB: audit actor, time, tool, outcome, safe result metadata
-  Tool-->>Provider: allowed fields or approved policies
-  Provider->>Route: scoped tool result
-  Route->>AI: tool result
-  AI-->>Route: structured advisory result and trace id
-  Route-->>Provider: response
-  Provider-->>WF: result
-  WF->>WF: validate department, priority, cited policies; force human review for policy conflict
-  WF->>DB: persist structured recommendation and audit metadata
-  DB-->>WF: saved
-  WF-->>API: 201 RecommendationDto
-  API-->>Reviewer: recommendation; reviewer decides whether to route
-  alt provider timeout or unavailable
-    Provider--xRoute: timeout or dependency failure
-    WF->>DB: audit triage failure and save
-    WF-->>API: 504 or 503; manual routing remains available
-    API-->>Reviewer: unavailable; route manually
+  WF->>WF: screen free text and approved policy content before egress
+  alt personal data detected, uncertain, or screening fails
+    WF-->>API: content blocked; no provider call
+    API-->>Reviewer: manual routing remains available
+  else screening passes
+    WF->>Provider: local context, including current department for fallback only
+    alt provider responds within deadline
+      Provider->>Route: screened allowed fields and policies; candidate enterprise quota scope
+      Note over Route,AI: APIM strips any approved gateway-only quota scope before model forwarding
+      Route->>AI: recommendation request
+      opt agent requests scoped tool
+        AI-->>Route: tool call (no record id argument)
+        Route-->>Provider: tool call
+        Provider->>Tool: execute against current request only
+        Tool->>DB: audit actor, time, tool, outcome, safe result metadata
+        Tool-->>Provider: allowed fields or approved policies
+        Note over Provider,Route: Screen every tool result; blocked or uncertain content returns manual fallback and is not forwarded
+        Provider->>Route: screened scoped tool result
+        Route->>AI: tool result
+      end
+      AI-->>Route: structured disposition (recommend or keep_current) and trace id
+      Route-->>Provider: response
+      alt agent abstains for insufficient context or policy conflict
+        Provider->>Provider: map keep_current to local current department; force human review
+      else agent recommends a route
+        Provider->>Provider: retain suggested department
+      end
+      Provider-->>WF: result
+      WF->>WF: validate mapped department, priority, cited policies; enforce policy-conflict human review
+      WF->>DB: persist structured recommendation and audit metadata
+      DB-->>WF: saved
+      WF-->>API: 201 RecommendationDto
+      API-->>Reviewer: recommendation; reviewer decides whether to route
+    else timeout or unavailable
+      Provider--xRoute: timeout or dependency failure
+      WF->>DB: audit triage failure and save
+      WF-->>API: 504 or 503; manual routing remains available
+      API-->>Reviewer: unavailable; route manually
+    end
   end
 ```
 
@@ -145,8 +163,8 @@ No public API change is needed for this design. If later work exposes a new loca
 
 ## Implementation tasks
 
-1. **API/provider engineer:** implement the profile-selected provider route and exact outbound field allowlist, including a tool bound to the current request without exposing a selectable request id. Acceptance: tests capture both the initial prompt and every tool-call/result round trip at the AI-service boundary and prove only title, description, category, and approved routing-policy data reach the service; `requestId`, department lists, current department, priority, attachments, and personal data are absent from every outbound message.
-2. **Platform engineer:** provision least-privilege managed-identity access for the direct managed endpoint and, for enterprise, configure the APIM gateway route and per-department controls. Acceptance: deployment uses no AI key; enterprise traffic is observed at APIM and direct production endpoint access is denied.
+1. **API/provider engineer:** implement the profile-selected provider route, pre-egress screening for the initial prompt and every tool result, and an exact outbound field allowlist; bind tools to the current request without exposing a selectable request id. Update agent instructions/schema to represent `keep_current` without a department, and map that disposition to the local current department before workflow validation. Acceptance: tests place synthetic personal data separately in title and description and verify, on both direct and APIM routes, that positive/uncertain/failed screening makes no provider call and preserves manual routing; clean text tests capture every outbound message and show only allowed screened fields/policies, with no request id, current department, priority, attachments, or personal data. Additional tests prove insufficient-context and policy-conflict abstentions map to the current department, force human review, and (for insufficient context) carry one clarifying question.
+2. **Platform engineer:** provision least-privilege managed-identity access for the direct managed endpoint and configure the enterprise APIM route. Acceptance: deployment uses no AI key; enterprise traffic is observed at APIM and direct production endpoint access is denied. Once the gateway-scope question below is resolved, integration tests prove two departments consume isolated quota/usage buckets, client-supplied scope is rejected, and gateway-only scope is absent from the model payload.
 3. **Core workflow engineer:** set and test an end-to-end deadline, retain recommendation validation and human-only routing/approval, and surface timeout/unavailable states. Acceptance: deterministic tests cover timeout, invalid result, service outage, and continued manual routing; telemetry reports p95 and users receive unavailable within two seconds of timeout.
 4. **Audit/privacy engineer:** audit recommendation and every tool invocation with actor, timestamp, request correlation, provider/tool, outcome, trace id, and only safe structured return metadata; implement profile retention. Acceptance: tests show no raw request free text in audit rows, application logs, or gateway logs; small-team recommendations expire at 90 days and enterprise recommendations/audit entries at 13 months.
 5. **AI quality engineer:** validate English and French results, policy citations, and adversarial prompt handling; prepare enterprise release evaluation evidence. Acceptance: both languages pass the agreed labelled cases, and enterprise release evidence contains a versioned dataset of at least ten labelled cases including adversarial inputs (STD-AI-002 v1.0).
@@ -157,4 +175,6 @@ No public API change is needed for this design. If later work exposes a new loca
 - **Audit detail:** BR-4 says audit what each tool returned, while STD-SEC-002 v1.1 prohibits persisting raw user-entered free text. Is structured field/policy metadata plus a response digest sufficient, or is an approved redacted audit representation required? This also affects whether recommendation rationale may be stored verbatim.
 - **Small-team audit retention:** STD-DATA-002 v1.0 defines recommendation retention but not a retention period for tool-call audit entries. What retention applies to those entries in the small-team profile?
 - **Enterprise gateway compatibility:** Can the central Azure API Management AI gateway front the selected managed agent endpoint while preserving managed identity, trace identifiers, the required tool-call flow, and the 8-second p95? The platform team must confirm before implementation.
+- **Trusted department scope for gateway quotas:** STD-OPS-002 v2.0 requires per-department quotas and usage reporting, but the shared app managed identity does not distinguish departments and current department must not reach the model. Should the API derive a gateway-only quota scope from the authorized request's current department and attach it as trusted metadata for APIM to validate and strip before model forwarding? What mechanism binds that scope to the authenticated API call and rejects caller-supplied or spoofed scope? Leave this boundary unresolved for reviewer/platform-owner decision; accept only after a two-department quota-isolation test proves separation and verifies the scope is removed before model forwarding.
+- **Personal-data screening effectiveness:** Which app-side screening implementation and evaluation threshold should be approved before launch? The proposed boundary fails closed on positive, uncertain, or failed screening; reviewers must confirm it catches the synthetic title/description cases and tool-result content without logging the rejected free text.
 - **Bilingual behavior:** Where should English or French be selected (request language, reviewer preference, or explicit UI locale), given that the current provider context has no locale field? The decision must avoid sending additional personal data and keep any public contract change additive.
