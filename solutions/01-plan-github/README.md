@@ -94,13 +94,9 @@ About 15 minutes.
 
    In bash, use `-p "$(cat solutions/01-plan-github/refine-task.md)"`.
 
-   **B. Delegate to the Copilot cloud agent (10 to 15 minutes; start it before the session).** Create an Issue from the **Plan: refine requirements with Copilot** template, assign it to **Copilot**, and pick the **plan-github** agent. From a terminal you can instead run:
+   **B. Delegate to the Copilot cloud agent (about 5 minutes; start it before the session).** Create an Issue from the **Plan: refine requirements with Copilot** template, assign it to **Copilot**, and pick the **plan-github** agent. Copilot opens a draft pull request when it is done.
 
-   ```powershell
-   gh agent-task create -F solutions/01-plan-github/refine-task.md --custom-agent plan-github
-   ```
-
-   Copilot opens a pull request. If its checks wait for approval, select **Approve and run workflows**.
+   Workflows on Copilot's pull requests wait for a person. Select **Approve and run workflows** on the pull request, or re-run the waiting runs from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids).
 
 3. **Watch the gate.** The **Plan · GitHub · review and publish the brief** check runs the validator. Its summary reads like `VALID - 4 tasks, 6 open questions, 1/2 conflicts unresolved`.
 
@@ -144,6 +140,6 @@ Do not merge the brief into `main`. Keeping it out keeps the demo repeatable.
 
 ## Troubleshooting
 
-- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent may wait for approval. Select **Approve and run workflows**.
+- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person to approve them. Select **Approve and run workflows**, or run `gh run rerun <run-id>`.
 - **`Refusing to publish: the backlog is not valid`.** The backlog changed after validation, or it cites something that does not exist. Fix it, then apply the label again.
 - **`dependencies: text-only`.** The Issue dependencies API is not available for the repository, so dependencies appear as links in each task instead.
