@@ -18,8 +18,8 @@ Scenario format (JSON)
                             countWhere {"field": "action", "equals": "decision.recorded", "count": 1} (list responses)
 
 Usage
-  python .github/skills/failure-reproduction/repro.py phases/04-test/github/repro/duplicate-decision.json
-  python .github/skills/failure-reproduction/repro.py phases/04-test/github/repro/whitespace-rejection.json --api http://localhost:5080
+  python .github/skills/failure-reproduction/repro.py solutions/04-test-github/scenarios/duplicate-decision.json
+  python .github/skills/failure-reproduction/repro.py solutions/04-test-github/scenarios/whitespace-rejection.json --api http://localhost:5081
 
 Exit codes: 0 every expectation held (not reproduced), 1 defect reproduced, 2 configuration or connection error.
 """
@@ -87,14 +87,18 @@ def check(step: dict, results: list[tuple[int, object]]) -> tuple[str, list[str]
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("scenario", type=Path, help="Scenario JSON file")
     parser.add_argument("--api", default="http://localhost:5080", help="RequestHub API base URL with development sign-in (default http://localhost:5080)")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    scenario = json.loads(args.scenario.read_text(encoding="utf-8"))
+    try:
+        scenario = json.loads(args.scenario.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"error: cannot read the scenario {args.scenario}: {exc}", file=sys.stderr)
+        return 2
     values: dict[str, object] = {"run": time.strftime("%Y%m%d%H%M%S")}
     failed = 0
     print(f"Scenario: {scenario['title']}  ({args.api})\n")

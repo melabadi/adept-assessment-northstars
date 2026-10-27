@@ -5,34 +5,51 @@ description: Assemble the evidence a reviewer needs for a pull request, separati
 
 # Review evidence
 
-A PR is accepted by deterministic checks and a person. Copilot code review comments help the reviewer, but an empty review is
-not proof of correctness. This skill keeps those two kinds of evidence apart in one PR comment.
+A fix is accepted by deterministic checks and a person. Copilot code review comments help the reviewer, but an empty
+review is not proof of correctness. This skill produces both kinds of evidence and keeps them apart.
 
 ## When to use
-- An agent or a developer opened a fix PR and asks for review.
-- You review a PR and want to see that the regression test failed before the fix and passes after it.
+- An agent or a developer opened a fix pull request and asks for review.
+- You review a fix and want to see that its regression tests failed before the fix and pass after it.
+- Before you merge, to record which checks passed and who decided.
 
 ## Inputs
-- The PR number. GitHub CLI signed in with access to the repository.
-- For `--run`: PostgreSQL on `localhost:5432` (the tests run in temporary git worktrees at each commit).
+- A pull request whose first change is a commit that only adds or changes tests, followed by the fix
+  (failure-reproduction skill, step 4).
+- GitHub CLI signed in with access to the repository.
+- For local proofs (`prove_fix.py`, or `review_evidence.py --run`): the .NET SDK and PostgreSQL on localhost:5432.
 
 ## Procedure
-1. Make sure the PR has a commit that only adds tests, followed by the fix (failure-reproduction skill, step 4).
-2. Request a Copilot code review on the PR (Reviewers > Copilot, or `gh pr edit <n> --add-reviewer @copilot`).
-3. Produce the evidence:
-   `python .github/skills/review-evidence/review_evidence.py --pr <n> --run --filter "*Decision*" --comment`
-4. Read the comment top-down: every deterministic check must pass and the tests-only commit must show failures. Then read the
-   Copilot comments and decide which to apply. Record the decision as a GitHub review (Approve or Request changes).
+1. **Prove the order of evidence.** The workflow *Test · GitHub · prove the fix test-first*
+   (`.github/workflows/test-github-proof.yml`) runs on fix pull requests. It finds the tests-only commit, selects the
+   test methods it added or changed, and runs them in clean worktrees at that commit (at least one must fail) and at
+   the head (every one must still exist and pass, so skipping or deleting a failing test does not count). Both test
+   outputs are kept in its `regression-proof` artifact. To run the same proof locally:
+   `python .github/skills/review-evidence/prove_fix.py --pr <n>` (or `--base <branch> --head HEAD` for local commits).
+2. **Ask for Copilot code review**: Reviewers > Copilot on the pull request, or `gh pr edit <n> --add-reviewer @copilot`.
+3. **Assemble the report** and post it on the pull request:
+   `python .github/skills/review-evidence/review_evidence.py --pr <n> --comment`.
+   Section 1 (checks and the proof) decides; section 2 (Copilot and people's comments) informs; section 3 records the
+   decision.
+4. **Decide.** Read the tests themselves: do they assert the behavior the Issue describes? Then approve or request
+   changes as a GitHub review, and run step 3 again: it updates the same comment with the decision.
 
 ## Expected output
 ```
-| `1a2b3c4d5` | tests only: Add failing regression tests for #7 | ❌ 3 of 3 failed (must fail: proves the defect) |
-| `9f8e7d6c5` | PR head | ✅ 3 of 3 passed (must pass) |
+| `8654a2fa4` | tests only: Add failing regression tests for #5 | ❌ 8 of 10 failed | must fail: proves the defect |
+| `f69668543` | head: Fix first-wins decisions ... | ✅ 10 of 10 passed | must pass: proves the fix |
+
+✅ Proven: 8 of 10 selected tests fail at the tests-only commit, and all 10 pass at the head.
 - Copilot code review: 2 inline comment(s).
-- **approved** by @reviewer (2026-10-26)
+- approved by @reviewer on 2026-10-27
 ```
+Exit codes of `prove_fix.py`: 0 proven, 1 not proven, 2 setup error.
 
 ## Failure handling
-- `No CI checks reported yet`: workflows on Copilot PRs wait for a maintainer to click **Approve and run workflows**.
-- `no tests-only commit`: ask the author to split the commit, or rerun the tests at the base branch to show the failure.
-- `did not run (build error?)`: the commit does not build; that is itself a finding for the review.
+- `No checks yet`: workflows on Copilot's pull requests wait until a person selects **Approve and run workflows**.
+- `no tests-only commit before the fix`: ask the author to commit the failing tests on their own first. Do not accept a
+  proof run at the base branch instead; it does not show that the tests in the pull request detect the defect.
+- `the new tests pass without the fix`: the tests do not detect the defect. Ask for stronger tests.
+- `did not run (build error?)`: that commit does not build; open its log in the artifact. That is a review finding.
+- A proof says ✅ but the tests assert something trivial: the proof shows the order of evidence, not test quality.
+  The reviewer still reads the tests.
