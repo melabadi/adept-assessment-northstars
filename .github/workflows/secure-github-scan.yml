@@ -1,0 +1,108 @@
+name: Secure · GitHub · CodeQL lab scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: lab/secure-* branch, or copilot/* repair PR targeting that lab
+        required: true
+        type: string
+      expect:
+        description: Required cs/sql-injection state
+        required: true
+        type: choice
+        options: [present, absent]
+      publish_alerts:
+        description: Upload to code scanning (public or licensed repo; disable default setup first)
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  entitlement:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      security-events: read
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check entitlement before any CodeQL execution
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: >-
+          python .github/skills/finding-triage/finding_triage.py preflight
+          --repo "$REPOSITORY" --ref "$TARGET_REF" --out out/entitlement.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: secure-entitlement
+          path: out/entitlement.json
+          if-no-files-found: error
+
+  scan:
+    needs: entitlement
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.entitlement.outputs.sha }}
+          path: target
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: github/codeql-action/init@3ce22a6e336a7fcc318bc58ae1986395bdc83ba7 # v4.35.4
+        with:
+          languages: csharp
+          build-mode: manual
+          source-root: target
+          queries: security-extended
+      - name: Build only RequestHub source under analysis (no deployment)
+        run: dotnet build target/app/RequestHub.slnx -c Release
+      - uses: github/codeql-action/analyze@3ce22a6e336a7fcc318bc58ae1986395bdc83ba7 # v4.35.4
+        with:
+          output: out/sarif
+          upload: never
+          upload-database: false
+          checkout_path: target
+          category: secure-github-csharp
+      - name: Verify the expected finding and write evidence
+        env:
+          EXPECT: ${{ inputs.expect }}
+          SCANNED_SHA: ${{ needs.entitlement.outputs.sha }}
+        run: >-
+          python trusted/.github/skills/finding-triage/finding_triage.py sarif
+          --input out/sarif --expect "$EXPECT" --sha "$SCANNED_SHA" --out out/finding.json
+      - uses: github/codeql-action/upload-sarif@3ce22a6e336a7fcc318bc58ae1986395bdc83ba7 # v4.35.4
+        if: inputs.publish_alerts
+        with:
+          sarif_file: out/sarif
+          ref: refs/heads/${{ inputs.target_ref }}
+          sha: ${{ needs.entitlement.outputs.sha }}
+          checkout_path: target
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: secure-codeql-evidence
+          path: out/
+          if-no-files-found: error

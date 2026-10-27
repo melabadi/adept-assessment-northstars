@@ -1,0 +1,2 @@
+# Python packages for this solution's skill scripts (Python 3.12+): pip install -r requirements.txt
+# None today: repro.py, prove_fix.py, and review_evidence.py use only the standard library.
