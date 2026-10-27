@@ -64,7 +64,9 @@ A person decides whether to assign it to Copilot.
 
 ## Filing the results with Copilot CLI
 
-The agentic workflow files its results through safe outputs. On the Copilot CLI path, file the same results yourself, in this order, with exactly these commands. The person who starts Copilot CLI allows `gh issue` commands and writing these two files. Use no other `gh issue` command, and run each command on its own: no pipes, redirection, or chained commands. Replace `<incident>` with the incident Issue number.
+Only on the Copilot CLI path. The agentic workflow skips this section: it files through its safe-output tools, which add the `[follow-up]` prefix and link the follow-up to the incident (`Related to #N`) themselves, so its follow-up body ends with the Evidence section and nothing else.
+
+On the Copilot CLI path, file the same results yourself, in this order, with exactly these commands. The person who starts Copilot CLI allows `gh issue` commands and writing these two files. Use no other `gh issue` command, and run each command on its own: no pipes, redirection, or chained commands. Replace `<incident>` with the incident Issue number.
 
 1. **Read the incident:** `gh issue view <incident> --json number,title,body,labels,url`
 2. **Stop if it was already triaged:** `gh issue list --state open --label incident-followup --search '"Related to #<incident>" in:body' --json number,title,url`. If an open follow-up for this incident exists, report its link and file nothing.
