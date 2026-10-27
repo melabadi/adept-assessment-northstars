@@ -12,7 +12,7 @@ describe('TriagePanel', () => {
           title: 'Badge access to Building C lab',
           departmentId: 'FAC',
           latestRecommendation: recommendation(),
-          permissions: { ...noPermissions, canTriage: true },
+          permissions: { ...noPermissions, canTriage: true, canRoute: true },
         }),
       'GET /api/requests/REQ-1003/history': () => [],
     });
@@ -34,8 +34,40 @@ describe('TriagePanel', () => {
     expect(within(panel).getByText('60%')).toBeInTheDocument();
     expect(within(panel).getByText('Recommendations are advisory. Only an approver can approve or reject.')).toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: 'Get recommendation' })).toBeInTheDocument();
-    // Applying a recommendation is intentionally not part of the UI.
-    expect(within(panel).getAllByRole('button')).toHaveLength(1);
+    expect(within(panel).getByRole('button', { name: 'Confirm routing' })).toBeInTheDocument();
+  });
+
+  it('confirms a current recommendation and shows who confirmed it', async () => {
+    let confirmed = false;
+    const recommendationId = '7d2c1f00-0000-4000-8000-000000000001';
+    mockApi({
+      'GET /api/requests/REQ-1001': () =>
+        detail({
+          departmentId: confirmed ? 'FAC' : 'IT',
+          latestRecommendation: recommendation({
+            suggestedDepartmentId: 'FAC',
+            departmentAtRecommendation: 'IT',
+            status: confirmed ? 'Confirmed' : 'Proposed',
+            confirmedBy: confirmed ? { id: 'u-ben', displayName: 'Ben Okafor' } : null,
+          }),
+          permissions: { ...noPermissions, canRoute: true },
+        }),
+      'GET /api/requests/REQ-1001/history': () => [],
+      [`POST /api/requests/REQ-1001/triage-recommendations/${recommendationId}/confirm`]: () => {
+        confirmed = true;
+        return {};
+      },
+    });
+    const user = userEvent.setup();
+
+    renderApp('/requests/REQ-1001', { persona: 'u-ben' });
+
+    const panel = await screen.findByRole('region', { name: 'Triage assistant' });
+    await user.click(within(panel).getByRole('button', { name: 'Confirm routing' }));
+
+    expect(await within(panel).findByText('Confirmed by Ben Okafor')).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
+    expect(await screen.findByText('Current department: Facilities')).toBeInTheDocument();
   });
 
   it('labels AI recommendations with the provider and trace id, and flags stale or uncertain suggestions', async () => {
