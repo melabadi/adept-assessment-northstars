@@ -64,6 +64,7 @@ Scripts and tests pick a persona with the `X-RequestHub-User` header, for exampl
 dotnet test --solution app/RequestHub.slnx        # API, worker, and contract tests on the local PostgreSQL
 npm run typecheck --prefix app/web
 npm test --prefix app/web                          # UI unit tests
+npm exec --prefix app/web -- playwright install chromium   # once: the browser the e2e tests drive
 npm run e2e --prefix app/web                       # browser tests; needs the API running on http://localhost:5080
 ```
 
@@ -105,11 +106,11 @@ The app has no deployment of its own. Each Microsoft solution that needs a runni
 
 Data stays off the public internet by default. PostgreSQL has no public endpoint, and Blob storage is reached through a private endpoint (a subnet, a `privatelink.blob` private DNS zone linked to the virtual network, and the endpoint itself) with its public endpoint closed. Set the module's `storagePrivateEndpoint` parameter to `false` to keep a public storage endpoint instead; attachments then fail wherever Azure Policy disables public network access on storage accounts. The [Secure solution](../solutions/05-secure-microsoft/) starts that way to give Azure Policy and Defender for Cloud a real finding to report.
 
-In the cloud, Container Apps authentication signs users in with Microsoft Entra ID and the API enforces app roles (`RequestHub.Requester`, `Reviewer`, `Approver`, `Admin`). Whoever runs `azd provision` gets every role. To call the deployed API from a terminal:
+In the cloud, Container Apps authentication signs users in with Microsoft Entra ID and the API enforces app roles (`RequestHub.Requester`, `Reviewer`, `Approver`, `Admin`). Whoever runs `azd provision` gets every role. To call the deployed API from a terminal, run this in the folder of the solution that deployed it (for example `solutions/03-develop-microsoft`), where `azd` finds its environment:
 
 ```powershell
 $token = az account get-access-token --scope "$(azd env get-value API_IDENTIFIER_URI)/user_impersonation" --query accessToken -o tsv
-curl -H "Authorization: Bearer $token" "$(azd env get-value API_URL)/api/me"
+curl.exe -H "Authorization: Bearer $token" "$(azd env get-value API_URL)/api/me"
 ```
 
 ## Folder map
