@@ -27,22 +27,138 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
         }
     }
 
-    private NotificationProcessor Processor(RequestHubDbContext db, INotificationSender sender, int maxAttempts) => new(
+    private sealed class TimeoutSender(Guid[] batch, CancellationTokenSource? processorCancellation = null) : INotificationSender
+    {
+        public List<Guid> Calls { get; } = [];
+
+        public Task SendAsync(Notification notification, CancellationToken cancellationToken)
+        {
+            if (!batch.Contains(notification.Id)) return Task.CompletedTask;
+            Calls.Add(notification.Id);
+            if (notification.Id != batch[1]) return Task.CompletedTask;
+            processorCancellation?.Cancel();
+            throw new TaskCanceledException("Sender timed out", null,
+                processorCancellation is null ? new CancellationToken(canceled: true) : cancellationToken);
+        }
+    }
+
+    private NotificationProcessor Processor(RequestHubDbContext db, INotificationSender sender, int maxAttempts,
+        int batchSize = 1, int baseBackoffSeconds = 0) => new(
         db, sender, TimeProvider.System,
-        Options.Create(new WorkerOptions { BatchSize = 1, MaxAttempts = maxAttempts, BaseBackoffSeconds = 0 }),
+        Options.Create(new WorkerOptions { BatchSize = batchSize, MaxAttempts = maxAttempts, BaseBackoffSeconds = baseBackoffSeconds }),
         new StaticOptionsMonitor<FaultOptions>(new FaultOptions()),
         NullLogger<NotificationProcessor>.Instance);
 
-    private async Task<Guid> PendingNotificationAsync(RequestHubDbContext db)
+    private async Task<Guid> PendingNotificationAsync(RequestHubDbContext db, DateTimeOffset? createdAt = null)
     {
         var n = new Notification
         {
-            Id = Guid.NewGuid(), Recipient = "u-ava", Type = "test.retry", CreatedAt = DateTimeOffset.UtcNow.AddYears(-1),
+            Id = Guid.NewGuid(), Recipient = "u-ava", Type = "test.retry", CreatedAt = createdAt ?? DateTimeOffset.UtcNow.AddYears(-1),
             NextAttemptAt = DateTimeOffset.UtcNow.AddYears(-1),
         };
         db.Notifications.Add(n);
         await db.SaveChangesAsync();
         return n.Id;
+    }
+
+    private async Task<Guid[]> PendingBatchAsync(RequestHubDbContext db)
+    {
+        var start = (await db.Notifications.MinAsync(n => (DateTimeOffset?)n.CreatedAt) ?? DateTimeOffset.UtcNow).AddDays(-1);
+        return [
+            await PendingNotificationAsync(db, start),
+            await PendingNotificationAsync(db, start.AddSeconds(1)),
+            await PendingNotificationAsync(db, start.AddSeconds(2)),
+        ];
+    }
+
+    [Fact]
+    public async Task Sender_timeout_persists_batch_and_retries_until_failed_without_resending_successes()
+    {
+        Guid[] ids;
+        await using (var scope = api.Factory.Services.CreateAsyncScope())
+        {
+            ids = await PendingBatchAsync(scope.ServiceProvider.GetRequiredService<RequestHubDbContext>());
+        }
+        var sender = new TimeoutSender(ids);
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var before = DateTimeOffset.UtcNow;
+            await using (var scope = api.Factory.Services.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+                var processor = Processor(db, sender, maxAttempts: 3, batchSize: 3, baseBackoffSeconds: 60);
+                await processor.ProcessBatchAsync(CancellationToken.None);
+            }
+
+            await using var verificationScope = api.Factory.Services.CreateAsyncScope();
+            var persisted = verificationScope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+            var notifications = await persisted.Notifications.Where(n => ids.Contains(n.Id)).ToDictionaryAsync(n => n.Id);
+            foreach (var id in new[] { ids[0], ids[2] })
+            {
+                Assert.Equal(NotificationStatus.Sent, notifications[id].Status);
+                Assert.Equal(1, notifications[id].Attempts);
+                Assert.NotNull(notifications[id].ProcessedAt);
+                Assert.Null(notifications[id].LastError);
+                Assert.Equal(1, sender.Calls.Count(call => call == id));
+            }
+            var timedOut = notifications[ids[1]];
+            Assert.Equal(attempt, timedOut.Attempts);
+            Assert.Equal("Sender timed out", timedOut.LastError);
+            Assert.Equal(attempt, sender.Calls.Count(call => call == ids[1]));
+            if (attempt < 3)
+            {
+                Assert.Equal(NotificationStatus.Pending, timedOut.Status);
+                Assert.Null(timedOut.ProcessedAt);
+                Assert.True(timedOut.NextAttemptAt >= before.AddSeconds(60 * Math.Pow(2, attempt - 1)));
+                timedOut.NextAttemptAt = before.AddSeconds(-1);
+                await persisted.SaveChangesAsync();
+            }
+            else
+            {
+                Assert.Equal(NotificationStatus.Failed, timedOut.Status);
+                Assert.NotNull(timedOut.ProcessedAt);
+            }
+        }
+
+        Assert.Equal(ids, sender.Calls.Take(3).ToArray());
+        var calls = sender.Calls.Count;
+        await using var finalScope = api.Factory.Services.CreateAsyncScope();
+        await Processor(finalScope.ServiceProvider.GetRequiredService<RequestHubDbContext>(), sender, maxAttempts: 3, batchSize: 3)
+            .ProcessBatchAsync(CancellationToken.None);
+        Assert.Equal(calls, sender.Calls.Count);
+    }
+
+    [Fact]
+    public async Task Processor_cancellation_during_delivery_propagates_without_committing_batch()
+    {
+        Guid[] ids;
+        await using (var scope = api.Factory.Services.CreateAsyncScope())
+        {
+            ids = await PendingBatchAsync(scope.ServiceProvider.GetRequiredService<RequestHubDbContext>());
+        }
+        using var cancellation = new CancellationTokenSource();
+        var sender = new TimeoutSender(ids, cancellation);
+        await using (var scope = api.Factory.Services.CreateAsyncScope())
+        {
+            var processor = Processor(scope.ServiceProvider.GetRequiredService<RequestHubDbContext>(), sender, maxAttempts: 3, batchSize: 3);
+            var error = await Assert.ThrowsAsync<TaskCanceledException>(() => processor.ProcessBatchAsync(cancellation.Token));
+            Assert.Equal(cancellation.Token, error.CancellationToken);
+        }
+
+        Assert.True(cancellation.IsCancellationRequested);
+        Assert.Equal(ids.Take(2).ToArray(), sender.Calls.ToArray());
+        await using var verificationScope = api.Factory.Services.CreateAsyncScope();
+        var db = verificationScope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var notifications = await db.Notifications.Where(n => ids.Contains(n.Id)).ToListAsync();
+        Assert.Equal(3, notifications.Count);
+        Assert.All(notifications, n =>
+        {
+            Assert.Equal(NotificationStatus.Pending, n.Status);
+            Assert.Equal(0, n.Attempts);
+            Assert.Null(n.LastError);
+            Assert.Null(n.ProcessedAt);
+        });
     }
 
     [Fact]
