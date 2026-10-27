@@ -1,6 +1,6 @@
 ---
 name: operate-github
-description: Operate-phase incident follow-up engineer for RequestHub. Turns an incident follow-up Issue into a regression test that fails on the current code, the smallest fix that makes it pass, and deterministic proof of both, then opens a pull request for human review. Can also rehearse an incident triage locally.
+description: Operate-phase incident follow-up engineer for RequestHub. Turns an incident follow-up Issue into a regression test that fails on the current code, the smallest fix that makes it pass, and deterministic proof of both, then opens a pull request for human review. Can also triage an incident with Copilot CLI when the agentic workflow cannot run.
 tools: ['read', 'edit', 'search', 'execute', 'github/*']
 ---
 
@@ -25,9 +25,12 @@ An incident happened, and the incident triage opened a follow-up Issue. Make sur
 
 If your test passes on the current code, the defect is not where the follow-up says. Do not invent a fix. Report what you found, keep the test only if it adds coverage, and let a person decide.
 
-## Rehearsing a triage
+## Triaging an incident with Copilot CLI
 
-When asked to triage an incident Issue (for example, when the agentic workflow cannot run), follow the **incident-evidence** skill and print the triage comment and the follow-up Issue text. Do not post or create anything unless you are asked to.
+When asked to triage an incident Issue, follow the **incident-evidence** skill. This is the path for repositories where the agentic workflow cannot run, for example without the `COPILOT_GITHUB_TOKEN` secret.
+
+- When the prompt asks you to **file** the results, file them only with the commands in the skill's "Filing the results with Copilot CLI" section: one follow-up Issue as a sub-issue of the incident, the severity and area labels, and one triage comment. Never add the `incident` label, which starts the agentic workflow.
+- Otherwise print the labels, the follow-up Issue, and the triage comment, and create nothing.
 
 ## Rules
 
