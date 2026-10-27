@@ -13,16 +13,16 @@ What this script does, step by step:
   6. Writes evidence of the live call to run.json: response id, agent name/version, model, vector store, file-search
      calls, duration, and validation result.
 
-Outputs (default folder phases/01-plan/output/microsoft/): backlog.json, brief.md, run.json.
+Outputs (default folder brief/ next to this script): backlog.json, brief.md, run.json.
 
 Configuration (environment variables, or read automatically from `azd env get-values` when azd is installed):
   FOUNDRY_PROJECT_ENDPOINT   https://<account>.services.ai.azure.com/api/projects/<project>
-  FOUNDRY_MODEL_DEPLOYMENT   model deployment name, e.g. gpt-4.1-mini
-Your identity needs the "Azure AI User" role on the Foundry account (granted by infra/core.bicep).
+  FOUNDRY_MODEL_DEPLOYMENT   model deployment name, e.g. gpt-4.1
+Your identity needs the "Foundry User" role (formerly Azure AI User) on the Foundry account (infra/resources.bicep grants it to whoever runs azd).
 
 Usage
-  python phases/01-plan/microsoft/requirements_analyst.py
-  python phases/01-plan/microsoft/requirements_analyst.py --out out/plan-foundry
+  python solutions/01-plan-microsoft/requirements_analyst.py
+  python solutions/01-plan-microsoft/requirements_analyst.py --out solutions/01-plan-microsoft/out/run1
 
 Exit codes: 0 valid package, 1 package produced but failed validation, 2 configuration or service error.
 """
@@ -45,18 +45,18 @@ from azure.ai.projects.models import (
     FileSearchTool,
     PromptAgentDefinition,
     PromptAgentDefinitionTextOptions,
+    Reasoning,
     TextResponseFormatJsonSchema,
 )
 from azure.identity import DefaultAzureCredential
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[2]
-SKILL = REPO / ".github/skills/requirements-traceability"
+SKILL = HERE / ".github/skills/requirements-traceability"
 sys.path.insert(0, str(SKILL))
 import render_brief  # noqa: E402
 import validate_backlog  # noqa: E402
 
-INPUTS = [REPO / "phases/01-plan/inputs/stakeholder-transcript.md", REPO / "phases/01-plan/inputs/routing-policies.md"]
+INPUTS = [HERE / "inputs/stakeholder-transcript.md", HERE / "inputs/routing-policies.md"]
 UNSUPPORTED_STRICT_KEYS = {"$schema", "title", "pattern", "minItems", "maxItems", "format", "minLength", "maxLength"}
 
 
@@ -64,7 +64,7 @@ def azd_env() -> dict[str, str]:
     """Read values from the active azd environment, if azd is available."""
     if not shutil.which("azd"):
         return {}
-    proc = subprocess.run(["azd", "env", "get-values", "--output", "json"], capture_output=True, text=True, cwd=REPO)
+    proc = subprocess.run(["azd", "env", "get-values", "--output", "json"], capture_output=True, text=True, cwd=HERE)
     if proc.returncode != 0:
         return {}
     try:
@@ -76,8 +76,24 @@ def azd_env() -> dict[str, str]:
 def setting(name: str, cache: dict[str, str]) -> str:
     value = os.environ.get(name) or cache.get(name)
     if not value:
-        raise SystemExit(f"error: {name} is not set. Run `azd provision` first or export {name}.")
+        raise SystemExit(f"error: {name} is not set. Run `azd up` in solutions/01-plan-microsoft first, or export {name}.")
     return value
+
+
+def last_json_document(text: str) -> dict:
+    """The agent's answer as JSON. When a response holds more than one complete answer back to back (the model
+    restated its package), the last one wins; the validator checks it either way."""
+    decoder = json.JSONDecoder()
+    position, document = 0, None
+    while position < len(text):
+        while position < len(text) and text[position].isspace():
+            position += 1
+        if position == len(text):
+            break
+        document, position = decoder.raw_decode(text, position)
+    if not isinstance(document, dict):
+        raise json.JSONDecodeError("no JSON object in the response", text, 0)
+    return document
 
 
 def strict_schema(node, in_properties: bool = False):
@@ -108,13 +124,19 @@ def ensure_vector_store(client, config: dict) -> tuple[str, bool]:
 
 def ensure_agent(project: AIProjectClient, spec: dict, model: str, vector_store_id: str):
     schema = strict_schema(json.loads((SKILL / "backlog.schema.json").read_text(encoding="utf-8")))
+    # Reasoning models (such as gpt-5.1) take a reasoning effort and reject temperature; other models take temperature.
+    settings = {}
+    if spec.get("temperature") is not None:
+        settings["temperature"] = spec["temperature"]
+    if spec.get("reasoning_effort"):
+        settings["reasoning"] = Reasoning(effort=spec["reasoning_effort"])
     definition = PromptAgentDefinition(
         model=model,
         instructions=spec["instructions"],
-        temperature=spec.get("temperature", 0.2),
         tools=[FileSearchTool(vector_store_ids=[vector_store_id], max_num_results=spec["file_search"]["max_num_results"])],
         text=PromptAgentDefinitionTextOptions(
             format=TextResponseFormatJsonSchema(name="requirements_package", schema=schema, strict=True)),
+        **settings,
     )
     definition_hash = hashlib.sha256(json.dumps(definition.as_dict(), sort_keys=True).encode()).hexdigest()[:16]
     try:
@@ -128,14 +150,14 @@ def ensure_agent(project: AIProjectClient, spec: dict, model: str, vector_store_
         agent_name=spec["name"],
         definition=definition,
         description=spec["description"],
-        metadata={"definitionHash": definition_hash, "source": "phases/01-plan/microsoft/agent.yaml"},
+        metadata={"definitionHash": definition_hash, "source": "solutions/01-plan-microsoft/agent.yaml"},
     )
     return created, False
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--out", type=Path, default=REPO / "phases/01-plan/output/microsoft", help="Output folder")
+    parser.add_argument("--out", type=Path, default=HERE / "brief", help="Output folder (default: brief/ next to this script)")
     parser.add_argument("--max-repairs", type=int, default=1,
                         help="How many times validator findings are sent back to the agent for correction (default 1, 0 disables)")
     args = parser.parse_args(argv)
@@ -176,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         response_ids.append(response.id)
         file_search_calls += sum(1 for item in response.output if getattr(item, "type", "") == "file_search_call")
         try:
-            data = json.loads(response.output_text)
+            data = last_json_document(response.output_text)
         except json.JSONDecodeError as exc:
             print(f"error: agent did not return JSON ({exc}); response id {response.id}", file=sys.stderr)
             return 2
@@ -184,6 +206,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"attempt {attempt + 1}: response {response.id}: {'VALID' if not problems else f'{len(problems)} problem(s)'}")
         if not problems or attempt == args.max_repairs:
             break
+        for problem in problems:
+            print(f"  - {problem}")
+        print("  sending the validator's findings back to the agent for one repair turn")
         # Repair turn: the deterministic validator's findings go back to the agent; the validator still decides.
         request_input = ("A deterministic validator rejected your requirements package. Fix every problem below, keep everything "
                          "else unchanged, and return the complete corrected package.\n" + "\n".join(f"- {p}" for p in problems))
