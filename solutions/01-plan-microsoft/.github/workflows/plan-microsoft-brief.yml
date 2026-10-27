@@ -1,0 +1,107 @@
+# Plan · Microsoft: the deterministic gate between the Foundry agent's proposed brief and the team's backlog.
+#  1. Every pull request that changes solutions/01-plan-microsoft/brief/ is validated: schema, real citations, testable
+#     acceptance criteria, no invented decisions, and the instruction planted in the transcript ignored.
+#  2. A person reviews brief.md and applies the `brief-approved` label. The backlog is then published as GitHub Issues:
+#     one epic, four task sub-issues, and their dependencies. Applying the label again updates; it never duplicates.
+# Scripts always come from the base branch. Only the backlog data comes from the pull request, and it is validated
+# again before anything is published.
+name: Plan · Microsoft · review and publish the brief
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths: ['solutions/01-plan-microsoft/brief/**']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or commit that contains solutions/01-plan-microsoft/brief/backlog.json
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-microsoft-brief-${{ github.event.pull_request.number || inputs.ref }}
+  cancel-in-progress: false
+
+env:
+  BACKLOG: solutions/01-plan-microsoft/brief/backlog.json
+  SOURCE_REF: ${{ github.event.pull_request.head.sha || inputs.ref }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    name: Validate the brief
+    if: github.event.action != 'labeled' || github.event.label.name == 'brief-approved'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted scripts (base branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.ref }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r solutions/01-plan-microsoft/requirements.txt
+      - name: Take the proposed backlog from the pull request
+        run: |
+          git fetch --no-tags --depth=1 origin "$SOURCE_REF"
+          mkdir -p "$(dirname "$BACKLOG")"
+          git show "FETCH_HEAD:$BACKLOG" > "$BACKLOG"
+      - name: Validate (schema, citations, testable criteria, decisions, injected instructions)
+        run: |
+          {
+            echo "### Plan brief validation"
+            echo '```'
+            python .github/skills/requirements-traceability/validate_backlog.py --backlog "$BACKLOG"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish to GitHub Issues
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'brief-approved'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check out trusted scripts (base branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.ref }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r solutions/01-plan-microsoft/requirements.txt
+      - name: Take the reviewed backlog from the pull request
+        run: |
+          git fetch --no-tags --depth=1 origin "$SOURCE_REF"
+          mkdir -p "$(dirname "$BACKLOG")"
+          git show "FETCH_HEAD:$BACKLOG" > "$BACKLOG"
+      - name: Publish the epic and tasks (validated again, idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/skills/backlog-publish/publish_backlog.py --backlog "$BACKLOG" --track microsoft | tee published.txt
+      - name: Comment on the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "### Backlog published after review"
+            echo
+            echo '```'
+            cat published.txt
+            echo '```'
+            echo
+            echo "Applying \`brief-approved\` again re-runs the publisher. Existing issues are updated, never duplicated."
+          } > comment.md
+          gh pr comment "$PR" --body-file comment.md
