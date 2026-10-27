@@ -1,8 +1,8 @@
 # ADR 0001: Live advisory triage within the RequestHub API
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-27
-- **Deciders:** to be named in the design review (people, never an agent)
+- **Deciders:** GitHub Copilot
 - **Related:** `solutions/02-design-github/inputs/reviewed-brief.md`, BR-1 through BR-7
 
 ## Context
