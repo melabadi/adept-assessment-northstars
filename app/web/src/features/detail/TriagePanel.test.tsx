@@ -34,7 +34,6 @@ describe('TriagePanel', () => {
     expect(within(panel).getByText('60%')).toBeInTheDocument();
     expect(within(panel).getByText('Recommendations are advisory. Only an approver can approve or reject.')).toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: 'Get recommendation' })).toBeInTheDocument();
-    // Applying a recommendation is intentionally not part of the UI.
     expect(within(panel).getAllByRole('button')).toHaveLength(1);
   });
 
@@ -91,7 +90,7 @@ describe('TriagePanel', () => {
     renderApp('/requests/REQ-1001', { persona: 'u-ben' });
 
     const panel = await screen.findByRole('region', { name: 'Triage assistant' });
-    const button = within(panel).getByRole('button', { name: 'Confirm recommendation' });
+    const button = within(panel).getByRole('button', { name: 'Confirm routing' });
     await user.click(button);
     expect(callsTo(fetchMock, 'POST', '/api/requests/REQ-1001/triage-recommendations/7d2c1f00-0000-4000-8000-000000000001/confirm')).toHaveLength(1);
     expect(await within(panel).findByText('Confirmed by Ben Okafor')).toBeInTheDocument();
@@ -111,7 +110,7 @@ describe('TriagePanel', () => {
     });
     renderApp('/requests/REQ-1001', { persona: 'u-ben' });
     const stalePanel = await screen.findByRole('region', { name: 'Triage assistant' });
-    expect(within(stalePanel).queryByRole('button', { name: 'Confirm recommendation' })).not.toBeInTheDocument();
+    expect(within(stalePanel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
 
     cleanup();
     mockApi({
@@ -124,7 +123,7 @@ describe('TriagePanel', () => {
     });
     renderApp('/requests/REQ-1001', { persona: 'u-ava' });
     const requesterPanel = await screen.findByRole('region', { name: 'Triage assistant' });
-    expect(within(requesterPanel).queryByRole('button', { name: 'Confirm recommendation' })).not.toBeInTheDocument();
+    expect(within(requesterPanel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
 
     cleanup();
     mockApi({
@@ -141,7 +140,7 @@ describe('TriagePanel', () => {
     });
     renderApp('/requests/REQ-1001', { persona: 'u-ben' });
     const confirmedPanel = await screen.findByRole('region', { name: 'Triage assistant' });
-    expect(within(confirmedPanel).queryByRole('button', { name: 'Confirm recommendation' })).not.toBeInTheDocument();
+    expect(within(confirmedPanel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
     expect(within(confirmedPanel).getByText('Confirmed by Ben Okafor')).toBeInTheDocument();
   });
 

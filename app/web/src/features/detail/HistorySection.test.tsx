@@ -22,11 +22,11 @@ function setup(locale: 'en' | 'fr') {
 describe('triage confirmation history label', () => {
   it('uses the English plain-language label', async () => {
     setup('en');
-    expect(await screen.findByText('Confirmed recommended routing from IT Services to Facilities')).toBeInTheDocument();
+    expect(await screen.findByText('Routing confirmed: Facilities')).toBeInTheDocument();
   });
 
   it('uses the French plain-language label', async () => {
     setup('fr');
-    expect(await screen.findByText('Acheminement recommandé confirmé de Services TI à Installations')).toBeInTheDocument();
+    expect(await screen.findByText('Routage confirmé : Installations')).toBeInTheDocument();
   });
 });

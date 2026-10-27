@@ -103,7 +103,7 @@ function describe(event: AuditEvent, t: I18n['t'], departmentName: (id: unknown)
       };
     case 'triage.confirmed':
       return {
-        title: t('history.triage.confirmed', { from: departmentName(details.from), to: departmentName(details.to) }),
+        title: t('history.triage.confirmed', { department: departmentName(details.to) }),
         extra: null,
       };
     case 'triage.failed':

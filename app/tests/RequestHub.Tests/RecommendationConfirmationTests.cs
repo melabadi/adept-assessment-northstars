@@ -73,6 +73,18 @@ public sealed class RecommendationConfirmationTests(ApiFixture api) : IClassFixt
     }
 
     [Fact]
+    public async Task Admin_can_confirm_a_recommendation_for_accessible_departments()
+    {
+        var (id, recommendation) = await CreateRequestAndRecommendation();
+
+        var response = await api.As("u-dan").PostAsync(
+            $"/api/requests/{id}/triage-recommendations/{recommendation.Id}/confirm", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("FAC", (await response.Read<RequestDetailDto>()).DepartmentId);
+    }
+
+    [Fact]
     public async Task Confirming_same_department_marks_recommendation_without_rerouting()
     {
         var (id, recommendation) = await CreateRequestAndRecommendation(title: "Replacement laptop for the field team", category: "equipment");
