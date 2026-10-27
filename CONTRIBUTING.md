@@ -95,7 +95,7 @@ In its cleanup, a solution that runs RequestHub must also delete the Microsoft E
 
 ## Solution READMEs
 
-Write for someone who has never seen the repository. Keep it short and adoption-focused, with no project-status sections.
+Write for someone who has never seen the repository. Keep it short and adoption-focused, with no project-status sections. Write commands for PowerShell 7 (`pwsh`) and paste-test them; quote `gh api` paths that contain `{owner}/{repo}`, because PowerShell reads unquoted braces as a script block.
 
 1. **Title and summary.** One paragraph: the problem and what AI changes.
 2. **Where it fits.** The SDLC phase, and how teams work today compared with this solution.

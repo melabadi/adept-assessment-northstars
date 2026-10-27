@@ -41,7 +41,8 @@ Every solution needs:
 
 - A copy of this repository on GitHub with **GitHub Copilot Business or Enterprise**. Solutions that assign work to Copilot also need the **Copilot cloud agent** enabled for the repository.
 - [GitHub CLI](https://cli.github.com/) (`gh auth login`) and [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli) (`copilot`). Visual Studio Code with GitHub Copilot works for the interactive steps too.
-- Python 3.12 or later for the solution scripts (`pip install -r requirements.txt` in the solution folder).
+- Python 3.12 or later for the solution scripts (`pip install -r requirements.txt` in the solution folder, when it has one).
+- [PowerShell 7.4 or later](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`). The READMEs' commands are written for it. Windows PowerShell 5.1 handles quotes and file encodings differently, and some commands fail there.
 
 Microsoft solutions also need:
 
@@ -62,6 +63,7 @@ tools/       repository tooling (sync_solutions.py)
 ## Good to know
 
 - **All data is synthetic.** No real people, customers, credentials, or tenant details appear in the code or the demos.
-- **Azure costs stay contained.** Each Microsoft solution deploys into its own resource group. Run `azd down --purge` in the solution folder to remove everything it created.
+- **Azure costs stay contained.** Each Microsoft solution deploys into its own resource group, and its README's clean-up steps remove everything it created: `azd down --purge` for the resource group, plus the Microsoft Entra app registration and GitHub environment it set up, which live outside the resource group.
+- **Agentic workflows need a Copilot token.** The AI release summary in [06-release-github](solutions/06-release-github/) and the incident triage in [07-operate-github](solutions/07-operate-github/) are GitHub Agentic Workflows. In a personal repository they authenticate with a `COPILOT_GITHUB_TOKEN` secret, a fine-grained personal access token with **Copilot Requests: Read**. Their READMEs show how to create it, and how to carry on with the rest of the demo without it.
 - **Some GitHub security features depend on your plan.** CodeQL code scanning (including running CodeQL in a workflow), Copilot Autofix, secret scanning, and push protection are free on public repositories. On a private repository they need GitHub Code Security or GitHub Secret Protection, which require a GitHub Team or Enterprise plan. Solutions that use them say what runs without them.
 - **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) for how solutions are structured and validated.
