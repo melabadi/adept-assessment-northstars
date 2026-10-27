@@ -83,7 +83,7 @@ About 30 minutes, of which about 15 are Copilot working. If time is short, run s
 
    ```powershell
    git fetch origin
-   git switch -C lab/test-duplicate-decision origin/main
+   git switch -C lab/test-duplicate-decision origin/main --no-track
    git apply solutions/04-test-github/lab/duplicate-decision.patch
    git rm -q solutions/04-test-github/lab/duplicate-decision.patch
    git commit -qam "Test lab: decision guards removed (duplicate-decision scenario)"
@@ -127,7 +127,7 @@ About 30 minutes, of which about 15 are Copilot working. If time is short, run s
 
    Copilot opens a draft pull request into the lab branch within a minute. Open it and select **View session** to watch it run the scenario, commit `Add failing regression tests for #<issue>`, then commit the fix and run the scenario again. It finishes in about 15 minutes and requests your review.
 
-4. **Approve the workflow runs.** Workflows on Copilot's pull requests wait for a person. Select **Approve and run workflows** on the pull request, or re-run the waiting runs from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids). Two workflows run: **CI** and **Test · GitHub · prove the fix test-first**.
+4. **Approve the workflow runs.** Workflows on Copilot's pull requests wait for a person. Select **Approve and run workflows** on the pull request, or re-run the waiting runs from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids). The two to watch are **CI** and **Test · GitHub · prove the fix test-first**; checks from other solutions may run too.
 
 5. **Watch the deterministic gate.** Open the **Regression tests fail before the fix and pass after it** check. Its summary shows the two runs at known SHAs and the failures in the tests' own words. From a rehearsal run:
 
@@ -154,7 +154,7 @@ About 30 minutes, of which about 15 are Copilot working. If time is short, run s
 
 8. **Decide.** Read the tests in the tests-only commit: do they assert what the Issue expects, including the concurrent case? Approve or request changes as a GitHub review, then run step 7 again. The same comment now records who decided. Do not merge: the lab branch is rebuilt for every run.
 
-9. **Optional: the same skill on a second defect (about 10 minutes).** The lab build also accepts a rejection whose comment is only spaces. Stop the API (Ctrl+C), so Copilot CLI can start its own, then:
+9. **Optional: the same skill on a second defect (about 15 minutes).** The lab build also accepts a rejection whose comment is only spaces. Stop the API (Ctrl+C), so Copilot CLI can start its own, then:
 
    ```powershell
    git switch -c test/whitespace-rejection
@@ -188,7 +188,7 @@ Never merge Copilot's pull request. Step 1 rebuilds the lab branch from `main` f
 
 1. Copy this folder's `.github/` contents into your repository's `.github/` folder. The cloud agent loads the custom agent profile from the default branch, so merge changes to the agent before you assign work. Skills and scripts come from the branch Copilot works on.
 2. Point the scripts at your stack: the sign-in header and base URL in `repro.py`, the solution and test folder (`app/RequestHub.slnx`, `app/tests/`) and the xUnit attribute pattern in `prove_fix.py`, and the suites in `run_regression.py`.
-3. Decide which pull requests need the proof. The workflow runs on pull requests into `lab/**` branches or labelled `bug`; change its `if:` to match how you mark fixes, and make the check required in a ruleset.
+3. Decide which pull requests need the proof. The workflow runs only on pull requests into `lab/test-**` branches, so it never touches other work. For fixes into `main`, change its `branches` filter, add an `if:` that recognizes a fix (for example a `bug` label), and make the check required in a ruleset.
 4. Write a scenario for your next defect report, and make sure the Copilot cloud agent can run your tests (database services in `copilot-setup-steps.yml`).
 
 ## Troubleshooting
