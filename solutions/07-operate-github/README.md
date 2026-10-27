@@ -94,13 +94,13 @@ The agent, skills, workflows, and form are already active because the repository
 
 ## Run the demo
 
-About 30 minutes, most of it waiting for Copilot. Start step 5 early if the session is short.
+About 20 minutes. In our run it took 16 minutes from filing the incident to green checks, 10 of them while Copilot worked. Start step 5 early if the session is short.
 
 1. **Show the report.** Open [`incidents/inc-2041-notification-backlog.md`](incidents/inc-2041-notification-backlog.md). Point out the clues nobody has connected yet: notifications late and repeated, a worker warning every 15 seconds, `failed 0` while 212 notifications wait, and a worker metric stuck at 3.
 
 2. **File the incident and triage it.** Pick one option. Both end with the same triage comment, labels, and follow-up Issue.
 
-   **A. Agentic workflow** (needs the `COPILOT_GITHUB_TOKEN` secret; about 5 minutes).
+   **A. Agentic workflow** (needs the `COPILOT_GITHUB_TOKEN` secret).
 
    ```powershell
    gh issue create --title "INC-2041: reviewers notified late and repeatedly (staging)" --label incident --label ai-sdlc --label phase:operate --body-file solutions/07-operate-github/incidents/inc-2041-notification-backlog.md
@@ -113,7 +113,7 @@ About 30 minutes, most of it waiting for Copilot. Start step 5 early if the sess
    - `detection` checks the agent's output for threats such as leaked secrets or malicious content.
    - `safe_outputs` applies what the agent asked for, within the limits set in the workflow's frontmatter.
 
-   **B. Copilot CLI** (no token needed; about 3 minutes). The same agent and skill triage the incident from your terminal and file the results with your GitHub CLI sign-in. This is the Copilot CLI path, not the agentic workflow. The incident is filed without the `incident` label, because that label starts the agentic workflow.
+   **B. Copilot CLI** (no token needed; about 3 minutes, 2.5 in our run). The same agent and skill triage the incident from your terminal and file the results with your GitHub CLI sign-in. This is the Copilot CLI path, not the agentic workflow. The incident is filed without the `incident` label, because that label starts the agentic workflow.
 
    ```powershell
    $url = gh issue create --title "INC-2041: reviewers notified late and repeatedly (staging)" --label ai-sdlc --label phase:operate --body-file solutions/07-operate-github/incidents/inc-2041-notification-backlog.md
@@ -138,11 +138,11 @@ About 30 minutes, most of it waiting for Copilot. Start step 5 early if the sess
      gh api -X POST "repos/$repo/issues/$followup/assignees" --input -
    ```
 
-   Copilot opens a draft pull request within a minute and usually finishes in 15 to 25 minutes. Its session log shows the test failing first, then passing after the fix.
+   Copilot opens a draft pull request within seconds. In our run it finished in about 10 minutes: a commit with the tests, a commit with the one-line fix, and the proof run in its own session. Its session log shows the new test failing first, then passing after the fix.
 
 6. **Run the checks.** Workflows on Copilot's pull requests wait for a person. Select **Approve and run workflows**, or re-run the waiting runs with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` lists them).
 
-7. **Show the proof.** Open the **Operate · GitHub · prove the regression test** check. Its summary reads `Regression proof: PROVEN`, with a table showing the new test failing on the code the pull request started from and passing with the change. The check is green only for PROVEN. **CI** confirms the whole suite passes.
+7. **Show the proof.** Open the **Operate · GitHub · prove the regression test** check (about 2 minutes). Its summary reads `Regression proof: PROVEN`, with a table showing the new test failing on the code the pull request started from and passing with the change. The check is green only for PROVEN. **CI** (about 3 minutes) confirms the whole suite passes.
 
 8. **Review the pull request** as you would any other: a small test, a one-line fix, no weakened tests, and the proof attached.
 
