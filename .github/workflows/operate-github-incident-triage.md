@@ -62,7 +62,7 @@ ${{ steps.sanitized.outputs.text }}
 Use the safe-output tools, each at most once, in this order:
 
 1. `add_labels` on this Issue: one `severity:N` label and one or two `area:*` labels from the rubric. If the report is too thin to classify, apply only `needs-info`.
-2. `create_issue`: the follow-up, following the follow-up template. Write the title without the `[follow-up]` prefix, which is added automatically, and without the incident number. Skip this when you applied `needs-info`.
+2. `create_issue`: the follow-up, following the follow-up template. Write the title without the `[follow-up]` prefix, which is added automatically, and without the incident number. End the body with the Evidence section: do not add a `Related to #N` line or an attribution line, because the workflow links the follow-up to this incident itself. Skip this when you applied `needs-info`.
 3. `add_comment` on this Issue: the triage, in the format of the incident-evidence skill. The comment links the follow-up automatically.
 
 If the Issue is not an incident report at all, call `noop` with a one-line reason instead.
