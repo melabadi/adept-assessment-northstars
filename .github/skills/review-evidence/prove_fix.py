@@ -135,7 +135,8 @@ def run_tests(sha: str, filters: list[str], out: Path, label: str) -> dict:
         finally:
             subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=REPO, capture_output=True)
     log.write_text(proc.stdout + proc.stderr, encoding="utf-8")
-    result = {"sha": sha, "log": log.name, "report": None, "total": 0, "passed": 0, "failed": 0, "tests": [], "failedTests": []}
+    result = {"sha": sha, "log": log.name, "report": None, "exitCode": proc.returncode,
+              "total": 0, "passed": 0, "failed": 0, "tests": [], "failedTests": []}
     if report.exists():
         tests = json.loads(report.read_text(encoding="utf-8"))["results"]["tests"]
         failed = [t for t in tests if t.get("status") == "failed"]
@@ -253,6 +254,8 @@ def judge(before: dict, after: dict) -> tuple[bool, str, list[str]]:
             gone = "test no longer exists" if len(missing) == 1 else "tests no longer exist"
             problems.append(f"{len(missing)} {gone}: " + ", ".join(f"`{short_name(name)}`" for name in missing[:8]))
         return False, f"not every selected test passes at the head ({'; '.join(problems)}).", missing
+    if after.get("exitCode", 0):
+        return False, f"the test command failed at the head (exit code {after['exitCode']}); see the log.", missing
     return True, (f"{before['failed']} of {before['total']} selected tests fail at the tests-only commit "
                   f"`{before['sha'][:9]}`, and {after['total']} of {after['total']} pass at the head `{after['sha'][:9]}`."), missing
 

@@ -69,8 +69,8 @@ flowchart LR
 Run once from the repository root:
 
 ```powershell
-gh label create ai-sdlc --color 5319e7 --description "AI across the SDLC demo" --force
-gh label create phase:test --color 1d76db --description "SDLC phase 4: test and review" --force
+gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+gh label create phase:test --color C5DEF5 --description "SDLC phase 4: Test" --force
 ```
 
 The agent, skills, workflow, and issue template are already active because the repository's root `.github/` folder mirrors them. The cloud agent's environment, including the PostgreSQL service its tests need, comes from [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml).

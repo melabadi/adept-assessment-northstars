@@ -4,10 +4,12 @@
 #  one must fail (the tests detect the defect), and at the pull request head every one must still exist and pass (the
 #  fix works; skipping or deleting a failing test does not count). Both test outputs are kept in the
 #  `regression-proof` artifact, and the job summary shows the two results side by side.
-# It runs on pull requests into a lab branch (lab/**) and on pull requests labelled `bug`, forks included. The full
-# test suite still runs in CI. Copilot code review and comments from people are not part of this check: they inform the
-# reviewer, and a person decides. The proof script comes from the base branch, so a pull request cannot change how it is
-# judged, and no credentials are left in the checkout while the pull request's tests run.
+# It runs on pull requests into a lab branch (lab/**) and on pull requests labelled `bug`, forks included. It does not
+# listen to `edited`: the cloud agent edits its pull request description many times, and each edit would queue a run
+# that waits for approval. After retargeting a pull request to a lab branch, push a commit or add the `bug` label.
+# The full test suite still runs in CI. Copilot code review and comments from people are not part of this check: they
+# inform the reviewer, and a person decides. The proof script comes from the base branch, so a pull request cannot
+# change how it is judged, and no credentials are left in the checkout while the pull request's tests run.
 name: Test · GitHub · prove the fix test-first
 
 on:
