@@ -84,6 +84,8 @@ services:
 
 `main.bicep` must output the values that [`app/infra/api.parameters.json`](app/infra/api.parameters.json) and [`worker.parameters.json`](app/infra/worker.parameters.json) read: `AZURE_CONTAINER_REGISTRY_ENDPOINT`, `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_ENVIRONMENT_NAME`, `APP_IDENTITY_ID`, `APP_IDENTITY_CLIENT_ID`, `APP_IDENTITY_NAME`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `STORAGE_BLOB_ENDPOINT`, `API_APP_NAME`, `WORKER_APP_NAME`, `API_URL`, `API_CLIENT_ID`, `API_IDENTIFIER_URI`, and `AUTOMATION_CLIENT_ID`. Optional: `FOUNDRY_PROJECT_ENDPOINT`, `TRIAGE_PROVIDER`, `DEMO_INDUSTRY`.
 
+In its cleanup, a solution that runs RequestHub must also delete the Microsoft Entra app registration that `requesthub.bicep` creates for sign-in: `azd down` deletes the resource group, but no resource group contains Microsoft Entra objects. Delete it and empty it from the recycle bin, as [03-develop-microsoft](solutions/03-develop-microsoft/README.md#reset-and-clean-up) does, or the next `azd up` with the same environment name cannot create it again for 30 days.
+
 ## Python scripts
 
 - Start with a module docstring that says what the script does and how to run it. `--help` documents every option.
