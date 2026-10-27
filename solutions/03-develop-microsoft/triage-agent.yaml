@@ -1,5 +1,5 @@
 # Versioned definition of the in-app Foundry triage agent (Develop phase, Microsoft track).
-# Publish with: python phases/03-develop/microsoft/publish_triage_agent.py
+# Publish with: python solutions/03-develop-microsoft/publish_triage_agent.py
 # The RequestHub API calls this agent by name (Foundry:AgentName) and executes its tools itself.
 name: requesthub-triage
 description: Proposes routing for RequestHub requests with cited policies. Advisory only; it has no approval tool.

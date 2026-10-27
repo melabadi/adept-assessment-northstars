@@ -10,7 +10,6 @@ This repository is a hands-on demo of AI across the software development lifecyc
 | `solutions/<NN>-<phase>-<github\|microsoft>/` | One solution per folder: README, its own `.github/` (agent, skills, workflows, issue templates), scripts and inputs, and for Microsoft solutions its own `azure.yaml` + `infra/` deployed into its own resource group. |
 | `.github/agents/`, `.github/skills/`, `.github/workflows/`, `.github/ISSUE_TEMPLATE/` | Mirrors of the solutions' `.github/` files (GitHub only reads the root). Never edit a mirror: edit the solution's copy, then run `python tools/sync_solutions.py`. |
 | `tools/` | Repository tooling, such as `sync_solutions.py`. |
-| `phases/`, root `infra/` and `azure.yaml` | Legacy layout, retired as each solution moves into `solutions/`. |
 
 ## Build and test
 

@@ -169,7 +169,7 @@ When you no longer need the solution:
 ```powershell
 cd solutions/01-plan-microsoft
 azd down --purge
-gh api -X DELETE repos/{owner}/{repo}/environments/plan-microsoft
+gh api -X DELETE 'repos/{owner}/{repo}/environments/plan-microsoft'
 ```
 
 `--purge` also removes the soft-deleted Foundry account, so the name can be reused.
@@ -185,4 +185,5 @@ gh api -X DELETE repos/{owner}/{repo}/environments/plan-microsoft
 
 - **`AzureCLICredential: exit status 1` during `azd up`.** azd could not get a token from the Azure CLI. Run `az account get-access-token` to check your sign-in, then run `azd up` again.
 - **`PermissionDenied` when the script runs right after `azd up`.** New role assignments can take a few minutes to apply. Wait, then run it again.
+- **`DeploymentNotFound` or `The project does not exist` right after re-creating the solution.** After `azd down --purge`, re-creating it under the same environment name reuses the same Foundry names, and the project endpoint can keep answering for the deleted account for more than an hour. Create it under a new environment name instead, for example `azd env new ai-sdlc-plan2 --location eastus2`, then `azd up`.
 - **`INVALID` after the repair turn.** The script exits with code 1 and no pull request is opened. Read the problems it lists, improve the `instructions` in `agent.yaml`, and run it again. Never edit the validator or the generated JSON.

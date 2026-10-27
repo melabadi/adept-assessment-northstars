@@ -197,9 +197,14 @@ curl.exe -X POST -H "Authorization: Bearer $token" "$(azd env get-value API_URL)
 When you no longer need the solution:
 
 ```powershell
+$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
 azd down --purge
-gh api -X DELETE repos/{owner}/{repo}/environments/release-microsoft
+az ad app delete --id $app
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+gh api -X DELETE 'repos/{owner}/{repo}/environments/release-microsoft'
 ```
+
+`azd down` deletes the resource group. RequestHub's sign-in app registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it and `az rest` empties it from the recycle bin. Without that last step, a new `azd up` with the same environment name can't create the app registration again for 30 days.
 
 ## Use it in your own repository
 
