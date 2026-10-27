@@ -1,0 +1,54 @@
+# Release · GitHub: checks the release tooling on every pull request that changes it.
+#  - Unit tests for the release-evidence and workflow-investigation scripts (small fixtures, no network).
+#  - The AI release summary's lock file is exactly what the pinned gh-aw compiler produces from its source, so the
+#    workflow that runs is the workflow that was reviewed.
+name: Release · GitHub · check the release tooling
+
+on:
+  pull_request:
+    paths:
+      - 'solutions/06-release-github/**'
+      - '.github/skills/release-evidence/**'
+      - '.github/skills/workflow-investigation/**'
+      - '.github/workflows/release-github-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GH_AW_VERSION: v0.93.5 # pinned compiler; recompile and commit the lock file when you change it
+
+jobs:
+  tests:
+    name: Release tooling unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s solutions/06-release-github/tests -v
+
+  agentic-workflow:
+    name: AI release summary lock file is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install gh-aw ${{ env.GH_AW_VERSION }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh extension install github/gh-aw --pin "$GH_AW_VERSION"
+      - name: Compile in strict mode and compare with the committed lock file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh aw compile release-github-summary --strict --validate --no-check-update
+          git diff --exit-code -- .github/workflows/release-github-summary.lock.yml \
+            || { echo "::error::Run 'gh aw compile release-github-summary' with gh-aw $GH_AW_VERSION, then 'python tools/sync_solutions.py --pull .github/workflows/release-github-summary.lock.yml', and commit."; exit 1; }
