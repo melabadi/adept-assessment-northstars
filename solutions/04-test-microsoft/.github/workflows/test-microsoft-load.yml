@@ -105,6 +105,14 @@ jobs:
           loadtestRunName: GitHub run ${{ github.run_number }} (${{ github.event_name }}${{ inputs.slowdown && ', slowdown rehearsal' || '' }})
           loadtestRunDescription: ${{ github.workflow }} on ${{ github.ref_name }} at ${{ github.sha }}
           outputVariableName: loadtest
+      # The OIDC sign-in above expires after a few minutes, so sign in again for the steps after the test.
+      - name: Sign in to Azure again
+        if: always()
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Report the result (job summary, pull request comment, Issue)
         if: always() && steps.loadtest.outputs['loadtest.testRunId'] != ''
         env:
