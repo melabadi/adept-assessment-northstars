@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="Test results" tests="2" failures="0" errors="0" time="0.5">
+  <testsuite name="RequestHub.Tests.dll" tests="2" failures="1" errors="0" skipped="0" time="0.5">
+    <testcase name="RequestHub.Tests.RequestLifecycleTests.Concurrent_double_click_records_exactly_one_decision" time="0.3" classname="RequestHub.Tests.RequestLifecycleTests">
+      <failure message="Assert.Equal() Failure: Values differ&#10;Expected: 1&#10;Actual:   2" type="Xunit.Sdk.EqualException">at RequestHub.Tests.RequestLifecycleTests.Concurrent_double_click_records_exactly_one_decision()</failure>
+    </testcase>
+    <testcase name="RequestHub.Tests.RequestLifecycleTests.Rejection_requires_a_comment" time="0.2" classname="RequestHub.Tests.RequestLifecycleTests" />
+  </testsuite>
+</testsuites>

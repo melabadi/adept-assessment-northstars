@@ -1,0 +1,70 @@
+# Secure · Microsoft: preview every pull request that changes the solution's infrastructure, before anyone deploys it.
+# Runs an Azure what-if of infra/resources.bicep against the live resource group (nothing is deployed), compared with the
+# template that is deployed now so only this change is reported, comments the preview on the pull request, and fails when
+# a change touches anything other than the storage account and its private networking. The OIDC identity can read and
+# preview, but has no right to deploy.
+name: Secure · Microsoft · preview the infrastructure change
+
+on:
+  pull_request:
+    paths:
+      - 'solutions/05-secure-microsoft/infra/**'
+      - '.github/skills/infrastructure-remediation/**'
+      - '.github/workflows/secure-microsoft-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: secure-microsoft-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preview:
+    name: What-if shows only the expected change
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: secure-microsoft
+    env:
+      # The parameters azd used, so the preview compares exactly what `azd provision` would deploy.
+      AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_PRINCIPAL_ID: ${{ secrets.AZURE_PRINCIPAL_ID }}
+      GITHUB_OIDC_SUBJECT_PREFIX: ${{ vars.OIDC_SUBJECT_PREFIX }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Preview with Azure what-if (nothing is deployed)
+        run: |
+          python .github/skills/infrastructure-remediation/whatif.py --markdown preview.md \
+            --expect Microsoft.Storage/storageAccounts --expect Microsoft.Network/virtualNetworks \
+            --expect 'Microsoft.Network/private*'
+      - name: Comment the preview on the pull request
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ ! -f preview.md ]; then exit 0; fi
+          { echo "Preview of \`${SHA:0:7}\` from [run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID). A person applies the change with \`azd provision\` after merging."; echo; cat preview.md; } > comment.md
+          gh pr comment "$PR" --body-file comment.md
+      - name: Summary
+        if: always()
+        run: cat preview.md >> "$GITHUB_STEP_SUMMARY" || true

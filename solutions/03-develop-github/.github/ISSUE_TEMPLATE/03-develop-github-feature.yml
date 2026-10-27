@@ -1,0 +1,73 @@
+name: "Develop: bounded feature for Copilot"
+description: Develop phase (GitHub track). A narrowly scoped feature with testable acceptance criteria, ready to assign to the Copilot cloud agent.
+title: "Develop: reviewer confirms the recommended routing department"
+labels: ["ai-sdlc", "phase:develop"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write the Issue so a teammate, human or agent, can finish it without a meeting: one problem, a clear scope, numbered
+        acceptance criteria that can each become a test, and what is out of scope. The fields are prefilled with the demo feature.
+
+        After you create the Issue, **assign it to Copilot** and pick the **develop-github** custom agent. CI, the
+        **Develop · GitHub · feature bounds** check, and a human reviewer decide whether the pull request merges.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who is blocked, and what happens today.
+      value: |
+        Reviewers can ask the triage assistant for a routing recommendation, but to act on it they reroute the request by hand.
+        The history then shows a manual reroute and nothing links it to the recommendation, so nobody can tell whether the
+        suggestion was accepted. We want one deliberate action that confirms the suggested department and records that a person
+        made that decision.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: The API operation, UI change, and main files involved. Say "additive" if the contract must not break.
+      value: |
+        An **additive** API operation and a button on the request detail page:
+
+        `POST /api/requests/{id}/triage-recommendations/{recommendationId}/confirm` returns `200` with the updated request detail.
+
+        Implement the business rules in `RequestWorkflow` (`app/src/RequestHub.Core/Services/RequestWorkflow.cs`), map the endpoint in
+        `ApiEndpoints`, and add the button to `TriagePanel` (`app/web/src/features/detail/TriagePanel.tsx`).
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: Numbered, each one testable. Include permitted roles, refusal cases with their error codes, audit entries, and UI states.
+      value: |
+        1. **Permitted roles.** Only a reviewer or admin who may change routing for the request (access to the request's current
+           department and to the suggested department) can confirm. Everyone else gets `403`. Requesters never see the button.
+        2. **Effect.** Confirming routes the request to the suggested department when it differs (same status change and notifications as
+           a manual reroute) and marks the recommendation `Confirmed`. Priority, decision, and approval status do not change. If the
+           suggested department is already the current department, the recommendation is still marked `Confirmed`.
+        3. **Audit.** Exactly one `triage.confirmed` audit entry with the recommendation id, from and to departments, cited policy refs,
+           and provider. The request History shows it as **Routing confirmed: {department}** (English and French).
+        4. **Stale recommendations** are refused with `409` and code `recommendation.stale`: the recommendation was superseded, or the
+           request's department changed after the recommendation was made.
+        5. **Duplicate confirmation.** Confirming the same recommendation again returns `409` with code
+           `recommendation.already_confirmed` and writes no audit entry.
+        6. **Closed requests.** Approved or rejected requests return `409` with code `request.terminal`.
+        7. **UI.** The latest recommendation shows a **Confirm routing** button only when the user may confirm it (never for a stale
+           or confirmed recommendation). After confirming, the panel shows **Confirmed by {name}** and the request shows the new
+           department. English and French strings.
+        8. **Contract and tests.** Regenerate `app/contracts/openapi.json` (additive change only). Add an integration test for each
+           criterion above (including the negative ones) and a web unit test for the button states.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What Copilot must not change. Approval authority is always out of scope for a feature.
+      value: |
+        Changing who can approve or reject, editing a recommendation, bulk confirmation, and any change to the triage providers.
+    validations:
+      required: true

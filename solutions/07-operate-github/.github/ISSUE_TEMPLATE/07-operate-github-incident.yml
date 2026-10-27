@@ -1,0 +1,71 @@
+name: "Operate: report an incident"
+description: Operate phase (GitHub track). Record what you know about an incident. An agentic workflow triages it and proposes one follow-up.
+title: "INC-<id>: <what users noticed>"
+labels: ["ai-sdlc", "phase:operate", "incident"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write down **what you observed**, with UTC times and where each fact came from. Sanitize logs first: no secrets, tokens, customer data, or personal data.
+
+        Creating this Issue starts **Operate · GitHub · triage an incident**. Within minutes it comments with a classification, a sourced timeline, and its hypotheses, and opens one follow-up Issue. People decide what happens next.
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      options:
+        - Investigating
+        - Mitigated
+        - Resolved
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: staging
+    validations:
+      required: true
+  - type: input
+    id: detected
+    attributes:
+      label: Detected at (UTC)
+      placeholder: "2026-01-31T09:05Z"
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Who noticed what, and since when. What still worked.
+    validations:
+      required: true
+  - type: textarea
+    id: changes
+    attributes:
+      label: Recent changes
+      description: Deployments and configuration changes before the incident, with UTC times and identifiers (revision, image, commit).
+    validations:
+      required: true
+  - type: textarea
+    id: timeline
+    attributes:
+      label: Timeline (UTC)
+      description: One event per line, each starting with its UTC time.
+    validations:
+      required: true
+  - type: textarea
+    id: signals
+    attributes:
+      label: Signals and logs (sanitized)
+      description: Metrics, API responses, and log lines exactly as observed.
+      render: text
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Mitigation so far
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence links
+      description: Dashboards, runs, tickets, or documents. Say when something was requested but is not available yet.
