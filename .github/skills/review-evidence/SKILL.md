@@ -51,5 +51,7 @@ Exit codes of `prove_fix.py`: 0 proven, 1 not proven, 2 setup error.
   proof run at the base branch instead; it does not show that the tests in the pull request detect the defect.
 - `the new tests pass without the fix`: the tests do not detect the defect. Ask for stronger tests.
 - `did not run (build error?)`: that commit does not build; open its log in the artifact. That is a review finding.
+- Tests added after the fix (for example after a review comment) are not in the proof: they are guards, and CI runs
+  them. The proof covers the tests committed before the fix.
 - A proof says ✅ but the tests assert something trivial: the proof shows the order of evidence, not test quality.
   The reviewer still reads the tests.
