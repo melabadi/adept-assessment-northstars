@@ -91,24 +91,25 @@ About 15 minutes of presenting. Copilot needs about 20 minutes on its own, so st
      ConvertTo-Json | gh api -X POST "repos/$repo/issues/$issue/assignees" --input -
    ```
 
-   Within a minute Copilot opens a draft pull request linked to the Issue. Select **View session** on the pull request to watch it plan, edit, and run tests live.
+   Copilot opens a draft pull request linked to the Issue within seconds. Select **View session** on the pull request to watch it plan, edit, and run tests live. In our run it finished in 19 minutes, about 3 of them preparing its environment.
 
-4. **Approve the workflow runs.** Workflows on Copilot's pull requests wait for a person, because they could run unreviewed code with the repository's secrets. Select **Approve and run workflows** on the pull request, or start the waiting runs from a terminal:
+4. **Approve the workflow runs.** Workflows on Copilot's pull requests wait for a person, because they could run unreviewed code with the repository's secrets. When Copilot has finished, select **Approve and run workflows** on the pull request, or start the waiting runs for its latest commit from a terminal:
 
    ```powershell
-   $branch = gh pr view <number> --json headRefName -q .headRefName
-   gh run list --branch $branch --status action_required --json databaseId -q '.[].databaseId' | ForEach-Object { gh run rerun $_ }
+   $head = gh pr view <number> --json headRefOid -q .headRefOid
+   gh run list --commit $head --status action_required --json databaseId -q '.[].databaseId' | ForEach-Object { gh run rerun $_ }
    ```
 
-   Two workflows report: **CI** (API and worker tests, web UI checks, browser tests) and **Develop · GitHub · feature bounds**. Approve again after each new push from Copilot.
+   Two workflows report: **CI** (API and worker tests, web UI checks, browser tests; about 3 minutes) and **Develop · GitHub · feature bounds** (seconds). Approve again after each new push from Copilot.
 
 5. **Review like a tech lead.** In the pull request:
-   - The description maps each acceptance criterion to the test that proves it, then shows the boundary and regression results Copilot got.
-   - **Files changed**: a new operation in `RequestWorkflow` with role and department checks and stable error codes, one new route, a *new* migration, an additive contract change, a test per criterion, the button in `TriagePanel`, and English and French strings.
+   - **Files changed**: a new operation in `RequestWorkflow` with role and department checks and stable error codes, one new route, a *new* migration, an additive contract change, the button in `TriagePanel`, a History label, and English and French strings.
+   - The tests read like the acceptance criteria, for example `Requester_cannot_confirm_a_recommendation`, `Recommendation_is_stale_after_request_department_changes`, and `Duplicate_confirmation_conflicts_without_a_second_audit`. Match them to the Issue's eight criteria.
    - The **Feature stays within its bounds** job summary ends with `PASS change stays within feature bounds`. Point out what did not change: `DecideAsync`, the approval rules, workflows, and infrastructure.
+   - **View session** shows every command Copilot ran, including the boundary check and the regression suite with browser tests. That is its own account; the checks above are the evidence.
    - Optionally request a review from **Copilot** for a second opinion. Its comments are advice; the checks are the gate.
 
-6. **Optional: add your own test and iterate on the same branch with Copilot CLI** (about 10 minutes). One agent at a time works on a branch: wait until the cloud agent session has finished, then:
+6. **Optional: add your own test and iterate on the same branch with Copilot CLI** (15 to 20 minutes, most of it building and testing). One agent at a time works on a branch: wait until the cloud agent session has finished, then:
 
    ```powershell
    gh pr checkout <number>
@@ -116,16 +117,19 @@ About 15 minutes of presenting. Copilot needs about 20 minutes on its own, so st
    copilot --agent develop-github --allow-all-tools -p "The reviewer added app/web/e2e/confirm-routing.spec.ts. Run it with the regression-validation skill (--e2e). If it fails, find the cause and fix the code, never the test. Then run the bounded-feature scope check, commit with a message that names the test, and push."
    ```
 
-   Copilot CLI builds the UI, starts RequestHub on http://localhost:5080, and runs the browser tests. If the reviewer's test fails, it reads the failing assertion, finds the cause in the code, fixes it, and reruns. Then it commits the test so CI runs it from now on, and pushes to the same pull request. Approve the new workflow runs. To hand the branch back to the cloud agent, mention `@copilot` in a pull request comment; it starts from your latest commit.
+   Copilot CLI builds the UI, starts RequestHub on http://localhost:5080, and runs the browser tests. If the reviewer's test fails, it reads the failing assertion, finds the cause in the code, fixes it, and reruns. Then it commits the test, pushes to the same pull request, and CI runs it from then on. In our run the test passed against Copilot's code without changes. Against an earlier run, the same test caught a History entry that read `Activity: triage.confirmed` instead of plain words.
+
+   To hand the branch back to the cloud agent, for example with a review finding, mention `@copilot` in a pull request comment. A new session starts within seconds, continues from your latest commit, and pushes a fix (6 minutes for a wording fix in our run). Approve its workflow runs as in step 4.
 
 7. **See it and decide.** To click through the feature, start the app from the branch (`npm ci --prefix app/web`, `npm run build --prefix app/web`, then `dotnet run --project app/src/RequestHub.Api`) and open http://localhost:5080. As **Ava**, file an *equipment* request under **Facilities**; as **Ben**, open it, select **Get recommendation**, then **Confirm routing**. The request moves to IT Services and the History reads *Routing confirmed: IT Services*. Then approve the pull request or ask for changes. For the demo, do not merge it (see below).
 
 ## What to observe
 
-- **The Issue is the contract.** Each numbered criterion became a test, and the pull request says which one.
+- **The Issue is the contract.** Each numbered criterion became a test named after the behavior it proves.
 - **Boundaries are enforced, not hoped for.** The bounds check ran the checker from `main` against Copilot's commits. A change to a workflow, the infrastructure, an existing migration, `DecideAsync`, or a deleted or skipped test turns it red.
 - **Human approval stays human.** The new action routes a request; it never approves one. Copilot's workflow runs needed a person, and so does the merge.
 - **Facts over narrative.** CI and the bounds check are green or red. What Copilot says it did is a summary, not evidence.
+- **Review still matters.** Green checks do not judge wording, product vocabulary, or design choices. Send a finding back with an `@copilot` comment and Copilot fixes it on the same branch.
 - **Two agents, one branch, no collisions.** The cloud agent and Copilot CLI take turns on the same pull request.
 - **Impact to measure.** Time from Issue to a green pull request, the number of review rounds, and how many criteria passed the reviewer's own test the first time. Generated lines of code are not a measure.
 
@@ -149,12 +153,13 @@ Never merge the demo pull request: the feature would land on `main` and the next
 ## Troubleshooting
 
 - **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person to approve them. Select **Approve and run workflows**, or run `gh run rerun <run-id>`.
-- **Port 5080 or the `requesthub` database is already used on your machine.** The browser tests reset the database they run against. Give RequestHub its own port and database, then point the tests at it:
+- **Port 5080 or the `requesthub` database is already used on your machine.** The browser tests reset the database of whichever RequestHub answers at `BASE_URL`. On a shared machine, another app took our free port while our API was still building, and its demo data was reset. Run your own copy on a free port with a new database (a database migrated by another branch can conflict), check that the listener is your process, then point the tests at it:
 
   ```powershell
   npm run build --prefix app/web
-  $env:ASPNETCORE_ENVIRONMENT = "Development"; $env:ASPNETCORE_URLS = "http://localhost:5093"
+  $env:ASPNETCORE_ENVIRONMENT = "Development"; $env:ASPNETCORE_URLS = "http://localhost:5193"
   $env:ConnectionStrings__RequestHub = "Host=localhost;Port=5432;Database=rh_develop_demo;Username=requesthub;Password=devpass"
   dotnet run --project app/src/RequestHub.Api --no-launch-profile          # leave running; in a second terminal:
-  $env:BASE_URL = "http://localhost:5093"; npm run e2e --prefix app/web -- e2e/confirm-routing.spec.ts
+  Get-Process -Id (Get-NetTCPConnection -LocalPort 5193 -State Listen).OwningProcess | Select-Object Id, Path   # must be your build
+  $env:BASE_URL = "http://localhost:5193"; npm run e2e --prefix app/web -- e2e/confirm-routing.spec.ts
   ```
