@@ -136,7 +136,8 @@ resource automationIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@20
 
 resource githubEnvironmentCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = if (!empty(githubRepository) && !empty(githubEnvironment)) {
   parent: automationIdentity
-  name: 'github-environment-${githubEnvironment}'
+  // Azure rejects reserved words such as "microsoft" in resource names, so the GitHub environment name stays in the subject.
+  name: 'github-oidc-environment'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
     subject: '${githubSubjectPrefix}:environment:${githubEnvironment}'

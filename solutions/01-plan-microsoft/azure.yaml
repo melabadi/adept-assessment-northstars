@@ -1,0 +1,23 @@
+# Azure Developer CLI project for the Plan · Microsoft solution. Run `azd up` from this folder.
+# The hooks connect the solution to GitHub Actions (OIDC identity + the plan-microsoft GitHub environment).
+name: ai-sdlc-plan-microsoft
+metadata:
+  template: ai-sdlc-plan-microsoft@1.0.0
+infra:
+  provider: bicep
+  path: infra
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: python configure_github.py prepare
+    posix:
+      shell: sh
+      run: python3 configure_github.py prepare
+  postprovision:
+    windows:
+      shell: pwsh
+      run: python configure_github.py publish
+    posix:
+      shell: sh
+      run: python3 configure_github.py publish

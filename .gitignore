@@ -22,8 +22,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Azure Developer CLI environments (contain subscription/tenant ids)
+# Azure Developer CLI environments (contain subscription/tenant ids) and the empty logs its AI extensions create
 .azure/
+azd-*.log
 
 # Local secrets and generated run output
 .env
