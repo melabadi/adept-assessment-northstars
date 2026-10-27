@@ -12,9 +12,12 @@ param githubEnvironment string
 param modelName string
 param modelVersion string
 param modelCapacity int
+param resourceSeed string
 param tags object
 
-var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, environmentName))
+var resourceToken = toLower(empty(resourceSeed)
+  ? uniqueString(subscription().id, resourceGroup().id, environmentName)
+  : uniqueString(subscription().id, resourceGroup().id, environmentName, resourceSeed))
 // GitHub OIDC tokens use either the classic subject (repo:owner/name) or the immutable one (repo:owner@id/name@id).
 var githubSubjectPrefix = empty(githubOidcSubjectPrefix) ? 'repo:${githubRepository}' : githubOidcSubjectPrefix
 var roles = {

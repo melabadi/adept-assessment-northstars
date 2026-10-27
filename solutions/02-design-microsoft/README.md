@@ -109,7 +109,7 @@ The last command loads the twelve standards into the index. The scripts read eve
 
 ## Run the demo
 
-About 15 minutes. Run the commands from the repository root. Each advisor call takes 20 to 40 seconds, plus a few seconds to sign in.
+About 15 minutes. Run the commands from the repository root. Each advisor call takes 20 to 40 seconds, plus 10 to 30 seconds to sign in and load the agents.
 
 1. **Show the standards.** Open [`standards/`](standards/). Each file has an id, a version, and a `scope`: nine standards apply to a small team, ten to an enterprise rollout. Two traps are planted: STD-OBS-002 (log full prompts for 30 days) contradicts STD-SEC-002 (never persist raw prompts), and no standard sets a token budget.
 
@@ -134,14 +134,14 @@ About 15 minutes. Run the commands from the repository root. Each advisor call t
    ```
 
    ```text
-   agent architecture-advisor-small-team v2 (reused), model gpt-5.4-mini, search filter: scope eq 'all' or scope eq 'small-team'
+   agent architecture-advisor-small-team v1 (new version), model gpt-5.4-mini, search filter: scope eq 'all' or scope eq 'small-team'
    response resp_... in 37.7 s · 3 search call(s) · retrieved 7: STD-AI-001, STD-ARCH-001, STD-DATA-002, STD-OBS-002, STD-OPS-001, STD-SEC-001, STD-SEC-002
    answerable: True · cites: STD-ARCH-001 v1.0, STD-OPS-001 v1.0, STD-SEC-001 v2.0, ... · conflicts: 1 · unknowns: 4
    recommendation: Prefer an in-process or same-service implementation behind the existing ITriageProvider, with the API calling Foundry directly using managed identity, ...
    checks: PASS
    ```
 
-   Open `solutions/02-design-microsoft/out/adr-draft.md`: options with pros and cons, the recommendation, a constraints table with each standard's version and the exact sentence quoted, the OBS-002 vs SEC-002 conflict, the unknowns, and status **Proposed**.
+   The first call publishes the agent in Foundry. Later calls say `reused` until `agent.yaml` or the model changes. Open `solutions/02-design-microsoft/out/adr-draft.md`: options with pros and cons, the recommendation, a constraints table with each standard's version and the exact sentence quoted, the OBS-002 vs SEC-002 conflict, the unknowns, and status **Proposed**.
 
 4. **Ask the same question as the enterprise.** Run the same command with `--profile enterprise`. The recommendation now routes model calls through the central AI gateway, because STD-OPS-002 only exists for the enterprise profile. Same question, same model, different permitted standards.
 
@@ -161,10 +161,10 @@ About 15 minutes. Run the commands from the repository root. Each advisor call t
    ```
 
    ```text
-   E01    small-team  PASS   13.4 s  resp_...
+   E01    small-team  PASS   18.2 s  resp_...
    ...
-   E08    enterprise  PASS    6.6 s  resp_...
-   10/10 runs passed in 82.4 s · model gpt-5.4-mini · results: ...\out\eval\results.json
+   E08    enterprise  PASS    5.5 s  resp_...
+   10/10 runs passed in 94.4 s · model gpt-5.4-mini · results: ...\out\eval\results.json
    ```
 
    Every case shows its live response id. `out/eval/results.md` is the same table in Markdown. Add `--repeat 3` to show run-to-run stability.
@@ -185,7 +185,7 @@ About 15 minutes. Run the commands from the repository root. Each advisor call t
 ## What to observe
 
 - **Grounded, versioned answers.** Every constraint names the standard, its version, and the sentence it comes from, and code verifies all three against the index.
-- **Honest gaps and contradictions.** The advisor says "I don't know" for the token budget, and hands the logging conflict to an architect instead of choosing a side.
+- **Honest gaps and contradictions.** The advisor says "I don't know" for the token budget. For the logging conflict, it lists both standards, proposes a safe interim, and says an architect must decide.
 - **Access enforced by the search service.** The small-team agent cannot retrieve enterprise standards, even when asked to. Every run checks what the search returned, not only what the model said.
 - **Measured, not anecdotal.** Ten labelled cases with response ids, re-run on every change. While choosing the model, the checks caught a model that skipped the search and invented standards, versions, and quotes.
 - **People decide.** The output is a Proposed ADR in a pull request. Merging it is the architect's decision, recorded in Git history.
@@ -210,7 +210,7 @@ azd down --purge
 gh api -X DELETE repos/{owner}/{repo}/environments/design-microsoft
 ```
 
-`--purge` also removes the soft-deleted Foundry account, so the name can be reused.
+`--purge` also removes the soft-deleted Foundry account, so the name can be reused. To bring the solution back soon afterwards, give the resources new names first: `azd env set AZURE_RESOURCE_SEED 2` (any new value), then `azd up`. See Troubleshooting.
 
 ## Use it in your own repository
 
@@ -231,7 +231,8 @@ gh api -X DELETE repos/{owner}/{repo}/environments/design-microsoft
 
 - **`AzureCLICredential: exit status 1` during `azd up` or `azd provision`.** azd could not get a token from the Azure CLI. Run `az account get-access-token` to check your sign-in, then run the command again.
 - **`DefaultAzureCredential failed to retrieve a token` with `AzureCliCredential: Failed to invoke the Azure CLI`.** The Azure CLI took too long to return a token. Run `az account get-access-token --resource https://ai.azure.com` to check it responds, then run the script again.
-- **`404 ... The API deployment for this resource does not exist` right after `azd up`.** A new model deployment takes a few minutes to answer. Wait five minutes and run the command again.
+- **`404 ... The API deployment for this resource does not exist` right after `azd up`.** A new model deployment can take a few minutes to answer. Wait five minutes and run the command again.
+- **`404 ... DeploymentNotFound` or `The project does not exist` for much longer after re-creating the solution.** After `azd down --purge`, an `azd up` that reuses the same names can leave the Foundry project endpoint pointing at the deleted account for more than an hour, even though the deployment exists. Give the resources new names in the same resource group: `azd env set AZURE_RESOURCE_SEED 2` (any new value), `azd up`, then `python ingest_standards.py`.
 - **`service error: ... 429 rate_limit_exceeded` in the evaluation.** The model deployment is throttled. Run with `--workers 1`, or raise `modelCapacity` in `infra/main.bicep` and run `azd provision`.
 - **A run fails with `excerpt: ... is not in the standard` or `citation: ... does not exist`.** The checks did their job: the model misquoted or invented a standard. Never loosen the checks. Measure with `--repeat 3`, then improve the instructions in `agent.yaml`.
 - **The issue gets no answer.** The workflow only runs for issues that carry the `design-advisor` label and were opened by someone with access to the repository. Remove and re-apply the label to ask again.
