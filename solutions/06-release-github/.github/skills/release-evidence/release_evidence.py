@@ -510,6 +510,24 @@ def render_notes(manifest: dict, whats_changed: str, approval: dict | None = Non
 
 # --------------------------------------------------------------------------------------------------- verify
 
+def token_can_read_packages(token: str) -> bool | None:
+    """False when a classic or OAuth token lacks a packages scope; None when GitHub does not report scopes
+    (GITHUB_TOKEN in Actions, fine-grained tokens), in which case the registry itself decides."""
+    api_url = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    request = urllib.request.Request(f"{api_url}/rate_limit", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            header = response.headers.get("X-OAuth-Scopes")
+    except urllib.error.HTTPError as error:
+        header = error.headers.get("X-OAuth-Scopes") if error.headers else None
+    except (urllib.error.URLError, OSError):
+        return None
+    if header is None:
+        return None
+    scopes = {scope.strip() for scope in header.split(",") if scope.strip()}
+    return bool(scopes & {"read:packages", "write:packages", "delete:packages"})
+
+
 def registry_check(image: dict, user: str | None, token: str | None) -> tuple[bool, str]:
     """HEAD the manifest by digest in the registry (GitHub Container Registry token exchange)."""
     name = image["name"]
@@ -525,7 +543,8 @@ def registry_check(image: dict, user: str | None, token: str | None) -> tuple[bo
         with urllib.request.urlopen(request, timeout=30) as response:
             served = response.headers.get("Docker-Content-Digest", image["digest"])
     except urllib.error.HTTPError as error:
-        return False, f"{name}@{image['digest'][:19]}…: registry answered HTTP {error.code}"
+        return False, (f"{name}@{image['digest'][:19]}…: registry answered HTTP {error.code} (the image is missing, "
+                       "or this token cannot read the package)")
     except (urllib.error.URLError, OSError, KeyError, ValueError) as error:
         return False, f"{name}: {error}"
     if served != image["digest"]:
@@ -636,6 +655,11 @@ def verify_release(repo: str, tag: str, folder: Path, release: dict, expect: str
     if not registry_token:
         checks.append(Check("images", "FAIL" if require_images else "SKIP",
                             "no registry token (set GHCR_TOKEN to a token that can read packages)"))
+    elif token_can_read_packages(registry_token) is False:
+        checks.append(Check("images", "FAIL" if require_images else "SKIP",
+                            "GHCR_TOKEN cannot read packages (no read:packages scope), so this check proves nothing "
+                            "either way; run `gh auth refresh -s read:packages` first. The approval workflow checks "
+                            "the images with its own token"))
     else:
         results = [registry_check(image, registry_user, registry_token) for image in manifest.get("images", [])]
         bad = [detail for ok, detail in results if not ok]
