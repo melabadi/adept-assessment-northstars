@@ -1,17 +1,20 @@
 # Develop · GitHub: a feature pull request must stay inside its bounds, whoever wrote it (Copilot or a person).
-# It runs on pull requests that change the app and close an Issue labeled `phase:develop`, the feature Issues this
-# solution hands to Copilot. The checker comes from the base branch and the pull request only supplies the commits it
-# inspects, so a pull request cannot change the rules it is judged by. The check fails when the change leaves app/
-# (CI/CD, agent configuration, infrastructure), edits an existing migration, touches approval authority, deletes or skips
-# a test, changes code without tests, or breaks the API contract. The app's own tests run in the CI workflow.
+# Feature pull requests are those that close an Issue labeled `phase:develop`, the feature Issues this solution hands to
+# Copilot. For them, the checker comes from the base branch and the pull request only supplies the commits it inspects,
+# so a pull request cannot change the rules it is judged by. The check fails when the change leaves app/ (CI/CD, agent
+# configuration, infrastructure), edits an existing migration, touches approval authority, deletes or skips a test,
+# changes code without tests, or breaks the API contract. Every other pull request passes at once, so the check can be
+# required in a ruleset without blocking unrelated work. If the feature lookup itself fails, the check fails.
+# The app's own tests run in the CI workflow.
 name: Develop · GitHub · feature bounds
 
 on:
   pull_request:
-    paths: ['app/**']
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 concurrency:
   group: develop-github-bounds-${{ github.event.pull_request.number }}
@@ -22,18 +25,12 @@ defaults:
     shell: bash
 
 jobs:
-  feature:
-    name: Find the feature Issue
+  bounds:
+    name: Feature stays within its bounds
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      issues: read
-      pull-requests: read
-    outputs:
-      issues: ${{ steps.linked.outputs.issues }}
+    timeout-minutes: 10
     steps:
-      - name: Issues labeled phase:develop that this pull request closes
+      - name: Find the Issues labeled phase:develop that this pull request closes
         id: linked
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,36 +48,30 @@ jobs:
             }' --jq '[.data.repository.pullRequest.closingIssuesReferences.nodes[]
                       | select(any(.labels.nodes[]; .name == "phase:develop")) | "#\(.number)"] | join(" ")')
           echo "issues=$issues" >> "$GITHUB_OUTPUT"
-          if [ -n "$issues" ]; then
-            echo "Feature pull request for $issues: checking its bounds." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No linked Issue labeled phase:develop, so this is not a feature pull request. Bounds check skipped." >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$issues" ]; then
+            echo "Not a feature pull request (it closes no Issue labeled phase:develop), so there are no bounds to check." >> "$GITHUB_STEP_SUMMARY"
           fi
-
-  bounds:
-    name: Feature stays within its bounds
-    needs: feature
-    if: needs.feature.outputs.issues != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
       - name: Check out the trusted checker (base branch, full history)
+        if: steps.linked.outputs.issues != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      - if: steps.linked.outputs.issues != ''
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
       - name: Fetch the pull request's commits (read as data, never run)
+        if: steps.linked.outputs.issues != ''
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: git fetch --no-tags origin "$HEAD_SHA"
       - name: Check scope, migrations, approval authority, tests, and contract
+        if: steps.linked.outputs.issues != ''
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          ISSUES: ${{ needs.feature.outputs.issues }}
+          ISSUES: ${{ steps.linked.outputs.issues }}
         run: |
           set +e
           python .github/skills/bounded-feature/scope_check.py --base "$BASE_SHA" --head "$HEAD_SHA" > bounds.txt 2>&1

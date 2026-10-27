@@ -12,7 +12,8 @@ crosses one of these boundaries:
   3. Approval authority: RequestWorkflow.DecideAsync and the approval rules in RequestWorkflow.PermissionsFor are
      unchanged, and no other code starts recording decisions, setting a request to Approved or Rejected, or calling
      the decision API from the web UI.
-  4. Tests: no test is deleted or skipped, and a change to app code comes with a change to its tests.
+  4. Tests: no test file loses test cases or gains a skip marker (each file is compared with its own base version, a
+     moved file with its old path), and a change to app code comes with a change to its tests.
   5. Contract: changes to app/contracts/openapi.json are additive only (uses the contract-impact skill).
 
 By default it checks your working tree: commits since the merge base plus uncommitted and untracked files. With
@@ -89,6 +90,10 @@ class Change:
             untracked = git("ls-files", "--others", "--exclude-standard").splitlines()
         rows = [line.split("\t", 1) for line in status.splitlines() if "\t" in line] + [["A", p] for p in untracked]
         self.files = [(kind[0], path.replace("\\", "/")) for kind, path in rows]
+        # Renamed or moved files (new path -> old path), so a moved test file is compared with its old self.
+        renames = git("diff", "--name-status", "-M", "--diff-filter=R", self.merge_base, *([head] if head else []))
+        self.renamed = {parts[2].replace("\\", "/"): parts[1].replace("\\", "/")
+                        for parts in (line.split("\t") for line in renames.splitlines()) if len(parts) == 3}
 
     def before(self, path: str) -> str:
         return at_ref(self.merge_base, path)
@@ -180,15 +185,19 @@ def check(change: Change, allow: list[str]) -> list[str]:
             if count(DECISION_CALL, after) > count(DECISION_CALL, before):
                 problems.append(f"approval authority changed: {path} adds a call to the decision API")
 
+    # Compare each test file with its own base version (a moved file with its old path), so new tests in one file
+    # can never hide tests deleted or skipped in another.
     tests = sorted({path for _, path in change.files if TEST_FILE.search(path)})
-    before = sum(test_cases(p, change.before(p)) for p in tests)
-    after = sum(test_cases(p, change.after(p)) for p in tests)
-    if after < before:
-        problems.append(f"tests removed: {before} test cases in the changed test files at the base, {after} now")
-    skipped_before = sum(count(SKIPPED, change.before(p)) for p in tests)
-    skipped_after = sum(count(SKIPPED, change.after(p)) for p in tests)
-    if skipped_after > skipped_before:
-        problems.append(f"tests skipped or focused: {skipped_after - skipped_before} new Skip/.skip/.fixme/.only marker(s)")
+    moved_to_tests = {old for new, old in change.renamed.items() if TEST_FILE.search(new)}
+    for path in tests:
+        if path in moved_to_tests and not change.after(path):
+            continue
+        origin = change.renamed.get(path, path)
+        before, after = change.before(origin), change.after(path)
+        if test_cases(path, after) < test_cases(origin, before):
+            problems.append(f"tests removed: {path} has {test_cases(path, after)} test case(s), {test_cases(origin, before)} at the base")
+        if (added := count(SKIPPED, after) - count(SKIPPED, before)) > 0:
+            problems.append(f"tests skipped or focused: {path} adds {added} Skip/.skip/.fixme/.only marker(s)")
     code = [p for p in changed if CODE_FILE.match(p) and not TEST_FILE.search(p) and not p.startswith(MIGRATIONS)]
     if code and not any(TEST_FILE.search(p) for p in changed):
         problems.append("no tests changed: app code changed without a test (turn each acceptance criterion into a test)")
