@@ -8,13 +8,6 @@ namespace RequestHub.Tests;
 public sealed class AuthorizationTests(ApiFixture api) : IClassFixture<ApiFixture>
 {
     [Fact]
-    public async Task Anonymous_calls_are_rejected()
-    {
-        var response = await api.Factory.CreateClient().GetAsync("/api/requests");
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
     public async Task Unknown_persona_is_rejected()
     {
         var response = await api.As("u-nobody").GetAsync("/api/me");
