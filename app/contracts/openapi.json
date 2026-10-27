@@ -963,6 +963,36 @@
         }
       }
     },
+    "/api/admin/load-test/cleanup": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Delete only the requests submitted by the configured load-test identities (Demo:LoadTestRequesterIds). An admin cleans up every load-test identity; a load-test identity cleans up its own requests.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoadTestCleanupDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/reset": {
       "post": {
         "tags": [
@@ -1330,6 +1360,29 @@
         "format": "binary"
       },
       "JsonElement": {},
+      "LoadTestCleanupDto": {
+        "required": [
+          "deleted",
+          "owners"
+        ],
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "MeDto": {
         "required": [
           "id",
