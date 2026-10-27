@@ -33,6 +33,17 @@ def preflight(repo: str, ref: str) -> dict:
     settings = repository.get("security_and_analysis") or {}
     licensed = any(settings.get(key, {}).get("status") == "enabled"
                    for key in ("advanced_security", "code_security"))
+    if repository["private"] and repository["owner"]["type"] == "Organization" and not licensed:
+        # Repository security settings are admin-only; a read-only Actions token can probe the service instead.
+        try:
+            alerts = api(f"repos/{repo}/code-scanning/alerts?per_page=1")
+        except subprocess.CalledProcessError as error:
+            if not any(status in (error.stderr or "") for status in ("HTTP 403", "HTTP 404")):
+                raise
+        else:
+            if not isinstance(alerts, list):
+                raise ValueError("Unexpected code scanning entitlement response")
+            licensed = True
     allowed = not repository["private"] or (repository["owner"]["type"] == "Organization" and licensed)
     if not allowed:
         return {"status": "BLOCKED", "repository": repo, "ref": ref, "reason":
