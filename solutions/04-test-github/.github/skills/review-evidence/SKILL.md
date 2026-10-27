@@ -1,0 +1,54 @@
+---
+name: review-evidence
+description: Assemble the evidence a reviewer needs for a pull request, separating deterministic acceptance (CI checks, regression tests that fail at the tests-only commit and pass at the head) from review comments (Copilot code review, people) and recording the human decision. Use before asking for review, when reviewing an agent's PR, and before merging.
+---
+
+# Review evidence
+
+A fix is accepted by deterministic checks and a person. Copilot code review comments help the reviewer, but an empty
+review is not proof of correctness. This skill produces both kinds of evidence and keeps them apart.
+
+## When to use
+- An agent or a developer opened a fix pull request and asks for review.
+- You review a fix and want to see that its regression tests failed before the fix and pass after it.
+- Before you merge, to record which checks passed and who decided.
+
+## Inputs
+- A pull request whose first change is a commit that only adds or changes tests, followed by the fix
+  (failure-reproduction skill, step 4).
+- GitHub CLI signed in with access to the repository.
+- For local proofs (`prove_fix.py`, or `review_evidence.py --run`): the .NET SDK and PostgreSQL on localhost:5432.
+
+## Procedure
+1. **Prove the order of evidence.** The workflow *Test · GitHub · prove the fix test-first*
+   (`.github/workflows/test-github-proof.yml`) runs on fix pull requests. It finds the tests-only commit, selects the
+   test methods it added or changed, and runs them in clean worktrees at that commit (at least one must fail) and at
+   the head (all must pass). Both test outputs are kept in its `regression-proof` artifact. To run the same proof locally:
+   `python .github/skills/review-evidence/prove_fix.py --pr <n>` (or `--base <branch> --head HEAD` for local commits).
+2. **Ask for Copilot code review**: Reviewers > Copilot on the pull request, or `gh pr edit <n> --add-reviewer @copilot`.
+3. **Assemble the report** and post it on the pull request:
+   `python .github/skills/review-evidence/review_evidence.py --pr <n> --comment`.
+   Section 1 (checks and the proof) decides; section 2 (Copilot and people's comments) informs; section 3 records the
+   decision.
+4. **Decide.** Read the tests themselves: do they assert the behavior the Issue describes? Then approve or request
+   changes as a GitHub review, and run step 3 again: it updates the same comment with the decision.
+
+## Expected output
+```
+| `8654a2fa4` | tests only: Add failing regression tests for #5 | ❌ 8 of 10 failed | must fail: proves the defect |
+| `f69668543` | head: Fix first-wins decisions ... | ✅ 10 of 10 passed | must pass: proves the fix |
+
+✅ Proven: 8 of 10 selected tests fail at the tests-only commit, and all 10 pass at the head.
+- Copilot code review: 2 inline comment(s).
+- approved by @reviewer on 2026-10-27
+```
+Exit codes of `prove_fix.py`: 0 proven, 1 not proven, 2 setup error.
+
+## Failure handling
+- `No checks yet`: workflows on Copilot's pull requests wait until a person selects **Approve and run workflows**.
+- `no tests-only commit before the fix`: ask the author to commit the failing tests on their own first. Do not accept a
+  proof run at the base branch instead; it does not show that the tests in the pull request detect the defect.
+- `the new tests pass without the fix`: the tests do not detect the defect. Ask for stronger tests.
+- `did not run (build error?)`: that commit does not build; open its log in the artifact. That is a review finding.
+- A proof says ✅ but the tests assert something trivial: the proof shows the order of evidence, not test quality.
+  The reviewer still reads the tests.

@@ -1,0 +1,83 @@
+# Test · GitHub: deterministic proof that a defect fix was made test-first.
+#  A fix pull request must start with a commit that only adds or changes tests, followed by the fix. This workflow runs
+#  the tests that commit added or changed at two known SHAs, each in a clean worktree: at the tests-only commit at least
+#  one must fail (the tests detect the defect), and at the pull request head all must pass (the fix works). Both test
+#  outputs are kept in the `regression-proof` artifact, and the job summary shows the two results side by side.
+# It runs on pull requests into a lab branch (lab/**) and on pull requests labelled `bug`. The full test suite still
+# runs in CI. Copilot code review and comments from people are not part of this check: they inform the reviewer, and a
+# person decides. The proof script comes from the base branch, so a pull request cannot change how it is judged.
+name: Test · GitHub · prove the fix test-first
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths: ['app/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-github-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  proof:
+    name: Regression tests fail before the fix and pass after it
+    if: >-
+      (startsWith(github.base_ref, 'lab/') || contains(github.event.pull_request.labels.*.name, 'bug'))
+      && (github.event.action != 'labeled' || github.event.label.name == 'bug')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: requesthub
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: requesthub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U requesthub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out the trusted proof script (base branch, full history of every branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Run the new tests at the tests-only commit (must fail) and at the head (must pass)
+        run: python .github/skills/review-evidence/prove_fix.py --base "$BASE_SHA" --head "$HEAD_SHA" --out out/regression-proof
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f out/regression-proof/proof.md ]; then
+            cat out/regression-proof/proof.md >> "$GITHUB_STEP_SUMMARY"
+            echo "Both test outputs (console logs and CTRF reports) are in the \`regression-proof\` artifact of this run." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No proof was produced. Open the previous step's log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Keep both test outputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: regression-proof
+          path: out/regression-proof
+          if-no-files-found: ignore
+          retention-days: 90
