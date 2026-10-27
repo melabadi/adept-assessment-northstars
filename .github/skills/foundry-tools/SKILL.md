@@ -11,8 +11,8 @@ and returns only permitted fields. There is no approval tool, so the agent canno
 
 | Piece | File |
 |---|---|
-| Agent definition: instructions, tool schemas, strict output schema | `phases/03-develop/microsoft/triage-agent.yaml` |
-| Publisher (new version only when the definition changes) | `phases/03-develop/microsoft/publish_triage_agent.py` |
+| Agent definition: instructions, tool schemas, strict output schema | `solutions/03-develop-microsoft/triage-agent.yaml` |
+| Publisher (new version only when the definition changes) | `solutions/03-develop-microsoft/publish_triage_agent.py` |
 | Tool loop, timeout, output parsing | `app/src/RequestHub.Api/Triage/FoundryTriageProvider.cs` |
 | Tool implementations (scoping, data minimization, audit) | `ScopedTriageTools` in `app/src/RequestHub.Core/Services/RequestWorkflow.cs` |
 | Deterministic guards (citations, approval claims, policy conflicts) | `RecommendAsync` and `ValidateRecommendation` in `RequestWorkflow.cs` |
@@ -24,7 +24,7 @@ and returns only permitted fields. There is no approval tool, so the agent canno
 
 ## Inputs
 - The change you want, for example "let the agent read the request's attachment names".
-- Azure access to the Foundry project (Azure AI User role) to publish.
+- Azure access to the Foundry project (Foundry User role, formerly Azure AI User) to publish.
 
 ## Procedure
 1. Declare the tool in `triage-agent.yaml` with a closed schema (`additionalProperties: false`, every property in `required`).
@@ -35,7 +35,7 @@ and returns only permitted fields. There is no approval tool, so the agent canno
    - write a `triage.tool_call` audit entry with the outcome.
 3. Run the contract check: `python .github/skills/foundry-tools/check_tools.py`.
 4. Add or update an integration test in `app/tests/RequestHub.Tests/TriageTests.cs` (see `MisbehavingTriageProvider`).
-5. Publish: `python phases/03-develop/microsoft/publish_triage_agent.py`, then run the **triage-evaluation** skill.
+5. Publish: `python solutions/03-develop-microsoft/publish_triage_agent.py`, then run the **triage-evaluation** skill.
 
 ## Expected output
 ```
@@ -49,4 +49,4 @@ published new version: requesthub-triage v5 (model gpt-4.1-mini)
 - `declared ... but FoundryTriageProvider does not execute it`: the agent would call a tool the API ignores. Implement it or remove it.
 - `looks state-changing`: stop. Approvals, rejections, and routing changes stay with people through authorized API operations.
 - `strict mode needs every property in required`: make optional values nullable (`type: [string, "null"]`) and list them in `required`.
-- Publishing fails with 401/403: run `az login` and confirm the Azure AI User role on the Foundry account.
+- Publishing fails with 401/403: run `az login` and confirm the Foundry User role (formerly Azure AI User) on the Foundry account.
