@@ -1,0 +1,81 @@
+name: Secure · GitHub · replay the remediation
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Same-repository Copilot repair PR targeting lab/secure-*
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  replay:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: requesthub
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: requesthub
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U requesthub" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Resolve immutable PR commits and check the lab boundary
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+        shell: bash
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "Invalid PR number"; exit 1; }
+          gh api "repos/$REPO/pulls/$PR" > out-pr.json
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          pr = json.loads(Path("out-pr.json").read_text())
+          if pr["head"]["repo"]["full_name"] != os.environ["REPO"] or not pr["base"]["ref"].startswith("lab/secure-"):
+              raise SystemExit("Only same-repository lab remediation PRs may run")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"base={pr['base']['sha']}\nhead={pr['head']['sha']}\n")
+          PY
+      - name: Fetch the exact source snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.pr.outputs.base }}
+          HEAD: ${{ steps.pr.outputs.head }}
+        shell: bash
+        run: |
+          gh auth setup-git
+          git fetch origin "$BASE" "$HEAD"
+      - name: Replay tests before and after the repair, then the full app suite
+        env:
+          BASE: ${{ steps.pr.outputs.base }}
+          HEAD: ${{ steps.pr.outputs.head }}
+        run: >-
+          python .github/skills/verified-remediation/verify_remediation.py
+          --base "$BASE" --head "$HEAD" --out out/replay
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: secure-remediation-evidence
+          path: |
+            out/replay/
+            out-pr.json
+          if-no-files-found: error

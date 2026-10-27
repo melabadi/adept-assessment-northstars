@@ -1,0 +1,106 @@
+# Release · GitHub: a person approves a release candidate; this workflow checks the evidence, records the approval, and
+# publishes the release. Starting it is the approval: the record says who started it, when, with which note, and on
+# which evidence (the SHA-256 of the release manifest).
+#  1. verify: the draft's evidence is intact (SHA256SUMS), complete (four test suites with no failures, recounted from
+#     the reports), built from main by the candidate workflow, and its images exist in the registry with those digests.
+#  2. publish runs in the release-github environment, which only accepts runs from main. When the environment has
+#     required reviewers (public repositories on GitHub Free, Pro, and Team; any repository on GitHub Enterprise), a
+#     reviewer must also approve before this job starts. The job checks everything again, checks the approver (admin or
+#     maintainer, never a bot), attaches approval-record.json to the draft, and publishes it, which creates the tag.
+name: Release · GitHub · approve and publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft release to approve, for example demo-v1.0.0
+        required: true
+        type: string
+      comment:
+        description: Approval note, recorded with the release (optional)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-github-approve-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  SKILL: .github/skills/release-evidence
+  TAG: ${{ inputs.tag }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify the evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # draft releases are only visible to tokens that can write releases; this job changes nothing
+      actions: read # read the candidate run
+      packages: read # find the image digests in the registry
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Verify the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: python "$SKILL/release_evidence.py" verify --tag "$TAG" --expect draft --require-images --workdir "$RUNNER_TEMP/release"
+
+  publish:
+    name: Record the approval and publish
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: release-github
+      url: ${{ steps.publish.outputs.url }}
+    permissions:
+      contents: write # attach the approval record and publish the release
+      actions: read # read the candidate run and this run's environment reviews
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Check again, check the approver, and write the approval record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GHCR_TOKEN: ${{ github.token }}
+          APPROVER: ${{ github.triggering_actor }}
+          COMMENT: ${{ inputs.comment }}
+          PREVENT_SELF_APPROVAL: ${{ vars.RELEASE_GITHUB_PREVENT_SELF_APPROVAL }}
+        run: |
+          flags=()
+          if [ "$PREVENT_SELF_APPROVAL" = "true" ]; then flags+=(--prevent-self-approval); fi
+          python "$SKILL/release_evidence.py" approve --tag "$TAG" --approver "$APPROVER" --comment "$COMMENT" \
+            --run-id "$GITHUB_RUN_ID" --workdir "$RUNNER_TEMP/release" --notes "$RUNNER_TEMP/release-notes.md" "${flags[@]}"
+      - name: Publish the release (creates the tag at the tested commit)
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" "$RUNNER_TEMP/release/approval-record.json" --clobber
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false --latest
+          url=$(gh release view "$TAG" --json url --jq .url)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### Published [RequestHub $TAG]($url)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: python "$SKILL/release_evidence.py" verify --tag "$TAG" --expect published --require-images --workdir "$RUNNER_TEMP/published"

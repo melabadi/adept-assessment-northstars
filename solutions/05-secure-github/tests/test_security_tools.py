@@ -1,0 +1,123 @@
+"""Unit tests for evidence reporters and entitlement guards, not live security demo evidence.
+
+Run: python -m unittest discover -s solutions/05-secure-github/tests -v
+Fixtures below test parsing only. No fixture result is accepted as a real scanner finding.
+"""
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load(name, relative):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+triage = load("triage", ".github/skills/finding-triage/finding_triage.py")
+verify = load("verify", ".github/skills/verified-remediation/verify_remediation.py")
+SHA = "a" * 40
+
+
+class EntitlementTests(unittest.TestCase):
+    def test_private_personal_repo_is_blocked_before_commit_lookup(self):
+        repository = {"private": True, "owner": {"type": "User"}, "security_and_analysis": None}
+        with patch.object(triage, "api", return_value=repository) as api:
+            self.assertEqual("BLOCKED", triage.preflight("demo/repo", "lab/secure-test")["status"])
+            api.assert_called_once()
+
+    def test_public_and_licensed_organization_are_allowed(self):
+        for repository in (
+            {"private": False, "owner": {"type": "User"}},
+            {"private": True, "owner": {"type": "Organization"},
+             "security_and_analysis": {"code_security": {"status": "enabled"}}},
+        ):
+            with self.subTest(repository=repository), patch.object(
+                    triage, "api", side_effect=[repository, {"sha": SHA}]):
+                self.assertEqual(SHA, triage.preflight("demo/repo", "lab/secure-test")["scanned_sha"])
+
+    def test_secret_protection_does_not_authorize_codeql(self):
+        repository = {"private": True, "owner": {"type": "Organization"},
+                      "security_and_analysis": {"secret_scanning": {"status": "enabled"}}}
+        with patch.object(triage, "api", return_value=repository):
+            self.assertEqual("BLOCKED", triage.preflight("demo/repo", "lab/secure-test")["status"])
+
+    def test_unrelated_or_unsafe_ref_is_rejected(self):
+        for ref in ("main", "--all", "lab/secure-x/../main", "release/latest", "lab/secure-"):
+            with self.subTest(ref=ref), self.assertRaises(ValueError):
+                triage.preflight("demo/repo", ref)
+
+    def test_copilot_branch_must_target_lab(self):
+        with patch.object(triage, "api", side_effect=[
+                {"private": False, "owner": {"type": "User", "login": "demo"}},
+                [{"base": {"ref": "main"}, "head": {"repo": {"full_name": "demo/repo"}}}]]):
+            with self.assertRaises(ValueError):
+                triage.preflight("demo/repo", "copilot/fix")
+
+
+class SarifTests(unittest.TestCase):
+    def document(self, results=None):
+        return {"version": "2.1.0", "runs": [{
+            "tool": {"driver": {"name": "CodeQL", "version": "test-fixture",
+                                "rules": [{"id": triage.RULE}]}},
+            "invocations": [{"executionSuccessful": True}],
+            "results": results or [],
+        }]}
+
+    def finding(self, uri=triage.SOURCE):
+        return {"ruleIndex": 0, "message": {"text": "Parser fixture, NOT live evidence"},
+                "locations": [{"physicalLocation": {
+                    "artifactLocation": {"uri": uri}, "region": {"startLine": 49}}}]}
+
+    def summarize(self, document, expect):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "fixture.sarif"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            return triage.summarize(path, expect, SHA)
+
+    def test_present_and_absent_expectations(self):
+        document = self.document([self.finding()])
+        self.assertEqual("PASS", self.summarize(document, "present")["status"])
+        self.assertEqual("FAIL", self.summarize(document, "absent")["status"])
+        self.assertEqual("PASS", self.summarize(self.document(), "absent")["status"])
+        self.assertEqual("FAIL", self.summarize(self.document(), "present")["status"])
+
+    def test_empty_or_wrong_tool_or_failed_invocation_is_not_a_clean_scan(self):
+        documents = [{"version": "2.1.0", "runs": []}, self.document(), self.document(), self.document()]
+        documents[1]["runs"][0]["tool"]["driver"]["name"] = "NotCodeQL"
+        documents[2]["runs"][0]["invocations"] = [{"executionSuccessful": False}]
+        documents[3]["runs"][0].pop("invocations")
+        for document in documents:
+            with self.subTest(document=document), self.assertRaises(ValueError):
+                self.summarize(document, "absent")
+
+    def test_file_uri_and_wrong_location(self):
+        self.assertEqual("PASS", self.summarize(
+            self.document([self.finding("file:///runner/target/" + triage.SOURCE)]), "present")["status"])
+        self.assertEqual("FAIL", self.summarize(
+            self.document([self.finding("unrelated.cs")]), "present")["status"])
+
+    def test_missing_sarif_is_not_a_clean_scan(self):
+        with tempfile.TemporaryDirectory() as folder, self.assertRaises(ValueError):
+            triage.summarize(Path(folder), "absent", SHA)
+
+
+class JunitTests(unittest.TestCase):
+    def test_assertions_are_distinguished_from_errors_and_skips(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "fixture.xml"
+            path.write_text('<testsuites><testsuite><testcase name="Search_treats_SQL_and_wildcards_as_literal_text">'
+                            '<failure>assertion</failure></testcase><testcase name="other"><error>infra</error>'
+                            '</testcase><testcase name="skip"><skipped /></testcase></testsuite></testsuites>')
+            self.assertEqual({"tests": 3, "failures": 1, "errors": 1, "skipped": 1,
+                              "literal_search_failures": 1}, verify.report(path))
+
+
+if __name__ == "__main__":
+    unittest.main()
