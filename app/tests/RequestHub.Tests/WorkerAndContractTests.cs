@@ -88,7 +88,17 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
             {
                 var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
                 var processor = Processor(db, sender, maxAttempts: 3, batchSize: 3, baseBackoffSeconds: 60);
-                await processor.ProcessBatchAsync(CancellationToken.None);
+                try
+                {
+                    await processor.ProcessBatchAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    await using var cleanupScope = api.Factory.Services.CreateAsyncScope();
+                    var cleanupDb = cleanupScope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+                    await cleanupDb.Notifications.Where(n => ids.Contains(n.Id)).ExecuteDeleteAsync();
+                    throw;
+                }
             }
 
             await using var verificationScope = api.Factory.Services.CreateAsyncScope();
@@ -139,26 +149,35 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
         }
         using var cancellation = new CancellationTokenSource();
         var sender = new TimeoutSender(ids, cancellation);
-        await using (var scope = api.Factory.Services.CreateAsyncScope())
+        try
         {
-            var processor = Processor(scope.ServiceProvider.GetRequiredService<RequestHubDbContext>(), sender, maxAttempts: 3, batchSize: 3);
-            var error = await Assert.ThrowsAsync<TaskCanceledException>(() => processor.ProcessBatchAsync(cancellation.Token));
-            Assert.Equal(cancellation.Token, error.CancellationToken);
-        }
+            await using (var scope = api.Factory.Services.CreateAsyncScope())
+            {
+                var processor = Processor(scope.ServiceProvider.GetRequiredService<RequestHubDbContext>(), sender, maxAttempts: 3, batchSize: 3);
+                var error = await Assert.ThrowsAsync<TaskCanceledException>(() => processor.ProcessBatchAsync(cancellation.Token));
+                Assert.Equal(cancellation.Token, error.CancellationToken);
+            }
 
-        Assert.True(cancellation.IsCancellationRequested);
-        Assert.Equal(ids.Take(2).ToArray(), sender.Calls.ToArray());
-        await using var verificationScope = api.Factory.Services.CreateAsyncScope();
-        var db = verificationScope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
-        var notifications = await db.Notifications.Where(n => ids.Contains(n.Id)).ToListAsync();
-        Assert.Equal(3, notifications.Count);
-        Assert.All(notifications, n =>
+            Assert.True(cancellation.IsCancellationRequested);
+            Assert.Equal(ids.Take(2).ToArray(), sender.Calls.ToArray());
+            await using var verificationScope = api.Factory.Services.CreateAsyncScope();
+            var db = verificationScope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+            var notifications = await db.Notifications.Where(n => ids.Contains(n.Id)).ToListAsync();
+            Assert.Equal(3, notifications.Count);
+            Assert.All(notifications, n =>
+            {
+                Assert.Equal(NotificationStatus.Pending, n.Status);
+                Assert.Equal(0, n.Attempts);
+                Assert.Null(n.LastError);
+                Assert.Null(n.ProcessedAt);
+            });
+        }
+        finally
         {
-            Assert.Equal(NotificationStatus.Pending, n.Status);
-            Assert.Equal(0, n.Attempts);
-            Assert.Null(n.LastError);
-            Assert.Null(n.ProcessedAt);
-        });
+            await using var cleanupScope = api.Factory.Services.CreateAsyncScope();
+            var db = cleanupScope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+            await db.Notifications.Where(n => ids.Contains(n.Id)).ExecuteDeleteAsync();
+        }
     }
 
     [Fact]
