@@ -11,7 +11,7 @@ Most release incidents start the same way: a new build replaces the one users ar
 | Deploying | The new build replaces the running one; users are the first real test. | The build runs beside the current one as a candidate with 0% of traffic until it passes the gate. |
 | Checking | "The deployment succeeded" means the container started. | The platform's readiness probe, then the API used the way people use it, on the candidate's own URL, then a bake period. |
 | Artifacts | Each environment rebuilds; nobody can say which commit is running. | One image per commit, deployed by digest. `/api/meta` reports the commit baked into the image, and the gate checks it. |
-| A bad build | Users hit errors until someone notices and redeploys. | The candidate never gets traffic. The gate fails within about two minutes and records why, and the candidate is removed. |
+| A bad build | It reaches users, or the pipeline says "deployed" while the platform quietly keeps the old version and nobody knows why. | The candidate never gets traffic. The gate fails within about two minutes, records why, and removes the candidate. |
 | Rolling back | Rebuild or redeploy the old version, often 10 minutes or more under pressure. | One traffic change to the previous revision, still running: about 15 seconds, then the same checks. |
 | Evidence | Scattered logs and chat messages. | One release record per run: commit, digest, revisions, every check, timings, and what users saw. |
 | Access | A stored service principal secret with Contributor. | GitHub OIDC, no secret. The release identity holds two roles: Container Apps Contributor on the resource group and AcrPush on the registry. |
@@ -111,17 +111,17 @@ About 20 minutes. Commands run from this folder unless they start with `gh`.
 - A terminal with the users' view: `python release.py watch`. It calls the production URL every second and prints the status and the build it gets, plus a line whenever Azure's traffic changes.
 - The app in a browser: `azd env get-value API_URL`, signed in. The header shows the environment and build.
 
-1. **Where we are.** `python release.py status` shows one revision with the `stable` label and 100% of traffic. The first time, its build is `local`: azd deployed it from a workstation.
+1. **Where we are.** `python release.py status` shows one revision with 100% of traffic. The first time, it has no label yet and its build is `local`: azd deployed it from a workstation. The first release labels it.
 
-2. **Release a good build (6–8 minutes).** In GitHub, open **Actions** → **Release · Microsoft · roll out a candidate revision** → **Run workflow** (fault `none`). Or:
+2. **Release a good build (about 5 minutes).** In GitHub, open **Actions** → **Release · Microsoft · roll out a candidate revision** → **Run workflow** (fault `none`). Or:
 
    ```powershell
    gh workflow run release-microsoft-rollout.yml
    gh run watch
    ```
 
-   - **Build the image once**: builds `requesthub-api:<commit>` on the runner (about 4 minutes the first time) and pushes it. Later runs for the same commit reuse it by digest in seconds.
-   - **Deploy the candidate and gate it**: refresh the portal. A revision `run<number>` appears with the label `candidate` and 0% traffic. Open `https://<app>---candidate.<domain>/api/meta` to show its build. The gate reports `Ready 36 s after it was created`, then nine checks on the candidate's URL and a 60-second bake. The `watch` terminal still shows the old build: no user has reached the candidate.
+   - **Build the image once**: builds `requesthub-api:<commit>` on the runner (about 90 seconds) and pushes it. Later runs for the same commit reuse it by digest in seconds.
+   - **Deploy the candidate and gate it**: refresh the portal. A revision `run<number>` appears with the label `candidate` and 0% traffic. Open `https://<app>---candidate.<domain>/api/meta` to show its build. The gate reports the candidate ready about 30 seconds after it was created, then nine checks on the candidate's URL and a 60-second bake. The `watch` terminal still shows the old build: no user has reached the candidate.
    - **Promote**: one traffic change, about 15 seconds. The `watch` terminal switches to the new build without a single failed call. The portal shows the new revision at 100% (`stable`) and the old one at 0% (`previous`, still running).
    - **Release record**: the run's summary shows the commit, the image digest, each step with timings, every check, and what users saw during each step.
 
@@ -159,7 +159,7 @@ About 20 minutes. Commands run from this folder unless they start with `gh`.
 
    One traffic change, about 15 seconds, to the previous revision, which is still running. Then the same smoke test on production. The `watch` terminal switches back to the previous build without a failed call. Nothing was rebuilt or redeployed.
 
-6. **Show the evidence.** Each run has a **release-record** artifact (Markdown and JSON). The repository's **Deployments** page lists the `release-microsoft` environment's runs. In the portal, the container app's **Activity log** shows each traffic change, made by the release identity. In the app, the requests named `Release check ...` are the ones the gate submitted; their history shows the refused self-approval never became a decision.
+6. **Show the evidence.** Each run has a **release-record** artifact (Markdown and JSON). The repository's **Deployments** page lists the `release-microsoft` environment's runs. In the portal, the container app's **Activity log** shows each change, made by the release identity. In the app, the requests named `Release check ...` are the ones the gate submitted; their history holds only the creation, because the API refused the self-approval.
 
 To drive a release from a terminal instead, build with `az acr build`, then run the steps yourself:
 
@@ -178,7 +178,7 @@ python release.py record         # writes out/release/release-record.md
 - **Users never meet an untested build.** The candidate runs with 0% of traffic until it passes the gate. In our runs, the `watch` terminal recorded 318 of 318 successful calls across a good release, a promotion, a bad release, and its removal.
 - **The gate checks behavior, not just "it started".** Readiness comes from the platform; the smoke test then submits a request, retries it safely, reads it back, confirms the requester cannot approve it (`decision.self_approval`), and reads its audit history, on the candidate's own URL.
 - **Provenance you can verify.** One image per commit, deployed by digest. The commit is baked into the image, and the gate fails if `/api/meta` reports a different one. The release record links commit, digest, revision, and the build users received.
-- **A bad build is caught by the platform and explained.** The readiness probe fails, the gate stops within about two minutes, captures Azure's probe failures and the app's own health-check message, and removes the candidate. Nobody has to dig through logs first.
+- **A bad build is caught and explained, not just held back.** Container Apps never routes users to a revision that is not ready; that is the platform's first line of defense. The release builds on it: the gate fails within about two minutes, captures Azure's probe failures and the app's own health-check message, and removes the candidate, so the run is red with a reason instead of "deployed". It also catches what readiness cannot see: a wrong build, or a business rule broken on a revision that starts fine.
 - **Recovery is a traffic change, not a redeploy.** Promotion and rollback each took about 15 seconds in our runs, with the same verification afterwards.
 - **Least privilege and no secrets.** GitHub signs in with OIDC; the release identity can manage container apps and push images, nothing more.
 - **What a rollback does not undo.** Every revision shares one PostgreSQL database, and a candidate runs its database migrations when it starts, even without traffic. Keep migrations backward compatible so the previous revision keeps working. A revision switch is not a database rollback.
