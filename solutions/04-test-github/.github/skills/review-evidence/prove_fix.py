@@ -6,7 +6,8 @@ tests-only commit between the base and the head of a pull request, works out whi
 changed, and runs exactly those tests twice, each time in a clean temporary git worktree:
 
   1. at the tests-only commit  at least one must FAIL: the tests detect the defect
-  2. at the head               all of them must PASS: the fix works
+  2. at the head               every one of them must still exist and PASS: the fix works (skipping or deleting a
+                               failing test does not count)
 
 Both test outputs (console log and CTRF JSON report) are kept in --out, named after their commit, next to proof.json and
 proof.md. The workflow "Test · GitHub · prove the fix test-first" runs this script on fix pull requests, and a reviewer
@@ -134,12 +135,13 @@ def run_tests(sha: str, filters: list[str], out: Path, label: str) -> dict:
         finally:
             subprocess.run(["git", "worktree", "remove", "--force", str(tree)], cwd=REPO, capture_output=True)
     log.write_text(proc.stdout + proc.stderr, encoding="utf-8")
-    result = {"sha": sha, "log": log.name, "report": None, "total": 0, "passed": 0, "failed": 0, "failedTests": []}
+    result = {"sha": sha, "log": log.name, "report": None, "total": 0, "passed": 0, "failed": 0, "tests": [], "failedTests": []}
     if report.exists():
         tests = json.loads(report.read_text(encoding="utf-8"))["results"]["tests"]
         failed = [t for t in tests if t.get("status") == "failed"]
         result.update(report=report.name, total=len(tests), failed=len(failed),
                       passed=sum(1 for t in tests if t.get("status") == "passed"),
+                      tests=[{"name": t.get("name", "?"), "status": t.get("status", "other")} for t in tests],
                       failedTests=[{"name": t.get("name", "?"), "message": summary_of(t.get("message"))} for t in failed])
     return result
 
@@ -156,12 +158,16 @@ def short_name(test: str) -> str:
     return method.rsplit(".", 1)[-1] + paren + arguments
 
 
-def outcome(result: dict) -> str:
-    if not result["total"]:
+def outcome(result: dict, missing: int = 0) -> str:
+    total, passed, failed = result["total"], result["passed"], result["failed"]
+    if not total:
         return "⚠️ did not run (build error? see the log)"
-    if result["failed"]:
-        return f"❌ {result['failed']} of {result['total']} failed"
-    return f"✅ {result['total']} of {result['total']} passed"
+    if failed:
+        return f"❌ {failed} of {total} failed" + (f", {missing} missing" if missing else "")
+    if passed < total or missing:
+        gaps = [f"{total - passed} skipped"] * (passed < total) + [f"{missing} missing"] * bool(missing)
+        return f"⚠️ {passed} of {total + missing} passed, " + ", ".join(gaps)
+    return f"✅ {total} of {total} passed"
 
 
 def render(proof: dict, heading: str = "### Regression tests at known commits") -> str:
@@ -171,7 +177,7 @@ def render(proof: dict, heading: str = "### Regression tests at known commits") 
         tests_only, head = proof["testsOnly"], runs["head"]
         lines += ["| Commit | What it contains | Selected tests | Expected |", "|---|---|---|---|",
                   f"| `{tests_only['sha'][:9]}` | tests only: {tests_only['title']} | {outcome(runs['testsOnly'])} | must fail: proves the defect |",
-                  f"| `{head['sha'][:9]}` | head: {proof['headTitle']} | {outcome(head)} | must pass: proves the fix |", ""]
+                  f"| `{head['sha'][:9]}` | head: {proof['headTitle']} | {outcome(head, len(proof.get('missingAtHead', [])))} | must pass: proves the fix |", ""]
     icon = "✅ Proven" if proof["verdict"] == "proven" else "❌ Not proven"
     lines += [f"**{icon}:** {proof['reason']}", ""]
     if proof["tests"]:
@@ -197,7 +203,7 @@ def prove(base: str, head: str, out: Path, test_filter: str | None = None) -> di
              "headTitle": run("git", "log", "-1", "--format=%s", head_sha).strip(),
              "testsOnly": {k: tests_commit[k] for k in ("sha", "title")} if tests_commit else None,
              "commits": [{k: c[k] for k in ("sha", "title")} for c in commits],
-             "tests": [], "selection": "", "otherTests": [], "runs": {}}
+             "tests": [], "selection": "", "otherTests": [], "runs": {}, "missingAtHead": []}
 
     if tests_commit is None:
         proof["reason"] = "no tests-only commit before the fix. Commit the failing tests on their own first, then the fix."
@@ -217,22 +223,38 @@ def prove(base: str, head: str, out: Path, test_filter: str | None = None) -> di
             before = run_tests(tests_commit["sha"], filters, out, "tests-only")
             after = before if tests_commit["sha"] == head_sha else run_tests(head_sha, filters, out, "head")
             proof["runs"] = {"testsOnly": before, "head": after}
-            if not before["total"]:
-                proof["reason"] = "the selected tests did not run at the tests-only commit (build error? see the log)."
-            elif not before["failed"]:
-                proof["reason"] = "the new tests pass without the fix, so they do not detect the defect."
-            elif not after["total"]:
-                proof["reason"] = "the selected tests did not run at the head (build error? see the log)."
-            elif after["failed"]:
-                proof["reason"] = f"{after['failed']} of {after['total']} selected tests still fail at the head."
-            else:
-                proof["verdict"] = "proven"
-                proof["reason"] = (f"{before['failed']} of {before['total']} selected tests fail at the tests-only commit "
-                                   f"`{before['sha'][:9]}`, and all {after['total']} pass at the head `{after['sha'][:9]}`.")
+            proven, proof["reason"], proof["missingAtHead"] = judge(before, after)
+            proof["verdict"] = "proven" if proven else "not proven"
 
     (out / "proof.json").write_text(json.dumps(proof, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (out / "proof.md").write_text(render(proof), encoding="utf-8")
     return proof
+
+
+def judge(before: dict, after: dict) -> tuple[bool, str, list[str]]:
+    """Whether two runs prove a test-first fix, why, and which tests that ran before no longer exist at the head.
+
+    Every test that ran before the fix must still exist and pass after it, so skipping or deleting a failing test
+    cannot turn the proof green.
+    """
+    status_after = {t["name"]: t["status"] for t in after["tests"]}
+    not_passing = sorted(t["name"] for t in before["tests"] if status_after.get(t["name"]) != "passed")
+    missing = [name for name in not_passing if name not in status_after]
+    skipped = after["total"] - after["passed"] - after["failed"]
+    if not before["total"]:
+        return False, "the selected tests did not run at the tests-only commit (build error? see the log).", missing
+    if not before["failed"]:
+        return False, "the new tests pass without the fix, so they do not detect the defect.", missing
+    if not after["total"]:
+        return False, "the selected tests did not run at the head (build error? see the log).", missing
+    if not_passing or skipped or after["failed"]:
+        problems = [f"{after['failed']} failed"] * bool(after["failed"]) + [f"{skipped} skipped"] * bool(skipped)
+        if missing:
+            gone = "test no longer exists" if len(missing) == 1 else "tests no longer exist"
+            problems.append(f"{len(missing)} {gone}: " + ", ".join(f"`{short_name(name)}`" for name in missing[:8]))
+        return False, f"not every selected test passes at the head ({'; '.join(problems)}).", missing
+    return True, (f"{before['failed']} of {before['total']} selected tests fail at the tests-only commit "
+                  f"`{before['sha'][:9]}`, and {after['total']} of {after['total']} pass at the head `{after['sha'][:9]}`."), missing
 
 
 def main(argv: list[str] | None = None) -> int:

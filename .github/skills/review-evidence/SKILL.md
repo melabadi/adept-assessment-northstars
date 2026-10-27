@@ -23,7 +23,8 @@ review is not proof of correctness. This skill produces both kinds of evidence a
 1. **Prove the order of evidence.** The workflow *Test · GitHub · prove the fix test-first*
    (`.github/workflows/test-github-proof.yml`) runs on fix pull requests. It finds the tests-only commit, selects the
    test methods it added or changed, and runs them in clean worktrees at that commit (at least one must fail) and at
-   the head (all must pass). Both test outputs are kept in its `regression-proof` artifact. To run the same proof locally:
+   the head (every one must still exist and pass, so skipping or deleting a failing test does not count). Both test
+   outputs are kept in its `regression-proof` artifact. To run the same proof locally:
    `python .github/skills/review-evidence/prove_fix.py --pr <n>` (or `--base <branch> --head HEAD` for local commits).
 2. **Ask for Copilot code review**: Reviewers > Copilot on the pull request, or `gh pr edit <n> --add-reviewer @copilot`.
 3. **Assemble the report** and post it on the pull request:

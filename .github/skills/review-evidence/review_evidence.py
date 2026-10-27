@@ -38,17 +38,25 @@ REPO = prove_fix.REPO
 MARKER = "<!-- review-evidence -->"
 ARTIFACT = "regression-proof"
 COPILOT = ("copilot-pull-request-reviewer", "Copilot")
-BUCKETS = {"pass": "✅ pass", "fail": "❌ fail", "pending": "⏳ pending", "skipping": "➖ skipped", "cancel": "⛔ cancelled"}
 
 
 def gh(*args: str, check: bool = True, stdin: str | None = None) -> str:
     try:
-        proc = subprocess.run(["gh", *args], cwd=REPO, input=stdin, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        proc = subprocess.run(["gh", *args], cwd=REPO, input=stdin, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=300)
     except FileNotFoundError as exc:
         raise prove_fix.ProofError("the GitHub CLI (gh) is not installed or not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise prove_fix.ProofError(f"gh {' '.join(args[:2])} did not answer within 5 minutes") from exc
     if check and proc.returncode != 0:
         raise prove_fix.ProofError(f"gh {' '.join(args[:2])}: {(proc.stderr or proc.stdout).strip()[:300]}")
     return proc.stdout
+
+
+def gh_list(endpoint: str) -> list[dict]:
+    """Every item of a paginated REST list (one compact JSON object per line, so it works on older GitHub CLIs too)."""
+    out = gh("api", "--paginate", f"{endpoint}?per_page=100", "--jq", ".[]")
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
 
 
 def first_line(text: str | None, width: int = 160) -> str:
@@ -56,12 +64,27 @@ def first_line(text: str | None, width: int = 160) -> str:
     return lines[0][:width] if lines else ""
 
 
+def check_result(check: dict) -> str:
+    """One check run or commit status from statusCheckRollup, as a short result."""
+    if check.get("__typename") == "StatusContext":
+        state = check.get("state", "")
+        return {"SUCCESS": "✅ pass", "FAILURE": "❌ fail", "ERROR": "❌ error"}.get(state, "⏳ pending")
+    if check.get("status") != "COMPLETED":
+        return "⏳ pending"
+    conclusion = check.get("conclusion") or ""
+    return {"SUCCESS": "✅ pass", "FAILURE": "❌ fail", "TIMED_OUT": "❌ timed out", "STARTUP_FAILURE": "❌ failed to start",
+            "CANCELLED": "⛔ cancelled", "SKIPPED": "➖ skipped", "NEUTRAL": "➖ neutral",
+            "ACTION_REQUIRED": "⏳ waiting for a person to approve the run"}.get(conclusion, conclusion.lower())
+
+
 def checks(number: int) -> list[str]:
-    raw = gh("pr", "checks", str(number), "--json", "name,workflow,bucket", check=False).strip()
-    found = json.loads(raw) if raw.startswith("[") else []
-    if not found:
+    rollup = json.loads(gh("pr", "view", str(number), "--json", "statusCheckRollup"))["statusCheckRollup"] or []
+    latest: dict[tuple[str, str], dict] = {}
+    for check in sorted(rollup, key=lambda c: c.get("startedAt") or ""):
+        latest[(check.get("workflowName") or "", check.get("name") or check.get("context") or "?")] = check
+    if not latest:
         return ["No checks yet. Workflows on Copilot's pull requests wait until a person selects **Approve and run workflows**.", ""]
-    rows = [f"| {c.get('workflow') or '–'} · {c['name']} | {BUCKETS.get(c.get('bucket', ''), c.get('bucket', '?'))} |" for c in found]
+    rows = [f"| {workflow or '–'} · {name} | {check_result(check)} |" for (workflow, name), check in latest.items()]
     return ["| Check | Result |", "|---|---|", *rows, ""]
 
 
@@ -88,15 +111,24 @@ def is_copilot(login: str) -> bool:
     return login.startswith(COPILOT)
 
 
+def headline(body: str | None) -> str:
+    """A review's verdict and first sentence, for example "🔵 Needs a closer look: Approval correctness depends on ..."."""
+    title = next((line.strip().lstrip("#").strip() for line in (body or "").splitlines() if line.strip().startswith("#")), "")
+    summary = first_line(body, 240)
+    return ": ".join(part for part in (title, summary) if part)
+
+
 def reviews(repo: str, number: int) -> list[str]:
-    submitted = json.loads(gh("api", f"repos/{repo}/pulls/{number}/reviews?per_page=100"))
-    inline = json.loads(gh("api", f"repos/{repo}/pulls/{number}/comments?per_page=100"))
+    submitted = gh_list(f"repos/{repo}/pulls/{number}/reviews")
+    inline = gh_list(f"repos/{repo}/pulls/{number}/comments")
+    copilot_reviews = [r for r in submitted if is_copilot(r["user"]["login"])]
     copilot_inline = [c for c in inline if is_copilot(c["user"]["login"])]
     people_inline = [c for c in inline if not is_copilot(c["user"]["login"])]
 
     lines = ["### 2. Review comments (inform the reviewer; they do not decide)", ""]
-    if any(is_copilot(r["user"]["login"]) for r in submitted):
-        lines.append(f"- **Copilot code review:** {len(copilot_inline)} inline comment(s).")
+    if copilot_reviews:
+        verdict = headline(copilot_reviews[-1].get("body"))
+        lines.append(f"- **Copilot code review:** {verdict + ' ' if verdict else ''}({len(copilot_inline)} inline comment(s))")
         lines += [f"  - `{c['path']}`: {first_line(c['body'])}" for c in copilot_inline[:8]]
     else:
         lines.append("- **Copilot code review:** not requested or not finished yet.")
@@ -120,7 +152,7 @@ def reviews(repo: str, number: int) -> list[str]:
 def post(repo: str, number: int, report: str) -> str:
     """Update the report this account posted earlier, or post a new comment."""
     me = gh("api", "user", "--jq", ".login", check=False).strip()
-    earlier = [c for c in json.loads(gh("api", f"repos/{repo}/issues/{number}/comments?per_page=100"))
+    earlier = [c for c in gh_list(f"repos/{repo}/issues/{number}/comments")
                if me and c["user"]["login"] == me and c["body"].startswith(MARKER)]
     if earlier:
         gh("api", "-X", "PATCH", f"repos/{repo}/issues/comments/{earlier[-1]['id']}", "--input", "-", stdin=json.dumps({"body": report}))
