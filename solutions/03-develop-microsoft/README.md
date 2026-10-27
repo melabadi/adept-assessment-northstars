@@ -90,7 +90,7 @@ python publish_triage_agent.py
 
 `azd up` takes about 15 minutes. It creates resource group `rg-ai-sdlc-develop` and fills it as follows:
 
-- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): a Container Apps environment, private PostgreSQL with Microsoft Entra authentication only, Blob storage, a container registry, Application Insights, and a Microsoft Entra app registration with RequestHub's app roles. You get every role.
+- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): a Container Apps environment, private PostgreSQL with Microsoft Entra authentication only, Blob storage behind a private endpoint, a container registry, Application Insights, and a Microsoft Entra app registration with RequestHub's app roles. You get every role.
 - **The app**, deployed as two container apps (API with web UI, and the notification worker). The images are built in the registry, so Docker is not needed.
 - **Microsoft Foundry** in `eastus2`: an account, a `develop` project, and `gpt-4.1-mini`. You, the app's managed identity, and the GitHub Actions identity get the **Foundry User** role (formerly Azure AI User).
 - **GitHub environment `develop-microsoft`**, created by the hooks with OIDC sign-in values and the Foundry endpoint.
@@ -154,9 +154,14 @@ When you no longer need the solution:
 
 ```powershell
 cd solutions/03-develop-microsoft
+$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
 azd down --purge
-gh api -X DELETE repos/{owner}/{repo}/environments/develop-microsoft
+az ad app delete --id $app
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+gh api -X DELETE 'repos/{owner}/{repo}/environments/develop-microsoft'
 ```
+
+`azd down` deletes the resource group. RequestHub's sign-in app registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it and `az rest` empties it from the recycle bin. Without that last step, a new `azd up` with the same environment name can't create the app registration again for 30 days.
 
 ## Use it in your own repository
 
@@ -170,4 +175,5 @@ gh api -X DELETE repos/{owner}/{repo}/environments/develop-microsoft
 - **The triage panel says the assistant is unavailable.** Run `python publish_triage_agent.py` in this folder. If the agent exists, new role assignments can take a few minutes; check the app's logs in Application Insights.
 - **`LocationIsOfferRestricted` for PostgreSQL during `azd up`.** Your subscription cannot create PostgreSQL Flexible Server in that region. Create a new azd environment in another region, for example `centralus`.
 - **`AzureCLICredential: exit status 1` during `azd up`.** azd could not get a token from the Azure CLI. Run `az account get-access-token`, then run `azd up` again.
+- **`DeploymentNotFound` or `The project does not exist` right after re-creating the solution.** After `azd down --purge`, re-creating it under the same environment name reuses the same Foundry names, and the project endpoint can keep answering for the deleted account for more than an hour. Create it under a new environment name instead (for example `azd env new ai-sdlc-develop2 --location centralus`, then `azd up` and `python publish_triage_agent.py`).
 - **The evaluation stops with `the API uses triage provider 'sample-rules'`.** Start the API with `Triage__Provider=Foundry` and `Foundry__ProjectEndpoint` as in step 3.

@@ -102,8 +102,9 @@ jobs:
           loadtestConfigFile: solutions/04-test-microsoft/out/loadtest.yaml
           loadtestResource: ${{ vars.LOAD_TEST_NAME }}
           resourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
-          loadtestRunName: GitHub run ${{ github.run_number }} (${{ github.event_name }}${{ inputs.slowdown && ', slowdown rehearsal' || '' }})
-          loadtestRunDescription: ${{ github.workflow }} on ${{ github.ref_name }} at ${{ github.sha }}
+          # The action limits run names to 50 characters and descriptions to 100.
+          loadtestRunName: GitHub run ${{ github.run_number }} (${{ github.event_name }}${{ inputs.slowdown && ', slowdown' || '' }})
+          loadtestRunDescription: Workflow run ${{ github.run_id }} at ${{ github.sha }}
           outputVariableName: loadtest
       # The OIDC sign-in above expires after a few minutes, so sign in again for the steps after the test.
       - name: Sign in to Azure again

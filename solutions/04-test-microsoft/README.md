@@ -89,7 +89,7 @@ azd env new ai-sdlc-test --location centralus
 azd up
 ```
 
-`azd up` takes about 20 minutes. It creates resource group `rg-ai-sdlc-test` and fills it as follows:
+`azd up` takes about 15 minutes. It creates resource group `rg-ai-sdlc-test` and fills it as follows:
 
 - **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep) and **the app** (API with web UI, and the notification worker), built in the registry, so Docker is not needed. You get every RequestHub role.
 - **Azure Load Testing** with two managed identities: `id-lt-requester-*` (RequestHub Requester) and `id-lt-approver-*` (RequestHub Approver). You and the GitHub Actions identity get **Load Test Contributor**; the Load Testing resource reads the app's metrics for its dashboard.
@@ -184,11 +184,14 @@ python slowdown.py status     # "no slowdown configured", or run: python slowdow
 python load_test.py cleanup
 ```
 
-Close any `load-test` Issue still open. When you no longer need the solution:
+Close any `load-test` Issue still open. When you no longer need the solution, run this in the solution folder. `azd down` removes the resource group, but not the Microsoft Entra app registration RequestHub signs in with (Entra objects live outside resource groups), and a deleted app that is not purged stops the next `azd up` from creating it again:
 
 ```powershell
+$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
 azd down --purge
-gh api -X DELETE repos/{owner}/{repo}/environments/test-microsoft
+az ad app delete --id $app
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+gh api -X DELETE 'repos/{owner}/{repo}/environments/test-microsoft'
 ```
 
 ## Use it in your own repository
@@ -206,3 +209,4 @@ gh api -X DELETE repos/{owner}/{repo}/environments/test-microsoft
 - **Every request fails with 401 in the test run.** The API does not accept the identities yet. Run `azd deploy api`, which applies `LOAD_TEST_CLIENT_IDS` to the API's authentication settings.
 - **`Cleanup refused (HTTP 403)` in the engine log.** The API is missing `Demo__LoadTestRequesterIds`. Run `azd deploy api`.
 - **`No server-side telemetry for this window yet`.** Application Insights receives data a minute or two late. Run `python load_test.py report --run-id <id>` again.
+- **A run stays in `PROVISIONING` far longer than the usual 3 minutes.** Azure Load Testing is waiting for engine capacity in the region; one of our runs waited 25 minutes and then ran normally. Wait, or stop the run in the Azure portal and start it again.

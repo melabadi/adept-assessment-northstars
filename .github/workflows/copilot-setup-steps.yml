@@ -58,6 +58,6 @@ jobs:
           node -e "require('@playwright/test').chromium.launch().then(b => b.close()).then(() => console.log('Chromium launches'))"
       - name: Install Python dependencies (every solution's requirements)
         run: |
-          for file in requirements.txt solutions/*/requirements.txt; do
-            if [ -f "$file" ]; then pip install -r "$file"; fi
+          for file in solutions/*/requirements.txt; do
+            pip install -r "$file"
           done
