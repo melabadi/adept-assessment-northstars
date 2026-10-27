@@ -109,7 +109,7 @@ nobody cleans up.
   the work it does; an incident investigation uses roughly 10 to 35 AAUs. New customers can
   [evaluate it](https://learn.microsoft.com/azure/sre-agent/evaluate) without the hourly charge for 30 days. This
   solution caps active usage at 1,000 AAUs a month. See [pricing](https://learn.microsoft.com/azure/sre-agent/pricing-billing),
-  and run `azd down` when you are done.
+  and [remove it](#reset-and-clean-up) when you are done.
 
 ## Set up
 
@@ -178,11 +178,12 @@ short. Run the commands in this folder.
    It rules out database errors, API errors, restarts, and the load spike, then reports the root cause with high
    confidence, the exact command, a rollback, and when the fault would have expired. It states that nothing changed.
 
-5. **Mitigate.** Reply in the thread: *Apply the proposed mitigation.* The agent rechecks the state and asks for
-   approval: the card shows the command and "Permission rule requires approval for this tool". Select **Approve**. The
-   agent first tries with its own identity and gets an authorization error, by design. The card then offers to run the
-   command with your credentials (on-behalf-of): select **Authorize**. A new worker revision starts without the fault.
-   You can also run the command yourself instead.
+5. **Mitigate.** Right after its report the agent submits the command, and the platform pauses it for approval: the
+   card shows the command and "Permission rule requires approval for this tool". Select **Approve**. The agent first
+   tries with its own identity and gets an authorization error, by design. The card then offers to run the command
+   with your credentials (on-behalf-of): select **Authorize**. A new worker revision starts without the fault. To run
+   the command yourself instead, select **Deny** and use the command from the report. If the agent stops at its report
+   without asking, reply *Apply the proposed mitigation.*
 
 6. **Watch it recover.** In the `watch` terminal the fault turns off and the backlog drains within about a minute of
    the new revision. The alert resolves about 5 minutes later, after three healthy one-minute evaluations. In the
@@ -229,15 +230,20 @@ python incident.py reset
 It removes the fault if it is still set and reseeds RequestHub's demo data. Wait for the alert to resolve before you
 start another drill.
 
-When you no longer need the solution:
+When you no longer need the solution, run from this folder:
 
 ```powershell
+$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
 azd down --purge
+az ad app delete --id $app
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
 gh api -X DELETE 'repos/{owner}/{repo}/environments/operate-microsoft'
 ```
 
-`azd down` deletes the resource group, including the agent, which stops its charges. The Microsoft Entra app
-registration *RequestHub (ai-sdlc-operate)* stays; delete it in Microsoft Entra ID if you do not plan to deploy again.
+`azd down` deletes the resource group, including the agent, which stops its charges. RequestHub's sign-in app
+registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it and
+`az rest` empties it from the recycle bin. Without that last step, a new `azd up` with the same environment name can't
+create the app registration again for 30 days.
 
 ## Use it in your own repository
 
