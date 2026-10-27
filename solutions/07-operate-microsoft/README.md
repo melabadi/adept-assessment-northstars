@@ -113,7 +113,7 @@ nobody cleans up.
 
 ## Set up
 
-Run once, from this folder:
+Run once, from the repository root:
 
 ```powershell
 cd solutions/07-operate-microsoft
@@ -122,9 +122,11 @@ az login
 azd auth login
 azd env new ai-sdlc-operate --location centralus
 azd up
+gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+gh label create phase:operate --color C5DEF5 --description "SDLC phase 7: Operate" --force
 ```
 
-`azd up` takes about 15 minutes. It creates resource group `rg-ai-sdlc-operate` and fills it as follows:
+`azd up` takes about 15 minutes. The two labels are for the incident summary Issue in step 7. `azd up` creates resource group `rg-ai-sdlc-operate` and fills it as follows:
 
 - **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep), and the app as two
   container apps (API with web UI, and the notification worker). You get every RequestHub role.
@@ -203,7 +205,8 @@ short. Run the commands in this folder.
    `verify` prints five checks: fault removed, backlog drained, a new request's notifications delivered, alert
    resolved, SRE Agent investigated. `summary` writes a timeline and the agent's report, without subscription,
    tenant, or object ids or email addresses, and files it as a GitHub Issue. To hand the follow-up to the GitHub track's
-   incident triage ([07-operate-github](../07-operate-github/)), add `--label incident`.
+   incident triage ([07-operate-github](../07-operate-github/)), add `--label incident`. That label starts its agentic
+   triage, so it needs that solution's Set up, including its Copilot token.
 
 ## What to observe
 
