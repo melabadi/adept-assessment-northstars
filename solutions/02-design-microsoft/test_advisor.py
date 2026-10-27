@@ -145,6 +145,15 @@ class GateTests(unittest.TestCase):
         self.assertFalse(advisor.excerpt_found("Personal data may be sent when encrypted.", source))
         self.assertFalse(advisor.excerpt_found("...", source))
 
+    def test_search_markers_are_removed_from_every_text(self):
+        raw = {"summary": "Stay in the API.【5:0†source】【5:4†source】", "unknowns": ["Scaling needs【5:1†source】"],
+               "constraints": [{"excerpt": "Prefer extending an existing service【3:2†source】"}], "answerable": True}
+        clean = advisor.strip_markers(raw)
+        self.assertEqual(clean["summary"], "Stay in the API.")
+        self.assertEqual(clean["unknowns"], ["Scaling needs"])
+        self.assertEqual(clean["constraints"][0]["excerpt"], "Prefer extending an existing service")
+        self.assertIs(clean["answerable"], True)
+
     def test_mentions_in_free_text_are_checked_unless_the_question_named_them(self):
         data = answer(unknowns=["Does STD-OPS-002 apply?"])
         self.assertTrue(any("STD-OPS-002 in the answer text" in p for p in self.check(data)))
