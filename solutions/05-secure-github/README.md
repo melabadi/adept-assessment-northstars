@@ -299,9 +299,15 @@ git apply --check --ignore-space-change solutions/05-secure-github/lab/code-find
   SHA and body. Do not copy a personal access token into the task or confuse CodeQL entitlement with review access.
 - **No tests-only commit / altered regression:** ask Copilot to meet the Issue criteria; the replay intentionally refuses
   a repair whose pre-fix failure cannot be established from its committed history.
+- **A literal `%` search returns a legitimate record:** synthetic descriptions include `95%`. The regression derives
+  the exact expected literal matches from independently fetched, authorized request details; it must not assume
+  that every punctuation search returns zero. This still catches wildcard expansion, including extra matches.
 - **Local database collisions:** the test fixture already uses unique databases. Do not reset the shared `requesthub`
   database. Use `REQUESTHUB_TEST_PG` only to select another server/account with create-database permission.
 - **Replay output already exists:** choose a new `--out` directory; evidence is never silently overwritten.
+- **Runner exits without JUnit:** retain the test log. With .NET 10's testing platform, the absolute
+  `--results-directory` is a `dotnet test` option and belongs before `--`, not among forwarded runner options.
+  The supplied replay command handles this and uses per-command Git long-path support for Windows cleanup.
 
 ## Product references
 
