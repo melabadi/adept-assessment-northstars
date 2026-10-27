@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,8 +46,21 @@ class EntitlementTests(unittest.TestCase):
     def test_secret_protection_does_not_authorize_codeql(self):
         repository = {"private": True, "owner": {"type": "Organization"},
                       "security_and_analysis": {"secret_scanning": {"status": "enabled"}}}
-        with patch.object(triage, "api", return_value=repository):
+        forbidden = subprocess.CalledProcessError(1, ["gh"], stderr="gh: Code scanning disabled (HTTP 403)")
+        with patch.object(triage, "api", side_effect=[repository, forbidden]):
             self.assertEqual("BLOCKED", triage.preflight("demo/repo", "lab/secure-test")["status"])
+
+    def test_actions_token_can_prove_enabled_service_without_admin_settings(self):
+        repository = {"private": True, "owner": {"type": "Organization"}}
+        with patch.object(triage, "api", side_effect=[repository, [], {"sha": SHA}]):
+            self.assertEqual("PASS", triage.preflight("demo/repo", "lab/secure-test")["status"])
+
+    def test_service_errors_are_not_misreported_as_licensing(self):
+        repository = {"private": True, "owner": {"type": "Organization"}}
+        server_error = subprocess.CalledProcessError(1, ["gh"], stderr="gh: Server error (HTTP 500)")
+        with patch.object(triage, "api", side_effect=[repository, server_error]):
+            with self.assertRaises(subprocess.CalledProcessError):
+                triage.preflight("demo/repo", "lab/secure-test")
 
     def test_unrelated_or_unsafe_ref_is_rejected(self):
         for ref in ("main", "--all", "lab/secure-x/../main", "release/latest", "lab/secure-"):
@@ -109,6 +123,12 @@ class SarifTests(unittest.TestCase):
 
 
 class JunitTests(unittest.TestCase):
+    def test_absolute_report_path_is_a_dotnet_option_not_a_runner_argument(self):
+        command = verify.regression_command(Path.cwd() / "out" / "report")
+        self.assertLess(command.index("--results-directory"), command.index("--"))
+        self.assertTrue(command[command.index("--project") + 1].endswith(".csproj"))
+        self.assertGreater(command.index("--filter-class"), command.index("--"))
+
     def test_assertions_are_distinguished_from_errors_and_skips(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "fixture.xml"

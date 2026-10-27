@@ -157,6 +157,8 @@ than promising a fixed duration. Commands below create two temporary lab branche
    $finding = "<actual injection review comment URL>"
    $task = Get-Content solutions/05-secure-github/remediate-task.md -Raw
    $task += "`n`nDetection: Copilot code review`nFinding: $finding`nReviewed SHA: $unsafe`nLab PR: $url`nBase: $lab`n"
+   $review = gh api "repos/$repo/pulls/$labPr/comments" --jq '.[] | {html_url,commit_id,path,line,body,author:.user.login}'
+   $task += "`nAuthenticated same-run review export:`n$review`n"
    $issueUrl = $task | gh issue create --title "Secure: parameterize the lab search, tests first" `
      --body-file - --label ai-sdlc --label phase:secure
    $issue = $issueUrl.Split('/')[-1]
@@ -210,6 +212,10 @@ private repository cannot use the CLI as a loophole.
    setup disabled** (or disable it first); do not run two competing CodeQL configurations.
    To adopt default setup instead, select **Code scanning → Set up → Default**, choose C#, and use its supported
    branch coverage. This lab's explicitly dispatched branch scans use the advanced workflow below.
+   On a licensed private organization repository with no previous analysis, a read-only token may receive
+   404 from the alerts endpoint and cannot see admin-only security settings. Bootstrap one default-setup scan
+   of safe `main`, wait for it to finish, then disable default setup before using this advanced workflow.
+   A 404 is not permission to bypass preflight or proof that a license is absent.
 2. Before assigning the repair, run the real scan on the unsafe lab:
 
    ```powershell
@@ -288,11 +294,20 @@ git apply --check --ignore-space-change solutions/05-secure-github/lab/code-find
   enable neither CodeQL nor upload as a workaround. Resume after public visibility or licensed organization enablement.
 - **No workflows on Copilot's PR:** approve them in the PR or use `gh run rerun <id>` as a maintainer.
 - **No custom agent:** merge the solution package onto the default branch before assigning the Issue.
+- **Cloud agent cannot read the private review with `gh`:** the profile explicitly enables built-in read-only
+  `github` tools. The Issue also carries an authenticated same-run review export; retain its actual URL, author,
+  SHA and body. Do not copy a personal access token into the task or confuse CodeQL entitlement with review access.
 - **No tests-only commit / altered regression:** ask Copilot to meet the Issue criteria; the replay intentionally refuses
   a repair whose pre-fix failure cannot be established from its committed history.
+- **A literal `%` search returns a legitimate record:** synthetic descriptions include `95%`. The regression derives
+  the exact expected literal matches from independently fetched, authorized request details; it must not assume
+  that every punctuation search returns zero. This still catches wildcard expansion, including extra matches.
 - **Local database collisions:** the test fixture already uses unique databases. Do not reset the shared `requesthub`
   database. Use `REQUESTHUB_TEST_PG` only to select another server/account with create-database permission.
 - **Replay output already exists:** choose a new `--out` directory; evidence is never silently overwritten.
+- **Runner exits without JUnit:** retain the test log. With .NET 10's testing platform, the absolute
+  `--results-directory` is a `dotnet test` option and belongs before `--`, not among forwarded runner options.
+  The supplied replay command handles this and uses per-command Git long-path support for Windows cleanup.
 
 ## Product references
 

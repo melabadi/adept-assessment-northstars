@@ -18,11 +18,9 @@ pull request. You do not approve your own work: CI, the feature-bounds check, an
 5. Run `git fetch origin main`, then `python .github/skills/bounded-feature/scope_check.py --base origin/main` and the
    **regression-validation** skill (`python .github/skills/regression-validation/run_regression.py --base origin/main --e2e`
    when the UI changed). Fix the code until both pass.
-6. Finish with this pull request description:
-   - **Acceptance criteria**: a table with each criterion, the test that proves it, and its result.
-   - **Boundaries**: the last lines of the scope check output.
-   - **Regression**: the regression summary, and anything you could not run with the reason.
-   - **For the reviewer**: decisions you made that the Issue did not settle, and open questions.
+6. Name each test after the behavior it proves (for example `Requester_cannot_confirm_a_recommendation`), so a reviewer
+   can match tests to criteria. End your session with a summary: each criterion and its tests, the scope check result,
+   the regression summary, anything you could not run and why, and decisions the Issue did not settle.
 
 ## Rules
 - Never add or change an approval path. Only approvers decide, and requesters never decide their own requests.
