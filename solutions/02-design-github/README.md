@@ -99,17 +99,17 @@ About 15 minutes. Run the commands from the repository root.
 
    Workflows on Copilot's pull requests wait for a person. Select **Approve and run workflows** on the pull request, or re-run the waiting runs from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids).
 
-3. **Watch the gate.** The **Design · GitHub · check the ADR and API impact** workflow adds two checks:
-   - **ADR checks** prints `PASS` for the new ADR: the template's sections, two options, both diagrams, real standards and versions, real paths, and Status Proposed.
-   - **API contract compatibility** compares `app/contracts/openapi.json` with `main`. An ADR-only pull request reports `Breaking changes: 0` and `No contract changes.` in the run summary.
+3. **Watch the gate.** The **Design · GitHub · check the ADR and API impact** workflow adds two checks, each in about ten seconds:
+   - **ADR checks** prints `solutions/02-design-github/adr/0001-live-triage-provider.md: PASS`: the template's sections, at least two options, both diagrams, real standards and versions, real paths, and Status Proposed.
+   - **API contract compatibility** compares `app/contracts/openapi.json` with the commit the branch started from. An ADR-only pull request reports `Breaking changes: 0` and `No contract changes.` in the run summary.
 
-4. **Ask Copilot for a code review.** Select **Reviewers** → **Copilot** on the pull request, or run `gh pr edit <number> --add-reviewer "@copilot"`. After a minute or two, Copilot comments on assumptions the ADR leaves unstated, standards it under-uses, and gaps in the threat model.
+4. **Ask Copilot for a code review.** Select **Reviewers** → **Copilot** on the pull request, or run `gh pr edit <number> --add-reviewer "@copilot"`. Within a few minutes Copilot posts a review that summarizes the decision and names what still needs people. In our runs it flagged the prompt-logging versus privacy conflict, the boundary for data sent to the AI service, and latency that has not been measured yet.
 
-5. **Review like an architect.** Open the ADR in the pull request and select **Display the rich diff**: the mermaid diagrams render. Look for:
-   - the two options, scored against the same standards, and the recommendation for each profile;
+5. **Review like an architect.** Open the ADR from the pull request (**Files changed** → **⋯** → **View file**) so the mermaid diagrams render. Look for:
+   - the options compared in one table against the same standards, and a recommendation for each profile;
    - the STD-OBS-002 vs STD-SEC-002 conflict under **Open questions**, left for you to decide;
-   - the API impact, tied to the real endpoints and fields of `requesthub.v1`;
-   - the threat model for the real data flow and the bounded tasks.
+   - what Copilot found by reading the code, not the brief: in our runs, that the workflow's 45-second triage timeout cannot meet the 8-second target, and that today's prompt sends more than the title, description, and category that BR-3 allows;
+   - the API impact tied to real endpoints and fields, the threat model for the real data flow, and the bounded tasks.
 
 6. **Show that only people decide.** On the pull request branch, let the agent "accept" its own ADR, and run the checker:
 
@@ -119,7 +119,9 @@ About 15 minutes. Run the commands from the repository root.
    python .github/skills/architecture-decision/check_adr.py $adr
    ```
 
-   It fails with `status Accepted must name the people who decided in **Deciders:**; an agent can only propose`. Now decide as the architect: replace `GitHub Copilot` with your name and role, run the checker again, and it passes. Push the change: the pull request's history shows who decided. Run `git checkout -- $adr` instead if you only want to show the failure.
+   It fails with `status Accepted must name the people who decided in **Deciders:**; an agent can only propose`. Now decide as the architect: replace `GitHub Copilot` with your name and role, run the checker again, and it passes. Commit and push: the **ADR checks** run passes, and the pull request's history shows who decided. Run `git checkout -- $adr` instead if you only want to show the failure.
+
+   Pushing the failing version shows the same red check in the pull request, even if that commit also edits `check_adr.py` to always pass: the workflow runs the checker from the base branch.
 
 7. **Optional: catch a breaking API change.** Remove a response field from a copy of the contract and compare it with `main`:
 
@@ -134,12 +136,12 @@ About 15 minutes. Run the commands from the repository root.
 
 ## What to observe
 
-- **Grounded in the real system.** The ADR names RequestHub's actual extension point, providers, timeout, audit events, endpoints, and Bicep. The check proves every file it cites exists.
-- **Standards, with versions.** Each driver cites `STD-xxx-nnn vX.Y`. A conflict between standards reaches a person instead of being settled silently.
-- **One question, two answers.** The recommendation changes with the operating profile where the standards do (STD-OPS-001 and STD-OPS-002).
-- **Contract impact as evidence.** The API impact is a deterministic report on every pull request, not an opinion. Breaking changes fail.
+- **Grounded in the real system.** Copilot reads the code before it designs. In our runs it reused the existing `ITriageProvider` extension point, rejected a separate triage service under STD-ARCH-001, and found gaps the brief does not mention, such as the 45-second timeout. The check proves every file the ADR cites exists.
+- **Standards, with versions.** Each driver cites `STD-xxx-nnn vX.Y`. The conflict between STD-OBS-002 and STD-SEC-002 reaches a person as a blocking open question instead of being settled silently.
+- **One question, two answers.** The recommendation follows the operating profile where the standards do: direct calls for the small team (STD-OPS-001), the central AI gateway for the enterprise (STD-OPS-002).
+- **Contract impact as evidence.** The API impact is a deterministic report on every pull request, not an opinion. Breaking changes fail; Copilot proposes any needed API change as an additive one.
 - **People decide.** Copilot proposes and Copilot code review questions; only a named person accepts. The checker and the standards come from the base branch, so the proposal cannot weaken them.
-- **Speed.** Minutes from a reviewed brief to a reviewable design.
+- **Speed.** About five minutes from a reviewed brief to a reviewable design.
 
 ## Reset and clean up
 
@@ -163,4 +165,3 @@ Do not merge the ADR into `main`. Keeping it out keeps the demo repeatable: the 
 ## Troubleshooting
 
 - **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person to approve them. Select **Approve and run workflows**, or run `gh run rerun <run-id>`.
-- **`error: unknown git ref origin/main`.** The contract tool compares with a ref your clone does not have. Run `git fetch origin main`, then try again.
