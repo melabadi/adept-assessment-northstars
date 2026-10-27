@@ -98,14 +98,14 @@ jobs:
       - name: Start RequestHub with the Foundry triage provider
         env:
           ASPNETCORE_ENVIRONMENT: Development
-          ASPNETCORE_URLS: http://localhost:5090
+          ASPNETCORE_URLS: http://localhost:5080
           Triage__Provider: Foundry
           Foundry__ProjectEndpoint: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
           Foundry__AgentName: ${{ env.AGENT_NAME }}
         run: |
           nohup dotnet run --project app/src/RequestHub.Api -c Release --no-build --no-launch-profile > api.log 2>&1 &
           for i in $(seq 1 60); do
-            if curl -sf http://localhost:5090/health/ready > /dev/null; then echo "API ready"; exit 0; fi
+            if curl -sf http://localhost:5080/health/ready > /dev/null; then echo "API ready"; exit 0; fi
             sleep 2
           done
           cat api.log; exit 1
