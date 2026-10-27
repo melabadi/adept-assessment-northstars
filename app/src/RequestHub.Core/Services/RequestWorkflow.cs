@@ -256,7 +256,13 @@ public sealed partial class RequestWorkflow(
             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
         }
 
+        if (request.Decision is not null)
+        {
+            return ExistingDecisionOutcome(request.Decision, user, key);
+        }
+
         var now = clock.GetUtcNow();
+        var decidedAt = now.AddTicks(-(now.Ticks % 10));
         var decision = new ApprovalDecision
         {
             Id = Guid.NewGuid(),
@@ -265,7 +271,7 @@ public sealed partial class RequestWorkflow(
             DecidedById = user.Id,
             Comment = string.IsNullOrEmpty(comment) ? null : comment,
             IdempotencyKey = key,
-            DecidedAt = now,
+            DecidedAt = decidedAt,
         };
         db.Decisions.Add(decision);
         request.Status = outcome == DecisionOutcome.Approved ? RequestStatus.Approved : RequestStatus.Rejected;
@@ -273,11 +279,31 @@ public sealed partial class RequestWorkflow(
         AddAudit(request.Id, user.Id, "decision.recorded", now, new { request = request.PublicId, outcome = outcome.ToString() });
         AddNotification(request, request.RequesterId, "request.decided", now, new { outcome = outcome.ToString() });
 
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation,
+            ConstraintName: "IX_Decisions_RequestId",
+        })
+        {
+            db.ChangeTracker.Clear();
+            var existing = await db.Decisions
+                .Include(d => d.DecidedBy)
+                .SingleOrDefaultAsync(d => d.RequestId == request.Id, ct);
+            if (existing is null)
+            {
+                throw;
+            }
+
+            return ExistingDecisionOutcome(existing, user, key);
+        }
 
         RequestHubTelemetry.DecisionsRecorded.Add(1, new KeyValuePair<string, object?>("outcome", outcome.ToString()));
         logger.LogInformation("Decision {Outcome} recorded on {RequestId} by {UserId}", outcome, request.PublicId, user.Id);
-        return Result<DecisionDto>.Ok(new DecisionDto(outcome.ToString(), new PersonRef(user.Id, user.DisplayName), decision.Comment, now));
+        return Result<DecisionDto>.Ok(new DecisionDto(outcome.ToString(), new PersonRef(user.Id, user.DisplayName), decision.Comment, decision.DecidedAt));
     }
 
     public async Task<Result<RequestDetailDto>> RerouteAsync(AppUser user, string publicId, RoutingInput input, CancellationToken ct)

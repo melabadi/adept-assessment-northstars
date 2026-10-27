@@ -97,8 +97,8 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
 
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
-        Assert.Equal("decision.already_decided", await second.Code());
         var conflict = await second.Read<JsonElement>();
+        Assert.Equal("decision.already_decided", conflict.GetProperty("code").GetString());
         Assert.Equal("Approved", conflict.GetProperty("decision").GetProperty("outcome").GetString());
 
         var detail = await (await api.As("u-ava").GetAsync($"/api/requests/{id}")).Read<RequestDetailDto>();
