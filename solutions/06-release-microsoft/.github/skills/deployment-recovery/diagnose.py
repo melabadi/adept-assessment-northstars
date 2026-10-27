@@ -1,4 +1,5 @@
-"""Explain why a Container Apps revision is not serving, from the platform's own evidence. It changes nothing.
+"""Explain why a Container Apps revision is not serving, from the platform's own evidence. It changes nothing, and it
+exits 0 whenever it could read the app: the verdict is in the report, not the exit code.
 
 For one revision (default: the revision labelled candidate, else the newest one) it prints:
   1. State: active, running state, health, replicas, share of traffic, and labels.
@@ -168,7 +169,7 @@ def main() -> int:
         print("   (or run the Release · Microsoft · roll back workflow), then fix the cause and release again.")
     if faults:
         print("   This revision has fault injection switched on; it is a rehearsal, not a defect in the code.")
-    return 0 if healthy else 1
+    return 0
 
 
 if __name__ == "__main__":
