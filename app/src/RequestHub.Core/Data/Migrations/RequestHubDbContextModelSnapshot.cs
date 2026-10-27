@@ -338,6 +338,10 @@ namespace RequestHub.Core.Data.Migrations
                     b.Property<double>("Confidence")
                         .HasColumnType("double precision");
 
+                    b.Property<string>("ConfirmedById")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -393,6 +397,8 @@ namespace RequestHub.Core.Data.Migrations
                         .HasColumnType("character varying(16)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ConfirmedById");
 
                     b.HasIndex("RequestId", "CreatedAt");
 
@@ -502,6 +508,11 @@ namespace RequestHub.Core.Data.Migrations
 
             modelBuilder.Entity("RequestHub.Core.Domain.TriageRecommendation", b =>
                 {
+                    b.HasOne("RequestHub.Core.Domain.User", null)
+                        .WithMany()
+                        .HasForeignKey("ConfirmedById")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("RequestHub.Core.Domain.Request", null)
                         .WithMany("Recommendations")
                         .HasForeignKey("RequestId")

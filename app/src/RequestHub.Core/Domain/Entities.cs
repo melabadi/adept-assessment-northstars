@@ -168,6 +168,7 @@ public sealed class TriageRecommendation
     public required string DepartmentAtRecommendation { get; set; }
     public required string CreatedById { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+    public string? ConfirmedById { get; set; }
     /// <summary>Provider trace/response id for live AI providers (evidence of a real call).</summary>
     public string? ProviderTraceId { get; set; }
 }

@@ -20,6 +20,7 @@ const actionIcon: Record<string, IconName> = {
   'decision.recorded': 'scale',
   'routing.changed': 'route',
   'triage.recommended': 'sparkle',
+  'triage.confirmed': 'route',
   'triage.failed': 'alert',
   'triage.tool_call': 'search',
   'attachment.added': 'file',
@@ -98,6 +99,11 @@ function describe(event: AuditEvent, t: I18n['t'], departmentName: (id: unknown)
         title: details.suggestedDepartment
           ? t('history.triage.recommended', { department: departmentName(details.suggestedDepartment) })
           : t('history.triage.recommendedGeneric'),
+        extra: null,
+      };
+    case 'triage.confirmed':
+      return {
+        title: t('history.triage.confirmed', { from: departmentName(details.from), to: departmentName(details.to) }),
         extra: null,
       };
     case 'triage.failed':

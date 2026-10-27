@@ -121,8 +121,10 @@ public sealed class RequestHubDbContext(DbContextOptions<RequestHubDbContext> op
             b.Property(t => t.SuggestedPriority).HasConversion<string>().HasMaxLength(16);
             b.Property(t => t.Status).HasConversion<string>().HasMaxLength(16);
             b.Property(t => t.Rationale).HasMaxLength(2000);
+            b.Property(t => t.ConfirmedById).HasMaxLength(80);
             b.Property(t => t.ProviderTraceId).HasMaxLength(200);
             b.HasIndex(t => new { t.RequestId, t.CreatedAt });
+            b.HasOne<User>().WithMany().HasForeignKey(t => t.ConfirmedById).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

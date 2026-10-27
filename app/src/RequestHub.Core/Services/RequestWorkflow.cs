@@ -353,6 +353,130 @@ public sealed partial class RequestWorkflow(
         return Result<RequestDetailDto>.Ok(await ToDetailAsync(user, request, ct));
     }
 
+    public async Task<Result<RequestDetailDto>> ConfirmRecommendationAsync(AppUser user, string publicId, Guid recommendationId, CancellationToken ct)
+    {
+        var request = await LoadAsync(publicId, ct);
+        if (request is null)
+        {
+            return WorkflowError.NotFound(publicId);
+        }
+
+        if (!(user.HasRole(Roles.Reviewer) || user.IsAdmin))
+        {
+            return new WorkflowError("auth.role_required", "Only reviewers can confirm routing recommendations.", 403);
+        }
+
+        var recommendation = request.Recommendations.FirstOrDefault(r => r.Id == recommendationId);
+        if (recommendation is null)
+        {
+            return new WorkflowError("recommendation.not_found", "The routing recommendation was not found.", 404);
+        }
+
+        if (!user.CanAccessDepartment(request.DepartmentId) || !user.CanAccessDepartment(recommendation.SuggestedDepartmentId))
+        {
+            return WorkflowError.Forbidden("You can only confirm recommendations for departments you can access.");
+        }
+
+        if (request.Status.IsTerminal())
+        {
+            return new WorkflowError("request.terminal", $"{request.PublicId} is {request.Status}; routing recommendations are closed.", 409);
+        }
+
+        if (recommendation.Status == RecommendationStatus.Confirmed)
+        {
+            return new WorkflowError("recommendation.already_confirmed", "This routing recommendation was already confirmed.", 409);
+        }
+
+        if (recommendation.Status != RecommendationStatus.Proposed
+            || recommendation.DepartmentAtRecommendation != request.DepartmentId)
+        {
+            return new WorkflowError("recommendation.stale", "This routing recommendation is stale and can no longer be confirmed.", 409);
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var now = clock.GetUtcNow();
+        var from = request.DepartmentId;
+        var to = recommendation.SuggestedDepartmentId;
+
+        // Claim the recommendation atomically so concurrent clicks cannot record two confirmations.
+        var claimed = await db.Recommendations
+            .Where(r => r.Id == recommendation.Id && r.RequestId == request.Id
+                && r.Status == RecommendationStatus.Proposed
+                && r.DepartmentAtRecommendation == request.DepartmentId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(r => r.Status, RecommendationStatus.Confirmed)
+                .SetProperty(r => r.ConfirmedById, user.Id), ct);
+        if (claimed != 1)
+        {
+            await transaction.RollbackAsync(ct);
+            db.ChangeTracker.Clear();
+            return await ConfirmationConflictAsync(publicId, recommendationId, ct);
+        }
+
+        recommendation.Status = RecommendationStatus.Confirmed;
+        recommendation.ConfirmedById = user.Id;
+        request.UpdatedAt = now;
+        if (from != to)
+        {
+            request.DepartmentId = to;
+            if (request.Status == RequestStatus.Submitted)
+            {
+                request.Status = RequestStatus.InReview;
+            }
+
+            AddAudit(request.Id, user.Id, "routing.changed", now,
+                new { request = request.PublicId, from, to, reason = $"Confirmed recommendation {recommendation.Id}" });
+            await NotifyDepartmentStaffAsync(request, "request.routed", now, ct);
+        }
+
+        AddAudit(request.Id, user.Id, "triage.confirmed", now, new
+        {
+            request = request.PublicId,
+            recommendationId = recommendation.Id,
+            from,
+            to,
+            policyRefs = recommendation.PolicyRefs,
+            provider = recommendation.Provider,
+            providerTraceId = recommendation.ProviderTraceId,
+        });
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            await transaction.RollbackAsync(ct);
+            db.ChangeTracker.Clear();
+            return await ConfirmationConflictAsync(publicId, recommendationId, ct);
+        }
+
+        return Result<RequestDetailDto>.Ok(await ToDetailAsync(user, request, ct));
+    }
+
+    private async Task<Result<RequestDetailDto>> ConfirmationConflictAsync(string publicId, Guid recommendationId, CancellationToken ct)
+    {
+        var current = await LoadAsync(publicId, ct);
+        if (current is null)
+        {
+            return WorkflowError.NotFound(publicId);
+        }
+
+        if (current.Status.IsTerminal())
+        {
+            return new WorkflowError("request.terminal", $"{current.PublicId} is {current.Status}; routing recommendations are closed.", 409);
+        }
+
+        var recommendation = current.Recommendations.FirstOrDefault(r => r.Id == recommendationId);
+        if (recommendation?.Status == RecommendationStatus.Confirmed)
+        {
+            return new WorkflowError("recommendation.already_confirmed", "This routing recommendation was already confirmed.", 409);
+        }
+
+        return new WorkflowError("recommendation.stale", "This routing recommendation is stale and can no longer be confirmed.", 409);
+    }
+
     public async Task<Result<RecommendationDto>> RecommendAsync(AppUser user, string publicId, CancellationToken ct)
     {
         var request = await LoadAsync(publicId, ct);
@@ -478,9 +602,12 @@ public sealed partial class RequestWorkflow(
             return WorkflowError.Forbidden($"You do not have access to {request.PublicId}.");
         }
 
-        var names = await NamesAsync(request.Recommendations.Select(r => r.CreatedById), ct);
+        var names = await NamesAsync(request.Recommendations
+            .SelectMany(r => new[] { r.CreatedById, r.ConfirmedById })
+            .Where(id => id is not null).Select(id => id!), ct);
         IReadOnlyList<RecommendationDto> list = request.Recommendations.OrderByDescending(r => r.CreatedAt)
-            .Select(r => ToDto(r, new PersonRef(r.CreatedById, names.GetValueOrDefault(r.CreatedById, r.CreatedById)))).ToList();
+            .Select(r => ToDto(r, new PersonRef(r.CreatedById, names.GetValueOrDefault(r.CreatedById, r.CreatedById)),
+                r.ConfirmedById is null ? null : new PersonRef(r.ConfirmedById, names.GetValueOrDefault(r.ConfirmedById, r.ConfirmedById)))).ToList();
         return Result<IReadOnlyList<RecommendationDto>>.Ok(list);
     }
 
@@ -536,7 +663,7 @@ public sealed partial class RequestWorkflow(
     public static bool CanView(AppUser user, Request request) =>
         user.IsAdmin || request.RequesterId == user.Id || user.IsStaffFor(request.DepartmentId);
 
-    public static PermissionsDto PermissionsFor(AppUser user, Request request)
+    public static PermissionsDto PermissionsFor(AppUser user, Request request, TriageRecommendation? recommendation = null)
     {
         var terminal = request.Status.IsTerminal();
         var canView = CanView(user, request);
@@ -551,6 +678,12 @@ public sealed partial class RequestWorkflow(
             CanUpload: canView && !terminal,
             CanTriage: user.IsStaffFor(request.DepartmentId) && !terminal,
             CanRoute: (user.HasRole(Roles.Reviewer) || user.IsAdmin) && user.CanAccessDepartment(request.DepartmentId) && !terminal,
+            CanConfirmRecommendation: recommendation is { Status: RecommendationStatus.Proposed }
+                && recommendation.DepartmentAtRecommendation == request.DepartmentId
+                && (user.HasRole(Roles.Reviewer) || user.IsAdmin)
+                && user.CanAccessDepartment(request.DepartmentId)
+                && user.CanAccessDepartment(recommendation.SuggestedDepartmentId)
+                && !terminal,
             CanDecide: blocked is null,
             DecideBlockedReason: blocked);
     }
@@ -575,23 +708,25 @@ public sealed partial class RequestWorkflow(
     internal async Task<RequestDetailDto> ToDetailAsync(AppUser user, Request r, CancellationToken ct)
     {
         var latest = r.Recommendations.Where(x => x.Status != RecommendationStatus.Superseded).OrderByDescending(x => x.CreatedAt).FirstOrDefault();
-        var people = await NamesAsync(r.Attachments.Select(a => a.UploadedById).Concat(latest is null ? [] : [latest.CreatedById]), ct);
+        var people = await NamesAsync(r.Attachments.Select(a => a.UploadedById).Concat(latest is null
+            ? [] : new[] { latest.CreatedById, latest.ConfirmedById }.Where(id => id is not null).Select(id => id!)), ct);
         return new RequestDetailDto(
             r.PublicId, r.Title, r.Description, r.Category, r.DepartmentId, r.Priority.ToString(), r.Status.ToString(),
             new PersonRef(r.RequesterId, r.Requester?.DisplayName ?? r.RequesterId), r.CreatedAt, r.UpdatedAt, r.Version.ToString(),
             r.Decision is { } d ? new DecisionDto(d.Outcome.ToString(), new PersonRef(d.DecidedById, d.DecidedBy?.DisplayName ?? d.DecidedById), d.Comment, d.DecidedAt) : null,
-            latest is null ? null : ToDto(latest, new PersonRef(latest.CreatedById, people.GetValueOrDefault(latest.CreatedById, latest.CreatedById))),
+            latest is null ? null : ToDto(latest, new PersonRef(latest.CreatedById, people.GetValueOrDefault(latest.CreatedById, latest.CreatedById)),
+                latest.ConfirmedById is null ? null : new PersonRef(latest.ConfirmedById, people.GetValueOrDefault(latest.ConfirmedById, latest.ConfirmedById))),
             r.Comments.OrderBy(c => c.CreatedAt).Select(c => new CommentDto(c.Id, new PersonRef(c.AuthorId, c.Author?.DisplayName ?? c.AuthorId), c.Body, c.CreatedAt)).ToList(),
             r.Attachments.OrderBy(a => a.UploadedAt).Select(a => new AttachmentDto(a.Id, a.FileName, a.ContentType, a.SizeBytes, a.Sha256,
                 new PersonRef(a.UploadedById, people.GetValueOrDefault(a.UploadedById, a.UploadedById)), a.UploadedAt,
                 $"/api/requests/{r.PublicId}/attachments/{a.Id}/content")).ToList(),
-            PermissionsFor(user, r));
+            PermissionsFor(user, r, latest));
     }
 
-    internal static RecommendationDto ToDto(TriageRecommendation r, PersonRef createdBy) => new(
+    internal static RecommendationDto ToDto(TriageRecommendation r, PersonRef createdBy, PersonRef? confirmedBy = null) => new(
         r.Id, r.Provider, r.IsSample, r.SuggestedDepartmentId, r.SuggestedPriority.ToString(), r.Rationale,
         r.PolicyRefs.Select(p => p.Split('@', 2)).Select(p => new PolicyRefDto(p[0], p.Length > 1 ? p[1] : "")).ToList(),
-        r.Confidence, r.NeedsHumanReview, r.Status.ToString(), r.DepartmentAtRecommendation, createdBy, r.CreatedAt, r.ProviderTraceId);
+        r.Confidence, r.NeedsHumanReview, r.Status.ToString(), r.DepartmentAtRecommendation, createdBy, r.CreatedAt, r.ProviderTraceId, confirmedBy);
 
     private async Task<Result<RecommendationDto>> TriageFailedAsync(Request request, AppUser user, string code, string message, int status, CancellationToken ct)
     {
