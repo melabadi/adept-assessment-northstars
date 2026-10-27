@@ -6,8 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        After you create this issue, **assign it to Copilot** and pick the **plan-github** custom agent
-        (or run `gh agent-task create -F solutions/01-plan-github/refine-task.md --custom-agent plan-github`).
+        After you create this issue, **assign it to Copilot** and pick the **plan-github** custom agent.
         Copilot opens a pull request with `solutions/01-plan-github/brief/brief.md` and `backlog.json`.
         Nothing is published until a person reviews the PR and applies the `brief-approved` label.
   - type: dropdown
