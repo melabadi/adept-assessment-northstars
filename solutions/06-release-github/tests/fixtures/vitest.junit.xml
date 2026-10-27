@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="3" failures="0" errors="0" time="0.812">
+    <testsuite name="src/pages/RequestDetail.test.tsx" timestamp="2026-10-27T12:00:00.000Z" hostname="runner" tests="2" failures="0" errors="0" skipped="1" time="0.512">
+        <testcase classname="src/pages/RequestDetail.test.tsx" name="RequestDetail &gt; shows the decision panel to approvers" time="0.301">
+        </testcase>
+        <testcase classname="src/pages/RequestDetail.test.tsx" name="RequestDetail &gt; pending translation" time="0">
+            <skipped/>
+        </testcase>
+    </testsuite>
+    <testsuite name="src/i18n.test.ts" timestamp="2026-10-27T12:00:00.000Z" hostname="runner" tests="1" failures="0" errors="0" skipped="0" time="0.300">
+        <testcase classname="src/i18n.test.ts" name="every English key has a French translation" time="0.012">
+        </testcase>
+    </testsuite>
+</testsuites>

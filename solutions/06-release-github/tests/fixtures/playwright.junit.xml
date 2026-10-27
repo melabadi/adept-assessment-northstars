@@ -1,0 +1,8 @@
+<testsuites id="" name="" tests="2" failures="0" skipped="0" errors="0" time="6.42">
+<testsuite name="requesthub.spec.ts" timestamp="2026-10-27T12:00:00.000Z" hostname="chromium" tests="2" failures="0" skipped="0" time="5.9" errors="0">
+<testcase name="requester submits a request and sees it in My requests" classname="requesthub.spec.ts" time="2.7">
+</testcase>
+<testcase name="approver records a decision that appears in the history" classname="requesthub.spec.ts" time="3.2">
+</testcase>
+</testsuite>
+</testsuites>
