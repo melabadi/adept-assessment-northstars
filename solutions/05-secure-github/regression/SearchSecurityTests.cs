@@ -14,12 +14,30 @@ public sealed class SearchSecurityTests(ApiFixture api) : IClassFixture<ApiFixtu
     [InlineData("u-dan", "all", "_")]
     public async Task Search_treats_SQL_and_wildcards_as_literal_text(string persona, string scope, string term)
     {
-        var response = await api.As(persona).GetAsync(
+        var client = api.As(persona);
+        var visible = await (await client.GetAsync(
+            $"/api/requests?scope={scope}&pageSize=100")).Read<PagedResult<RequestSummaryDto>>();
+        Assert.NotEmpty(visible.Items);
+        Assert.Equal(visible.TotalCount, visible.Items.Count);
+        var expected = new List<string>();
+        foreach (var item in visible.Items)
+        {
+            var detailResponse = await client.GetAsync($"/api/requests/{item.Id}");
+            Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+            var detail = await detailResponse.Read<RequestDetailDto>();
+            if (detail.Title.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                detail.Description.Contains(term, StringComparison.OrdinalIgnoreCase))
+            {
+                expected.Add(detail.Id);
+            }
+        }
+
+        var response = await client.GetAsync(
             $"/api/requests?scope={scope}&pageSize=100&q={Uri.EscapeDataString(term)}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var result = await response.Read<PagedResult<RequestSummaryDto>>();
-        Assert.Equal(0, result.TotalCount);
-        Assert.Empty(result.Items);
+        Assert.Equal(expected.Count, result.TotalCount);
+        Assert.Equal(expected.OrderBy(id => id).ToArray(), result.Items.Select(item => item.Id).OrderBy(id => id).ToArray());
     }
 
     [Theory]
