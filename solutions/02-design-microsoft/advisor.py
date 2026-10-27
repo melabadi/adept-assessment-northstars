@@ -53,6 +53,7 @@ from ingest_standards import INDEX, SPEC, scope_filter  # noqa: E402
 
 PROFILES = tuple(SPEC["profiles"])
 STANDARD_ID = re.compile(r"STD-[A-Z]+-\d{3}")
+SEARCH_MARKER = re.compile(r"\s*【[^】]*】")
 RATE_LIMIT_RETRIES = 3
 
 
@@ -71,6 +72,18 @@ def excerpt_found(excerpt: str, source: str) -> bool:
     parts = [normalize(part) for part in re.split(r"\.\.\.|…", excerpt)]
     parts = [part for part in parts if part]
     return bool(parts) and all(part in normalize(source) for part in parts)
+
+
+def strip_markers(node):
+    """Remove the search tool's inline citation markers, such as 【5:0†source】, from every text in the answer.
+    The structured fields already carry the citations."""
+    if isinstance(node, str):
+        return SEARCH_MARKER.sub("", node)
+    if isinstance(node, list):
+        return [strip_markers(value) for value in node]
+    if isinstance(node, dict):
+        return {key: strip_markers(value) for key, value in node.items()}
+    return node
 
 
 class Advisor:
@@ -169,7 +182,7 @@ class Advisor:
         duration = round(time.monotonic() - started, 1)
         if response.status != "completed":
             raise RuntimeError(f"response {response.id} ended with status {response.status}: {response.error or response.incomplete_details}")
-        data = json.loads(response.output_text)
+        data = strip_markers(json.loads(response.output_text))
         searches = [item for item in response.output if getattr(item, "type", "") == "azure_ai_search_call"]
         retrieved = sorted({doc_id for item in response.output if getattr(item, "type", "") == "azure_ai_search_call_output"
                             for doc_id in retrieved_ids(item)})
