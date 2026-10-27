@@ -1,0 +1,119 @@
+# Operate · GitHub: the deterministic gate on an incident follow-up pull request.
+# A regression test proves its value only by failing without the fix. On a pull request that resolves an Issue labeled
+# `incident-followup`, this workflow runs RequestHub's tests twice: at the pull request head, and with app/src put back
+# to the merge base while keeping the pull request's tests. It passes only when a test fails before and passes after
+# (PROVEN). The proof script comes from the base branch, so a pull request cannot change its rules. It does run the pull
+# request's own test code, so its result is evidence for the reviewer, not a security boundary.
+name: Operate · GitHub · prove the regression test
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: ['app/src/**', 'app/tests/**']
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Number of the pull request to prove
+        required: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: operate-github-proof-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  scope:
+    name: Find the incident follow-up
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      followups: ${{ steps.find.outputs.followups }}
+      head: ${{ steps.find.outputs.head }}
+      base: ${{ steps.find.outputs.base }}
+    steps:
+      - name: Look for a linked Issue labeled incident-followup
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          gh api graphql -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" -f query='
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $pr) {
+                  headRefOid
+                  baseRefOid
+                  labels(first: 100) { nodes { name } }
+                  closingIssuesReferences(first: 25) { nodes { number labels(first: 100) { nodes { name } } } }
+                }
+              }
+            }' > pr.json
+          followups=$(jq -r '[.data.repository.pullRequest.closingIssuesReferences.nodes[]
+            | select(any(.labels.nodes[]; .name == "incident-followup")) | "#\(.number)"] | join(" ")' pr.json)
+          if [ -z "$followups" ] && jq -e '.data.repository.pullRequest.labels.nodes | any(.name == "incident-followup")' pr.json > /dev/null; then
+            followups="this pull request (label)"
+          fi
+          {
+            echo "followups=$followups"
+            echo "head=$(jq -r .data.repository.pullRequest.headRefOid pr.json)"
+            echo "base=$(jq -r .data.repository.pullRequest.baseRefOid pr.json)"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$followups" ]; then
+            echo "Incident follow-up: $followups. Proving its regression test." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Not an incident follow-up (no linked Issue labeled incident-followup), so there is nothing to prove." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+  prove:
+    name: Prove the regression test
+    needs: scope
+    if: needs.scope.outputs.followups != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: requesthub
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: requesthub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U requesthub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Check out the proof script (base branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.scope.outputs.base }}
+          path: trusted
+          persist-credentials: false
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.scope.outputs.head }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Prove (tests at the head, then on the base code with the pull request's tests)
+        env:
+          BASE: ${{ needs.scope.outputs.base }}
+        run: python trusted/.github/skills/regression-followup/prove_regression.py --repo pr --base "$BASE" --summary "$GITHUB_STEP_SUMMARY"
