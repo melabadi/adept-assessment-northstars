@@ -244,6 +244,21 @@ class AssembleVerifyApproveTests(unittest.TestCase):
         original = rel.registry_check
         rel.registry_check = lambda image, user, token: (True, f"{image['name']} exists")
         self.addCleanup(setattr, rel, "registry_check", original)
+        original_scopes = rel.token_can_read_packages
+        rel.token_can_read_packages = lambda token: None
+        self.addCleanup(setattr, rel, "token_can_read_packages", original_scopes)
+
+    def test_a_token_without_package_scope_is_reported_not_mistaken_for_missing_images(self):
+        self.assemble()
+        original = rel.token_can_read_packages
+        rel.token_can_read_packages = lambda token: False
+        self.addCleanup(setattr, rel, "token_can_read_packages", original)
+        checks = rel.verify_release(REPO, TAG, self.release_dir, self.release(), "any", False, None, "gho_token")[0]
+        images = next(c for c in checks if c.name == "images")
+        self.assertEqual(images.status, "SKIP")
+        self.assertIn("cannot read packages", images.detail)
+        checks = rel.verify_release(REPO, TAG, self.release_dir, self.release(), "any", True, None, "gho_token")[0]
+        self.assertEqual(next(c for c in checks if c.name == "images").status, "FAIL")
 
     def test_approve_writes_the_record_and_keeps_the_ai_summary(self):
         self.registry_ok()
