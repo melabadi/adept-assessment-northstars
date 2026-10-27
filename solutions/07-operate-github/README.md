@@ -100,18 +100,19 @@ About 20 minutes. In our run it took 16 minutes from filing the incident to gree
 
 2. **File the incident and triage it.** Pick one option. Both end with the same triage comment, labels, and follow-up Issue.
 
-   **A. Agentic workflow** (needs the `COPILOT_GITHUB_TOKEN` secret).
+   **A. Agentic workflow** (needs the `COPILOT_GITHUB_TOKEN` secret; about 6 minutes in our run).
 
    ```powershell
    gh issue create --title "INC-2041: reviewers notified late and repeatedly (staging)" --label incident --label ai-sdlc --label phase:operate --body-file solutions/07-operate-github/incidents/inc-2041-notification-backlog.md
    ```
 
-   For a real incident, people use the **Operate: report an incident** Issue form, which applies the same labels. Within seconds the Issue gets an 👀 reaction and a comment that links to the workflow run. Open it: **Actions** > **Operate · GitHub · triage an incident**. Each label on the new Issue starts a run; the runs for `ai-sdlc` and `phase:operate` are skipped at once. Walk through the jobs of the `incident` run:
+   For a real incident, people use the **Operate: report an incident** Issue form, which applies the same labels. Within a minute or two (once a runner picks up the job) the Issue gets an 👀 reaction and a comment that links to the workflow run. Open it: **Actions** > **Operate · GitHub · triage an incident**. Each label on the new Issue starts a run; the runs for `ai-sdlc` and `phase:operate` are skipped at once. Walk through the jobs of the `incident` run:
    - `pre_activation` checks that the person who labeled the Issue has write access, and that no open follow-up exists for this incident yet.
    - `activation` adds the reaction and the status comment, and builds the prompt from the sanitized Issue text.
-   - `agent` runs Copilot with read-only permissions, in a sandbox behind a network firewall. Its tools are read-only GitHub tools and a short list of shell commands (`cat`, `grep`, and similar).
-   - `detection` checks the agent's output for threats such as leaked secrets or malicious content.
-   - `safe_outputs` applies what the agent asked for, within the limits set in the workflow's frontmatter.
+   - `agent` runs Copilot with read-only permissions, in a sandbox behind a network firewall. Its tools are read-only GitHub tools and a short list of shell commands (`cat`, `grep`, and similar). Anything else is refused: in our run a `sed` pipeline was denied and Copilot read the files another way. It took about 2 minutes.
+   - `detection` checks the agent's output for threats such as prompt injection, leaked secrets, or malicious content.
+   - `safe_outputs` applies what the agent asked for, within the limits set in the workflow's frontmatter: the labels, the follow-up as a sub-issue of the incident, and the comment.
+   - `conclusion` updates the status comment with the result.
 
    **B. Copilot CLI** (no token needed; about 3 minutes, 2.5 in our run). The same agent and skill triage the incident from your terminal and file the results with your GitHub CLI sign-in. This is the Copilot CLI path, not the agentic workflow. The incident is filed without the `incident` label, because that label starts the agentic workflow.
 
