@@ -207,7 +207,7 @@ When you no longer need the solution (Azure AI Search Basic bills by the hour wh
 ```powershell
 cd solutions/02-design-microsoft
 azd down --purge
-gh api -X DELETE repos/{owner}/{repo}/environments/design-microsoft
+gh api -X DELETE 'repos/{owner}/{repo}/environments/design-microsoft'
 ```
 
 `--purge` also removes the soft-deleted Foundry account, so the name can be reused. To bring the solution back soon afterwards, give the resources new names first: `azd env set AZURE_RESOURCE_SEED 2` (any new value), then `azd up`. See Troubleshooting.

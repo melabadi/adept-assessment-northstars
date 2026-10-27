@@ -169,7 +169,7 @@ When you no longer need the solution:
 ```powershell
 cd solutions/01-plan-microsoft
 azd down --purge
-gh api -X DELETE repos/{owner}/{repo}/environments/plan-microsoft
+gh api -X DELETE 'repos/{owner}/{repo}/environments/plan-microsoft'
 ```
 
 `--purge` also removes the soft-deleted Foundry account, so the name can be reused.
