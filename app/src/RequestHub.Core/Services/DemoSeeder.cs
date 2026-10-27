@@ -60,6 +60,31 @@ public sealed class DemoSeeder(RequestHubDbContext db, TimeProvider clock)
         await tx.CommitAsync(ct);
     }
 
+    /// <summary>
+    /// Deletes only the requests submitted by the given owners (load-test identities), with their decisions, comments,
+    /// attachments, recommendations, audit entries, and notifications, and records the cleanup itself in the audit log.
+    /// Everything else stays untouched.
+    /// </summary>
+    public async Task<int> DeleteRequestsOwnedByAsync(IReadOnlyCollection<string> requesterIds, string actor, CancellationToken ct = default)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var ids = await db.Requests.Where(r => requesterIds.Contains(r.RequesterId)).Select(r => r.Id).ToListAsync(ct);
+        await db.AuditEvents.Where(a => a.RequestId != null && ids.Contains(a.RequestId.Value)).ExecuteDeleteAsync(ct);
+        await db.Notifications.Where(n => n.RequestId != null && ids.Contains(n.RequestId.Value)).ExecuteDeleteAsync(ct);
+        var deleted = await db.Requests.Where(r => ids.Contains(r.Id)).ExecuteDeleteAsync(ct);
+        db.AuditEvents.Add(new AuditEvent
+        {
+            Actor = actor,
+            Action = "loadtest.cleanup",
+            Details = JsonSerializer.Serialize(new { deleted, owners = requesterIds }),
+            CorrelationId = RequestHubTelemetry.CorrelationId,
+            OccurredAt = clock.GetUtcNow(),
+        });
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return deleted;
+    }
+
     private async Task SeedAsync(IndustryProfile profile, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);

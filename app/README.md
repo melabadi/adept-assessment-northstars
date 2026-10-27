@@ -81,6 +81,7 @@ Settings use standard ASP.NET Core configuration (`appsettings.json`, or environ
 | `Auth:Mode` | `Development`, `EasyAuth` | Persona switcher locally; Microsoft Entra ID through Container Apps authentication in Azure. |
 | `Storage:Provider` | `Local`, `Blob` | Where attachments are stored. |
 | `Demo:AllowReset` | `true`, `false` | Lets an Admin reseed the demo data with `POST /api/admin/reset`. |
+| `Demo:LoadTestRequesterIds` | comma-separated user ids, for example `aad-<object id>` | Lets `POST /api/admin/load-test/cleanup` delete only the requests these load-test identities submitted. An Admin cleans up all of them; a listed identity cleans up its own. Empty (the default) disables the cleanup. |
 
 ### Fault injection
 
