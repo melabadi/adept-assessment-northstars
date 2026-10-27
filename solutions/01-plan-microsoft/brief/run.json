@@ -1,0 +1,24 @@
+{
+  "track": "microsoft",
+  "product": "Microsoft Foundry Agent Service",
+  "startedAt": "2026-10-27T12:22:06+00:00",
+  "durationSeconds": 18.7,
+  "responseId": "resp_05755695fc885b2a006ae0977192b08194a3a019de4d9f9a7e",
+  "responseIds": [
+    "resp_05755695fc885b2a006ae0977192b08194a3a019de4d9f9a7e"
+  ],
+  "repairTurns": 0,
+  "agent": {
+    "name": "requirements-analyst",
+    "version": "10"
+  },
+  "model": "gpt-4.1",
+  "vectorStoreId": "vs_CF6G460JAbigmcUfwUtI2jKQ",
+  "fileSearchCalls": 1,
+  "usage": {
+    "inputTokens": 4777,
+    "outputTokens": 2138
+  },
+  "valid": true,
+  "problems": []
+}
