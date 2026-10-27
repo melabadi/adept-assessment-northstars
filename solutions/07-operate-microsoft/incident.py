@@ -342,6 +342,51 @@ def start(args: argparse.Namespace) -> int:
     return 0 if created == args.requests else 1
 
 
+def sample(azure: Azure, drill: dict, since: datetime, threshold: float) -> tuple[str, bool]:
+    """Reads every source once, records new timeline events, and returns the printed line and whether it is over."""
+    moment = now()
+    backlog = azure.backlog() or {}
+    state = azure.worker_state()
+    alerts = azure.alerts(since)
+    threads = azure.threads(since)
+    drill["backlogSamples"].append({"at": iso(moment), **backlog})
+    events = {e["event"] for e in drill["timeline"]}
+
+    alert = alerts[0] if alerts else None
+    if alert:
+        record(drill, "alert fired", alert["fired"], alertId=alert["id"], severity=alert["severity"])
+        if alert["resolved"]:
+            record(drill, "alert resolved", alert["resolved"])
+    thread = threads[-1] if threads else None
+    milestone = ""
+    if thread:
+        record(drill, "SRE Agent investigation started", thread["created"], threadId=thread["id"],
+               responsePlan=thread["plan"], mode=thread["mode"])
+        for event, (at, details) in sorted(azure.thread_events(thread["id"]).items(), key=lambda item: item[1][0]):
+            record(drill, event, at, **details)
+            milestone = event
+    if not state["faults"] and "fault applied" in events and "fault removed" not in events:
+        revision = azure.arm(f"{azure.rg_id}/providers/Microsoft.App/containerApps/{azure.worker}/revisions/"
+                             f"{state['latestRevision']}", "2024-03-01")
+        record(drill, "fault removed", parse_time(revision["properties"].get("createdTime")) or moment,
+               revision=state["latestRevision"])
+    if backlog and "fault removed" in events and backlog.get("pending", 1) == 0:
+        record(drill, "backlog drained", moment)
+    save_drill(drill)
+
+    elapsed = str(timedelta(seconds=int((moment - since).total_seconds())))
+    alert_text = f"{alert['condition']} {clock(alert['fired'])}" if alert else "not fired"
+    if alert and alert["resolved"]:
+        alert_text = f"Resolved {clock(alert['resolved'])}"
+    thread_text = f"{thread['status']}: {milestone or 'investigating'}" if thread else "-"
+    oldest = backlog.get("oldestPendingAgeSeconds")
+    flag = "!" if oldest is not None and oldest > threshold else " "
+    line = (f"{clock(moment):>9}  {elapsed:>7}  {backlog.get('pending', '?'):>7}  {oldest if oldest is not None else '?':>6}{flag}  "
+            f"{'on' if state['faults'] else 'off':<5}  {alert_text:<26}  {thread_text}")
+    events = {e["event"] for e in drill["timeline"]}
+    return line, "alert resolved" in events and "backlog drained" in events
+
+
 def watch(args: argparse.Namespace) -> int:
     azure = Azure()
     drill = load_drill()
@@ -352,48 +397,11 @@ def watch(args: argparse.Namespace) -> int:
     print(f"{'time':>9}  {'elapsed':>7}  {'pending':>7}  {'oldest':>7}  {'fault':<5}  {'alert':<26}  SRE Agent")
     try:
         while True:
-            moment = now()
-            backlog = azure.backlog() or {}
-            state = azure.worker_state()
-            alerts = azure.alerts(since)
-            threads = azure.threads(since)
-            drill["backlogSamples"].append({"at": iso(moment), **backlog})
-            events = {e["event"] for e in drill["timeline"]}
-
-            alert = alerts[0] if alerts else None
-            if alert:
-                record(drill, "alert fired", alert["fired"], alertId=alert["id"], severity=alert["severity"])
-                if alert["resolved"]:
-                    record(drill, "alert resolved", alert["resolved"])
-            thread = threads[-1] if threads else None
-            milestone = ""
-            if thread:
-                record(drill, "SRE Agent investigation started", thread["created"], threadId=thread["id"],
-                       responsePlan=thread["plan"], mode=thread["mode"])
-                for event, (at, details) in sorted(azure.thread_events(thread["id"]).items(), key=lambda item: item[1][0]):
-                    record(drill, event, at, **details)
-                    milestone = event
-            if not state["faults"] and "fault applied" in events and "fault removed" not in events:
-                revision = azure.arm(f"{azure.rg_id}/providers/Microsoft.App/containerApps/{azure.worker}/revisions/"
-                                     f"{state['latestRevision']}", "2024-03-01")
-                record(drill, "fault removed", parse_time(revision["properties"].get("createdTime")) or moment,
-                       revision=state["latestRevision"])
-            if backlog and "fault removed" in events and backlog.get("pending", 1) == 0:
-                record(drill, "backlog drained", moment)
-            save_drill(drill)
-
-            elapsed = str(timedelta(seconds=int((moment - since).total_seconds())))
-            alert_text = f"{alert['condition']} {clock(alert['fired'])}" if alert else "not fired"
-            if alert and alert["resolved"]:
-                alert_text = f"Resolved {clock(alert['resolved'])}"
-            thread_text = f"{thread['status']}: {milestone or 'investigating'}" if thread else "-"
-            oldest = backlog.get("oldestPendingAgeSeconds")
-            flag = "!" if oldest is not None and oldest > threshold else " "
-            print(f"{clock(moment):>9}  {elapsed:>7}  {backlog.get('pending', '?'):>7}  {oldest if oldest is not None else '?':>6}{flag}  "
-                  f"{'on' if state['faults'] else 'off':<5}  {alert_text:<26}  {thread_text}")
-
-            events = {e["event"] for e in drill["timeline"]}
-            done = "alert resolved" in events and "backlog drained" in events
+            try:
+                line, done = sample(azure, drill, since, threshold)
+                print(line)
+            except Exception as error:  # one failed read (network, token, throttling) must not end an hour-long watch
+                print(f"{clock(now()):>9}  sample failed, retrying: {str(error)[:120]}")
             if args.once or done or time.time() > deadline:
                 break
             time.sleep(args.interval)
@@ -465,10 +473,11 @@ def verify(args: argparse.Namespace) -> int:
     drill["verification"] = {"at": iso(now()), "results": [{"check": c, "verdict": v, "detail": d} for c, v, d in results]}
     if alert and alert["resolved"]:
         record(drill, "alert resolved", alert["resolved"])
-    if delivered_in is not None:
+    passed = all(v == "PASS" for _, v, _ in results)
+    if passed:
         record(drill, "recovery verified", now(), probeDeliveredSeconds=round(delivered_in))
     save_drill(drill)
-    return 0 if all(v == "PASS" for _, v, _ in results) else 1
+    return 0 if passed else 1
 
 
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")

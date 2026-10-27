@@ -39,8 +39,10 @@ Search it before you start.
 
    Say what it changes (a new worker revision without the fault), the expected effect (the backlog drains within a
    minute), how to roll it back, and when the fault would have switched itself off anyway (`Faults__ExpiresAtUtc`).
-7. **Wait for approval.** Run the mitigation only after an SRE Agent Administrator approves it. If they prefer to run it
-   themselves, give them the exact command.
+7. **Ask for approval through the platform.** Right after your report, run exactly that command with the Azure CLI
+   write tool. The platform pauses it until an SRE Agent Administrator selects **Approve** or **Deny**, and your own
+   identity cannot make the change, so it runs with the approver's permissions. If they deny it, stop and give them the
+   exact command so they can run it themselves. Run no other write command.
 8. **Verify recovery** with the `verify-worker-recovery` skill after the change. Report before and after numbers with
    UTC timestamps. Do not declare recovery while telemetry is still missing; ingestion can lag a few minutes.
 9. **Summarize the incident** in a few lines the on-call team can paste into their incident record: impact,

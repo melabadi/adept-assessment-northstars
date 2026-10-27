@@ -44,7 +44,8 @@ var roles = {
 }
 // Read-only access to this resource group: resources, metrics, alerts, and logs. Nothing that can change them.
 var readRoles = [roles.reader, roles.monitoringReader, roles.logAnalyticsReader]
-// Enough to update custom agents, skills, response plans, and knowledge, but not to chat or approve actions.
+// Enough to update custom agents, skills, response plans, and knowledge. Neither role can approve the agent's actions
+// or change its global tool policy.
 var automationRoles = empty(automationPrincipalId) ? [] : [roles.sreAgentAuthor, roles.sreAgentStandardUser]
 
 resource workloadAppInsights 'Microsoft.Insights/components@2020-02-02' existing = {

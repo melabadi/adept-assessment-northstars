@@ -26,6 +26,7 @@ Author plus Standard User everything but the global tool policy is applied (use 
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import sys
@@ -57,7 +58,9 @@ PLACEHOLDERS = (
 )
 PLACEHOLDER = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
-WRITE_TOOLS = {"RunAzCliWriteCommands", "RunKubectlWriteCommand"}
+# Tools that can change Azure resources or run arbitrary commands. None may run without a person's approval.
+WRITE_TOOLS = {"RunAzCliWriteCommands", "RunKubectlWriteCommand", "RunShellCommand", "RunInTerminal", "Terminal",
+               "bash", "shell", "execute_bash"}
 
 
 @dataclass
@@ -129,10 +132,14 @@ def check(config: Config) -> list[str]:
     if not plan.get("titleContains"):
         problems.append("the response plan needs titleContains, so it only takes this solution's alert")
 
-    allow, ask, deny = (set(policy.get(k, [])) for k in ("allow", "ask", "deny"))
-    for tool in WRITE_TOOLS & set(agent.get("tools", [])):
-        if tool in allow:
-            problems.append(f"tool policy must not allow {tool} without approval")
+    allow, ask, deny = (list(policy.get(k, [])) for k in ("allow", "ask", "deny"))
+    for rule in allow:
+        tool_glob = rule.split("(", 1)[0].strip()
+        widened = sorted(t for t in WRITE_TOOLS if fnmatch.fnmatchcase(t, tool_glob))
+        if widened:
+            problems.append(f"tool policy must not allow '{rule}': it lets {', '.join(widened)} run without approval")
+    used = set(agent.get("tools", [])) | {t for s in config.skills for t in s.tools}
+    for tool in sorted(WRITE_TOOLS & used):
         if tool not in ask:
             problems.append(f"tool policy must ask before {tool}")
     problems += [f"custom agent tool {t} is denied by the tool policy" for t in agent.get("tools", []) if t in deny]

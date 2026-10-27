@@ -18,7 +18,7 @@ like code.
 | Investigation | Open dashboards, query logs, ask who changed what. | The agent correlates metrics, logs, spans, and the worker's revision history in about three minutes, and separates facts from hypotheses. |
 | Mitigation | The first plausible fix, run with broad permissions. | One proposed command, scoped to the worker. It runs only after an administrator approves it, with that administrator's permissions. |
 | Recovery | "Looks fine now." | Evidence: fault gone, backlog drained, a new request's notifications delivered, alert resolved. |
-| Agent changes | Edited by hand in a portal. | Instructions, skills, runbook, response plan, and tool policy reviewed in pull requests, checked against rules, applied from `main`. |
+| Agent changes | Edited by hand in a portal. | Instructions, skills, runbook, response plan, and tool policy reviewed in pull requests and checked against rules. `main` applies them; only an administrator can change the tool policy. |
 
 ## How it works
 
@@ -53,7 +53,9 @@ sequenceDiagram
   SRE Agent Administrator can approve. The change runs with the presenter's own Azure permissions and shows their name
   in the Activity Log.
 - **GitHub Actions** ([`operate-microsoft-agent-config.yml`](.github/workflows/operate-microsoft-agent-config.yml))
-  checks every change to `sre-agent/` against those rules, and applies it to the agent from `main` through OIDC.
+  checks every change to `sre-agent/` against those rules, and applies it to the agent from `main` through OIDC. The
+  GitHub environment accepts only `main`, and the workflow's identity cannot approve actions or change the global tool
+  policy; an SRE Agent Administrator applies that with `python configure_sre_agent.py`.
 - **GitHub Copilot** (custom agent [`operate-microsoft`](.github/agents/operate-microsoft.agent.md)) helps run the drill
   and changes the SRE Agent configuration through pull requests.
 
@@ -231,7 +233,7 @@ When you no longer need the solution:
 
 ```powershell
 azd down --purge
-gh api -X DELETE repos/{owner}/{repo}/environments/operate-microsoft
+gh api -X DELETE 'repos/{owner}/{repo}/environments/operate-microsoft'
 ```
 
 `azd down` deletes the resource group, including the agent, which stops its charges. The Microsoft Entra app
