@@ -14,8 +14,9 @@ Checks
      Proposed must name the people who decided in **Deciders:**, never Copilot, an agent, a bot, or a placeholder.
   5. Standards: the ADR cites at least one standard, every cited id (STD-XXX-NNN) exists, and a cited version
      (`STD-OBS-001 v1.2`) matches the standard's current version.
-  6. Paths: every repository path written in backticks (for example `app/src/...`) exists. A line or anchor suffix
-     (`:42`, `#L42`) is allowed. Describe files that do not exist yet in plain words, without backticks.
+  6. Paths: every repository path written in backticks (for example `app/src/...`) exists and uses forward slashes.
+     A line or anchor suffix (`:42`, `#L42`) is allowed. Describe files that do not exist yet in plain words, without
+     backticks.
   7. No template text left: placeholders from adr-template.md (such as `<option name>` or `YYYY-MM-DD`) are replaced.
 
 Usage
@@ -93,15 +94,17 @@ def same_version(cited: str, current: str) -> bool:
     return parts(cited) == parts(current)
 
 
-def repository_paths(text: str, repo: Path) -> set[str]:
-    """Backticked tokens that start with a top-level folder of the repository, such as `app/...` or `.github/...`."""
+def repository_paths(text: str, repo: Path) -> dict[str, str]:
+    """Backticked tokens that start with a top-level folder of the repository, such as `app/...` or `.github/...`.
+
+    Returns {token as written: path with forward slashes}, so Windows-style paths are checked too."""
     top = {p.name for p in repo.iterdir() if p.is_dir() and p.name != ".git"}
-    paths = set()
+    paths = {}
     for token in BACKTICKED.findall(text):
-        token = LOCATION_SUFFIX.sub("", token.rstrip(".,;)"))
-        first, slash, _ = token.partition("/")
-        if slash and first in top and not re.search(r"[*?<>{}$]", token):
-            paths.add(token)
+        path = LOCATION_SUFFIX.sub("", token.rstrip(".,;)")).replace("\\", "/")
+        first, slash, _ = path.partition("/")
+        if slash and first in top and not re.search(r"[*?<>{}$]", path):
+            paths[token] = path
     return paths
 
 
@@ -144,9 +147,12 @@ def check(adr: Path, standards: dict[str, str], repo: Path, placeholders: set[st
         if current and not same_version(version, current):
             problems.append(f"cites {standard} v{version}, but the approved version is v{current}")
 
-    for ref in sorted(repository_paths(text, repo)):
-        if not (repo / ref).exists():
-            problems.append(f"references missing path `{ref}`")
+    paths = repository_paths(text, repo)
+    for path in sorted(set(paths.values())):
+        if not (repo / path).exists():
+            problems.append(f"references missing path `{path}`")
+    for token in sorted(t for t in paths if "\\" in t):
+        problems.append(f"write repository paths with forward slashes: `{token}`")
 
     for placeholder in sorted(p for p in placeholders if p in text):
         problems.append(f"still contains template text {placeholder}")

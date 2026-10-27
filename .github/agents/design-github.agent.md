@@ -31,8 +31,10 @@ Answer the open design question in `solutions/02-design-github/inputs/reviewed-b
 ## Rules
 - Keep **Status: Proposed** and leave the Deciders line as the template has it. You propose; a person decides in the
   pull request review.
-- Cite standards by id and version (for example `STD-OBS-001 v1.2`), and only standards that exist. Put a path in
-  backticks only when the file exists.
+- Write for a reviewer who has ten minutes: one comparison table for the options, short sentences, and no detail the
+  decision does not need.
+- Cite standards by id and version (for example `STD-OBS-001 v1.2`), and only standards that exist. Write repository
+  paths with forward slashes, and put a path in backticks only when the file exists.
 - When two applicable standards contradict each other, cite both, explain the conflict, and leave the choice to the
   reviewer. When the design depends on a rule that no standard covers, record an open question. Never invent a
   standard, a number, or a decision.
