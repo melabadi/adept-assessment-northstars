@@ -35,3 +35,7 @@ out/
 # Local demo run output (advisor runs, evaluations). Plan backlogs are reviewed in PRs, so they are not ignored.
 phases/02-design/output/
 phases/03-develop/output/
+
+# Compile-time cache written by `gh aw compile`. Compiled .lock.yml files pin their actions, so it is not committed
+# (two solutions compile agentic workflows independently and would otherwise conflict on this one file).
+.github/aw/actions-lock.json

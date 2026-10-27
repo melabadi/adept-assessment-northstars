@@ -1,0 +1,148 @@
+# Develop · Microsoft: every change to the triage agent is evaluated live, before and after it ships.
+#  - Pull request: publishes the changed definition as a candidate agent (requesthub-triage-pr-<number>), runs RequestHub
+#    with it, evaluates the 12 labelled cases, comments the report on the pull request, then deletes the candidate. The app
+#    in Azure keeps calling the agent published from main.
+#  - Push to main, or a manual run: publishes requesthub-triage (a new version only when the definition changed), evaluates
+#    it, and opens or updates one Issue per failing case (and closes it when the case passes again).
+# Routing policies are data the agent reads through a tool, so a policy change is re-evaluated without retraining anything.
+name: Develop · Microsoft · evaluate the triage agent
+
+on:
+  pull_request:
+    paths:
+      - 'solutions/03-develop-microsoft/triage-agent.yaml'
+      - 'solutions/03-develop-microsoft/eval_cases.jsonl'
+      - 'solutions/03-develop-microsoft/*.py'
+      - 'app/src/RequestHub.Core/Profiles/**'
+      - 'app/src/RequestHub.Core/Triage/**'
+      - 'app/src/RequestHub.Api/Triage/**'
+      - '.github/workflows/develop-microsoft-eval.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'solutions/03-develop-microsoft/triage-agent.yaml'
+      - 'solutions/03-develop-microsoft/eval_cases.jsonl'
+      - 'solutions/03-develop-microsoft/*.py'
+      - 'app/src/RequestHub.Core/Profiles/**'
+      - 'app/src/RequestHub.Core/Triage/**'
+      - 'app/src/RequestHub.Api/Triage/**'
+      - '.github/workflows/develop-microsoft-eval.yml'
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Runs per case (2 or more measures repeatability)
+        default: '1'
+      cases:
+        description: Comma-separated case ids, for example T06,T08 (empty runs all 12)
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: develop-microsoft-eval-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  evaluate:
+    name: Publish the agent and evaluate it
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: develop-microsoft
+    env:
+      AGENT_NAME: ${{ github.event_name == 'pull_request' && format('requesthub-triage-pr-{0}', github.event.pull_request.number) || 'requesthub-triage' }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: requesthub
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: requesthub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U requesthub"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r solutions/03-develop-microsoft/requirements.txt
+      - name: Check the agent's tool contract (declared = executed, read-only, strict schemas)
+        run: python .github/skills/foundry-tools/check_tools.py
+      - name: Build the API
+        run: dotnet build app/src/RequestHub.Api -c Release
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Publish the agent (${{ env.AGENT_NAME }})
+        run: python solutions/03-develop-microsoft/publish_triage_agent.py --name "$AGENT_NAME"
+      - name: Start RequestHub with the Foundry triage provider
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ASPNETCORE_URLS: http://localhost:5080
+          Triage__Provider: Foundry
+          Foundry__ProjectEndpoint: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          Foundry__AgentName: ${{ env.AGENT_NAME }}
+        run: |
+          nohup dotnet run --project app/src/RequestHub.Api -c Release --no-build --no-launch-profile > api.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:5080/health/ready > /dev/null; then echo "API ready"; exit 0; fi
+            sleep 2
+          done
+          cat api.log; exit 1
+      - name: Evaluate the live agent (deterministic checks)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPEAT: ${{ inputs.repeat || '1' }}
+          CASES: ${{ inputs.cases }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          args=(--repeat "$REPEAT")
+          if [ -n "$CASES" ]; then args+=(--cases "$CASES"); fi
+          # Issues track the agent that ships; pull requests get a comment instead.
+          if [ "$EVENT" != "pull_request" ]; then args+=(--issues); fi
+          python solutions/03-develop-microsoft/eval_triage.py "${args[@]}"
+      - name: Report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPORT: solutions/03-develop-microsoft/out/eval/report.md
+        run: |
+          if [ ! -f "$REPORT" ]; then exit 0; fi
+          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PR" ]; then
+            { echo "Candidate agent \`$AGENT_NAME\` evaluated in [run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."; echo; cat "$REPORT"; } > comment.md
+            gh pr comment "$PR" --body-file comment.md
+          fi
+      - name: Delete the candidate agent
+        if: always() && github.event_name == 'pull_request'
+        run: python solutions/03-develop-microsoft/publish_triage_agent.py --name "$AGENT_NAME" --delete
+      - name: Upload evaluation results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: triage-eval
+          path: |
+            solutions/03-develop-microsoft/out/eval
+            api.log
+          retention-days: 14
