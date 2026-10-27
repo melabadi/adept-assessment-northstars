@@ -12,7 +12,7 @@ Most release incidents start the same way: a new build replaces the one users ar
 | Checking | "The deployment succeeded" means the container started. | The platform's readiness probe, then the API used the way people use it, on the candidate's own URL, then a bake period. |
 | Artifacts | Each environment rebuilds; nobody can say which commit is running. | One image per commit, deployed by digest. `/api/meta` reports the commit baked into the image, and the gate checks it. |
 | A bad build | It reaches users, or the pipeline says "deployed" while the platform quietly keeps the old version and nobody knows why. | The candidate never gets traffic. The gate fails within about two minutes, records why, and removes the candidate. |
-| Rolling back | Rebuild or redeploy the old version, often 10 minutes or more under pressure. | One traffic change to the previous revision, still running: about 15 seconds, then the same checks. |
+| Rolling back | Rebuild or redeploy the old version while users wait. | One traffic change to the previous revision, still running: about 15 seconds, then the same checks. |
 | Evidence | Scattered logs and chat messages. | One release record per run: commit, digest, revisions, every check, timings, and what users saw. |
 | Access | A stored service principal secret with Contributor. | GitHub OIDC, no secret. The release identity holds two roles: Container Apps Contributor on the resource group and AcrPush on the registry. |
 
