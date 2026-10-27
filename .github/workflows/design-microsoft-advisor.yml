@@ -1,0 +1,172 @@
+# Design · Microsoft: an issue opened from the "ask the Foundry architecture advisor" form (label `design-advisor`) is
+# answered by the Microsoft Foundry architecture advisor, grounded in the approved standards in Azure AI Search.
+# The workflow signs in to Azure with OIDC (GitHub environment design-microsoft, no stored secret), comments the answer
+# on the issue, pushes the ADR draft to a branch, and links a prefilled pull request for an architect to accept or
+# reject. The issue text is data: it reaches the advisor through a file, never through a shell command.
+# The workflow does not open the pull request itself, so it needs no permission to create pull requests.
+name: Design · Microsoft · ask the Foundry architecture advisor
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      question:
+        description: Architecture question
+        required: true
+      profile:
+        description: Operating profile (decides which standards the advisor can retrieve)
+        type: choice
+        options: [enterprise, small-team]
+        default: enterprise
+
+permissions:
+  contents: write
+  issues: write
+  id-token: write
+
+concurrency:
+  # One group per issue and label: the form applies several labels at once, and only design-advisor runs the job.
+  group: design-microsoft-advisor-${{ github.event.issue.number || github.run_id }}-${{ github.event.label.name || 'dispatch' }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  advise:
+    name: Ask the advisor
+    # Only issues opened by people with access to the repository run it, so strangers cannot spend the Foundry quota.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'design-advisor' &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: design-microsoft
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: pip install -r solutions/02-design-microsoft/requirements.txt
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Read the question (issue text is data, not code)
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          INPUT_QUESTION: ${{ inputs.question }}
+          INPUT_PROFILE: ${{ inputs.profile }}
+        run: |
+          python - <<'PY'
+          import os, re
+          body = os.environ.get("ISSUE_BODY") or ""
+
+          def section(heading):
+              match = re.search(rf"(?ms)^###\s+{heading}\s*\n(.*?)(?=^###\s|\Z)", body)
+              value = match.group(1).strip() if match else ""
+              return "" if value == "_No response_" else value
+
+          question = os.environ.get("INPUT_QUESTION") or section("Question") or body
+          title = re.sub(r"^Architecture question:\s*", "", os.environ.get("ISSUE_TITLE") or "").strip()
+          if title and title not in question:
+              question = f"{title}\n\n{question}"
+          profile = os.environ.get("INPUT_PROFILE") or section("Operating profile")
+          profile = profile if profile in ("small-team", "enterprise") else "enterprise"
+          with open("question.md", "w", encoding="utf-8") as handle:
+              handle.write(question[:4000])
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"PROFILE={profile}\n")
+          PY
+      - name: Ask the Foundry advisor (live call, deterministic checks)
+        id: advise
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
+          SEARCH_ENDPOINT: ${{ vars.SEARCH_ENDPOINT }}
+          SEARCH_CONNECTION_NAME: ${{ vars.SEARCH_CONNECTION_NAME }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          args=(--profile "$PROFILE" --question-file question.md --out out)
+          adr_file=""
+          if [ -n "$ISSUE" ]; then
+            adr_file="solutions/02-design-microsoft/adr/issue-$ISSUE.md"
+            args+=(--adr-file "$adr_file")
+          fi
+          set +e
+          python solutions/02-design-microsoft/advisor.py "${args[@]}"
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "adr_file=$adr_file" >> "$GITHUB_OUTPUT"
+          if [ -f out/summary.md ]; then cat out/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Push the ADR draft and link a prefilled pull request
+        id: branch
+        if: github.event_name == 'issues' && steps.advise.outputs.status == '0'
+        env:
+          ISSUE: ${{ github.event.issue.number }}
+          RUN_ID: ${{ github.run_id }}
+          BASE: ${{ github.event.repository.default_branch }}
+          ADR_FILE: ${{ steps.advise.outputs.adr_file }}
+        run: |
+          branch="design/advisor-issue-$ISSUE-$RUN_ID"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add "$ADR_FILE"
+          git commit -m "Design: Foundry advisor ADR draft for #$ISSUE"
+          git push origin "$branch"
+          agent=$(jq -r '"\(.agent.name) v\(.agent.version)"' out/run.json)
+          response=$(jq -r .responseId out/run.json)
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          body=$(printf '%s\n\n%s\n\n%s' \
+            "Closes #$ISSUE. ADR draft from the Microsoft Foundry agent **$agent** (response \`$response\`), produced in [workflow run $RUN_ID]($run_url). Its citations passed the deterministic checks against the standards index." \
+            "Review it like any ADR: check the citations, versions, and excerpts against \`solutions/02-design-microsoft/standards/\`, and give each conflict and unknown an owner." \
+            "Accept: set **Status** to Accepted and merge. Reject: close this pull request with a comment.")
+          query=$(jq -rn --arg title "Design: ADR draft for #$ISSUE (Foundry advisor)" --arg body "$body" '"title=\($title|@uri)&body=\($body|@uri)"')
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "link=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$branch?quick_pull=1&$query" >> "$GITHUB_OUTPUT"
+      - name: Comment on the issue
+        if: always() && github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          STATUS: ${{ steps.advise.outputs.status }}
+          LINK: ${{ steps.branch.outputs.link }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            if [ -f out/summary.md ]; then
+              cat out/summary.md
+            else
+              echo "The advisor could not run. See [the workflow run]($RUN_URL)."
+            fi
+            echo
+            if [ -n "$LINK" ]; then
+              echo "**[Open the ADR draft pull request]($LINK)** (branch \`$BRANCH\`). An architect accepts it by merging or rejects it by closing it."
+            elif [ "$STATUS" = "1" ]; then
+              echo "No ADR draft was proposed because a deterministic check failed. See [the workflow run]($RUN_URL)."
+            fi
+          } > comment.md
+          gh issue comment "$ISSUE" --body-file comment.md
+      - name: Keep the evidence (run.json, summary, ADR draft)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: design-advisor-${{ github.run_id }}
+          path: out/
+          if-no-files-found: ignore
+      - name: Fail the run when the advisor failed
+        if: steps.advise.outputs.status != '0'
+        env:
+          STATUS: ${{ steps.advise.outputs.status }}
+        run: |
+          echo "::error::The advisor exited with status $STATUS (1: a deterministic check failed, 2: service or configuration error)."
+          exit 1
