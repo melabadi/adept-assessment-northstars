@@ -1,0 +1,45 @@
+# Azure Developer CLI project for the Release · Microsoft solution. Run `azd up` from this folder.
+# It provisions infra/ (RequestHub's hosting platform from app/infra) and deploys the shared app once: the api and
+# worker images are built in Azure Container Registry, and `azd deploy` applies app/infra/api.bicep and worker.bicep.
+# After that first deployment, releases go through release.py and the release-microsoft-* workflows, which add
+# candidate revisions without traffic instead of replacing the running one. The hooks connect the solution to GitHub.
+name: ai-sdlc-release-microsoft
+metadata:
+  template: ai-sdlc-release-microsoft@1.0.0
+infra:
+  provider: bicep
+  path: infra
+services:
+  api:
+    project: ../../app
+    language: docker
+    host: containerapp
+    module: ../../../app/infra/api
+    docker:
+      path: ./Dockerfile
+      context: .
+      remoteBuild: true
+  worker:
+    project: ../../app
+    language: docker
+    host: containerapp
+    module: ../../../app/infra/worker
+    docker:
+      path: ./Dockerfile.worker
+      context: .
+      remoteBuild: true
+hooks:
+  preprovision:
+    windows:
+      shell: pwsh
+      run: python configure_github.py prepare
+    posix:
+      shell: sh
+      run: python3 configure_github.py prepare
+  postprovision:
+    windows:
+      shell: pwsh
+      run: python configure_github.py publish
+    posix:
+      shell: sh
+      run: python3 configure_github.py publish
