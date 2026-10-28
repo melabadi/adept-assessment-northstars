@@ -442,7 +442,7 @@ export const fr: Messages = {
   'triage.confirmRoute': "Confirmer l'acheminement",
   'triage.confirming': 'Confirmation de l’acheminement…',
   'triage.confirmed': 'Acheminement confirmé.',
-  'triage.confirmedBy': 'Confirmé par {name}',
+  'triage.confirmedBy': 'Confirmée par {name}',
   'triage.advisory': 'Les recommandations sont indicatives. Seul un approbateur peut approuver ou refuser.',
   'triage.failed': "Impossible d'obtenir une recommandation.",
 

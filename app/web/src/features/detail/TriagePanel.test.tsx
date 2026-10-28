@@ -200,4 +200,26 @@ describe('TriagePanel', () => {
     expect(within(panel).getByRole('button', { name: "Confirmer l'acheminement" })).toBeInTheDocument();
     expect(screen.getByText((text) => text.startsWith('Acheminement confirmé') && text.includes('Installations'))).toBeInTheDocument();
   });
+
+  it('uses feminine agreement for the French confirmed-by label', async () => {
+    const rec = recommendation({ status: 'Confirmed', departmentAtRecommendation: 'IT' });
+    mockApi({
+      'GET /api/requests/REQ-1001': () => detail({ latestRecommendation: rec }),
+      'GET /api/requests/REQ-1001/history': () => [
+        {
+          id: 1,
+          action: 'triage.confirmed',
+          actor: { id: 'u-ben', displayName: 'Ben Okafor' },
+          occurredAt: '2026-10-28T12:00:00Z',
+          details: { recommendationId: rec.id, to: 'FAC' },
+          correlationId: null,
+        },
+      ],
+    });
+
+    renderApp('/requests/REQ-1001', { locale: 'fr', persona: 'u-ben' });
+
+    const panel = await screen.findByRole('region', { name: 'Assistant de triage' });
+    expect(within(panel).getByText('Confirmée par Ben Okafor')).toBeInTheDocument();
+  });
 });
