@@ -38,4 +38,5 @@ description: Build, check, and explain the evidence of a RequestHub release on G
 - `checksums: FAIL ... changed after the candidate run`: an asset was edited or replaced. Do not approve; build a new candidate.
 - `tests: FAIL`: a report disagrees with the manifest, or a suite failed. Investigate with the workflow-investigation skill.
 - `candidate run: FAIL ... in_progress`: wait for the run to finish, then verify again.
-- `images: SKIP`: set `GHCR_TOKEN` to a token with `read:packages` (for example `gh auth refresh -s read:packages`, then `$env:GHCR_TOKEN = gh auth token`).
+- `gh release view demo-vX.Y.Z` says `release not found` while the draft exists: the AI summary's update made GitHub remove the draft's pending tag name, so `gh release list` shows it as `untagged-…`. `verify` and the approval workflow find it by its title (`RequestHub demo-vX.Y.Z (demo)`), and publishing sets the tag again.
+- `images: SKIP` (no token, or a token without `read:packages`): the local check proves nothing either way. Refresh the scope with `gh auth refresh -s read:packages`, then `$env:GHCR_TOKEN = gh auth token`, or rely on the approval workflow, which checks the images with its own token. A local HTTP 401, 403, or 404 from the registry means the same; never report the images as missing from a local check.

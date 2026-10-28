@@ -18,8 +18,9 @@ solutions/<NN>-<phase>-<github|microsoft>/
 ├── .github/
 │   ├── agents/<phase>-<track>.agent.md
 │   ├── skills/<skill>/SKILL.md   plus the skill's scripts and reference files
-│   ├── workflows/<phase>-*.yml
-│   └── ISSUE_TEMPLATE/<NN>-<phase>-*.yml
+│   ├── instructions/<name>.instructions.md   optional path-specific Copilot instructions (for example for code review)
+│   ├── workflows/<phase>-<track>-*.yml
+│   └── ISSUE_TEMPLATE/<NN>-<phase>-<track>-*.yml
 ├── azure.yaml                    Microsoft solutions: azd project for the solution's resource group
 ├── infra/                        Microsoft solutions: main.bicep (subscription scope) and parameters
 ├── requirements.txt              Python packages for the solution's scripts
@@ -27,10 +28,11 @@ solutions/<NN>-<phase>-<github|microsoft>/
 ```
 
 1. **Self-contained.** Everything the demo needs lives in its folder. The exceptions are the app (`app/`) and the Bicep modules that host it (`app/infra/`). Small helpers are copied into each solution that needs them rather than shared.
-2. **Root `.github/` is a mirror.** GitHub only reads agents, skills, workflows, and issue templates from the root `.github/` folder. Edit the solution's copy, then run `python tools/sync_solutions.py`. For files generated at the root, such as `gh aw compile` output, copy them back with `python tools/sync_solutions.py --pull <path>`. The *Repository checks* workflow fails if the copies drift.
+2. **Root `.github/` is a mirror.** GitHub only reads agents, skills, instructions, workflows, and issue templates from the root `.github/` folder. Edit the solution's copy, then run `python tools/sync_solutions.py`. For files generated at the root, such as `gh aw compile` output, copy them back with `python tools/sync_solutions.py --pull <path>`. The *Repository checks* workflow fails if the copies drift.
 3. **Unique names.** Two solutions may only ship a file with the same path if the contents are identical. Name workflows `<phase>-<track>-<what>.yml` (for example `develop-microsoft-eval.yml`) with a display name such as `Develop · Microsoft · evaluate the triage agent`, issue templates `<NN>-<phase>-<track>-<what>.yml`, and agents `<phase>-<track>`.
 4. **Paths.** Workflows and agents refer to solution files by their repository path (`solutions/03-develop-microsoft/...`). Skills refer to their own files through `.github/skills/<skill>/...`, which works both here and in an adopter's repository.
 5. **Repository-wide files belong to no solution:** `.github/copilot-instructions.md`, `.github/workflows/ci.yml`, `.github/workflows/copilot-setup-steps.yml`, and `.github/workflows/repo-checks.yml`.
+6. **Workflows only act on their own demo.** Every workflow in this repository sees every pull request. A solution's pull-request workflow must recognize its own demo (paths inside its solution folder, a `lab/<phase>-*` base branch, or an Issue labeled `phase:<phase>`) and skip, never fail, everything else. A check that fails on another solution's demo pull request is a defect.
 
 ## Microsoft solutions on Azure
 
@@ -82,6 +84,8 @@ services:
 
 `main.bicep` must output the values that [`app/infra/api.parameters.json`](app/infra/api.parameters.json) and [`worker.parameters.json`](app/infra/worker.parameters.json) read: `AZURE_CONTAINER_REGISTRY_ENDPOINT`, `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_ENVIRONMENT_NAME`, `APP_IDENTITY_ID`, `APP_IDENTITY_CLIENT_ID`, `APP_IDENTITY_NAME`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `STORAGE_BLOB_ENDPOINT`, `API_APP_NAME`, `WORKER_APP_NAME`, `API_URL`, `API_CLIENT_ID`, `API_IDENTIFIER_URI`, and `AUTOMATION_CLIENT_ID`. Optional: `FOUNDRY_PROJECT_ENDPOINT`, `TRIAGE_PROVIDER`, `DEMO_INDUSTRY`.
 
+In its cleanup, a solution that runs RequestHub must also delete the Microsoft Entra app registration that `requesthub.bicep` creates for sign-in: `azd down` deletes the resource group, but no resource group contains Microsoft Entra objects. Delete it and empty it from the recycle bin, as [03-develop-microsoft](solutions/03-develop-microsoft/README.md#reset-and-clean-up) does, or the next `azd up` with the same environment name cannot create it again for 30 days.
+
 ## Python scripts
 
 - Start with a module docstring that says what the script does and how to run it. `--help` documents every option.
@@ -91,25 +95,55 @@ services:
 
 ## Solution READMEs
 
-Write for someone who has never seen the repository. Keep it short and adoption-focused, with no project-status sections.
+Write for someone who has never seen the repository and will present the demo to an audience. Be complete: every step says what to do, what appears on screen (with a screenshot), and what to point out. No project-status sections. Write commands for PowerShell 7 (`pwsh`) and paste-test them; quote `gh api` paths that contain `{owner}/{repo}`, because PowerShell reads unquoted braces as a script block.
 
-1. **Title and summary.** One paragraph: the problem and what AI changes.
+1. **Title and summary.** One paragraph: the problem and what AI changes. Follow it with the one screenshot that best shows the result.
 2. **Where it fits.** The SDLC phase, and how teams work today compared with this solution.
 3. **How it works.** A diagram (Mermaid renders on GitHub) and who does what: Copilot or Foundry, GitHub Actions or Azure, and the human.
 4. **What's in this folder.** An annotated file tree.
 5. **Prerequisites.**
-6. **Set up.** One-time steps, copy-paste ready.
-7. **Run the demo.** Numbered steps, each with the command or click and what you should see.
-8. **What to observe.** The impact to point out to the audience.
-9. **Reset and clean up.**
-10. **Use it in your own repository.** What to copy and what to change.
-11. **Troubleshooting.** Only problems someone actually hit.
+6. **Set up.** One-time steps, copy-paste ready, with what you should see when each one worked.
+7. **Before each session.** A checklist: how to confirm the demo is in its starting state, what to open in advance (tabs, terminals, files), what to start early because it takes long (Copilot sessions, deployments, load tests), and the timings.
+8. **Run the demo.** Numbered steps. Each step has the click path or command, a screenshot of what appears, how long it takes, and **Point out:** the one thing the audience should notice.
+9. **What to observe.** The impact to point out to the audience.
+10. **Reset and clean up.**
+11. **Use it in your own repository.** What to copy and what to change.
+12. **Troubleshooting.** Only problems someone actually hit.
+
+## Screenshots
+
+Screenshots go in the solution's `images/` folder, named after the step they illustrate (`images/05-proof-check.png`), and are linked with alt text that says what the image shows: `![The proof check: the new test fails before the fix and passes after it](images/05-proof-check.png)`. Capture them from a real run of the demo.
+
+**Capture every screenshot with [`tools/screenshot.mjs`](tools/screenshot.mjs)**, never with another screenshot tool. It masks what identifies your tenant and account before the image is saved: your subscription and tenant, your account and tenant domain, resource host names and the unique tokens in resource names, GUIDs, e-mail addresses, and user profile paths. It refuses to save an image when anything is left, and reads every image back with OCR. One-time setup:
+
+```powershell
+npm ci --prefix app/web                      # Playwright, used by the tool
+pip install pillow                           # image check and compression
+python tools/redact.py init                  # your redaction list, stored outside the repository
+node tools/screenshot.mjs browser            # a separate Chrome profile: sign in to GitHub and Azure there
+```
+
+Run `python tools/redact.py init` again after you deploy a solution, so its new resources are on the list. Then:
+
+```powershell
+# A web page (GitHub, the Azure portal, the Foundry portal, RequestHub): crop to the part that matters.
+node tools/screenshot.mjs page "https://github.com/<owner>/<repo>/pull/12" solutions/04-test-github/images/05-proof-check.png `
+  --selector ".merge-status-list" --width 1200
+# Command output, rendered as a terminal window.
+python solutions/07-operate-microsoft/incident.py verify *> out.txt
+node tools/screenshot.mjs terminal solutions/07-operate-microsoft/images/07-verify.png --input out.txt --title "PowerShell 7"
+```
+
+`node tools/screenshot.mjs` without arguments lists every option (`--wait`, `--click`, `--selector`, `--clip`, `--full`, `--remove`, `--pick-account`).
+
+Before you commit, run `python tools/redact.py check --changed`; it must print `OK`. Then look at every image yourself. A pushed commit stays reachable through its pull request even after you remove the file, so an image must be clean before its first push. The same rule applies to text: never paste host names, subscription or tenant details, or e-mail addresses into Issues, pull requests, or comments.
 
 ## Definition of done
 
 A solution is done when:
 
 - The demo runs end to end against the real services, following its README from a clean state.
+- Every step of *Run the demo* that shows something on screen has a screenshot from a real run, captured with `tools/screenshot.mjs`, and `python tools/redact.py check --changed` prints `OK`.
 - The *Repository checks* workflow passes, and the app's CI passes if the app changed.
 - The pull request links the live evidence: workflow runs, Issues and pull requests the demo created, evaluation results, and screenshots where they help. When a step only works from the default branch (issue templates, label- or dispatch-triggered workflows), run it right after merging and add the evidence as a comment on the pull request.
 - It ships in its own pull request.

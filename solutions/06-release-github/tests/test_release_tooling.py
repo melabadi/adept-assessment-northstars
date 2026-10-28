@@ -175,8 +175,9 @@ class AssembleVerifyApproveTests(unittest.TestCase):
             "--requested-by", "ava-dev", "--approval-mode", "the person who runs the approval workflow"])
         return code
 
-    def release(self, body: str | None = None) -> dict:
-        return {"tag_name": TAG, "draft": self.fake.release_state == "draft", "target_commitish": COMMIT,
+    def release(self, body: str | None = None, tag_name: str = TAG) -> dict:
+        return {"id": 425872300, "tag_name": tag_name, "name": rel.release_title(TAG),
+                "draft": self.fake.release_state == "draft", "target_commitish": COMMIT,
                 "body": body if body is not None else self.notes.read_text(encoding="utf-8")}
 
     def verify(self, require_images: bool = False):
@@ -213,6 +214,31 @@ class AssembleVerifyApproveTests(unittest.TestCase):
         self.assertEqual(statuses.pop("approval record"), "SKIP")
         self.assertEqual(set(statuses.values()), {"PASS"}, statuses)
 
+    def test_verify_explains_a_draft_whose_tag_name_was_removed(self):
+        self.assemble()
+        release = self.release(tag_name="untagged-e7951f4ef569b73b93ec")
+        checks = rel.verify_release(REPO, TAG, self.release_dir, release, "draft", False, None, None)[0]
+        git_tag = next(c for c in checks if c.name == "git tag")
+        self.assertEqual(git_tag.status, "PASS")
+        self.assertIn("lists the draft as `untagged-e7951f4ef569b73b93ec`", git_tag.detail)
+        self.assertIn(f"sets `{TAG}` again", git_tag.detail)
+
+    def test_find_release_falls_back_to_the_title_of_a_draft_that_lost_its_tag_name(self):
+        releases = [
+            {"id": 1, "tag_name": "demo-v1.1.0", "name": rel.release_title("demo-v1.1.0"), "draft": False},
+            {"id": 2, "tag_name": "untagged-aaa", "name": rel.release_title("demo-v1.3.0"), "draft": True},
+            {"id": 3, "tag_name": "untagged-bbb", "name": rel.release_title(TAG), "draft": True},
+        ]
+        original = rel.api
+        self.addCleanup(setattr, rel, "api", original)
+        rel.api = lambda path, ok404=False, paginate=False: releases
+        self.assertEqual(rel.find_release(REPO, TAG)["id"], 3)
+        self.assertIsNone(rel.find_release(REPO, "demo-v9.9.9"))
+        releases.append({"id": 4, "tag_name": TAG, "name": "renamed by hand", "draft": True})
+        self.assertEqual(rel.find_release(REPO, TAG)["id"], 4, "an exact tag match wins over a title match")
+        releases[1]["draft"] = False
+        self.assertIsNone(rel.find_release(REPO, "demo-v1.3.0"), "only drafts are matched by title")
+
     def test_verify_catches_an_edited_report(self):
         self.assemble()
         report = self.release_dir / "web-tests.junit.xml"
@@ -244,13 +270,33 @@ class AssembleVerifyApproveTests(unittest.TestCase):
         original = rel.registry_check
         rel.registry_check = lambda image, user, token: (True, f"{image['name']} exists")
         self.addCleanup(setattr, rel, "registry_check", original)
+        original_scopes = rel.token_can_read_packages
+        rel.token_can_read_packages = lambda token: None
+        self.addCleanup(setattr, rel, "token_can_read_packages", original_scopes)
+
+    def test_a_token_without_package_scope_is_reported_not_mistaken_for_missing_images(self):
+        self.assemble()
+        original = rel.token_can_read_packages
+        rel.token_can_read_packages = lambda token: False
+        self.addCleanup(setattr, rel, "token_can_read_packages", original)
+        checks = rel.verify_release(REPO, TAG, self.release_dir, self.release(), "any", False, None, "gho_token")[0]
+        images = next(c for c in checks if c.name == "images")
+        self.assertEqual(images.status, "SKIP")
+        self.assertIn("cannot read packages", images.detail)
+        checks = rel.verify_release(REPO, TAG, self.release_dir, self.release(), "any", True, None, "gho_token")[0]
+        self.assertEqual(next(c for c in checks if c.name == "images").status, "FAIL")
 
     def test_approve_writes_the_record_and_keeps_the_ai_summary(self):
         self.registry_ok()
-        code, out, final_notes = self.approve(
-            ai_text="\n---\n\n## AI summary\nThe release adds release evidence.\n",
-            extra=["--comment", "Evidence reviewed."])
+        outputs = self.tmp / "github-output.txt"
+        with unittest.mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(outputs)}):
+            code, out, final_notes = self.approve(
+                ai_text="\n---\n\n## AI summary\nThe release adds release evidence.\n",
+                extra=["--comment", "Evidence reviewed."])
         self.assertEqual(code, 0, out)
+        step_outputs = dict(line.split("=", 1) for line in outputs.read_text(encoding="utf-8").splitlines())
+        self.assertEqual(step_outputs["release_id"], "425872300")
+        self.assertEqual(step_outputs["commit"], COMMIT)
         record = json.loads((self.release_dir / rel.APPROVAL).read_text(encoding="utf-8"))
         self.assertEqual(record["approved_by"], "chloe-lead")
         self.assertEqual(record["requested_by"], "ava-dev")
