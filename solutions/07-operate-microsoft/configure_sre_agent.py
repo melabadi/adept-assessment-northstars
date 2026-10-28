@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import re
 import sys
 import time
@@ -48,6 +49,7 @@ DATA_PLANE_SCOPE = "https://azuresre.dev/.default"
 ARM_SCOPE = "https://management.azure.com/.default"
 QUICKSTART_PLAN = "quickstart_handler"
 PLACEHOLDERS = (
+    "AZURE_SUBSCRIPTION_ID",
     "AZURE_RESOURCE_GROUP",
     "WORKER_APP_NAME",
     "API_APP_NAME",
@@ -205,7 +207,12 @@ def agent_endpoint(client: Client, agent_id: str) -> str:
             raise SystemExit(f"error: cannot read the SRE Agent ({status}): {body}")
         props = body.get("properties", {})
         if props.get("provisioningState") == "Succeeded" and props.get("agentEndpoint"):
-            return props["agentEndpoint"].rstrip("/")
+            endpoint = props["agentEndpoint"].rstrip("/")
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                # The endpoint is derived, not a secret, so GitHub would not mask it if an error message printed it.
+                print(f"::add-mask::{endpoint}")
+                print(f"::add-mask::{endpoint.split('//', 1)[-1]}")
+            return endpoint
         print(f"  agent is {props.get('provisioningState')}; waiting")
         time.sleep(20)
     raise SystemExit("error: the SRE Agent did not finish provisioning in 10 minutes")
