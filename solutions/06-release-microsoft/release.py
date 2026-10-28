@@ -745,6 +745,7 @@ def cmd_status(args) -> int:
         if label in state.labels:
             print(f"{label.capitalize():<16} {state.label_url(label)}")
     rows = sorted(state.revisions.values(), key=lambda r: r.get("properties", {}).get("createdTime", ""), reverse=True)
+    rows.sort(key=lambda r: not r.get("properties", {}).get("active"))  # active revisions (stable, previous, candidate) first
     print(f"\n{'REVISION':<24} {'LABEL':<10} {'TRAFFIC':>7}  {'ACTIVE':<6} {'STATE':<10} {'HEALTH':<9} {'REPLICAS':>8}  "
           f"{'BUILD':<9} CREATED (UTC)")
     for revision in rows[: args.limit]:
