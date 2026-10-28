@@ -81,7 +81,7 @@ The private endpoint itself is implemented in the shared module [`app/infra/requ
 ## Prerequisites
 
 - An Azure subscription where you can create resource groups, Microsoft Entra app registrations, role assignments, and policy assignments, for example as Owner.
-- Microsoft Defender for Cloud with the Microsoft cloud security benchmark assigned. That is the default for Azure subscriptions, and the free foundational CSPM is enough.
+- Microsoft Defender for Cloud with the Microsoft cloud security benchmark assigned. That is the default for Azure subscriptions, and the free foundational CSPM is enough; with the paid Defender CSPM plan, as in the screenshots, the portal also rates each recommendation's risk level.
 - A region that allows PostgreSQL Flexible Server for the app. The examples use `centralus`.
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) 2.76 or later, [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), and the [GitHub CLI](https://cli.github.com/) signed in as a repository admin. The hooks create a GitHub environment and its secrets.
 - [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`) for the commands below, and Python 3.12 or later. The scripts use only the standard library.
@@ -162,7 +162,9 @@ Run the commands from the repository root unless a step says otherwise.
 
 1. **Show the finding where security teams see it** (2 minutes). In the Defender for Cloud tab, the recommendation lists the storage account, with a remediation: add a private endpoint.
 
-   ![Defender for Cloud's recommendation "Storage account should use a private link connection" for the storage account (name masked): its description, and the remediation, add a private endpoint, with a link to general guidance](images/01-defender-recommendation.png)
+   ![Defender for Cloud's recommendation "Storage account should use a private link connection" for the storage account (name masked), risk level Low: its description, and the remediation, add a private endpoint, with a link to general guidance](images/01-defender-recommendation.png)
+
+   **Point out:** *Risk level: Low* is not the *Medium* severity that the scan, the Issue, and the verification comment report. Severity is Microsoft's fixed rating of the recommendation. Risk level is Defender CSPM's rating of this account in its context (internet exposure, sensitive data, lateral movement, attack paths): it found no risk factors or attack paths here and rated it Low. Without the Defender CSPM plan, risk level reads *Not evaluated*.
 
    In the Policy tab, the solution's assignment reports the same storage account non-compliant.
 
@@ -181,7 +183,7 @@ Run the commands from the repository root unless a step says otherwise.
 
    The run opens an Issue titled *Posture: attachment storage in rg-ai-sdlc-secure has no private endpoint*, labelled `posture`. Its table has one row per source: the live resource configuration, each Azure Policy assignment, Defender for Cloud, and the app check. Below it: where to fix it, and when the work is done. Run the workflow again and it comments on the same Issue instead of opening a second one.
 
-   ![The posture Issue opened by the scan: a table with one row per source, all failing, then where to fix it and a checklist of what done means](images/02-scan-issue.png)
+   ![The body of the posture Issue, opened by GitHub Actions: a table with one row per source, all failing, then where to fix it, a checklist of what done means, and the workflow run that detected it](images/02-scan-issue.png)
 
    **Point out:** the evidence stays separated by source, and the Issue says where the fix lives: one Bicep value, not a portal setting.
 
@@ -196,7 +198,7 @@ Run the commands from the repository root unless a step says otherwise.
 
    A draft pull request appears within seconds. When Copilot finishes, it has changed one line in `infra/resources.bicep` (`storagePrivateEndpoint: true`), rewritten the comment above it to say what the private endpoint does, and linked the Issue.
 
-   ![Copilot's draft pull request "Enable private networking for attachment storage": its description explains the change, storagePrivateEndpoint: true, and links the Issue it fixes; the timeline shows Copilot starting and finishing the work](images/03-copilot-pull-request.png)
+   ![Copilot's draft pull request, one file changed: its description explains the change, storagePrivateEndpoint: true, and links the Issue it fixes; the timeline shows Copilot starting and finishing the work](images/03-copilot-pull-request.png)
 
    **Point out:** Copilot's description names the one value it changed, `storagePrivateEndpoint: true`, and links the Issue it fixes.
 
