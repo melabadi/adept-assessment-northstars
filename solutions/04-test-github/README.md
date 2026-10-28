@@ -2,6 +2,8 @@
 
 Defects that only show up under retries or simultaneous clicks slip through review: nobody wrote the test that would have caught them, and a green pull request does not say whether its new test ever failed. In this solution a reported defect, a request that can be approved and rejected at the same time, is reproduced against a running API from a data-driven scenario. The Copilot cloud agent commits failing regression tests first, including an eight-click race, then the fix. GitHub Actions proves that the tests fail at the tests-only commit and pass at the head, Copilot code review adds comments, and a person decides.
 
+![The review evidence on Copilot's pull request: every check passes, and Copilot's regression tests fail at the tests-only commit and pass at the head](images/07-evidence-checks.png)
+
 ## Where it fits
 
 **Phase 4 of 7: Test and review.** The Microsoft counterpart is [04-test-microsoft](../04-test-microsoft/).
@@ -42,6 +44,7 @@ flowchart LR
 ├── README.md
 ├── duplicate-decision-issue.md         the defect report: becomes the Issue Copilot receives
 ├── requirements.txt                    no packages needed: the scripts use the Python standard library
+├── images/                             screenshots from a live run, used in this README
 ├── lab/duplicate-decision.patch        the defect: removes the decision guards and the tests that cover them
 ├── scenarios/
 │   ├── duplicate-decision.json         the reported defect as data: a retry, a second approver, eight parallel clicks
@@ -71,13 +74,34 @@ Run once from the repository root:
 ```powershell
 gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
 gh label create phase:test --color C5DEF5 --description "SDLC phase 4: Test" --force
+gh label list --search phase:test
+gh api 'repos/{owner}/{repo}/contents/.github/agents/test-github.agent.md' --jq .path
 ```
 
-The agent, skills, workflow, and issue template are already active because the repository's root `.github/` folder mirrors them. The cloud agent's environment, including the PostgreSQL service its tests need, comes from [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml).
+What you should see: `gh label list` shows `phase:test  SDLC phase 4: Test  #C5DEF5` on its first line, and the last command prints `.github/agents/test-github.agent.md`. That means the custom agent is on the default branch, which is where the cloud agent reads it. The skills, workflow, and issue template are active too, because the repository's root `.github/` folder mirrors them. The cloud agent's environment, including the PostgreSQL service its tests need, comes from [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml).
+
+## Before each session
+
+- [ ] **Confirm the starting state.** `gh pr list --base lab/test-duplicate-decision` prints nothing, and `gh issue list --label phase:test --state open` shows no Issue left over from an earlier run (this repository keeps Issue #5 from the first run on purpose, with its draft pull request #6 on a frozen copy of the lab branch). If either does, follow [Reset and clean up](#reset-and-clean-up) first.
+- [ ] **Start the slow parts about 30 minutes early.** Run steps 1 and 3 before the audience arrives: Copilot needs 15 to 30 minutes, and its pull request is then ready to show. Build the API once (`dotnet build app/src/RequestHub.Api`) so step 2 starts in seconds. If you plan to show step 9, run it beforehand as well and keep its branch.
+- [ ] **Open in advance.** Two PowerShell terminals at the repository root, on the lab branch (the second one runs the API). Browser tabs: the Issue, Copilot's pull request, its **View session** page, and the latest run of **Test · GitHub · prove the fix test-first** under **Actions**. In the editor: [`duplicate-decision-issue.md`](duplicate-decision-issue.md) and [`scenarios/duplicate-decision.json`](scenarios/duplicate-decision.json).
+- [ ] **Plan the time.** About 20 minutes on stage when steps 1, 3, and 9 ran beforehand. The waiting times come from the live runs behind this README:
+
+| Step | On stage | Waiting |
+| --- | --- | --- |
+| 1. Rebuild the lab branch | 1 min | |
+| 2. Reproduce the defect | 2 min | |
+| 3. Hand the defect to Copilot | 3 min | Copilot works 15 to 30 min |
+| 4. Approve the workflow runs | 1 min | the proof takes about 2 min, CI about 4 min |
+| 5. Watch the deterministic gate | 2 min | |
+| 6. Ask Copilot for a code review | 2 min | the review arrives in 5 to 12 min |
+| 7. Assemble the evidence | 2 min | |
+| 8. Decide, with a review loop | 4 min | Copilot pushes in about 7 min, then the checks run again |
+| 9. Optional: a second defect with Copilot CLI | 3 min | Copilot CLI works 12 to 18 min |
 
 ## Run the demo
 
-About 20 minutes of presenting, plus 15 to 30 minutes while Copilot works. Run steps 1 to 3 before the session, or present the context while Copilot works.
+The screenshots come from the live run with Issue #100 and pull request #101. Your SHAs, test names, and counts will differ, because Copilot writes new tests every time.
 
 1. **Rebuild the lab branch from `main`.** Do this before every run. The defect lives only on `lab/test-duplicate-decision`: today's `main` plus [`lab/duplicate-decision.patch`](lab/duplicate-decision.patch), which removes the decision guards and the tests that cover them. The patch file stays off the lab branch. Copilot can still read the code from before the defect commit, as an engineer would when a regression appears; what the demo proves is the order of the evidence, a failing test at a known SHA and then the fix.
 
@@ -90,26 +114,24 @@ About 20 minutes of presenting, plus 15 to 30 minutes while Copilot works. Run s
    git push --force origin lab/test-duplicate-decision
    ```
 
-2. **Reproduce the defect.** Start the API from the lab branch in a second terminal, then run the scenario:
+   ![The lab branch rebuilt: one commit on top of main, force-pushed as lab/test-duplicate-decision](images/01-lab-branch.png)
+
+   *About 20 seconds.* **Point out:** the defect exists only on a lab branch built from today's `main`; `main` itself stays healthy.
+
+2. **Reproduce the defect.** Start the API from the lab branch in the second terminal, then run the scenario in the first:
 
    ```powershell
    dotnet run --project app/src/RequestHub.Api        # second terminal; http://localhost:5080
    python .github/skills/failure-reproduction/repro.py solutions/04-test-github/scenarios/duplicate-decision.json
    ```
 
-   You should see six failing steps. Point out step 8, the double-click (the split between `201` and `500` varies from run to run):
+   ![The scenario against the lab build: six of nine steps fail, and eight parallel approvals return 201 three times and 500 five times](images/02-reproduce.png)
 
-   ```text
-    4. FAIL Dan rejects the already approved request  ->  HTTP 201
-             HTTP 201, expected 409
-             code None, expected decision.already_decided
-    8. FAIL Chloé double-clicks Approve: eight requests at once  ->  HTTP 201 x3, HTTP 500 x5
-             status counts {'201': 3, '500': 5}, expected {'201': 1, '409': 7}
+   To show that the scenario is a fair oracle, run it against `main` too: stop the API (Ctrl+C), `git switch main`, start the API again, and rerun the scenario. Every step passes. Switch back with `git switch lab/test-duplicate-decision` afterwards.
 
-   REPRODUCED: 6 step(s) did not behave as expected.
-   ```
+   ![The same scenario against main: every step behaves as expected](images/02-not-reproduced-on-main.png)
 
-   The same scenario against `main` prints `Not reproduced: every step behaved as expected.`, so it is a fair oracle.
+   The screenshots ran the lab and `main` APIs side by side on ports 5092 and 5091, with `--api`, because the machine was shared (see [Troubleshooting](#troubleshooting)). *About 2 minutes, of which the scenario takes 5 seconds.* **Point out:** step 8, a double-click of eight requests, records three decisions and returns `500` five times; on `main` it returns one `201` and seven `409`.
 
 3. **Hand the defect to Copilot.** Create the Issue from the defect report:
 
@@ -117,33 +139,61 @@ About 20 minutes of presenting, plus 15 to 30 minutes while Copilot works. Run s
    gh issue create --title "Test: a request can be decided more than once" --label ai-sdlc --label phase:test --label bug --body-file solutions/04-test-github/duplicate-decision-issue.md
    ```
 
-   Open the Issue and assign it to **Copilot**. In the dialog, pick the **test-github** agent and the base branch **lab/test-duplicate-decision**. From a terminal instead (replace `<issue>`):
+   Open the Issue and assign it to **Copilot**. In the dialog, pick the **test-github** agent and the base branch **lab/test-duplicate-decision**. From a terminal instead (replace `<issue>`; it prints `Copilot` and your login):
 
    ```powershell
    $repo = gh repo view --json nameWithOwner -q .nameWithOwner
    @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = 'lab/test-duplicate-decision'; custom_agent = 'test-github' } } |
-     ConvertTo-Json -Compress | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input -
+     ConvertTo-Json -Compress | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '.assignees[].login'
    ```
 
-   Copilot opens a draft pull request into the lab branch within a minute. Open it and select **View session** to watch it run the scenario, commit `Add failing regression tests for #<issue>`, then commit the fix and run the scenario again. It took 15 to 30 minutes in our runs, then requested a review and ended its description with the evidence (both SHAs, test results, and the scenario before and after).
+   Within seconds Copilot appears under the Issue's **Assignees**, and the Issue links its session and a draft pull request into the lab branch:
 
-4. **Approve the workflow runs.** Workflows on Copilot's pull requests wait for a person. Select **Approve and run workflows** on the pull request, or re-run the waiting runs of the latest commit from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids and commits). The two to watch are **CI** and **Test · GitHub · prove the fix test-first**; checks from other solutions may run too.
+   ![The Issue's header: Copilot's session (here already complete) and its draft pull request #101, linked under the title](images/03-issue-assigned.png)
 
-5. **Watch the deterministic gate.** Open the **Regression tests fail before the fix and pass after it** check. Its summary shows the two runs at known SHAs and the failures in the tests' own words. From a live run:
+   Open the pull request and select **View session** to watch Copilot work: it runs the scenario, commits the failing tests, then commits the fix, reruns the tests, the regression suites, and the scenario, and ends with an evidence summary:
 
-   ```text
-   | `3751c5b07` | tests only: Add failing regression tests for #42 | ❌ 3 of 3 failed | must fail: proves the defect |
-   | `06bd7e69c` | head: Prevent duplicate request decisions        | ✅ 3 of 3 passed | must pass: proves the fix    |
+   ![Copilot's session: its last steps, and an evidence summary with the tests-only and fix commits, the proof, and the scenario result](images/03-copilot-session.png)
 
-   ✅ Proven: 3 of 3 selected tests fail at the tests-only commit `3751c5b07`, and 3 of 3 pass at the head `06bd7e69c`.
-   - Concurrent_approvals_record_one_decision_and_return_conflicts_for_the_rest: Expected: 1 · Actual: 3
-   - Decision_retry_with_same_idempotency_key_returns_original_without_duplicate_side_effects: Expected: OK · Actual: Created
-   - Later_approver_decision_returns_conflict_and_preserves_first_decision: Expected: Conflict · Actual: Created
+   When the session ends, look at the commits, on the pull request's **Commits** tab or in a terminal:
+
+   ```powershell
+   git fetch origin
+   # Copilot's branch name is at the top of the pull request
+   git --no-pager log --reverse --stat=100 --format="%n%h %s" origin/lab/test-duplicate-decision..origin/copilot/labtest-duplicate-decision
    ```
 
-   The `regression-proof` artifact keeps both test outputs. Copilot chooses how many tests to write, so the counts change between runs. Tests that already pass before the fix are guards, for example "an existing decision does not bypass authorization".
+   ![Copilot's commits: two that change only the tests, then one that changes only RequestWorkflow.cs](images/03-copilot-commits.png)
 
-6. **Ask Copilot for a code review.** In the pull request, select **Reviewers > Copilot**, or run `gh pr edit <pr> --add-reviewer "@copilot"`. Its review arrives within about 10 minutes. In the live run it flagged a gap the proof cannot see: the concurrent test never retried with the same `Idempotency-Key`. In the rehearsal it found no issues but said it *could not run the new concurrency tests*; the proof in step 5 did.
+   Open the tests-only commit and find the concurrent test, for example with `git show <tests-only commit>:app/tests/RequestHub.Tests/RequestLifecycleTests.cs`:
+
+   ![Copilot's double-click test: eight approvals at once with Task.WhenAll, exactly one 201 and seven 409s](images/03-concurrent-test.png)
+
+   *About 3 minutes on stage; Copilot worked 14 minutes in this run (its tests-only commit came after 6) and about 30 in another.* **Point out:** the tests landed in their own commits, touching only `app/tests/`, before any production code changed.
+
+   Copilot's output varies between runs. In this one the fix commit reused the previous commit's message ("Refine duplicate decision regression assertions"), and the evidence summary appeared in the session rather than in the pull request description. Neither matters to the gate in step 5: it reads what each commit changes, not what its message says.
+
+4. **Approve the workflow runs.** Workflows on Copilot's pull requests wait for a person:
+
+   ![The pull request's merge box: four workflows awaiting approval, with the Approve workflows to run button](images/04-approve-workflows.png)
+
+   Select **Approve workflows to run**, or re-run the waiting runs of the latest commit from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids and commits). The two to watch are **CI** and **Test · GitHub · prove the fix test-first**; checks from other solutions may run and pass or skip. Runs that waited on an earlier commit are cancelled when the latest commit's runs start, because they share a concurrency group. *Under a minute; the proof then takes about 2 minutes and CI about 4.* **Point out:** nothing Copilot wrote runs in Actions until a person approves it.
+
+5. **Watch the deterministic gate.** Open the **Regression tests fail before the fix and pass after it** check and its summary:
+
+   ![The proof check's summary: 5 of 7 selected tests fail at the tests-only commit, and 7 of 7 pass at the head](images/05-proof-check.png)
+
+   Below the table, the summary lists each failure at the tests-only commit in the tests' own words:
+
+   ![The failures at the tests-only commit, in the tests' words: a later decision gets Created instead of Conflict, a same-key retry gets Created instead of OK, and eight parallel clicks get no conflicts](images/05-proof-failures.png)
+
+   The run's `regression-proof` artifact keeps both test outputs (console logs and CTRF reports). Tests that already pass before the fix are guards that protect existing behavior, such as a requester still being unable to approve their own request. *About 2 minutes.* **Point out:** the same tests fail at one known SHA, for the reasons the Issue describes, and pass at another.
+
+6. **Ask Copilot for a code review.** In the pull request, select **Reviewers > Copilot**, or run `gh pr edit <pr> --add-reviewer "@copilot"`. You can do this right after step 4, so the review runs while you show the proof.
+
+   ![Copilot code review: changes recommended, with a high-severity finding that the concurrency recovery path can return another department's decision](images/06-copilot-review.png)
+
+   *About 6 minutes in this run, up to 12 in others.* **Point out:** the review found an authorization gap that no test covered, a request rerouted to another department between the access check and the save. Copilot's own self-check in the session had found no issues. In earlier runs the review flagged a missing concurrent retry test, or found nothing and said it could not run the concurrency tests.
 
 7. **Assemble the evidence** and post it on the pull request:
 
@@ -151,28 +201,44 @@ About 20 minutes of presenting, plus 15 to 30 minutes while Copilot works. Run s
    python .github/skills/review-evidence/review_evidence.py --pr <pr> --comment
    ```
 
-   The comment has three sections: **Deterministic acceptance** (the checks and the proof at known SHAs) decides; **Review comments** (Copilot code review, people) informs, and says that no comments does not mean correct; **Reviewer decision** is still pending.
+   The comment has three sections. **Deterministic acceptance** (the checks, and the proof at known SHAs) decides; it is the image at the top of this README. **Review comments** (Copilot code review, people) informs. **Reviewer decision** stays pending until a person reviews:
 
-8. **Decide.** Read the tests in the tests-only commit: do they assert what the Issue expects, including the concurrent case? If the review found a gap, ask Copilot on the pull request, for example `@copilot Please add a concurrent same-key retry test: eight simultaneous approvals with the same Idempotency-Key return one 201 and seven 200.` In the live run it pushed the test about five minutes later. Approve the new workflow runs, then run step 7 again. Tests added after the fix are guards: CI runs them, and the proof keeps covering the tests committed before the fix. When you are satisfied, approve or request changes as a GitHub review and run step 7 once more: the same comment records who decided. Do not merge: the lab branch is rebuilt for every run.
+   ![The review comments and reviewer decision sections: Copilot's finding is listed, no comments does not mean correct, and the decision is pending](images/07-evidence-review.png)
 
-9. **Optional: the same skill on a second defect (about 15 minutes).** The lab build also accepts a rejection whose comment is only spaces. Stop the API (Ctrl+C), so Copilot CLI can start its own, then:
+   These images show the comment after step 8 updated it, so the head is the review-loop commit. *About 20 seconds.* **Point out:** what decides (checks and proof) is kept apart from what informs (review comments).
+
+8. **Decide.** Read the tests in the tests-only commit: do they assert what the Issue expects, including the concurrent case? If the review found a gap, ask Copilot on the pull request. This run used:
+
+   ```text
+   @copilot Please address the Copilot code review comment on `RequestWorkflow.cs`: in the concurrency recovery path, recheck department access for the reloaded request before returning its decision, and return `403 auth.department_forbidden` when access is denied. Add a regression test for this case. Give each new commit a message that says what it changes, and do not rewrite or squash the earlier commits.
+   ```
+
+   ![The review loop: the @copilot request, Copilot's new commit, and its reply that the authorization check and a deterministic race test were added](images/08-review-loop.png)
+
+   Copilot pushed one commit with the check and a race test about 7 minutes later. Approve its workflow runs (step 4), then run step 7 again: the same comment now shows the new head, still proven. Tests added after the fix are guards: CI runs them, and the proof keeps covering the tests committed before the fix. When you are satisfied, approve or request changes as a GitHub review and run step 7 once more: the comment records who decided. Do not merge: the lab branch is rebuilt for every run. *About 4 minutes on stage, plus Copilot's 7 minutes and the checks.* **Point out:** the reviewer's finding became code and a test within minutes, and the new commit went through the same gates.
+
+9. **Optional: the same skill on a second defect (about 15 minutes, best run beforehand).** The lab build also accepts a rejection whose comment is only spaces. Stop the API (Ctrl+C), so Copilot CLI can start its own, then:
 
    ```powershell
-   git switch -c test/whitespace-rejection
+   git switch -c test/whitespace-rejection lab/test-duplicate-decision
    copilot --agent test-github --allow-all-tools -p "Fix this defect test-first. A rejection whose comment is only spaces is accepted; it must return 400 validation.failed and the request must stay Submitted. Scenario: solutions/04-test-github/scenarios/whitespace-rejection.json"
    python .github/skills/review-evidence/prove_fix.py --base origin/lab/test-duplicate-decision --head HEAD
    ```
 
-   Copilot reproduces the defect with the scenario (`REPRODUCED: 2 step(s)`), commits a failing test, then the fix. The local proof prints `✅ Proven` with both commits.
+   Copilot reproduces the defect with the scenario (`REPRODUCED: 2 step(s)`), commits failing tests, then the fix. The local proof selects the tests that the tests-only commits added, and runs them at the last tests-only commit and at the fix:
+
+   ![The local proof for the second defect: 4 of 4 selected tests fail at the tests-only commit and pass at the fix](images/09-local-proof.png)
+
+   *Copilot CLI took 12 to 18 minutes in our runs; the local proof about 3.* **Point out:** the same skills and the same proof work on a different defect, from the terminal, with no pull request.
 
 ## What to observe
 
 - **Tests that failed first.** The proof shows the new tests failing at a known SHA for the reported reason (`Expected: Conflict · Actual: Created`) and passing at the head, with both outputs kept.
 - **Concurrency is tested, not assumed.** Eight parallel clicks must produce exactly one `201`, in the scenario and in the tests.
 - **One oracle before and after.** The scenario reproduces the defect on the lab build, and prints `Not reproduced` on `main` and after the fix.
-- **Comments are not checks.** The checks prove what the tests cover. Copilot code review informs the reviewer: it can point at what the tests miss, such as a concurrent retry with the same key, or say what it could not verify. The evidence comment lists it apart from the checks, and an empty review counts for nothing.
+- **Comments are not checks.** The checks prove what the tests cover. Copilot code review informs the reviewer: it can point at what the tests miss, such as an authorization gap in a recovery path or a concurrent retry with the same key, or say what it could not verify. The evidence comment lists it apart from the checks, and an empty review counts for nothing.
 - **People stay in charge.** Workflows on Copilot's pull request run only after a person approves them, a person decides on the change, and RequestHub's own rule is untouched: only approvers decide, never on their own request.
-- **Speed.** Minutes from a defect report to a proven, reviewable fix.
+- **Speed.** Minutes from a defect report to a proven, reviewable fix, and minutes from a review finding to a new commit.
 
 ## Reset and clean up
 
@@ -194,6 +260,8 @@ Never merge Copilot's pull request. Step 1 rebuilds the lab branch from `main` f
 
 ## Troubleshooting
 
-- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve and run workflows**, or run `gh run rerun <run-id>`.
-- **Port 5080 or the `requesthub` database is already in use** (for example on a shared machine). Give the API its own: set `$env:ConnectionStrings__RequestHub = "Host=localhost;Port=5432;Database=rh_lab;Username=requesthub;Password=devpass"`, start it with `--urls http://localhost:5081`, and pass `--api http://localhost:5081` to `repro.py`.
+- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run**, or run `gh run rerun <run-id>`.
+- **The runs of an earlier commit show as cancelled.** Approving the waiting runs of several commits starts them together, and the newest run in each concurrency group cancels the older ones. Approve the latest commit's runs; the proof still tests the tests-only commit.
+- **The pull request description has no evidence.** Copilot sometimes writes its evidence summary only at the end of the session. Read it under **View session**, or ask `@copilot` to add it to the description.
+- **Port 5080 or the `requesthub` database is already in use** (for example on a shared machine). Give the API its own: set `$env:ConnectionStrings__RequestHub = "Host=localhost;Port=5432;Database=rh_lab;Username=requesthub;Password=devpass"`, start it with `--urls http://localhost:5081`, and pass `--api http://localhost:5081` to `repro.py`. Tell Copilot CLI the same port and database in its prompt.
 - **`error: cannot reach http://localhost:5080`.** The API is not running yet, or runs on another port.
