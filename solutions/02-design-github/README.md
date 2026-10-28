@@ -265,14 +265,13 @@ About 20 minutes. Run the commands from the repository root.
 ## Reset and clean up
 
 ```powershell
-gh pr close <number> --delete-branch                # close each ADR pull request (options A and B)
-gh issue close <number> --reason "not planned"      # option B: close the design Issue
-git switch main
-git branch -D design/copilot-adr                    # option A: drop the local branch
-git push origin --delete design/breaking-contract-demo   # step 8 in Actions: drop the scratch branch
+git switch main                                          # first, so the next command can delete the demo branch
+gh pr close <number> --delete-branch                     # each ADR pull request (options A and B) and its branch
+gh issue close <number> --reason "not planned"           # option B: the design Issue
+git push origin --delete design/breaking-contract-demo   # step 8 in Actions: the scratch branch
 ```
 
-Do not merge the ADR into `main`. Keeping it out keeps the demo repeatable: the next run starts again from ADR 0001. The commands in [Before each session](#before-each-session) confirm the clean state.
+Do not merge the ADR into `main`. Keeping it out keeps the demo repeatable: the next run starts again from ADR 0001. The commands in [Before each session](#before-each-session) confirm the clean state. If they still list `design/copilot-adr`, delete it with `git push origin --delete design/copilot-adr`: `gh pr close` keeps a branch that is checked out somewhere, for example in another worktree.
 
 ## Use it in your own repository
 
