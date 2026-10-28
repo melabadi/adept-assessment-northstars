@@ -66,7 +66,7 @@ sequenceDiagram
 ```text
 07-operate-microsoft/
 ├── README.md
-├── images/                            screenshots of a live run, used in this README
+├── images/                            screenshots from two live runs of the drill, used in this README
 ├── incident.py                        the drill: status, start, watch, verify, summary (sanitized, optional GitHub Issue), reset
 ├── configure_sre_agent.py             applies sre-agent/ to the live agent, or checks it offline (--check)
 ├── configure_github.py                azd hooks: connect the solution to GitHub Actions (OIDC environment)
@@ -201,7 +201,8 @@ About 5 minutes, at least 15 minutes before you present.
 
 ## Run the demo
 
-Run the commands in this folder.
+Run the commands in this folder. The screenshots come from two runs of this drill on the same day, so times and numbers
+differ between some of them.
 
 1. **Show the guardrails** (3 minutes). In the SRE Agent portal, open **Incidents**, then **Triggers & response
    plans**: one response plan sends the backlog alert to the custom agent, in **Review** mode.
@@ -297,13 +298,13 @@ Run the commands in this folder.
    minute and a half of the change. In the thread, the agent checks fresh telemetry from the new revision before it
    calls anything recovered.
 
-   ![The agent verifying recovery: the new revision's gauge reached 0 pending about 77 seconds after it became ready, delivery spans without the fault take under a millisecond, and it waits for Azure Monitor to resolve the alert](images/06-agent-verifies.png)
+   ![The agent checking recovery: one metrics query failed, so it read the new revision's backlog reports and gauges directly: 0 pending about 77 seconds after the revision became ready, delivery spans without the fault under a millisecond, and it waits for Azure Monitor to resolve the alert](images/06-agent-verifies.png)
 
    The alert resolves about 4.5 minutes after the backlog drains, after three healthy one-minute evaluations, and
-   `watch` stops by itself. The workbook now tells the whole story; read the lines, because the numbers under the
-   first two charts add up every one-minute sample in the time range.
+   `watch` stops by itself. The workbook now tells the whole story. In the portal, read the lines: the numbers under
+   the first two charts add up every one-minute sample in the time range.
 
-   ![Workbook after the drill: the oldest pending notification climbs in steps to about 1,000 seconds and drops to zero at the fix, the pending count falls from 340 to zero, and deliveries jump from about 6 to about 260 a minute when the fault is removed](images/06-workbook-recovered.png)
+   ![Workbook after the drill: the oldest pending notification climbs in steps to about 1,000 seconds and drops to zero at the fix, and the pending count falls from 340 to zero](images/06-workbook-recovered.png)
 
    **Point out:** recovery is measured, not assumed: the agent waits for post-change data and the resolved alert.
 
