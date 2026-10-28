@@ -29,6 +29,7 @@ owner/repo · assisted-triage-brief · track github: 5 created
   sub-issues newly linked: 4 · dependencies: api
 ```
 Each issue contains the backlog id, owner role, acceptance criteria as a checklist, and the quoted source paragraphs.
+Publishing again keeps the "blocked by" links in step with the backlog: a link between two of its own issues that `dependsOn` no longer lists is removed, and the last line adds `stale dependencies removed: N`. Links to any other issue are never touched.
 
 ## Failure handling
 - `Refusing to publish: the backlog is not valid`: fix the backlog with the requirements-traceability skill first.
