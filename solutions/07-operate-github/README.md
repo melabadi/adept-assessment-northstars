@@ -157,7 +157,7 @@ About 20 minutes. Each step says how long it takes in our runs.
    - `safe_outputs` applies what the agent asked for, within the limits set in the workflow's frontmatter: the labels, the follow-up as a sub-issue of the incident, and the comment.
    - `conclusion` updates the status comment with the result.
 
-   ![The triage run: six green jobs from pre_activation to conclusion, a total duration of 5m 49s, and the job graph with each job's time](images/02a-triage-run.png)
+   ![The triage run's summary page: six green jobs listed from pre_activation to conclusion, status Success, and a total duration of 5m 49s](images/02a-triage-run.png)
 
    **Point out:** the `agent` job can only read. Its requests reach the repository only through `safe_outputs`, after the `detection` job checked them, and only within the limits the workflow declares.
 
@@ -198,9 +198,9 @@ About 20 minutes. Each step says how long it takes in our runs.
      gh api -X POST "repos/$repo/issues/$followup/assignees" --input - --jq '[.assignees[].login] | join(", ")'
    ```
 
-   It prints `Copilot` and your login. Within seconds Copilot opens a draft pull request that will close the follow-up. In its timeline, select **View session** next to "Copilot started work" to watch Copilot work; the repository's **Agents** tab lists the same session. It reads the code and the tests, writes the tests and the one-line fix, and runs `prove_regression.py`, which shows the new tests failing on the old code and passing with the fix. Then it commits, pushes, and summarizes the change. To show which agent it used, open the **Running Copilot cloud agent** run under **Actions**: its log says `Selecting custom agent "operate-github"`.
+   It prints `Copilot` and your login. Within seconds Copilot opens a draft pull request that will close the follow-up. In its timeline, select **View session** next to "Copilot started work" to watch Copilot work; the repository's **Agents** tab lists the same session. It reads the code and the tests, writes the tests and the one-line fix, and runs `prove_regression.py` to see which tests fail on the old code and pass with the fix. Then it commits, pushes, and summarizes the change. Keep that summary in mind for step 7. To show which agent it used, open the **Running Copilot cloud agent** run under **Actions**: its log says `Selecting custom agent "operate-github"`.
 
-   ![Copilot's session for the follow-up, done in about 4 minutes: environment setup, four commands, a progress update, then Copilot's summary of the fix and the three new tests, with a note that the proof table also lists an existing test](images/05-copilot-session.png)
+   ![Copilot's session for the follow-up, done in about 4 minutes: environment setup, four commands, a progress update, then Copilot's summary: the fix, the three new tests, the claim that all three fail on the baseline, and a note that the proof table also lists an existing test](images/05-copilot-session.png)
 
    **Point out:** a handful of commands from Issue to proof (four in our run): read the code, read the tests, write the tests and the fix, run the proof. The `operate-github` agent holds Copilot to the rules a person would follow: test first, the smallest fix, and proof that the test catches the defect.
 
@@ -210,11 +210,15 @@ About 20 minutes. Each step says how long it takes in our runs.
 
    **Point out:** an agent's pull request runs nothing in Actions until a person with write access approves it.
 
-7. **Show the proof** (2 minutes; CI takes 3). Open the **Operate · GitHub · prove the regression test** check. Its summary reads `Regression proof: PROVEN`, with a table of the tests that fail on the code the pull request started from and pass with the change. The check is green only for PROVEN. **CI** confirms the whole suite passes. The table can also list an existing worker test: on the old code, a new timeout test leaves a stuck pending notification in the shared test database, which breaks that test. Copilot notes this in its pull request.
+7. **Show the proof** (2 minutes; CI takes 3). Open the **Operate · GitHub · prove the regression test** check. Its summary reads `Regression proof: PROVEN`, with a table of every test that fails on the code the pull request started from (run with the pull request's tests) and passes with the change. The check is green only for PROVEN. **CI** confirms the whole suite passes. In our run the table has three rows:
+   - Two of Copilot's three new tests, `Timed_out_delivery_is_retried_without_rolling_back_the_batch` and `Delivery_that_always_times_out_ends_as_failed`. They reproduce the defect.
+   - An existing test, `Failed_delivery_is_retried_then_succeeds_exactly_once`. On the old code, the new timeout tests leave stuck pending notifications in the shared test database, and those break an existing worker test that runs later. Which one varies between runs: in Copilot's own run it was `Delivery_gives_up_after_max_attempts`. On `main`, without the new tests, both pass.
 
-   ![The proof check's summary: Regression proof PROVEN; three tests fail on the code before the change and pass with it, and the suite goes from 60 passed and 3 failed before the change to 63 passed at the head](images/07-proof-check.png)
+   The third new test, `Cancelled_token_still_propagates`, is not in the table. It is a guard that passes on both: the old code already let a shutdown's cancellation through, and the fix must keep doing so.
 
-   **Point out:** the new tests failed without the fix. A test that has never failed proves nothing.
+   ![The proof check's summary: Regression proof PROVEN. Three tests fail on the code before the change and pass with it: the two new timeout tests and the existing Failed_delivery_is_retried_then_succeeds_exactly_once. 60 passed and 3 failed before the change; 63 passed at the head](images/07-proof-check.png)
+
+   **Point out:** trust the check, not the description. Copilot's summary in step 5 says all three new tests fail on the old code. The table shows two do, and so did Copilot's own proof run (expand the last **Run Bash command** in its session). A reviewer catches this in a minute because the evidence is attached.
 
 8. **Review the pull request** (2 minutes) as you would any other: small tests, a one-line fix, no weakened tests, and the proof attached. Open **Files changed**. The ⚠ 4 above the diff and the warning sign on the test file are CI's annotations for four analyzer warnings in the test file, all on lines the pull request did not change (the existing contract test).
 
@@ -241,7 +245,7 @@ Three safeguards respond, independently. The agent quotes the line under **Suspi
 - **Honest reasoning.** Facts, hypotheses, and missing evidence stay apart. Each hypothesis has a confidence level and points at the code that supports it, so people can check it quickly.
 - **Bounded automation.** The agentic workflow can only read, comment, apply allow-listed labels, and open one Issue. Only people with write access can trigger it, and it never opens a second follow-up for an incident while one is open. On the Copilot CLI path, the command is the boundary: `gh issue` commands and the two drafts, nothing else that needs approval. Within `gh issue`, the agent's instructions keep it to the commands the skill lists, which is why a person runs this path and watches the commands it prints.
 - **People decide.** A person chooses whether the follow-up goes to Copilot, approves the workflow runs, and reviews the pull request. Nothing merges by itself.
-- **Proof, not promises.** The check shows that the new test fails without the fix. A test that has never failed proves nothing.
+- **Proof, not promises.** The check shows which tests fail without the fix, whatever the pull request's description says. In our run it showed that Copilot's summary overstated its own proof. A test that has never failed proves nothing.
 
 ## Reset and clean up
 
