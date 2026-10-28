@@ -6,9 +6,11 @@
       credential that lets this solution's GitHub environment sign in to Azure without a stored secret.
 
   python configure_github.py publish    (azd postprovision hook)
-      Creates or updates the GitHub environment `secure-microsoft` and stores the Azure sign-in values (secrets) and the
-      names and endpoints the workflows read (variables): the resource group to scan, the deployment parameters for the
-      what-if preview, and the RequestHub API for the post-deployment check. With OIDC there is no password or key to store.
+      Creates or updates the GitHub environment `secure-microsoft`. Secrets: the Azure sign-in values, and every value
+      that names a deployed resource (the RequestHub API's URL and its Microsoft Entra identifier), because GitHub masks
+      secrets in logs while it prints variables in every step's environment listing. Variables: only names that identify
+      nothing, such as the resource group and the deployment parameters the what-if preview needs. Variables from earlier
+      versions that now are secrets are deleted. With OIDC there is no password or key to store.
 
 Needs the GitHub CLI signed in with admin rights on the repository (environments and secrets need them).
 To target another repository, run `azd env set GITHUB_REPOSITORY owner/name` first.
@@ -28,21 +30,23 @@ SECRETS = {
     "AZURE_CLIENT_ID": "AUTOMATION_CLIENT_ID",
     "AZURE_TENANT_ID": "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID": "AZURE_SUBSCRIPTION_ID",
+    "API_URL": "API_URL",
+    "API_IDENTIFIER_URI": "API_IDENTIFIER_URI",
 }
-# GitHub variable name -> azd environment value
+# GitHub variable name -> azd environment value. Documented names only; nothing here identifies the deployment.
 VARIABLES = {
     "AZURE_ENV_NAME": "AZURE_ENV_NAME",
     "AZURE_LOCATION": "AZURE_LOCATION",
     "AZURE_RESOURCE_GROUP": "AZURE_RESOURCE_GROUP",
     "POLICY_ASSIGNMENT_NAME": "POLICY_ASSIGNMENT_NAME",
-    "API_URL": "API_URL",
-    "API_IDENTIFIER_URI": "API_IDENTIFIER_URI",
 }
 # Deployment parameters the what-if preview needs to reproduce `azd provision` exactly. Set only when present: the prefix is
 # empty for repositories with classic OIDC subjects (and GitHub variable names cannot start with GITHUB_). The presenter's
-# object id is not a credential; it is stored as a secret only to keep it out of logs.
+# object id is not a credential; it is a secret to keep it out of logs.
 OPTIONAL_VARIABLES = {"OIDC_SUBJECT_PREFIX": "GITHUB_OIDC_SUBJECT_PREFIX"}
 OPTIONAL_SECRETS = {"AZURE_PRINCIPAL_ID": "AZURE_PRINCIPAL_ID"}
+# Variables that earlier versions published and that are secrets now.
+RETIRED_VARIABLES = ("API_URL", "API_IDENTIFIER_URI")
 
 
 def run(*args: str, stdin: str | None = None) -> str:
@@ -89,7 +93,12 @@ def publish() -> None:
         run("gh", "secret", "set", secret, "--env", ENVIRONMENT, "--repo", repo, stdin=values[source])
     for variable, source in variables.items():
         run("gh", "variable", "set", variable, "--env", ENVIRONMENT, "--repo", repo, "--body", values[source])
-    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(secrets)} secrets, {len(variables)} variables set.")
+    existing = json.loads(run("gh", "variable", "list", "--env", ENVIRONMENT, "--repo", repo, "--json", "name") or "[]")
+    retired = [v["name"] for v in existing if v["name"] in RETIRED_VARIABLES]
+    for variable in retired:
+        run("gh", "variable", "delete", variable, "--env", ENVIRONMENT, "--repo", repo)
+    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(secrets)} secrets, {len(variables)} variables set"
+          + (f", {len(retired)} retired variables deleted." if retired else "."))
 
 
 def main() -> int:
