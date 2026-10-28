@@ -6,8 +6,10 @@
       credential that lets this solution's GitHub environment sign in to Azure without a stored secret.
 
   python configure_github.py publish    (azd postprovision hook)
-      Creates or updates the GitHub environment `test-microsoft` and stores the Azure sign-in values (secrets) and the
-      resource names the load-test workflow reads (variables). With OIDC there is no password or key to store.
+      Creates or updates the GitHub environment `test-microsoft`. The Azure sign-in values and the names of this
+      solution's resources (API URL, Load Testing resource, identities, Application Insights, PostgreSQL) are stored as
+      secrets, so GitHub masks them wherever they would appear in a workflow log; only the resource group name, which
+      carries no unique token, is a variable. With OIDC there is no password or key to store.
 
 Needs the GitHub CLI signed in with admin rights on the repository (environments and secrets need them).
 To target another repository, run `azd env set GITHUB_REPOSITORY owner/name` first.
@@ -22,24 +24,23 @@ import subprocess
 import sys
 
 ENVIRONMENT = "test-microsoft"
-# GitHub secret name -> azd environment value
+# GitHub secret name -> azd environment value. Resource names carry the deployment's unique token and host names,
+# so they are secrets too: GitHub masks secrets in logs, while variables are printed in every step's env listing.
 SECRETS = {
     "AZURE_CLIENT_ID": "AUTOMATION_CLIENT_ID",
     "AZURE_TENANT_ID": "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID": "AZURE_SUBSCRIPTION_ID",
+    "LOAD_TEST_NAME": "LOAD_TEST_NAME",
+    "LOAD_TEST_REQUESTER_IDENTITY": "LOAD_TEST_REQUESTER_IDENTITY",
+    "LOAD_TEST_APPROVER_IDENTITY": "LOAD_TEST_APPROVER_IDENTITY",
+    "API_URL": "API_URL",
+    "API_IDENTIFIER_URI": "API_IDENTIFIER_URI",
+    "API_APP_NAME": "API_APP_NAME",
+    "APPLICATIONINSIGHTS_NAME": "APPLICATIONINSIGHTS_NAME",
+    "POSTGRES_HOST": "POSTGRES_HOST",
 }
-# GitHub variables, read by load_test.py and slowdown.py in the workflow (same names as the azd outputs)
-VARIABLES = [
-    "AZURE_RESOURCE_GROUP",
-    "LOAD_TEST_NAME",
-    "LOAD_TEST_REQUESTER_IDENTITY",
-    "LOAD_TEST_APPROVER_IDENTITY",
-    "API_URL",
-    "API_IDENTIFIER_URI",
-    "API_APP_NAME",
-    "APPLICATIONINSIGHTS_NAME",
-    "POSTGRES_HOST",
-]
+# GitHub variables (same names as the azd outputs): values that identify nothing about the tenant.
+VARIABLES = ["AZURE_RESOURCE_GROUP"]
 
 
 def run(*args: str, stdin: str | None = None) -> str:
@@ -76,7 +77,11 @@ def publish() -> None:
         run("gh", "secret", "set", secret, "--env", ENVIRONMENT, "--repo", repo, stdin=values[source])
     for variable in VARIABLES:
         run("gh", "variable", "set", variable, "--env", ENVIRONMENT, "--repo", repo, "--body", values[variable])
-    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variables set.")
+    # Earlier versions stored the resource names as variables; remove them so they cannot be printed by mistake.
+    existing = json.loads(run("gh", "variable", "list", "--env", ENVIRONMENT, "--repo", repo, "--json", "name") or "[]")
+    for stale in sorted({v["name"] for v in existing} & set(SECRETS)):
+        run("gh", "variable", "delete", stale, "--env", ENVIRONMENT, "--repo", repo)
+    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variable set.")
 
 
 def main() -> int:

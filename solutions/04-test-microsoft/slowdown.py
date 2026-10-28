@@ -67,6 +67,11 @@ def app_args() -> list[str]:
     return ["--resource-group", setting("AZURE_RESOURCE_GROUP"), "--name", setting("API_APP_NAME")]
 
 
+def short(revision: str) -> str:
+    """A revision's suffix (for example 0000007): enough to tell revisions apart without the app's resource name."""
+    return revision.rsplit("--", 1)[-1]
+
+
 def current() -> dict:
     """The latest revision and the fault settings in the app's template."""
     app = az("containerapp", "show", *app_args(), "--query",
@@ -89,7 +94,7 @@ def describe(state: dict) -> str:
 
 def wait_for(revision: str) -> None:
     """Wait until the new revision runs, is healthy, and receives all traffic; then deactivate the others."""
-    print(f"Waiting for revision {revision} to become ready and take all traffic ...")
+    print(f"Waiting for API revision {short(revision)} to become ready and take all traffic ...")
     deadline = time.monotonic() + 600
     while True:
         state = az("containerapp", "revision", "show", *app_args(), "--revision", revision, "--query",
@@ -97,13 +102,13 @@ def wait_for(revision: str) -> None:
         if state["running"] in READY_STATES and state["health"] == "Healthy" and (state["traffic"] or 0) == 100:
             break
         if state["running"] == "Failed" or time.monotonic() > deadline:
-            raise AzError(f"revision {revision} did not become ready: {state}")
+            raise AzError(f"API revision {short(revision)} did not become ready: {state}")
         time.sleep(10)
     active = az("containerapp", "revision", "list", *app_args(), "--query", "[?properties.active].name") or []
     for old in active:
         if old != revision:
             az("containerapp", "revision", "deactivate", *app_args(), "--revision", old)
-            print(f"Deactivated the previous revision {old}.")
+            print(f"Deactivated the previous API revision {short(old)}.")
 
 
 def probe() -> None:
@@ -143,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         state = current()
         if args.command == "status":
-            print(f"Revision {state['revision']}: {describe(state)}.")
+            print(f"API revision {short(state['revision'])}: {describe(state)}.")
             probe()
             return 0
         if args.command == "on":
@@ -156,13 +161,13 @@ def main(argv: list[str] | None = None) -> int:
                      "--query", "properties.latestRevisionName")
         else:
             if not state["delay"] and not state["expiry"]:
-                print(f"Revision {state['revision']}: no slowdown configured. Nothing to remove.")
+                print(f"API revision {short(state['revision'])}: no slowdown configured. Nothing to remove.")
                 return 0
             print("Removing the slowdown ...")
             app = az("containerapp", "update", *app_args(), "--container-name", "api", "--remove-env-vars", DELAY, EXPIRY,
                      "--query", "properties.latestRevisionName")
         wait_for(app)
-        print(f"Revision {app}: {describe(current())}.")
+        print(f"API revision {short(app)}: {describe(current())}.")
         probe()
         return 0
     except AzError as exc:
