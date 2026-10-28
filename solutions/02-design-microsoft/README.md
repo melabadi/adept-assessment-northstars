@@ -325,6 +325,7 @@ gh api -X DELETE 'repos/{owner}/{repo}/environments/design-microsoft'
 - **`service error: ... 429 rate_limit_exceeded` in the evaluation.** The model deployment is throttled. Run with `--workers 1`, or raise `modelCapacity` in `infra/main.bicep` and run `azd provision`.
 - **A run fails with `excerpt: ... is not in the standard` or `citation: ... does not exist`.** The checks did their job: the model misquoted or invented a standard. Never loosen the checks. Measure with `--repeat 3`, then improve the instructions in `agent.yaml`.
 - **The issue gets no answer.** The workflow only runs for issues that carry the `design-advisor` label and were opened by someone with access to the repository. Remove and re-apply the label to ask again.
+- **`gh issue list` still shows an issue you just closed.** GitHub's search lags a few seconds behind; run the command again.
 - **The ADR's Context shows the question twice.** The workflow adds the issue title when it differs from the question. Use a short topic as the title, not a second wording of the question.
 - **The Foundry portal opens another project.** It reopens the project you used last. Pick `design` in the project switcher next to **Microsoft Foundry**, at the top left.
 - **The agent's Playground keeps loading.** It can take up to a minute. Open it before the session, or show the **Details** tab, which loads faster.
