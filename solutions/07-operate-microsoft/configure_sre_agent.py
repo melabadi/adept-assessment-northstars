@@ -49,6 +49,7 @@ DATA_PLANE_SCOPE = "https://azuresre.dev/.default"
 ARM_SCOPE = "https://management.azure.com/.default"
 QUICKSTART_PLAN = "quickstart_handler"
 PLACEHOLDERS = (
+    "AZURE_SUBSCRIPTION_ID",
     "AZURE_RESOURCE_GROUP",
     "WORKER_APP_NAME",
     "API_APP_NAME",
