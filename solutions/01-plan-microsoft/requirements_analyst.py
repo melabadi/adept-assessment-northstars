@@ -156,6 +156,14 @@ def ensure_agent(project: AIProjectClient, spec: dict, model: str, vector_store_
     return created, False
 
 
+def shown(path: Path) -> str:
+    """A path relative to the current folder when it is inside it: short, and without the user's profile folder."""
+    try:
+        return str(path.resolve().relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=HERE / "brief", help="Output folder (default: brief/ next to this script)")
@@ -245,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
           f"{len(data.get('openQuestions', []))} open questions, file_search calls: {file_search_calls}")
     for problem in problems:
         print(f"  - {problem}")
-    print(f"wrote {backlog_path}" + ("" if problems else f", {args.out / 'brief.md'}") + f", {args.out / 'run.json'}")
+    print(f"wrote {shown(backlog_path)}" + ("" if problems else f", {shown(args.out / 'brief.md')}") + f", {shown(args.out / 'run.json')}")
     return 0 if not problems else 1
 
 

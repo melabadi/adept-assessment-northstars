@@ -1,8 +1,10 @@
-# Plan · Microsoft: run the Microsoft Foundry requirements analyst from GitHub Actions (OIDC, no stored secrets) and push
+# Plan · Microsoft: run the Microsoft Foundry requirements analyst from GitHub Actions (OIDC, no stored credentials) and push
 # its brief to a branch. The run summary links to a prefilled pull request: a person opens it, the review workflow
 # (plan-microsoft-brief.yml) validates the brief, and applying `brief-approved` publishes the backlog.
 # The workflow does not open the pull request itself, so it needs no permission to create pull requests, and a pull
 # request opened by a person starts the validation check right away.
+# The Foundry endpoint names a deployed resource, so it is an environment secret: GitHub masks secrets in the log, while
+# variables appear in clear text in every step's environment listing.
 name: Plan · Microsoft · run the Foundry requirements analyst
 
 on:
@@ -27,6 +29,17 @@ jobs:
     timeout-minutes: 15
     environment: plan-microsoft
     steps:
+      - name: Mask the parts of the Foundry endpoint
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+        run: |
+          # GitHub masks the endpoint secret only as a whole; an error message could print its host or account name.
+          host="${FOUNDRY_PROJECT_ENDPOINT#https://}"
+          host="${host%%/*}"
+          if [ -n "$host" ]; then
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%.*}"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -40,7 +53,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Run the Foundry agent (live call, validated, one repair turn)
         env:
-          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
         run: python solutions/01-plan-microsoft/requirements_analyst.py | tee analyst.txt
       - name: Push the brief and link to a prefilled pull request
