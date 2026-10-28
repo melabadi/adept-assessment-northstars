@@ -120,13 +120,13 @@ sequenceDiagram
   participant API as RequestWorkflow
   participant DB as PostgreSQL
   participant P as Foundry provider
-  participant AI as AI path (A direct; B APIM then Foundry)
+  participant AI as AI path (A direct, B APIM then Foundry)
   participant T as Scoped tools
   Reviewer->>UI: Ask for recommendation
   UI->>API: POST triage-recommendations
-  API->>DB: Load request; check staff department and nonterminal state
+  API->>DB: Load request, check staff department and nonterminal state
   alt Unauthorized or closed
-    API-->>UI: 403 or 409; no AI call
+    API-->>UI: 403 or 409, no AI call
   else Authorized
     API->>P: Begin bounded deadline and trace
     P->>AI: Start pinned agent with opaque per-call handle
@@ -139,16 +139,16 @@ sequenceDiagram
     alt Valid result within deadline
       AI-->>P: Department, priority, rationale, policy IDs, confidence, trace ID
       P-->>API: Untrusted TriageResult
-      API->>API: Validate; resolve policy versions; apply conflict guard
+      API->>API: Validate, resolve policy versions, apply conflict guard
       API->>DB: Save structured recommendation and correlated audits
       API-->>UI: 201 advisory recommendation
     else Timeout, outage, invalid output or blocked payload
-      P-->>API: Explicit typed failure; no substitute advice
+      P-->>API: Explicit typed failure, no substitute advice
       API->>DB: Save sanitized tool/failure audits
-      API-->>UI: Explicit problem; timeout uses existing 504
+      API-->>UI: Explicit problem, timeout uses existing 504
       UI-->>Reviewer: Localized unavailable state within 2 seconds of timeout
     end
-    Note over Reviewer,DB: Manual routing remains independent; advice never invokes decisions
+    Note over Reviewer,DB: Manual routing remains independent, advice never invokes decisions
   end
 ```
 
