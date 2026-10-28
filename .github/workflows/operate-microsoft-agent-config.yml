@@ -4,7 +4,8 @@
 #  - Push to main, or a manual run on main: applies the custom agent, skills, runbook, and response plan to the live
 #    agent through OIDC, then reads them back. The GitHub environment only accepts main. The workflow's identity cannot
 #    approve the agent's actions, and the global tool policy stays with an SRE Agent Administrator
-#    (`python configure_sre_agent.py` on their machine).
+#    (`python configure_sre_agent.py` on their machine). Resource names with the deployment's random suffix are
+#    environment secrets, and the agent's endpoint is masked, so nothing in the log identifies the deployment.
 name: Operate · Microsoft · apply the SRE Agent configuration
 
 on:
@@ -59,10 +60,11 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       SRE_AGENT_NAME: ${{ vars.SRE_AGENT_NAME }}
-      WORKER_APP_NAME: ${{ vars.WORKER_APP_NAME }}
-      API_APP_NAME: ${{ vars.API_APP_NAME }}
-      APPLICATIONINSIGHTS_NAME: ${{ vars.APPLICATIONINSIGHTS_NAME }}
-      LOG_ANALYTICS_NAME: ${{ vars.LOG_ANALYTICS_NAME }}
+      # Names that carry the deployment's random suffix are secrets, so the log shows *** instead of them.
+      WORKER_APP_NAME: ${{ secrets.WORKER_APP_NAME }}
+      API_APP_NAME: ${{ secrets.API_APP_NAME }}
+      APPLICATIONINSIGHTS_NAME: ${{ secrets.APPLICATIONINSIGHTS_NAME }}
+      LOG_ANALYTICS_NAME: ${{ secrets.LOG_ANALYTICS_NAME }}
       BACKLOG_ALERT_NAME: ${{ vars.BACKLOG_ALERT_NAME }}
       BACKLOG_ALERT_THRESHOLD_SECONDS: ${{ vars.BACKLOG_ALERT_THRESHOLD_SECONDS }}
     steps:

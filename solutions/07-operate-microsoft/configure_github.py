@@ -7,8 +7,9 @@
 
   python configure_github.py publish    (azd postprovision hook)
       Creates or updates the GitHub environment, limits it to the main branch (only main applies the agent's
-      configuration), and stores the Azure sign-in values (secrets) and the names the workflow reads (variables).
-      With OIDC there is no password or key to store.
+      configuration), and stores what the workflow reads. The Azure sign-in values and the resource names that carry
+      the deployment's random suffix are secrets, so GitHub masks them in every log line; names without a suffix and
+      the alert threshold are variables. With OIDC there is no password or key to store.
 
 Needs the GitHub CLI signed in with admin rights on the repository (environments and secrets need them).
 To target another repository, run `azd env set GITHUB_REPOSITORY owner/name` first.
@@ -23,20 +24,21 @@ import subprocess
 import sys
 
 ENVIRONMENT = "operate-microsoft"
-# GitHub secret name -> azd environment value
+# GitHub secret name -> azd environment value. Workflow logs list every variable a step receives, and anyone can read
+# a public repository's logs, so anything that names a deployed resource with its random suffix is a secret.
 SECRETS = {
     "AZURE_CLIENT_ID": "AUTOMATION_CLIENT_ID",
     "AZURE_TENANT_ID": "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID": "AZURE_SUBSCRIPTION_ID",
-}
-# GitHub variable name -> azd environment value
-VARIABLES = {
-    "AZURE_RESOURCE_GROUP": "AZURE_RESOURCE_GROUP",
-    "SRE_AGENT_NAME": "SRE_AGENT_NAME",
     "WORKER_APP_NAME": "WORKER_APP_NAME",
     "API_APP_NAME": "API_APP_NAME",
     "APPLICATIONINSIGHTS_NAME": "APPLICATIONINSIGHTS_NAME",
     "LOG_ANALYTICS_NAME": "LOG_ANALYTICS_NAME",
+}
+# GitHub variable name -> azd environment value: fixed names and settings that identify nothing.
+VARIABLES = {
+    "AZURE_RESOURCE_GROUP": "AZURE_RESOURCE_GROUP",
+    "SRE_AGENT_NAME": "SRE_AGENT_NAME",
     "BACKLOG_ALERT_NAME": "BACKLOG_ALERT_NAME",
     "BACKLOG_ALERT_THRESHOLD_SECONDS": "BACKLOG_ALERT_THRESHOLD_SECONDS",
 }
@@ -81,7 +83,13 @@ def publish() -> None:
         run("gh", "secret", "set", secret, "--env", ENVIRONMENT, "--repo", repo, stdin=values[source])
     for variable, source in VARIABLES.items():
         run("gh", "variable", "set", variable, "--env", ENVIRONMENT, "--repo", repo, "--body", values[source])
-    print(f"GitHub environment '{ENVIRONMENT}' in {repo} (main only): {len(SECRETS)} secrets, {len(VARIABLES)} variables set.")
+    # Earlier versions stored the suffixed names as variables; a secret and a variable with one name would both exist.
+    existing = json.loads(run("gh", "api", f"repos/{repo}/environments/{ENVIRONMENT}/variables?per_page=100"))
+    stale = [v["name"] for v in existing.get("variables", []) if v["name"] in SECRETS]
+    for variable in stale:
+        run("gh", "variable", "delete", variable, "--env", ENVIRONMENT, "--repo", repo)
+    print(f"GitHub environment '{ENVIRONMENT}' in {repo} (main only): {len(SECRETS)} secrets, {len(VARIABLES)} variables set"
+          + (f", {len(stale)} old variables removed." if stale else "."))
 
 
 def main() -> int:
