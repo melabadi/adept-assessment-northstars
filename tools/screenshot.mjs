@@ -17,7 +17,8 @@
  *           from this machine on port 9333. Sign in to GitHub and Azure there once.
  *
  * Page options:
- *   --wait <selector>        wait until this element is visible (repeatable; Playwright selectors such as text=Done)
+ *   --wait <selector>        wait until this element is visible (repeatable). Selectors are CSS, or text=<words> for
+ *                            the innermost element showing those words.
  *   --click <selector>       click this element before capturing (repeatable, in order)
  *   --frame <url part>       apply --wait, --click, and --selector inside the first frame whose URL contains this
  *   --selector <selector>    capture only this element, with --padding pixels around it (default 8)
@@ -32,6 +33,8 @@
  *   --keep-guids             do not mask GUIDs
  *   --pick-account           when Microsoft's "Pick an account" page appears, click the tile of the account on your
  *                            redaction list (never types anything); or set SCREENSHOT_PICK_ACCOUNT=1
+ *   --accept-consent <app>   when Microsoft's "Permissions requested" page names exactly this app, accept it for your
+ *                            account only. Use it only for an app you decided to consent to.
  *   --cdp <url>              DevTools endpoint (default: $SCREENSHOT_CDP or http://127.0.0.1:9333)
  *
  * Terminal options:
@@ -56,6 +59,7 @@ import { fileURLToPath } from 'node:url';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fail = (code, message) => { console.error(message); process.exit(code); };
 class Refusal extends Error { constructor(code, message) { super(message); this.code = code; } }
+class ThemeRetry extends Error {}
 const refuse = (code, message) => { throw new Refusal(code, message); };
 
 let chromium;
@@ -124,7 +128,22 @@ const maskGuids = !options['keep-guids'];
 // Pure text masking, shared by Node (terminal mode) and the browser. Must stay self-contained: it is serialized.
 function makeFix(items, maskGuids) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const sorted = [...items].sort((a, b) => b.value.length - a.value.length);
+  // Pages truncate long names ("ME-contoso-youralias…"), so identifying values also match by their prefixes.
+  const PREFIX_KINDS = new Set(['windows-user', 'tenant-prefix', 'tenant-domain', 'subscription-name', 'account', 'git-email', 'git-name', 'host-label', 'name-token', 'user-name']);
+  const expanded = [...items];
+  for (const i of items) {
+    if (PREFIX_KINDS.has(i.kind)) {
+      for (let n = i.value.length - 1; n >= Math.max(6, Math.ceil(i.value.length / 2)); n--) {
+        const prefix = i.value.slice(0, n);
+        // A letters-only start of a host name ("centralus") is a common word, not an identifier.
+        if (/^(host-label|name-token)$/.test(i.kind) && !/\d/.test(prefix)) continue;
+        expanded.push({ kind: i.kind, value: prefix, replacement: i.replacement });
+      }
+    } else if (/^[0-9a-f]{8}-/i.test(i.value) && /subscription|tenant/.test(i.kind)) {
+      expanded.push({ kind: i.kind, value: i.value.slice(0, 8), replacement: '00000000' });
+    }
+  }
+  const sorted = expanded.sort((a, b) => b.value.length - a.value.length);
   const listRx = sorted.length ? new RegExp(sorted.map((i) => esc(i.value)).join('|'), 'gi') : null;
   const replacements = new Map(sorted.map((i) => [i.value.toLowerCase(), i.replacement]));
   const GUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
@@ -140,7 +159,7 @@ function makeFix(items, maskGuids) {
     t = t.replace(EMAIL, (m) => (ALLOWED_EMAIL.test(m) ? m : 'user@contoso.com'));
     t = t.replace(TENANT_DOMAIN, (m) => (/^contoso\./i.test(m) ? m : 'contoso.onmicrosoft.com'));
     t = t.replace(PROFILE, (m, prefix, name) => (keepProfile(name) ? m : `${prefix}you`));
-    if (maskGuids) t = t.replace(GUID, ZERO_GUID);
+    if (maskGuids) t = t.replace(GUID, ZERO_GUID).replace(/\b[0-9a-f]{8}-[0-9a-f-]{1,27}(?=…|\.\.\.)/gi, (m) => ZERO_GUID.slice(0, m.length));
     return t;
   };
   const findKinds = (all) => {
@@ -251,11 +270,19 @@ const hostCssSource = `(() => {
         (document.head || document.documentElement).appendChild(style);
       }
     }
+    // GitHub renders the account's appearance setting; pin its light theme unless --theme dark.
+    if (/(^|\\.)github\\.com$/.test(location.hostname) && document.documentElement) {
+      document.documentElement.setAttribute('data-color-mode', ${JSON.stringify(options.theme === 'dark' ? 'dark' : 'light')});
+      document.documentElement.setAttribute('data-light-theme', 'light');
+      document.documentElement.setAttribute('data-dark-theme', 'dark');
+    }
   };
   if (document.documentElement) add();
   document.addEventListener('DOMContentLoaded', add);
 })()`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const t0 = Date.now();
+const debug = (label) => { if (process.env.SCREENSHOT_DEBUG === '1') console.error(`[${((Date.now() - t0) / 1000).toFixed(1)} s] ${label}`); };
 
 async function scrubAllFrames(page) {
   for (const frame of page.frames()) {
@@ -285,126 +312,397 @@ function ocrCheck(out) {
   }
 }
 
-// With --pick-account (or SCREENSHOT_PICK_ACCOUNT=1): when Microsoft's "Pick an account" page appears, click the tile of
-// the account on the redaction list (your Azure CLI account). It never types anything; anything else needs you.
-async function pickAccount(page) {
-  if (!(options['pick-account'] || process.env.SCREENSHOT_PICK_ACCOUNT === '1')) return;
-  const accounts = items.filter((i) => i.kind === 'account').map((i) => i.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (!/(^|\.)login\.microsoftonline\.com$/i.test(new URL(page.url()).hostname)) return;
-    if (!accounts.length) return;
-    const tile = page.locator('[data-test-id], [role="button"]').filter({ hasText: new RegExp(accounts.join('|'), 'i') }).first();
-    try { await tile.waitFor({ state: 'visible', timeout: 15_000 }); } catch { return; }
-    await tile.click();
-    await page.waitForURL((u) => !/(^|\.)login\.microsoftonline\.com$/i.test(new URL(u).hostname), { timeout: 45_000 }).catch(() => {});
-    if (await page.locator('input[type="password"], #idDiv_SAOTCAS_Title, #idDiv_SAOTCC_Title').count()) {
-      refuse(3, 'Refused: Microsoft sign-in needs your password or MFA. Complete it in the capture browser, then retry.');
+// ---- Page mode: a minimal DevTools protocol client that creates and drives only its own tab. Playwright's
+// connectOverCDP attaches to every open page of the shared capture browser: connecting gets slow, and each connection
+// resets the emulated viewport and color scheme of the other sessions' pages.
+
+// Element lookup inside a page: CSS selectors, or text=<substring> for the innermost element showing that text.
+const FIND_SOURCE = `(() => {
+  if (globalThis.__find) return;
+  globalThis.__find = (sel) => {
+    if (!sel.startsWith('text=')) return document.querySelector(sel);
+    const needle = sel.slice(5).replace(/^["']|["']$/g, '').toLowerCase();
+    let best = null;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+    let n;
+    while ((n = walker.nextNode())) {
+      if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(n.tagName)) continue;
+      if ((n.innerText || '').toLowerCase().includes(needle)) best = n;
     }
-    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+    return best;
+  };
+  globalThis.__box = (sel) => {
+    const el = globalThis.__find(sel);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
+  };
+})()`;
+const PAGE_SCRIPTS = `${scrubberSource};${hostCssSource};${FIND_SOURCE}`;
+// Whether the page's background is light (null when it is transparent): what the reader will see, whatever the
+// media query says.
+const RENDERED_LIGHT = `(() => {
+  const lum = (el) => {
+    if (!el) return null;
+    const c = getComputedStyle(el).backgroundColor.match(/[\\d.]+/g);
+    if (!c) return null;
+    const [r, g, b, a = 1] = c.map(Number);
+    return a < 0.5 ? null : (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  };
+  const l = lum(document.body) ?? lum(document.documentElement);
+  return l === null ? null : l > 0.5;
+})()`;
+
+async function devtools(endpoint) {
+  let version;
+  try {
+    version = await (await fetch(`${endpoint.replace(/\/$/, '')}/json/version`, { signal: AbortSignal.timeout(15_000) })).json();
+  } catch (error) {
+    fail(2, `No browser at ${endpoint} (${error.message}). Start the capture browser first (CONTRIBUTING.md, "Screenshots").`);
+  }
+  const ws = new WebSocket(version.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    ws.addEventListener('open', resolve, { once: true });
+    ws.addEventListener('error', () => reject(new Error('cannot open the DevTools connection')), { once: true });
+  });
+  let nextId = 0;
+  const pending = new Map();
+  const listeners = new Set();
+  ws.addEventListener('message', (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.id !== undefined && pending.has(msg.id)) {
+      const call = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) call.reject(new Error(`${call.method}: ${msg.error.message}`)); else call.resolve(msg.result);
+    } else {
+      for (const listener of listeners) listener(msg);
+    }
+  });
+  const send = (method, params = {}, sessionId, timeoutMs = 60_000) => new Promise((resolve, reject) => {
+    const id = ++nextId;
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method}: no answer in ${timeoutMs / 1000} s`)); }, timeoutMs);
+    pending.set(id, { method, resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+    ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+  });
+  return { send, on: (fn) => listeners.add(fn), close: () => ws.close() };
+}
+
+async function openTab(cdp, { width, height, scale, theme }) {
+  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', background: true });
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+  const sessions = new Set([sessionId]);
+  const contexts = new Map();
+  const state = { loads: 0, inflight: 0, lastNetwork: Date.now() };
+  const media = { features: [{ name: 'prefers-color-scheme', value: theme }] };
+  const setup = async (sid, child) => {
+    await cdp.send('Runtime.enable', {}, sid);
+    await cdp.send('Page.enable', {}, sid).catch(() => {});
+    await cdp.send('Network.enable', {}, sid).catch(() => {});
+    await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: PAGE_SCRIPTS }, sid).catch(() => {});
+    await cdp.send('Emulation.setEmulatedMedia', media, sid).catch(() => {});
+    await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sid).catch(() => {});
+    if (child) await cdp.send('Runtime.runIfWaitingForDebugger', {}, sid).catch(() => {});
+  };
+  cdp.on((msg) => {
+    if (!msg.sessionId || !sessions.has(msg.sessionId)) return;
+    const p = msg.params ?? {};
+    switch (msg.method) {
+      case 'Runtime.executionContextCreated':
+        if (p.context.auxData?.isDefault) contexts.set(`${msg.sessionId}:${p.context.id}`, { sessionId: msg.sessionId, id: p.context.id, frameId: p.context.auxData.frameId });
+        break;
+      case 'Runtime.executionContextDestroyed': contexts.delete(`${msg.sessionId}:${p.executionContextId}`); break;
+      case 'Runtime.executionContextsCleared': for (const [k, c] of contexts) if (c.sessionId === msg.sessionId) contexts.delete(k); break;
+      case 'Page.loadEventFired': if (msg.sessionId === sessionId) state.loads++; break;
+      case 'Network.requestWillBeSent': state.inflight++; state.lastNetwork = Date.now(); break;
+      case 'Network.loadingFinished': case 'Network.loadingFailed': state.inflight = Math.max(0, state.inflight - 1); state.lastNetwork = Date.now(); break;
+      case 'Target.attachedToTarget':
+        if (p.targetInfo.type === 'iframe') { sessions.add(p.sessionId); setup(p.sessionId, true).catch(() => {}); } else cdp.send('Runtime.runIfWaitingForDebugger', {}, p.sessionId).catch(() => {});
+        break;
+      case 'Target.detachedFromTarget': sessions.delete(p.sessionId); break;
+      default:
+    }
+  });
+  await setup(sessionId, false);
+  const metrics = async (h) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: Math.min(Math.ceil(h), 12_000), deviceScaleFactor: scale, mobile: false }, sessionId);
+  };
+  await metrics(height);
+  await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
+
+  const evalIn = async (ctx, expression) => {
+    const r = await cdp.send('Runtime.evaluate', { expression, contextId: ctx.id, returnByValue: true, awaitPromise: true }, ctx.sessionId, 30_000);
+    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description?.split('\n')[0] ?? r.exceptionDetails.text);
+    return r.result.value;
+  };
+  const frames = async () => {
+    const out = [];
+    for (const sid of sessions) {
+      try {
+        const walk = (node) => { out.push({ sessionId: sid, id: node.frame.id, url: node.frame.url, parentId: node.frame.parentId }); (node.childFrames ?? []).forEach(walk); };
+        walk((await cdp.send('Page.getFrameTree', {}, sid)).frameTree);
+      } catch { /* detached */ }
+    }
+    return out;
+  };
+  const contextFor = (frame) => [...contexts.values()].find((c) => c.sessionId === frame.sessionId && c.frameId === frame.id);
+  const top = async () => {
+    const tree = await cdp.send('Page.getFrameTree', {}, sessionId);
+    return contextFor({ sessionId, id: tree.frameTree.frame.id });
+  };
+  const evalTop = async (expression) => {
+    for (let i = 0; i < 40; i++) {
+      const ctx = await top();
+      if (ctx) { try { return await evalIn(ctx, expression); } catch (e) { if (!/context|destroyed|navigat/i.test(e.message)) throw e; } }
+      await sleep(250);
+    }
+    throw new Error('the page did not get ready');
+  };
+  const evalAll = async (expression) => {
+    const results = [];
+    for (const ctx of [...contexts.values()]) { try { results.push(await evalIn(ctx, expression)); } catch { /* detached frame */ } }
+    return results;
+  };
+  return {
+    targetId, sessionId, sessions, state, evalTop, evalAll, evalIn, frames, contextFor, metrics,
+    send: (method, params, timeoutMs) => cdp.send(method, params, sessionId, timeoutMs),
+    reapplyMedia: async () => { for (const sid of sessions) await cdp.send('Emulation.setEmulatedMedia', media, sid).catch(() => {}); },
+  };
+}
+
+async function settle(tab, { loadTimeout = 90_000, idleCap = 8_000 } = {}) {
+  const start = Date.now();
+  const loadsBefore = tab.state.loads;
+  while (Date.now() - start < loadTimeout) {
+    if (tab.state.loads > loadsBefore || (await tab.evalTop('document.readyState').catch(() => '')) === 'complete') break;
+    await sleep(250);
+  }
+  const idleStart = Date.now();
+  while (Date.now() - idleStart < idleCap) {
+    const quiet = Date.now() - tab.state.lastNetwork;
+    if ((tab.state.inflight === 0 && quiet > 600) || quiet > 2_500) break;
+    await sleep(200);
+  }
+}
+
+// With --pick-account (or SCREENSHOT_PICK_ACCOUNT=1): when Microsoft's "Pick an account" page appears, click the tile of
+// the account on the redaction list (your Azure CLI account). With --accept-consent "<exact app name>": when Microsoft's
+// "Permissions requested" page names exactly that app, accept it for your account only (the organization-wide consent box
+// stays unchecked). It never types anything; anything else needs you.
+async function signInSteps(tab) {
+  const pick = options['pick-account'] || process.env.SCREENSHOT_PICK_ACCOUNT === '1';
+  const consentApp = options['accept-consent'] ?? '';
+  const accounts = items.filter((i) => i.kind === 'account').map((i) => i.value.toLowerCase());
+  const onSignIn = async () => /(^|\.)login\.microsoftonline\.com$/i.test(await tab.evalTop('location.hostname').catch(() => ''));
+  for (let attempt = 0; attempt < 5; attempt++) {
+    // Sign-in pages often pass through on their own (silent sign-in, "Working on it"): give them time first.
+    const until = Date.now() + 12_000;
+    while (Date.now() < until && await onSignIn()) {
+      const ready = await tab.evalTop(`Boolean(document.querySelector('[data-test-id], [role=button], input[type=submit], #idBtn_Back'))`).catch(() => false);
+      if (ready) break;
+      await sleep(500);
+    }
+    if (!(await onSignIn())) return;
+    if (!pick && !consentApp) return;
+    await sleep(800);
+    const page = await tab.evalTop(`(() => {
+      const text = document.body ? document.body.innerText : '';
+      const visible = (e) => e && e.offsetParent !== null && getComputedStyle(e).visibility !== 'hidden';
+      return { consent: /Permissions requested/i.test(text), app: ${JSON.stringify(consentApp)} !== '' && text.includes(${JSON.stringify(consentApp)}),
+               staySignedIn: /Stay signed in\\?/i.test(text) && visible(document.querySelector('#idBtn_Back')),
+               secret: [...document.querySelectorAll('input[type=password], #idDiv_SAOTCAS_Title, #idDiv_SAOTCC_Title')].some(visible) };
+    })()`);
+    if (page.secret) refuse(3, 'Refused: Microsoft sign-in needs your password or MFA. Complete it in the capture browser, then retry.');
+    if (page.staySignedIn) {
+      // "Stay signed in?": answer No. Sign-in completes, and no persistent session is created.
+      await tab.evalTop(`document.querySelector('#idBtn_Back').click()`);
+    } else if (page.consent) {
+      if (!page.app) refuse(3, 'Refused: Microsoft asks to grant an app permissions. Pass --accept-consent "<exact app name>" only for an app the user approved.');
+      await tab.evalTop(`(() => {
+        document.querySelectorAll('input[type=checkbox]').forEach((c) => { if (c.checked) c.click(); });
+        (document.querySelector('input[type=submit][value=Accept]') || document.querySelector('#idSIButton9')).click();
+      })()`);
+    } else if (pick && accounts.length) {
+      const clicked = await tab.evalTop(`(() => {
+        const accounts = ${JSON.stringify(accounts)};
+        const tile = [...document.querySelectorAll('[data-test-id], [role=button]')].find((e) => accounts.some((a) => (e.innerText || '').toLowerCase().includes(a)));
+        if (tile) tile.click();
+        return Boolean(tile);
+      })()`);
+      if (!clicked) return;
+    } else {
+      return;
+    }
+    const leave = Date.now() + 30_000;
+    while (Date.now() < leave && /(^|\.)login\.microsoftonline\.com$/i.test(await tab.evalTop('location.hostname').catch(() => 'login.microsoftonline.com'))) await sleep(500);
+    await settle(tab, { loadTimeout: 30_000 });
   }
 }
 
 async function capturePage(url, out) {
-  const cdp = options.cdp ?? process.env.SCREENSHOT_CDP ?? 'http://127.0.0.1:9333';
+  const endpoint = options.cdp ?? process.env.SCREENSHOT_CDP ?? 'http://127.0.0.1:9333';
   const width = Number(options.width ?? 1280);
   const height = Number(options.height ?? 800);
   const scale = Number(options.scale ?? 2);
-  let browser;
-  try { browser = await chromium.connectOverCDP(cdp, { timeout: 60_000 }); } catch (error) { fail(2, `No browser at ${cdp} (${error.message.split('\n')[0]}). Start the capture browser first (CONTRIBUTING.md, "Screenshots").`); }
-  const context = browser.contexts()[0];
-  const page = await context.newPage();
-  try {
-    await page.addInitScript({ content: scrubberSource });
-    await page.addInitScript({ content: hostCssSource });
-    const session = await context.newCDPSession(page);
-    await session.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false });
-    await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    // One look in every README: light unless --theme dark, whatever the operating system's setting.
-    await page.emulateMedia({ colorScheme: options.theme === 'dark' ? 'dark' : 'light' });
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
-    await pickAccount(page);
-    const scope = () => {
-      if (!options.frame) return page;
-      const frame = page.frames().find((f) => f.url().includes(options.frame));
-      if (!frame) refuse(2, `No frame whose URL contains "${options.frame}"`);
-      return frame;
+  const theme = options.theme === 'dark' ? 'dark' : 'light';
+  const cdp = await devtools(endpoint);
+  const tab = await openTab(cdp, { width, height, scale, theme });
+  let saved = false;
+  // One attempt: navigate, wait, mask, check, capture. A page that renders in the wrong color scheme (GitHub's React
+  // views decide at startup) is loaded again; masking refusals are never retried.
+  const captureOnce = async () => {
+    saved = false;
+    debug('tab open');
+    await tab.send('Page.navigate', { url }, 120_000);
+    debug('navigated');
+    await settle(tab);
+    debug('settled');
+    await signInSteps(tab);
+    debug('sign-in steps done');
+
+    // Where --wait, --click, and --selector apply: the page, or the first frame whose URL contains --frame. Frames such
+    // as the Azure portal's React blades attach late, so look for up to a minute.
+    const scope = async () => {
+      if (!options.frame) return { evaluate: (e) => tab.evalTop(e), frame: null };
+      const until = Date.now() + 60_000;
+      for (;;) {
+        const frame = (await tab.frames()).find((f) => f.url.includes(options.frame));
+        const ctx = frame && tab.contextFor(frame);
+        if (ctx) return { evaluate: (e) => tab.evalIn(ctx, e), frame };
+        if (Date.now() > until) refuse(2, `No frame whose URL contains "${options.frame}"`);
+        await sleep(1000);
+      }
     };
-    for (const sel of options.wait ?? []) await scope().locator(sel).first().waitFor({ state: 'visible', timeout: 120_000 });
+    const ensureHelpers = async (s) => s.evaluate(`${FIND_SOURCE}; true`);
+    for (const sel of options.wait ?? []) {
+      const until = Date.now() + 120_000;
+      for (;;) {
+        const s = await scope();
+        await ensureHelpers(s);
+        if (await s.evaluate(`__box(${JSON.stringify(sel)})`).catch(() => null)) break;
+        if (Date.now() > until) refuse(2, `Timed out waiting for ${sel}`);
+        await sleep(400);
+      }
+    }
     for (const sel of options.click ?? []) {
-      await scope().locator(sel).first().click({ timeout: 60_000 });
-      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      const s = await scope();
+      await ensureHelpers(s);
+      const found = await s.evaluate(`(() => { const el = __find(${JSON.stringify(sel)}); if (!el) return false; el.scrollIntoView({ block: 'center' }); el.click(); return true; })()`);
+      if (!found) refuse(2, `Nothing to click: ${sel}`);
+      await sleep(500);
+      await settle(tab, { loadTimeout: 5_000 });
     }
+    debug('waits and clicks done');
     await sleep(Number(options.delay ?? 1500));
-    for (const sel of options.hide ?? []) {
-      for (const frame of page.frames()) await frame.evaluate((s) => document.querySelectorAll(s).forEach((e) => { e.style.visibility = 'hidden'; }), sel).catch(() => {});
-    }
-    for (const sel of options.remove ?? []) {
-      for (const frame of page.frames()) await frame.evaluate((s) => document.querySelectorAll(s).forEach((e) => { e.style.setProperty('display', 'none', 'important'); }), sel).catch(() => {});
-    }
-    await scrubAllFrames(page);
-    await sleep(300);
-    const before = await leftovers(page);
+    for (const sel of options.hide ?? []) await tab.evalAll(`document.querySelectorAll(${JSON.stringify(sel)}).forEach((e) => { e.style.visibility = 'hidden'; })`);
+    for (const sel of options.remove ?? []) await tab.evalAll(`document.querySelectorAll(${JSON.stringify(sel)}).forEach((e) => { e.style.setProperty('display', 'none', 'important'); })`);
+    await tab.evalAll(`${PAGE_SCRIPTS}; document.head && document.head.insertAdjacentHTML('beforeend', '<style>*, *::before, *::after { caret-color: transparent !important; animation-play-state: paused !important; transition: none !important; }</style>'); true`);
+
+    const scrubAndCheck = async () => {
+      await tab.evalAll(`${PAGE_SCRIPTS}; globalThis.__scrub.scrubTree(document); globalThis.__scrub.scrubInputs(); true`);
+      await sleep(250);
+      return [...new Set((await tab.evalAll('globalThis.__scrub ? globalThis.__scrub.check() : ["unscrubbed-frame"]')).flat())];
+    };
+    const before = await scrubAndCheck();
+    debug(`scrubbed and checked ${tab.sessions.size} session(s)`);
     if (before.includes('sign-in-page')) refuse(3, `Refused: ${new URL(url).host} redirected to a sign-in page. Sign in in the capture browser (or pass --pick-account), then retry. Nothing was saved.`);
     if (before.length) refuse(3, `Refused before capture: unmasked ${before.join(', ')} on ${new URL(url).host}. Nothing was saved.`);
 
+    // The viewport and color scheme may have been reset by something else; set them again and check both the media
+    // query and what the page actually rendered. A resize makes pages that read the scheme once (GitHub's React views)
+    // read it again.
+    await tab.reapplyMedia();
+    await tab.metrics(height + 1);
+    await sleep(200);
+    await tab.metrics(height);
+    await sleep(500);
+    if ((await tab.evalTop(`matchMedia('(prefers-color-scheme: dark)').matches`)) !== (theme === 'dark')) throw new ThemeRetry();
+    const rendered = await tab.evalTop(RENDERED_LIGHT);
+    if (rendered !== null && rendered !== (theme === 'light')) throw new ThemeRetry();
+
+    debug('scheme pinned');
     mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
-    // Captured through the DevTools protocol (Playwright's own screenshot ignores the emulated scale on a connected
-    // browser), always within the viewport: capturing beyond it resizes the page and re-flows layouts such as
-    // GitHub's after the element was measured. When the target is taller than the viewport, the viewport grows first
-    // and the target is measured again.
-    await page.addStyleTag({ content: '*, *::before, *::after { caret-color: transparent !important; animation-play-state: paused !important; transition: none !important; }' }).catch(() => {});
-    const setHeight = async (h) => {
-      await session.send('Emulation.setDeviceMetricsOverride', { width, height: Math.min(Math.ceil(h), 12_000), deviceScaleFactor: scale, mobile: false });
-      await sleep(700);
-    };
     const capture = async (clip) => {
-      const metrics = await session.send('Page.getLayoutMetrics');
-      const vp = metrics.cssVisualViewport ?? metrics.visualViewport;
+      const m = await tab.send('Page.getLayoutMetrics');
+      const vp = m.cssVisualViewport ?? m.visualViewport;
       const params = { format: 'png', fromSurface: true, captureBeyondViewport: false };
       if (clip) params.clip = { x: clip.x + vp.pageX, y: clip.y + vp.pageY, width: clip.width, height: clip.height, scale: 1 };
-      const { data } = await session.send('Page.captureScreenshot', params);
+      const { data } = await tab.send('Page.captureScreenshot', params, 90_000);
       writeFileSync(out, Buffer.from(data, 'base64'));
+    };
+    // Offset of the scoped frame in the page, for element boxes measured inside it.
+    const frameOffset = async (s) => {
+      if (!s.frame) return { x: 0, y: 0 };
+      const owner = await cdp.send('DOM.getFrameOwner', { frameId: s.frame.id }, tab.sessionId).catch(() => null);
+      if (!owner) return { x: 0, y: 0 };
+      const { model } = await cdp.send('DOM.getBoxModel', { backendNodeId: owner.backendNodeId }, tab.sessionId);
+      return { x: model.content[0], y: model.content[1] };
     };
     if (options.selector) {
       const pad = Number(options.padding ?? 8);
-      const target = scope().locator(options.selector).first();
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await target.scrollIntoViewIfNeeded();
-      await sleep(300);
-      let box = await target.boundingBox();
+      const sel = JSON.stringify(options.selector);
+      const s = await scope();
+      await ensureHelpers(s);
+      const measure = async () => {
+        const box = await s.evaluate(`(() => { const el = __find(${sel}); if (!el) return null; el.scrollIntoView({ block: 'nearest' }); return __box(${sel}); })()`);
+        if (!box) return null;
+        const off = await frameOffset(s);
+        return { x: box.x + off.x, y: box.y + off.y, width: box.width, height: box.height };
+      };
+      await tab.evalTop('window.scrollTo(0, 0)');
+      let box = await measure();
       if (!box) refuse(2, `Element not visible: ${options.selector}`);
       if (box.y < 0 || box.y + box.height + pad > height) {
         // Grow the viewport so the whole element fits from the top of the page, then measure again.
-        await page.evaluate(() => window.scrollTo(0, 0));
-        box = await target.boundingBox();
-        await setHeight(Math.max(height, (box?.y ?? 0) + (box?.height ?? 0) + pad + 16));
-        await target.scrollIntoViewIfNeeded();
-        await sleep(300);
-        box = await target.boundingBox();
+        await tab.evalTop('window.scrollTo(0, 0)');
+        await tab.metrics(Math.max(height, box.y + box.height + pad + 16));
+        await sleep(700);
+        box = await measure();
         if (!box) refuse(2, `Element not visible: ${options.selector}`);
       }
       await capture({ x: Math.max(0, box.x - pad), y: Math.max(0, box.y - pad), width: box.width + 2 * pad, height: box.height + 2 * pad });
     } else if (options.clip) {
       const [x, y, w, h] = options.clip.split(',').map(Number);
-      if (y + h > height) await setHeight(y + h);
+      if (y + h > height) { await tab.metrics(y + h); await sleep(700); }
       await capture({ x, y, width: w, height: h });
     } else if (options.full) {
-      await page.evaluate(() => window.scrollTo(0, 0));
-      const metrics = await session.send('Page.getLayoutMetrics');
-      const size = metrics.cssContentSize ?? metrics.contentSize;
-      await setHeight(Math.max(height, size.height));
+      await tab.evalTop('window.scrollTo(0, 0)');
+      const m = await tab.send('Page.getLayoutMetrics');
+      await tab.metrics(Math.max(height, (m.cssContentSize ?? m.contentSize).height));
+      await sleep(700);
       await capture(null);
     } else {
       await capture(null);
     }
-    const after = await leftovers(page);
-    if (after.length) { try { unlinkSync(out); } catch {} refuse(3, `Refused after capture: unmasked ${after.join(', ')} appeared. The image was deleted.`); }
+    saved = true;
+    const after = [...new Set((await tab.evalAll('globalThis.__scrub ? globalThis.__scrub.check() : ["unscrubbed-frame"]')).flat())];
+    if (after.length) { try { unlinkSync(out); } catch {} saved = false; refuse(3, `Refused after capture: unmasked ${after.join(', ')} appeared. The image was deleted.`); }
+    const renderedAfter = await tab.evalTop(RENDERED_LIGHT);
+    if ((await tab.evalTop(`matchMedia('(prefers-color-scheme: dark)').matches`)) !== (theme === 'dark') || (renderedAfter !== null && renderedAfter !== (theme === 'light'))) {
+      try { unlinkSync(out); } catch {}
+      saved = false;
+      throw new ThemeRetry();
+    }
+  };
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await captureOnce();
+        break;
+      } catch (error) {
+        if (!(error instanceof ThemeRetry)) throw error;
+        if (attempt >= 3) refuse(2, `The page kept rendering in the wrong color scheme. If the site has its own theme setting, set it to ${theme}.`);
+        debug(`color scheme mismatch, loading again (attempt ${attempt + 1})`);
+      }
+    }
   } finally {
-    await page.close().catch(() => {});
+    await cdp.send('Target.closeTarget', { targetId: tab.targetId }).catch(() => {});
+    cdp.close();
   }
-  ocrCheck(out);
-  console.log(`saved ${out}`);
+  if (saved) {
+    ocrCheck(out);
+    console.log(`saved ${out}`);
+  }
   process.exit(0);
 }
 

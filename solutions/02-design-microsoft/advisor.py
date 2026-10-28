@@ -67,6 +67,14 @@ def bare_version(text: str) -> str:
     return text.strip().lstrip("vV")
 
 
+def shown(path: Path) -> str:
+    """A path as the presenter typed it: relative to the current folder when it is inside it."""
+    try:
+        return str(Path(path).resolve().relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 def excerpt_found(excerpt: str, source: str) -> bool:
     """True when every part of the excerpt (split on an ellipsis) appears word for word in the source."""
     parts = [normalize(part) for part in re.split(r"\.\.\.|…", excerpt)]
@@ -406,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
     for problem in run["checks"]:
         print(f"  - {problem}")
     written = [args.out / name for name in ("run.json", "summary.md", "adr-draft.md")] + ([args.adr_file] if args.adr_file else [])
-    print("wrote " + ", ".join(str(path) for path in written))
+    print("wrote " + ", ".join(shown(path) for path in written))
     return 0 if not run["checks"] else 1
 
 
