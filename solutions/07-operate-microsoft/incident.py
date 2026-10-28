@@ -1,5 +1,8 @@
 """Run the Operate incident drill against the deployed RequestHub, and collect the evidence.
 
+  python incident.py status    check, without changing anything, that the demo is in its starting state: PostgreSQL
+                               running, the API answering, no fault on the worker, no backlog, no firing alert, and the
+                               SRE Agent's response plan in place. Each failed check prints the command that fixes it
   python incident.py start     slow the notification worker down (a fault setting with an expiry) and submit
                                synthetic requests, so a backlog builds
   python incident.py watch     print the backlog, the alert, the worker's fault settings, and the SRE Agent
@@ -15,7 +18,7 @@ agent gives. Every command adds timestamped evidence to out/drill.json; `start` 
 out/drills/. All requests, people, and notifications are synthetic.
 
 Settings come from environment variables or this solution's azd environment (run `azd up` first): API_URL,
-API_IDENTIFIER_URI, AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, WORKER_APP_NAME, BACKLOG_ALERT_NAME,
+API_IDENTIFIER_URI, AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, WORKER_APP_NAME, POSTGRES_HOST, BACKLOG_ALERT_NAME,
 BACKLOG_ALERT_THRESHOLD_SECONDS, SRE_AGENT_NAME. You sign in with the Azure CLI (`az login`); `azd up` gave you the
 RequestHub Admin role and the SRE Agent Administrator role.
 """
@@ -105,7 +108,8 @@ def record(drill: dict, event: str, at: datetime | None, **details: object) -> N
         return
     drill["timeline"].append({"event": event, "at": iso(at or now()), **details})
     drill["timeline"].sort(key=lambda e: e["at"])
-    print(f"  * {event} at {clock(at or now())}" + (f" ({details})" if details else ""))
+    shown = {k: v for k, v in details.items() if k != "threadId"}  # an opaque id; the audience finds the thread by title
+    print(f"  * {event} at {clock(at or now())}" + (f" ({shown})" if shown else ""))
 
 
 # ---------- Azure access ----------
@@ -132,7 +136,8 @@ class Azure:
             self.tokens[scope] = (token.token, token.expires_on)
         return self.tokens[scope][0]
 
-    def call(self, method: str, url: str, scope: str, body: object = None, headers: dict | None = None) -> tuple[int, object]:
+    def call(self, method: str, url: str, scope: str, body: object = None, headers: dict | None = None,
+             timeout: int = 60) -> tuple[int, object]:
         request = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None, method=method)
         request.add_header("Authorization", f"Bearer {self.token(scope)}")
         if body is not None:
@@ -140,21 +145,24 @@ class Azure:
         for key, value in (headers or {}).items():
             request.add_header(key, value)
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 text = response.read().decode("utf-8", "replace")
                 return response.status, parse_json(text)
         except urllib.error.HTTPError as error:
             return error.code, error.read().decode("utf-8", "replace")
         except urllib.error.URLError as error:
             return 0, str(error.reason)
+        except OSError as error:  # a read timeout or a reset connection
+            return 0, str(error) or type(error).__name__
 
-    def api(self, method: str, path: str, body: object = None, headers: dict | None = None) -> tuple[int, object]:
-        return self.call(method, f"{self.api_url}{path}", self.api_scope, body, headers)
+    def api(self, method: str, path: str, body: object = None, headers: dict | None = None,
+            timeout: int = 60) -> tuple[int, object]:
+        return self.call(method, f"{self.api_url}{path}", self.api_scope, body, headers, timeout)
 
     def arm(self, path: str, api_version: str) -> object:
         status, body = self.call("GET", f"{ARM}{path}{'&' if '?' in path else '?'}api-version={api_version}", ARM_SCOPE)
         if status != 200:
-            raise RuntimeError(f"ARM GET {path} returned {status}: {str(body)[:200]}")
+            raise RuntimeError(f"HTTP {status} reading {path.rsplit('/providers/', 1)[-1]}: {str(body)[:200]}")
         return body
 
     def backlog(self) -> dict | None:
@@ -476,7 +484,8 @@ def verify(args: argparse.Namespace) -> int:
     threads = azure.threads(since)
     thread = threads[-1] if threads else None
     results.append(("SRE Agent investigated", "PASS" if thread else "FAIL",
-                    f"thread {thread['id']} started {clock(thread['created'])}" if thread else "no investigation thread found"))
+                    f"incident thread started {clock(thread['created'])}, {thread['mode']} mode" if thread
+                    else "no investigation thread found"))
 
     width = max(len(r[0]) for r in results)
     for check, verdict, detail in results:
@@ -493,14 +502,22 @@ def verify(args: argparse.Namespace) -> int:
 
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+HOST = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:azurecontainerapps\.io|azure\.com|azure\.net|azurecr\.io|windows\.net|azuresre\.ai)\b",
+                  re.I)
+# The 13-character token Bicep's uniqueString() adds to resource names (ca-worker-<token>): it is derived from the
+# subscription, so it stays out of anything published.
+TOKEN = re.compile(r"(?<![A-Za-z0-9])(?=[a-z0-9]*[0-9])(?=[a-z0-9]*[a-z])[a-z0-9]{13}(?![A-Za-z0-9])")
 
 
 def sanitize(text: str) -> str:
-    """Removes subscription and tenant ids, object ids, email addresses, and long tokens before anything leaves Azure."""
-    text = re.sub(r"/subscriptions/[^/\s]+", "/subscriptions/<subscription>", text)
-    text = GUID.sub("<id>", text)
-    text = EMAIL.sub("<email>", text)
-    return re.sub(r"\b[A-Za-z0-9+/_-]{60,}={0,2}", "<redacted>", text)
+    """Removes what identifies the tenant before text leaves Azure: subscription, tenant, object, and thread ids,
+    e-mail addresses, Azure host names, the unique token in resource names, and long tokens."""
+    text = re.sub(r"/subscriptions/[^/\s]+", "/subscriptions/[subscription]", text)
+    text = GUID.sub("[id]", text)
+    text = EMAIL.sub("[e-mail]", text)
+    text = HOST.sub("[host]", text)
+    text = TOKEN.sub("x" * 13, text)
+    return re.sub(r"\b[A-Za-z0-9+/_-]{60,}={0,2}", "[redacted]", text)
 
 
 def message_text(message: dict) -> str:
@@ -532,6 +549,9 @@ def summary(args: argparse.Namespace) -> int:
         report = next((r for r in replies if "root cause" in r.lower()), "")
         recovery = replies[-1] if replies and replies[-1] != report else ""
 
+    started = events.get("SRE Agent investigation started")
+    investigation = (f"Azure SRE Agent incident thread started {started['at']}, response plan "
+                     f"`{started.get('responsePlan')}` in {started.get('mode')} mode") if started else "not recorded"
     lines = [
         f"## Incident summary: notification backlog (drill {drill['id']})",
         "",
@@ -544,7 +564,7 @@ def summary(args: argparse.Namespace) -> int:
         f"| Detected | Azure Monitor alert *{setting('BACKLOG_ALERT_NAME')}* at {events.get('alert fired', {}).get('at', 'not recorded')} |",
         f"| Duration | {str(recovered - fired).split('.')[0] if fired and recovered else 'not recorded'} from alert to drained backlog |",
         f"| Cause | Fault setting `Faults__WorkerDelayMs={drill['faultDelayMs']}` on the notification worker (expiry {drill['faultExpiresAtUtc']}) |",
-        "| Investigation | Azure SRE Agent thread THREAD_ID |",
+        f"| Investigation | {investigation} |",
         "",
         "### Timeline (UTC)",
         "",
@@ -559,8 +579,7 @@ def summary(args: argparse.Namespace) -> int:
         lines += ["", "### SRE Agent investigation report", "", report.strip()]
     if recovery:
         lines += ["", "### SRE Agent recovery check", "", recovery.strip()]
-    # The thread id is the agent's record of this investigation, not an identity, so it stays.
-    text = sanitize("\n".join(lines)).replace("THREAD_ID", f"`{thread_id}`" if thread_id else "not recorded") + "\n"
+    text = sanitize("\n".join(lines)) + "\n"
     path = OUT / "incident-summary.md"
     path.write_text(text, encoding="utf-8")
     print(f"Wrote {path.relative_to(SOLUTION)} ({len(text)} characters, sanitized).")
@@ -605,9 +624,97 @@ def reset(args: argparse.Namespace) -> int:
     return 0
 
 
+def status(args: argparse.Namespace) -> int:
+    """Read-only: is the demo in its starting state? Prints each check, and the command that fixes a failed one."""
+    from configure_sre_agent import QUICKSTART_PLAN, load  # the expected response plan is defined in sre-agent/agent.yaml
+
+    azure = Azure()
+    rows: list[tuple[bool, str, str, str]] = []
+
+    def check(name: str, fix: str, read) -> bool:
+        try:
+            ok, detail = read()
+        except Exception as error:  # one unreadable source should not hide the others
+            ok, detail = False, f"could not read: {str(error)[:120]}"
+        rows.append((ok, name, detail, "fix the lines above first" if detail.startswith("skipped") else fix))
+        return ok
+
+    group = setting("AZURE_RESOURCE_GROUP")
+    server = setting("POSTGRES_HOST").split(".")[0]
+
+    def postgres():
+        state = azure.arm(f"{azure.rg_id}/providers/Microsoft.DBforPostgreSQL/flexibleServers/{server}",
+                          "2024-08-01")["properties"].get("state")
+        return state == "Ready", str(state)
+
+    database = check("PostgreSQL", f"az postgres flexible-server start -g {group} -n {server}   (about 3 minutes)", postgres)
+
+    def api():
+        if not database:
+            return False, "skipped until PostgreSQL is ready"
+        code, me = azure.api("GET", "/api/me", timeout=20)
+        roles = me.get("roles", []) if code == 200 and isinstance(me, dict) else []
+        return "Admin" in roles, f"your roles: {', '.join(roles)}" if code == 200 else f"no answer ({code or 'timeout'})"
+
+    api_up = check("RequestHub API", "sign in with `az login` as the account that ran `azd up`; after PostgreSQL starts, "
+                   "the API needs about a minute", api)
+
+    def worker():
+        state = azure.worker_state()
+        revision = "--" + str(state["readyRevision"]).rsplit("--", 1)[-1]
+        faults = ", ".join(sorted(state["faults"])) or "no fault settings"
+        return not state["faults"] and state["latestRevision"] == state["readyRevision"], f"revision {revision} ready, {faults}"
+
+    check("Worker", "python incident.py reset", worker)
+
+    def backlog():
+        if not api_up:
+            return False, "skipped until the API answers"
+        current = azure.backlog() or {}
+        return current.get("pending") == 0, f"{current.get('pending')} pending, oldest {current.get('oldestPendingAgeSeconds')}s"
+
+    check("Notification backlog", "python incident.py reset", backlog)
+
+    def alert():
+        firing = [a for a in azure.alerts(now() - timedelta(days=1)) if a["condition"] == "Fired"]
+        return not firing, f"fired at {clock(firing[0]['fired'])}, not resolved yet" if firing else "not firing"
+
+    check("Backlog alert", "wait: Azure Monitor resolves it about 5 minutes after the backlog drains", alert)
+
+    def agent():
+        name = setting("SRE_AGENT_NAME")
+        state = azure.arm(f"{azure.rg_id}/providers/Microsoft.App/agents/{name}", "2026-01-01")["properties"].get(
+            "provisioningState")
+        return state == "Succeeded", f"{name}: {state}"
+
+    check("SRE Agent", "azd provision", agent)
+
+    def plan():
+        config = load()
+        code, body = azure.sre("/api/v2/extendedAgent/incidentFilters")
+        plans = body.get("value", []) if isinstance(body, dict) else body if isinstance(body, list) else []
+        ours = next((p for p in plans if p.get("name") == config.plan["name"]), None)
+        if code != 200 or not ours:
+            return False, f"{config.plan['name']} not found (HTTP {code})"
+        props = ours.get("properties", {})
+        ok = (props.get("isEnabled", True) and props.get("agentMode") == config.plan["agentMode"]
+              and props.get("handlingAgent") == config.agent["name"] and not any(p.get("name") == QUICKSTART_PLAN for p in plans))
+        return bool(ok), f"{ours['name']} -> {props.get('handlingAgent')}, {props.get('agentMode')} mode"
+
+    check("Response plan", "python configure_sre_agent.py", plan)
+
+    width = max(len(row[1]) for row in rows)
+    for ok, name, detail, fix in rows:
+        print(f"{'READY' if ok else 'FIX  '}  {name:<{width}}  {detail}" + ("" if ok else f"\n{'':<{width + 9}}-> {fix}"))
+    ready = all(row[0] for row in rows)
+    print("\nStarting state confirmed." if ready else "\nNot ready: run the commands after the arrows, then run status again.")
+    return 0 if ready else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("status", help="check, without changing anything, that the demo is in its starting state")
     p = commands.add_parser("start", help="slow the worker down and submit synthetic requests")
     p.add_argument("--delay-ms", type=int, default=10_000, help="extra delay per delivered notification (default 10000)")
     p.add_argument("--minutes", type=int, default=45, help="the fault switches itself off after this many minutes (default 45)")
@@ -627,7 +734,8 @@ def main() -> int:
     p.add_argument("--keep-data", action="store_true", help="only remove the fault; keep the synthetic requests")
     args = parser.parse_args()
     utf8_stdout()
-    return {"start": start, "watch": watch, "verify": verify, "summary": summary, "reset": reset}[args.command](args)
+    return {"status": status, "start": start, "watch": watch, "verify": verify, "summary": summary,
+            "reset": reset}[args.command](args)
 
 
 if __name__ == "__main__":

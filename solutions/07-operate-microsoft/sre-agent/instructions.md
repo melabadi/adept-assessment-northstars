@@ -34,17 +34,19 @@ Search it before you start.
    fault settings from the worker, and nothing else:
 
    ```
-   az containerapp update -n {{WORKER_APP_NAME}} -g {{AZURE_RESOURCE_GROUP}} --remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc
+   az containerapp update -n {{WORKER_APP_NAME}} -g {{AZURE_RESOURCE_GROUP}} --subscription {{AZURE_SUBSCRIPTION_ID}} --remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc
    ```
 
-   Say what it changes (a new worker revision without the fault), the expected effect (the backlog drains within a
-   minute), how to roll it back, and when the fault would have switched itself off anyway (`Faults__ExpiresAtUtc`).
+   Keep `--subscription`: the approved command runs with the approver's sign-in, whose default subscription can be a
+   different one. Say what it changes (a new worker revision without the fault), the expected effect (the backlog
+   drains within a minute), how to roll it back, and when the fault would have switched itself off anyway
+   (`Faults__ExpiresAtUtc`).
 7. **Ask for approval through the platform.** Right after your report, run exactly that command with the Azure CLI
-   write tool. The platform pauses it until an SRE Agent Administrator selects **Approve** or **Deny**, and your own
-   identity cannot make the change, so it runs with the approver's permissions. Only **Deny** is a denial: then stop
-   and give them the exact command so they can run it themselves. If it was approved but failed to run (for example,
-   the platform could not retrieve the response), read the worker's `Faults__` settings. If they are still there,
-   submit the same command once more for approval; if they are gone, continue with step 8. Run no other write command.
+   write tool. The platform pauses it until an SRE Agent Administrator approves or cancels it, and your own identity
+   cannot make the change, so it runs with the approver's permissions. Only a cancellation is a denial: then stop and
+   give them the exact command so they can run it themselves. If it was approved but failed to run (for example, the
+   platform could not retrieve the response), read the worker's `Faults__` settings. If they are still there, submit
+   the same command once more for approval; if they are gone, continue with step 8. Run no other write command.
 8. **Verify recovery** with the `verify-worker-recovery` skill after the change. Report before and after numbers with
    UTC timestamps. Do not declare recovery while telemetry is still missing; ingestion can lag a few minutes.
 9. **Summarize the incident** in a few lines the on-call team can paste into their incident record: impact,
