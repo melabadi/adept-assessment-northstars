@@ -34,6 +34,10 @@ GitHub Actions). The identity needs Reader and Policy Insights rights on the res
 identity has Reader and Policy Enrollments Contributor) and a RequestHub app role for the app check. --issue uses the
 GitHub CLI. Results are written to solutions/05-secure-microsoft/out/ (scan.json, scan.md, verify.json, verify.md).
 
+Everything the script prints, posts, or saves is masked first, because it ends up in Issues, workflow logs, and run
+artifacts: GUIDs (subscription and tenant ids among them) and the random token in resource names (the 13 letters and
+digits in `st<token>` or `vnet-<token>`) are shown as `…`.
+
 Exit codes: scan 0 = scan completed; verify 0 = verified, 1 = not verified (pending or failed); 2 = configuration or
 Azure error.
 """
@@ -53,11 +57,51 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from azd_env import REPO, SOLUTION, setting, utf8_stdout
+
+GUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+NAME_TOKEN = re.compile(r"(?<![a-z0-9])[a-z0-9]{13}(?![a-z0-9])")
+
+
+class Masker:
+    """Hides what identifies a deployment: GUIDs, and the random token that azd-style templates put in every resource name
+    of a group (13 letters and digits, as in `st<token>` and `vnet-<token>`). learn() finds the token in resource names:
+    a 13-character word with letters and digits, or a 13-character ending that several names share."""
+
+    def __init__(self) -> None:
+        self.tokens: set[str] = set()
+
+    def learn(self, names: list[str]) -> None:
+        lowered = {n.lower() for n in names if n}
+        endings = Counter(n[-13:] for n in lowered if len(n) > 13 and re.fullmatch(r"[a-z0-9]{13}", n[-13:]))
+        self.tokens |= {t for t, count in endings.items() if count >= 2}
+        self.tokens |= {t for n in lowered for t in NAME_TOKEN.findall(n) if re.search(r"\d", t) and re.search(r"[a-z]", t)}
+
+    def __call__(self, text: str) -> str:
+        for token in sorted(self.tokens, key=len, reverse=True):
+            text = re.sub(re.escape(token), "…", text, flags=re.I)
+        return GUID.sub("…", text)
+
+
+mask = Masker()
+
+
+class MaskedOutput:
+    """Stands in for stdout and stderr, so nothing reaches a console or a workflow log unmasked."""
+
+    def __init__(self, stream) -> None:
+        self.stream = stream
+
+    def write(self, text: str) -> int:
+        return self.stream.write(mask(text))
+
+    def __getattr__(self, name: str):
+        return getattr(self.stream, name)
 
 
 @dataclass(frozen=True)
@@ -108,7 +152,7 @@ CONTROL = Control(
     policy_definition="6edd7eda-6dd8-40f7-810d-67160c639cd9",
     resource_type="Microsoft.Storage/storageAccounts",
     assignment="requesthub-storage-private-link",
-    issue_title="Posture: storage account {name} has no private endpoint",
+    issue_title="Posture: attachment storage in {rg} has no private endpoint",
     bicep="`solutions/05-secure-microsoft/infra/resources.bicep`: the `storagePrivateEndpoint` value passed to "
     "`app/infra/requesthub.bicep`",
     fix="Turning it on adds a subnet, a private endpoint for Blob storage, and a private DNS zone linked to the app's virtual "
@@ -121,9 +165,8 @@ LABEL = "posture"
 OUT = SOLUTION / "out"
 AZ = shutil.which("az") or "az"
 ARG_URL = "https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
-DEFENDER_LINK = "https://portal.azure.com/#view/Microsoft_Azure_Security/GenericRecommendationDetailsBlade/assessmentKey/{key}"
 POSTURE_REQUEST_TITLE = "Posture check: attachment round trip"
-# Readable names for initiatives that commonly include the control. Display only; unknown initiatives show their id.
+# Readable names for initiatives that commonly include the control.
 INITIATIVES = {"1f3afdf9-d0c9-4c3d-847f-89da613e70a8": "Microsoft cloud security benchmark"}
 LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 
@@ -170,7 +213,7 @@ def stamp(value: str | None) -> str:
 
 
 def short_id(resource_id: str, rg: str) -> str:
-    """Resource group relative id: readable, and keeps subscription ids out of Issues and logs."""
+    """Resource group relative id: readable, and keeps subscription ids out of Issues and logs (output masks the name's token)."""
     return f"{rg}/{resource_id.rstrip('/').split('/')[-1]}"
 
 
@@ -193,6 +236,7 @@ class Posture:
         self.subscription = setting("AZURE_SUBSCRIPTION_ID")
         self.rg = setting("AZURE_RESOURCE_GROUP")
         self.assignment = setting("POLICY_ASSIGNMENT_NAME", control.assignment)
+        mask.learn(az("resource", "list", "--resource-group", self.rg, "--query", "[].name") or [])
 
     def resources(self) -> list[dict]:
         """Live configuration from Azure Resource Manager (not Resource Graph, which can lag behind a deployment)."""
@@ -292,7 +336,7 @@ def policy_rows(finding: dict) -> list[Row]:
     rows = []
     for s in finding["policy"]:
         mark = "✅" if s["state"] == "Compliant" else "❌" if s["state"] == "NonCompliant" else "⏳"
-        via = f", {INITIATIVES.get(s['initiative'], 'initiative ' + s['initiative'])}" if s["initiative"] else ""
+        via = f", {INITIATIVES.get(s['initiative'], 'an inherited initiative')}" if s["initiative"] else ""
         rows.append((f"Azure Policy · `{s['assignment']}` ({s['scope']}{via})", f"{s['state']} {mark}",
                      f"evaluated {stamp(s['evaluatedAt'])}, definition version {s['definitionVersion'] or '?'}"))
     if not finding["policy"]:
@@ -313,8 +357,7 @@ def defender_row(finding: dict, after_fix: bool = False) -> Row:
     else:
         mark = ""
     return (f"Microsoft Defender for Cloud · {d['name']}", f"{d['state']} {mark}".strip(),
-            f"{d['severity'] or '-'} severity, status since {stamp(d['changedAt'])}, assessment "
-            f"[`{d['key']}`]({DEFENDER_LINK.format(key=d['key'])})")
+            f"{d['severity'] or '-'} severity, status since {stamp(d['changedAt'])} (Defender for Cloud > Recommendations)")
 
 
 def app_row(app: dict) -> Row:
@@ -346,16 +389,25 @@ def run_link() -> str:
     return "a local run"
 
 
+def save(name: str, text: str) -> None:
+    """Writes a result file under out/, masked: workflows upload these as run artifacts."""
+    (OUT / name).write_text(mask(text), encoding="utf-8")
+
+
 # ---------- GitHub Issues ----------
 def gh(*args: str, stdin: str | None = None) -> str:
-    proc = subprocess.run(["gh", *args], input=stdin, capture_output=True, text=True, encoding="utf-8", cwd=REPO)
+    """Runs the GitHub CLI. Arguments and input are masked: what this sends becomes Issue titles, bodies, and comments."""
+    proc = subprocess.run(["gh", *map(mask, args)], input=mask(stdin) if stdin else None, capture_output=True, text=True,
+                          encoding="utf-8", cwd=REPO)
     if proc.returncode != 0:
         raise AzureError(f"gh {' '.join(args[:2])} failed: {proc.stderr.strip()}")
     return proc.stdout
 
 
 def marker(finding: dict, rg: str) -> str:
-    return f"<!-- posture:{finding['control']}:{short_id(finding['resource']['id'], rg).lower()} -->"
+    """Identifies the finding's Issue without naming the resource: a short digest of its resource id."""
+    digest = hashlib.sha256(finding["resource"]["id"].lower().encode()).hexdigest()[:12]
+    return f"<!-- posture:{finding['control']}:{rg.lower()}:{digest} -->"
 
 
 def find_issue(finding: dict, rg: str) -> dict | None:
@@ -367,15 +419,15 @@ def issue_body(finding: dict, posture: Posture, app: dict | None) -> str:
     c, r = posture.control, finding["resource"]
     return "\n".join([
         marker(finding, posture.rg),
-        f"**{c.title}** · storage account `{r['name']}` in resource group `{posture.rg}`",
+        f"**{c.title}** · RequestHub's attachment storage account in resource group `{posture.rg}`",
         "",
         f"RequestHub keeps every attachment in this account. {r['impact']}",
         "",
         *table(rows_for(finding, app=app)),
         "",
-        "Azure Policy and Defender for Cloud evaluate the same policy definition "
-        f"(`{c.policy_definition}`) on separate schedules, so their results can differ for a while. Neither proves on "
-        "its own that the configuration changed: the resource configuration does.",
+        f"Azure Policy and Defender for Cloud evaluate the same built-in policy definition, *{c.title}*, on separate "
+        "schedules, so their results can differ for a while. Neither proves on its own that the configuration changed: "
+        "the resource configuration does.",
         "",
         "### Where to fix it",
         f"The setting lives in {c.bicep}. {c.fix} Fix it in Bicep, not in the portal, so the next deployment keeps it.",
@@ -390,7 +442,7 @@ def issue_body(finding: dict, posture: Posture, app: dict | None) -> str:
         "confirms on its own schedule.",
         "",
         "Do not add a policy exemption, change the assignment's effect, or open the public endpoint to make the finding "
-        "disappear.",
+        "disappear. Keep host names, resource names, and ids out of this Issue and its pull request.",
         "",
         f"Detected by {run_link()} on {now():%Y-%m-%d %H:%M} UTC.",
     ])
@@ -404,7 +456,7 @@ def sync_issue(finding: dict, posture: Posture, app: dict | None) -> str:
         comment = "\n".join([f"Still present at {now():%Y-%m-%d %H:%M} UTC ({run_link()}).", "", *table(rows_for(finding, app=app))])
         gh("issue", "comment", str(existing["number"]), "--body-file", "-", stdin=comment)
         return f"commented on #{existing['number']}, already open for this finding: {existing['url']}"
-    title = posture.control.issue_title.format(name=finding["resource"]["name"])
+    title = posture.control.issue_title.format(rg=posture.rg)
     url = gh("issue", "create", "--title", title, "--label", LABEL, "--body-file", "-", stdin=issue_body(finding, posture, app)).strip()
     return f"opened {url}"
 
@@ -533,7 +585,7 @@ def scan(args: argparse.Namespace, posture: Posture) -> int:
     summary = [f"### Cloud posture scan: `{posture.rg}`", ""]
     print()
     for finding in findings:
-        name, rid = finding["resource"]["name"], short_id(finding["resource"]["id"], posture.rg)
+        rid = short_id(finding["resource"]["id"], posture.rg)
         summary += [f"**{posture.control.title}** · `{rid}`", "", *table(rows_for(finding, app=app)), ""]
         if finding["resource"]["compliant"]:
             note = "configured correctly"
@@ -546,14 +598,14 @@ def scan(args: argparse.Namespace, posture: Posture) -> int:
             note = sync_issue(finding, posture, app)
         else:
             note = "MISCONFIGURED and reported; run with --issue to track it"
-        print(f"{name}: {note}")
+        print(f"{rid}: {note}")
         summary += [f"Result: {note}", ""]
     summary += [f"Other findings in the resource group: {context['policyNonCompliant']} non-compliant Azure Policy results, "
                 f"{len(context['defenderUnhealthy'])} unhealthy Defender for Cloud recommendations."]
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "scan.json").write_text(json.dumps({"scannedAt": now().isoformat(), "resourceGroup": posture.rg,
-                                               "findings": findings, "app": app, "context": context}, indent=2), encoding="utf-8")
-    (OUT / "scan.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
+    save("scan.json", json.dumps({"scannedAt": now().isoformat(), "resourceGroup": posture.rg,
+                                  "findings": findings, "app": app, "context": context}, indent=2, ensure_ascii=False))
+    save("scan.md", "\n".join(summary) + "\n")
     return 0
 
 
@@ -612,9 +664,9 @@ def verify(args: argparse.Namespace, posture: Posture) -> int:
     print("\n" + plain(report))
 
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "verify.json").write_text(json.dumps({"checkedAt": now().isoformat(), "resourceGroup": posture.rg, "verified": verified,
-                                                 "findings": findings, "app": app}, indent=2), encoding="utf-8")
-    (OUT / "verify.md").write_text(report + "\n", encoding="utf-8")
+    save("verify.json", json.dumps({"checkedAt": now().isoformat(), "resourceGroup": posture.rg, "verified": verified,
+                                    "findings": findings, "app": app}, indent=2, ensure_ascii=False))
+    save("verify.md", report + "\n")
 
     if args.issue:
         state = json.loads(gh("issue", "view", str(args.issue), "--json", "state"))["state"]
@@ -652,6 +704,7 @@ def main(argv: list[str] | None = None) -> int:
     verify_parser.add_argument("--skip-app", action="store_true", help="skip the attachment upload and download through the API")
     args = parser.parse_args(argv)
     utf8_stdout()
+    sys.stdout, sys.stderr = MaskedOutput(sys.stdout), MaskedOutput(sys.stderr)
     try:
         posture = Posture(CONTROL)
         return scan(args, posture) if args.command == "scan" else verify(args, posture)
