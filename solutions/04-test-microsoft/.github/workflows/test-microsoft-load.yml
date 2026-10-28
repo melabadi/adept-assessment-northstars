@@ -5,7 +5,8 @@
 #  - Manual run with "slowdown": rehearses a regression. The workflow slows the request list on the deployed API (the
 #    fault expires on its own after 30 minutes), runs the test, which is expected to fail, then removes the slowdown.
 # The job signs in to Azure with OIDC (GitHub environment test-microsoft); the load test signs in to RequestHub with two
-# managed identities. No password, key, or token is stored anywhere.
+# managed identities. No password, key, or token is stored anywhere. Resource names and URLs are environment secrets, so
+# GitHub masks them in this log, and the values derived from them are masked before any step can print them.
 name: Test · Microsoft · load test RequestHub
 
 on:
@@ -56,14 +57,14 @@ jobs:
     environment: test-microsoft
     env:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-      LOAD_TEST_NAME: ${{ vars.LOAD_TEST_NAME }}
-      LOAD_TEST_REQUESTER_IDENTITY: ${{ vars.LOAD_TEST_REQUESTER_IDENTITY }}
-      LOAD_TEST_APPROVER_IDENTITY: ${{ vars.LOAD_TEST_APPROVER_IDENTITY }}
-      API_URL: ${{ vars.API_URL }}
-      API_IDENTIFIER_URI: ${{ vars.API_IDENTIFIER_URI }}
-      API_APP_NAME: ${{ vars.API_APP_NAME }}
-      APPLICATIONINSIGHTS_NAME: ${{ vars.APPLICATIONINSIGHTS_NAME }}
-      POSTGRES_HOST: ${{ vars.POSTGRES_HOST }}
+      LOAD_TEST_NAME: ${{ secrets.LOAD_TEST_NAME }}
+      LOAD_TEST_REQUESTER_IDENTITY: ${{ secrets.LOAD_TEST_REQUESTER_IDENTITY }}
+      LOAD_TEST_APPROVER_IDENTITY: ${{ secrets.LOAD_TEST_APPROVER_IDENTITY }}
+      API_URL: ${{ secrets.API_URL }}
+      API_IDENTIFIER_URI: ${{ secrets.API_IDENTIFIER_URI }}
+      API_APP_NAME: ${{ secrets.API_APP_NAME }}
+      APPLICATIONINSIGHTS_NAME: ${{ secrets.APPLICATIONINSIGHTS_NAME }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,6 +82,16 @@ jobs:
         run: |
           az extension add --name load --upgrade --only-show-errors
           az extension add --name application-insights --upgrade --only-show-errors
+      # Secrets are masked only where their whole value appears. Mask what is derived from them, and the subscription
+      # name that azure/load-testing prints, before any later step can write them to the log.
+      - name: Keep tenant and resource details out of the log
+        run: |
+          echo "::add-mask::$(az account show --query name -o tsv)"
+          echo "::add-mask::$(az load show --name "$LOAD_TEST_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --query dataPlaneURI -o tsv --only-show-errors)"
+          host="${API_URL#https://}"
+          echo "::add-mask::$host"
+          echo "::add-mask::$(cut -d. -f2 <<< "$host")"
+          echo "::add-mask::${LOAD_TEST_NAME#lt-}"
       - name: Check the load scenario (criteria, guardrails, Python 3.9, no secrets)
         run: python .github/skills/load-scenario/check_scenario.py
       - name: Inject the rehearsal slowdown (expires on its own after 30 minutes)
@@ -100,7 +111,7 @@ jobs:
         uses: azure/load-testing@575d8931b92662596940eb75c9eca346dd785813 # v1.2.7
         with:
           loadtestConfigFile: solutions/04-test-microsoft/out/loadtest.yaml
-          loadtestResource: ${{ vars.LOAD_TEST_NAME }}
+          loadtestResource: ${{ secrets.LOAD_TEST_NAME }}
           resourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
           # The action limits run names to 50 characters and descriptions to 100.
           loadtestRunName: GitHub run ${{ github.run_number }} (${{ github.event_name }}${{ inputs.slowdown && ', slowdown' || '' }})
