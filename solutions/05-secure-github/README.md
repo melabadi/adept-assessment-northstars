@@ -305,6 +305,9 @@ git apply --check --ignore-space-change solutions/05-secure-github/lab/code-find
 - **Local database collisions:** the test fixture already uses unique databases. Do not reset the shared `requesthub`
   database. Use `REQUESTHUB_TEST_PG` only to select another server/account with create-database permission.
 - **Replay output already exists:** choose a new `--out` directory; evidence is never silently overwritten.
+- **Runner exits without JUnit:** retain the test log. With .NET 10's testing platform, the absolute
+  `--results-directory` is a `dotnet test` option and belongs before `--`, not among forwarded runner options.
+  The supplied replay command handles this and uses per-command Git long-path support for Windows cleanup.
 
 ## Product references
 
