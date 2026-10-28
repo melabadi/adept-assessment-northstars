@@ -7,6 +7,8 @@ first, then repairs the query. Actions independently replays both commits; a per
 **CodeQL code scanning and Copilot Autofix are a separate optional path for public or appropriately licensed repositories.**
 AI review is not code scanning, and a passing review does not prove a vulnerability is absent.
 
+![The trusted Actions summary records six failing cases before repair, ten passing cases afterward, and a passing full app suite](images/04-trusted-replay.png)
+
 ## Where it fits
 
 **Phase 5 of 7: Secure.** The [Microsoft counterpart](../05-secure-microsoft/) addresses deployed cloud posture.
@@ -49,6 +51,7 @@ The optional CodeQL workflow checks entitlement **before** downloading or runnin
 ```text
 05-secure-github/
 ├── README.md
+├── images/                                real review, regression, repair and Actions screenshots
 ├── requirements.txt                       standard library only; nothing to install
 ├── remediate-task.md                      acceptance criteria copied into the remediation Issue
 ├── lab/code-finding.patch                 deliberately unsafe query, stored as data only on main
@@ -108,10 +111,33 @@ Before preparing a lab in an adopter's repo, check that **all deployment/release
 and `copilot/*`**. Do not dispatch any deployment from those refs. In this repository, app CI only builds/tests,
 and release-candidate preflight requires `main`; the security workflows never deploy.
 
+## Before each session
+
+- Confirm the previous run's lab and repair PRs are closed **without merging**, its Issue is closed, and its temporary
+  branches are gone. Use `gh pr list --state open`, `gh issue list --label phase:secure --state open` and
+  `git ls-remote --heads origin 'lab/secure-*'`; do not close or delete another presenter's work.
+- Fetch `origin/main`, confirm a clean worktree with `git status --short`, and verify that the default branch contains
+  the `secure-github` agent, the regression reference and `secure-github-verify.yml`. The lab must start from safe
+  `main`, not a previous unsafe or repaired branch.
+- Open the solution README, `lab/code-finding.patch`, the lab PR's **Files changed**, the repair PR's **Commits** and
+  **View session**, and the Actions page. Keep a PowerShell 7 terminal at the repository root with `gh` already signed
+  in. Do not display `gh auth token`, environment-variable dumps or account-settings pages.
+- Start the real detection and cloud repair early, retaining their current-run links for the presentation.
+  The screenshot run took **5m55s for detection**, **15 minutes for cloud execution**, and **1m48s for trusted replay**.
+  These are observations, not SLAs; allow 30–45 minutes of preparation and about 15 minutes of presentation.
+- Check Actions usage/runner availability and your ability to approve workflows on the Copilot PR. Do not start a
+  local API or reset a shared database: the hosted verification supplies its own PostgreSQL service.
+- Keep CodeQL and Autofix disabled on an unlicensed private repository. The live path is Copilot review followed by
+  cloud-agent repair and deterministic tests. Capture only the current run's evidence; never substitute an old PASS.
+
 ## Run the demo
 
 Allow about 15 minutes presenting, with the cloud agent started beforehand. Its runtime varies; measure it rather
 than promising a fixed duration. Commands below create two temporary lab branches and two PRs, never targeting `main`.
+The screenshots show the real run of [lab PR #99](https://github.com/melabadi/adept-assessment-northstars/pull/99),
+[repair PR #105](https://github.com/melabadi/adept-assessment-northstars/pull/105) and
+[trusted replay](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40712087636).
+Use your new run's numbers in the commands, not those historical examples.
 
 1. **Prepare the undeployed lab.** Use a clean worktree so no unrelated app edits enter the exercise.
 
@@ -136,7 +162,15 @@ than promising a fixed duration. Commands below create two temporary lab branche
    ```
 
    Show the diff: `q.Q` reaches a concatenated `FromSqlRaw` call in `ListAsync`. Existing role/department
-   filters are still applied, but they do not make SQL concatenation safe. The old tests miss this defect.
+   filters are still applied, but they do not make SQL concatenation safe. Current app CI already catches the lost
+   wildcard escaping; the supplied security regression adds explicit injection, quote and authorization-scope cases.
+   A red lab CI run is expected, not a reason to weaken the checks.
+
+   **Timing:** about 1 minute to create and push the lab; ordinary CI runs separately.
+   **Point out:** the unsafe implementation exists only on an undeployed lab branch, and the PR targets another lab
+   branch rather than `main`.
+
+   ![The undeployed lab diff replaces parameterized search with user input concatenated into FromSqlRaw](images/01-unsafe-lab.png)
 
 2. **Ask Copilot to find it.** In the lab PR's **Reviewers**, request **Copilot** (use Balanced effort when available).
    Or use the documented review-request API:
@@ -150,6 +184,12 @@ than promising a fixed duration. Commands below create two temporary lab branche
    Wait for the actual review. Read the comment that identifies SQL injection and copy **that comment's URL** into
    `$finding`. Verify its `commit_id` is `$unsafe`. A workflow run or a generic review summary alone is not detection.
    If Copilot misses it, stop and retain the result as FAIL. This step is **AI code review**, not CodeQL scanning.
+
+   **Timing:** several minutes; the screenshot run's detection took 5m55s.
+   **Point out:** the actual inline finding identifies untrusted input reaching the SQL sink at the reviewed SHA;
+   a green review workflow alone would not demonstrate detection.
+
+   ![The authenticated current-run Copilot review identifies SQL injection, quote failures and the exact reviewed source location](images/02-copilot-finding.png)
 
 3. **Create and assign the remediation Issue.** Append real evidence to the supplied task:
 
@@ -172,6 +212,15 @@ than promising a fixed duration. Commands below create two temporary lab branche
    Open **View session** in Copilot's repair PR. Look for its tests-only commit, actual failed assertions,
    parameterized LINQ/EF repair and separate fix commit. Copy the repair PR number into `$repair`.
 
+   **Timing:** assignment takes under a minute; the screenshot run's cloud execution took 15 minutes. Allow 20–30
+   minutes or more when environment setup or runner queues are slow.
+   **Point out:** the agent must preserve the supplied regression, commit it before the source repair and show real
+   assertion failures. A build error is not proof of the injection.
+
+   ![The trusted replay of Copilot's tests-only commit shows an injection assertion returning 18 records instead of zero and six failures out of ten](images/03-failing-regression.png)
+
+   This is the before-repair log downloaded from the trusted replay in step 4, not a simulated terminal failure.
+
 4. **Approve execution, then independently verify.** Review the changed files before approving workflows.
    Select **Approve and run workflows**, or rerun the waiting run as a maintainer:
 
@@ -191,16 +240,34 @@ than promising a fixed duration. Commands below create two temporary lab branche
    The checker and reference regression come from `main`, not Copilot's branch. It permits only a new test plus
    edits inside `ListAsync`, preserving approval methods and all other source.
 
+   **Timing:** the screenshot run's replay job took 1m48s; runner queuing is additional.
+   **Point out:** trusted code and tests come from `main`, not the agent's PR. The same regression must fail on unsafe
+   source and pass on repaired source, followed by the full app suite.
+
+   ![Actions independently records six baseline failures, all ten repaired cases passing, and a successful full suite at immutable commits](images/04-trusted-replay.png)
+
 5. **Review the repair.** Inspect the two-file diff. Parameterization prevents SQL interpretation; `EscapeLike`
    preserves literal `%` and `_` searches. Confirm requester, reviewer, admin, public-id and cross-department cases.
    Request a fresh Copilot review on the repair PR using the same API as step 2 with `$repair` instead of `$labPr`.
    Its comments are advisory; the replay and app CI remain the deterministic evidence. **Do not merge either PR.**
    On a public/licensed repo, also require the optional clean CodeQL rescan below before claiming scanner remediation.
 
+   **Timing:** allow 2–3 minutes to inspect the small diff; a fresh AI review may take several more minutes.
+   **Point out:** the SQL command no longer contains concatenated input. Explicit LIKE escaping preserves literal
+   punctuation searches, and unchanged authorization filters still constrain the result.
+
+   ![Copilot's separate source-fix commit replaces concatenated raw SQL with parameterized ILike predicates and an explicit escape character](images/05-cloud-fix.png)
+
 6. **Keep the evidence.** Link both PRs, the injection comment, Issue, replay run, artifact and exact SHAs in a comment
    on the solution's delivery PR. Record UTC start/end times for detection, assignment and verified repair.
    Report review findings separately from deterministic results and mark CodeQL/Autofix BLOCKED when unlicensed.
    Retain downloaded artifacts before GitHub's retention window expires; a closed PR preserves discussion, not artifacts forever.
+
+   **Timing:** about 2 minutes to collect links, download artifacts and record the result.
+   **Point out:** AI comments and deterministic acceptance are separate evidence. Report missed detection, timeout,
+   failed tests or blocked licensing explicitly rather than calling every completed workflow a PASS.
+
+   ![The actual Actions run lists the successful replay job, retained secure-remediation-evidence artifact and run link](images/06-retained-evidence.png)
 
 ## Optional: CodeQL and Autofix when public or licensed
 
@@ -267,6 +334,11 @@ git worktree remove "out\secure-$run"
 git branch -D $lab
 ```
 
+If Windows rejects removal because build output paths are too long, use
+`git -c core.longpaths=true worktree remove "out\secure-$run"` for that exact owned worktree.
+Confirm both PRs show **Closed**, not **Merged**, and the remote lab refs no longer appear in `git ls-remote`.
+Do not delete the downloaded evidence when resetting the demo.
+
 Keep the evidence on the delivery PR. The next run uses a new timestamp and clean `origin/main`, so no existing
 branch or Issue is overwritten. Do not delete another session's branches, worktrees, databases or artifacts.
 
@@ -293,6 +365,9 @@ git apply --check --ignore-space-change solutions/05-secure-github/lab/code-find
 - **CodeQL preflight BLOCKED / alerts API 403:** expected on an unlicensed private repo. Use the Copilot review path;
   enable neither CodeQL nor upload as a workaround. Resume after public visibility or licensed organization enablement.
 - **No workflows on Copilot's PR:** approve them in the PR or use `gh run rerun <id>` as a maintainer.
+- **Copilot review cannot read check runs:** the review may report no inline issues while explicitly saying it could
+  not verify the evidence. Supply the actual replay and CI links, inspect them independently, and retain that access
+  limitation. Do not equate an empty review with acceptance or claim the agent verified checks it could not read.
 - **No custom agent:** merge the solution package onto the default branch before assigning the Issue.
 - **Cloud agent cannot read the private review with `gh`:** the profile explicitly enables built-in read-only
   `github` tools. The Issue also carries an authenticated same-run review export; retain its actual URL, author,
