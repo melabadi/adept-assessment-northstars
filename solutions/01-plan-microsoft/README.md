@@ -187,7 +187,7 @@ Run the commands from the repository root in PowerShell 7.
 
 3. **Show the agent in Foundry** (1 to 2 minutes). In the [Foundry portal](https://ai.azure.com), open the `plan` project, then **Build** → **Agents** → `requirements-analyst`. Open the **Version** list at the top.
 
-   ![The requirements-analyst agent in the Foundry portal: the Version list shows versions 1 to 10 with version 10 active, next to the model gpt-4.1, the instructions from agent.yaml, and a File search tool bound to the plan-inputs vector store](images/03-foundry-agent.png)
+   ![The requirements-analyst agent in the Foundry portal: the Version list shows versions 1 to 10 with version 10 selected, next to the model gpt-4.1, the instructions from agent.yaml, and a File search tool bound to the plan-inputs vector store](images/03-foundry-agent.png)
 
    **Point out:** this is a managed agent with a history. Its instructions are the ones in `agent.yaml`, file search reads the transcript and policies from a vector store, and each change to the definition added a version.
 
@@ -209,9 +209,9 @@ Run the commands from the repository root in PowerShell 7.
 
    The run takes under a minute. Open it in the browser: **Actions** → **Plan · Microsoft · run the Foundry requirements analyst** → the newest run. Its summary shows the agent version, the response id, the script's output, and the branch it pushed, `plan/foundry-brief-<run id>`.
 
-   ![The workflow run's summary: Foundry requirements brief by agent requirements-analyst v10, the response id, the analyst output ending in VALID, and the Open the review pull request link for branch plan/foundry-brief-40712566196](images/05-run-summary.png)
+   ![The workflow run's job summary: Foundry requirements brief by agent requirements-analyst v10 with its response id, the analyst output (agent and vector store reused, VALID on the first attempt with 4 tasks and 4 open questions, and the three files written), and the Open the review pull request link for branch plan/foundry-brief-40712566196](images/05-run-summary.png)
 
-   **Point out:** no key or password exists for this. The workflow signs in with an identity that only this repository's `plan-microsoft` environment can use, and its public log shows the Foundry endpoint as `***`.
+   **Point out:** the run used the same agent version as your terminal, v10, and ends with a link to a review pull request. No key or password exists for this: the workflow signs in through OIDC, and its log, not shown here, prints the Foundry endpoint as `***`.
 
 6. **Open the review pull request** (1 minute). In the run summary, select **Open the review pull request**. GitHub opens a pull request form with the title and description filled in. Select **Create pull request**.
 
@@ -233,9 +233,9 @@ Run the commands from the repository root in PowerShell 7.
    python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-microsoft/brief/backlog.json $env:TEMP/01-plan-microsoft-pr.json $env:TEMP/01-plan-github.json
    ```
 
-   The columns are your terminal run from step 2, the GitHub Actions run from step 5, and Copilot's brief. Each planted issue is ✅ found, ⚠️ found with the wrong status, or ❌ missed.
+   The columns are your terminal run from step 2, the GitHub Actions run from step 5, and Copilot's brief. Each planted issue is ✅ found, ⚠️ found with the wrong status, or ❌ missed. In this capture the terminal run is marked ❌ for the Finance vs IT conflict: its brief cited T07 and the two policies but not T06, as step 4 describes.
 
-   ![The comparison of three briefs: both Foundry runs and the Copilot brief find the resolved auto-routing conflict and all four unknowns, and ignore T18; the terminal run misses the Finance versus IT conflict because it cites T07 but not T06, while the Actions run and Copilot find it; Copilot's brief has 13 requirements to Foundry's 5](images/07-compare.png)
+   ![The comparison of three briefs: both Foundry runs and the Copilot brief find the resolved auto-routing conflict and all four unknowns, and ignore T18; the terminal run is marked missed for the Finance versus IT conflict, while the Actions run and Copilot find it; Copilot's brief has 13 requirements to Foundry's 5](images/07-compare.png)
 
    **Point out:** two runs of the same agent version differ. The validator checks that a brief is well-formed and cites real sources; whether it is complete is for the reviewer, helped by this score. Judge a change to `agent.yaml` on several runs, as the [foundry-requirements-agent](.github/skills/foundry-requirements-agent/SKILL.md) skill describes.
 
@@ -243,11 +243,11 @@ Run the commands from the repository root in PowerShell 7.
 
    ![The workflow's comment on the pull request: Backlog published after review, track microsoft: 5 updated, with EPIC-TRIAGE as #21 and TASK-1 to TASK-4 as #22 to #25](images/08-published.png)
 
-   The first time in a repository, every line says `created`. After a reset, the publisher reopens and updates the same Issues, so the lines say `updated`, as here. Open the epic, shown at the top of this page. It carries the summary, acceptance criteria, open questions, the unresolved conflict, and the quoted source paragraphs. Its four tasks are sub-issues, and those that depend on another task are marked blocked:
+   The first time in a repository, every line says `created`. After a reset, the publisher reopens and updates the same Issues, so the lines say `updated`, as here. Open the epic: its top part is the screenshot at the top of this page. Below the open questions, it also lists the unresolved conflict and quotes the source paragraphs. Its four tasks are sub-issues, and those that depend on another task are marked blocked:
 
    ![The epic's Sub-issues panel, 0 of 4 done: Implement Assistant Recommendation Engine (#22) comes first, and Reviewer Confirmation and Override UI (#23), Audit Logging for Recommendations and Lookups (#24), and Bilingual Support and Assistant Availability Handling (#25) are each marked blocked by a dependency](images/08-sub-issues.png)
 
-   **Point out:** nothing reached the backlog until a person applied the label, and every Issue still shows where each line came from.
+   **Point out:** nothing reached the backlog until a person applied the label. The epic's open questions still carry the paragraphs they came from, and the four tasks are linked to it as sub-issues.
 
 9. **Show it is safe to repeat** (about 1 minute). Apply the label again:
 
@@ -258,7 +258,7 @@ Run the commands from the repository root in PowerShell 7.
 
    ![The comment after applying the label again: track microsoft: 5 unchanged, with every line from #21 to #25 marked unchanged](images/09-unchanged.png)
 
-   **Point out:** the publisher is idempotent. Applying the label again updates the existing Issues and never duplicates them.
+   **Point out:** the publisher is idempotent. With the brief unchanged, applying the label again changes nothing: all five lines say `unchanged`, and no Issue is duplicated.
 
 ## What to observe
 
