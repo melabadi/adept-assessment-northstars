@@ -9,7 +9,7 @@ This repository is a hands-on demo of AI across the software development lifecyc
 | `app/` | RequestHub: ASP.NET Core 10 API (`src/RequestHub.Api`), domain + EF Core (`src/RequestHub.Core`), notification worker (`src/RequestHub.Worker`), React web UI (`web/`), integration tests (`tests/`), API contract (`contracts/`), and the Bicep modules that host it (`infra/`). |
 | `solutions/<NN>-<phase>-<github\|microsoft>/` | One solution per folder: README, its own `.github/` (agent, skills, workflows, issue templates), scripts and inputs, and for Microsoft solutions its own `azure.yaml` + `infra/` deployed into its own resource group. |
 | `.github/agents/`, `.github/skills/`, `.github/workflows/`, `.github/ISSUE_TEMPLATE/` | Mirrors of the solutions' `.github/` files (GitHub only reads the root). Never edit a mirror: edit the solution's copy, then run `python tools/sync_solutions.py`. |
-| `tools/` | Repository tooling, such as `sync_solutions.py`. |
+| `tools/` | Repository tooling: `sync_solutions.py` (mirror check), `screenshot.mjs` and `redact.py` (screenshots with tenant details masked). |
 
 ## Build and test
 
@@ -25,6 +25,7 @@ This repository is a hands-on demo of AI across the software development lifecyc
 - **Never weaken a test, guard, or validation to make a check pass.** Fix the code, or explain why the test is wrong in the PR.
 - **Contract `requesthub.v1` is additive-only.** If the API shape changes, regenerate `app/contracts/openapi.json` with `UPDATE_CONTRACT=1 dotnet test --solution app/RequestHub.slnx` and describe the change in the PR.
 - **Synthetic data only.** No real people, customers, secrets, tenant ids, or subscription ids in code, tests, docs, or commit messages.
+- **Never expose the tenant.** No deployed host names, resource names, GUIDs, account names, or e-mail addresses in code, docs, Issues, pull requests, or comments. Capture screenshots only with `tools/screenshot.mjs`, and run `python tools/redact.py check --changed` before committing (see CONTRIBUTING.md, "Screenshots").
 - Keep changes small and reviewable; add or update tests for every behavior change; update the relevant README when behavior or commands change.
 
 ## Code conventions
