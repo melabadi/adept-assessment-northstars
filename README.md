@@ -56,7 +56,7 @@ Each solution README lists anything else it needs.
 ```text
 app/         RequestHub: API, worker, web UI, tests, API contract, and the Bicep modules that host it
 solutions/   the fourteen solutions, one folder each
-tools/       repository tooling (sync_solutions.py)
+tools/       repository tooling: sync_solutions.py (mirror check), screenshot.mjs and redact.py (masked screenshots)
 .github/     shared CI, Copilot setup steps and instructions, plus the mirrored solution files
 ```
 
