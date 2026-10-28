@@ -58,7 +58,8 @@ jobs:
     environment: develop-microsoft
     env:
       AGENT_NAME: ${{ github.event_name == 'pull_request' && format('requesthub-triage-pr-{0}', github.event.pull_request.number) || 'requesthub-triage' }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      # A secret, so GitHub masks it in logs: it names the Foundry account. The model deployment name identifies nothing.
+      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
     services:
       postgres:
@@ -75,6 +76,11 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     steps:
+      - name: Mask the Foundry host name in logs
+        run: |
+          # GitHub masks the whole endpoint; also mask the parts an error message could print on their own.
+          host="${FOUNDRY_PROJECT_ENDPOINT#https://}"; host="${host%%/*}"
+          if [ -n "$host" ]; then echo "::add-mask::$host"; echo "::add-mask::${host%%.*}"; fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -100,7 +106,7 @@ jobs:
           ASPNETCORE_ENVIRONMENT: Development
           ASPNETCORE_URLS: http://localhost:5080
           Triage__Provider: Foundry
-          Foundry__ProjectEndpoint: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          Foundry__ProjectEndpoint: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           Foundry__AgentName: ${{ env.AGENT_NAME }}
         run: |
           nohup dotnet run --project app/src/RequestHub.Api -c Release --no-build --no-launch-profile > api.log 2>&1 &
@@ -137,6 +143,12 @@ jobs:
       - name: Delete the candidate agent
         if: always() && github.event_name == 'pull_request'
         run: python solutions/03-develop-microsoft/publish_triage_agent.py --name "$AGENT_NAME" --delete
+      - name: Remove the Foundry host name from the API log
+        if: always()
+        run: |
+          # Artifacts are not masked like logs, so the uploaded API log gets placeholders instead.
+          host="${FOUNDRY_PROJECT_ENDPOINT#https://}"; host="${host%%/*}"
+          if [ -f api.log ] && [ -n "$host" ]; then sed -i "s|$host|<foundry-host>|g; s|${host%%.*}|<foundry-account>|g" api.log; fi
       - name: Upload evaluation results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
