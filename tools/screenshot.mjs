@@ -307,7 +307,7 @@ async function capturePage(url, out) {
   const height = Number(options.height ?? 800);
   const scale = Number(options.scale ?? 2);
   let browser;
-  try { browser = await chromium.connectOverCDP(cdp); } catch { fail(2, `No browser at ${cdp}. Start the capture browser first (CONTRIBUTING.md, "Screenshots").`); }
+  try { browser = await chromium.connectOverCDP(cdp, { timeout: 60_000 }); } catch (error) { fail(2, `No browser at ${cdp} (${error.message.split('\n')[0]}). Start the capture browser first (CONTRIBUTING.md, "Screenshots").`); }
   const context = browser.contexts()[0];
   const page = await context.newPage();
   try {
