@@ -91,8 +91,21 @@ app.Use(async (ctx, next) =>
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = c => c.Tags.Contains("ready") });
 
+// index.html names the current build's hashed scripts. Without revalidation a browser keeps the old page after a
+// deploy and asks the new revision for scripts it no longer serves; the hashed scripts themselves may be cached.
+var revalidateHtml = new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Context.Response.Headers.CacheControl = "no-cache";
+        }
+    },
+};
+
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(revalidateHtml);
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseCustomHeaderCsrfGuard();
@@ -100,7 +113,7 @@ app.UseCustomHeaderCsrfGuard();
 app.MapOpenApi("/openapi/{documentName}.json");
 app.MapRequestHubApi();
 app.MapFallback("/api/{**path}", () => Results.Problem(statusCode: 404, title: "route.not_found", detail: "No such API route."));
-app.MapFallbackToFile("index.html");
+app.MapFallbackToFile("index.html", revalidateHtml);
 
 app.Run();
 

@@ -40,7 +40,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 GUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
-HOST = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:azurecontainerapps\.io|azure\.com|windows\.net|azurecr\.io|azure\.net)\b", re.I)
+HOST = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:azurecontainerapps\.io|azure\.com|windows\.net|azurecr\.io|azure\.net|azuresre\.ai|"
+                  r"azurewebsites\.net|azure-api\.net|azurefd\.net|azureedge\.net|azurestaticapps\.net|trafficmanager\.net|"
+                  r"cloudapp\.net)\b", re.I)
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 ALLOWED_EMAIL = re.compile(r"(noreply\.github\.com|@example\.(com|org)|@contoso\.com|@contoso\.onmicrosoft\.com)$", re.I)
 TENANT_DOMAIN = re.compile(r"\b[A-Za-z0-9-]+\.onmicrosoft\.com\b")

@@ -237,6 +237,14 @@ def sync_issues(summary: dict, cases: dict) -> None:
             print(f"opened {url} ({cid})")
 
 
+def shown(path: Path) -> str:
+    """The path relative to the current folder when it is inside it, so the output stays short and shows no profile path."""
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--api", default=os.environ.get("REQUESTHUB_API", "http://localhost:5080"), help="RequestHub API base URL (default http://localhost:5080 or REQUESTHUB_API)")
@@ -301,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
             fh.write(markdown)
     if args.repeat > 1:
         print("\nRepeatability: " + ", ".join(f"{cid} {s}" for cid, s in summary["stability"].items()))
-    print(f"\n{passed}/{len(results)} runs passed · report: {args.out / 'report.md'}")
+    print(f"\n{passed}/{len(results)} runs passed · report: {shown(args.out / 'report.md')}")
 
     if args.issues:
         try:
