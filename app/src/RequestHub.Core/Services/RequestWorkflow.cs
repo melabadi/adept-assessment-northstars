@@ -355,6 +355,116 @@ public sealed partial class RequestWorkflow(
         return Result<RequestDetailDto>.Ok(await ToDetailAsync(user, request, ct));
     }
 
+    public async Task<Result<RequestDetailDto>> ConfirmRecommendationAsync(AppUser user, string publicId, Guid recommendationId, CancellationToken ct)
+    {
+        var request = await LoadAsync(publicId, ct);
+        if (request is null)
+        {
+            return WorkflowError.NotFound(publicId);
+        }
+
+        if (!(user.HasRole(Roles.Reviewer) || user.IsAdmin))
+        {
+            return new WorkflowError("auth.role_required", "Only reviewers can confirm routing recommendations.", 403);
+        }
+
+        var recommendation = request.Recommendations.SingleOrDefault(r => r.Id == recommendationId);
+        if (recommendation is null)
+        {
+            return new WorkflowError("recommendation.not_found", "The routing recommendation was not found.", 404);
+        }
+
+        if (!user.CanAccessDepartment(request.DepartmentId) || !user.CanAccessDepartment(recommendation.SuggestedDepartmentId))
+        {
+            return WorkflowError.Forbidden("You can only confirm recommendations between departments you have access to.");
+        }
+
+        if (request.Status.IsTerminal())
+        {
+            return new WorkflowError("request.terminal", $"{request.PublicId} is {request.Status}; routing is closed.", 409);
+        }
+
+        if (recommendation.Status == RecommendationStatus.Confirmed)
+        {
+            return new WorkflowError("recommendation.already_confirmed", "This routing recommendation has already been confirmed.", 409);
+        }
+
+        if (recommendation.Status == RecommendationStatus.Superseded || recommendation.DepartmentAtRecommendation != request.DepartmentId)
+        {
+            return new WorkflowError("recommendation.stale", "This routing recommendation is stale; get a current recommendation.", 409);
+        }
+
+        var now = clock.GetUtcNow();
+        var from = request.DepartmentId;
+        var to = recommendation.SuggestedDepartmentId;
+        if (now <= request.UpdatedAt)
+        {
+            // PostgreSQL timestamps are persisted to microsecond precision; force a durable row update
+            // even when a same-department confirmation happens within the timestamp's current precision.
+            now = request.UpdatedAt.AddTicks(10);
+        }
+
+        if (from != to)
+        {
+            request.DepartmentId = to;
+            if (request.Status == RequestStatus.Submitted)
+            {
+                request.Status = RequestStatus.InReview;
+            }
+
+            await NotifyDepartmentStaffAsync(request, "request.routed", now, ct);
+        }
+
+        // Updating the request row even for a same-department confirmation makes the request row-version
+        // the concurrency guard for duplicate confirmations.
+        request.UpdatedAt = now;
+        recommendation.Status = RecommendationStatus.Confirmed;
+        AddAudit(request.Id, user.Id, "triage.confirmed", now, new
+        {
+            request = request.PublicId,
+            recommendationId = recommendation.Id,
+            from,
+            to,
+            policyRefs = recommendation.PolicyRefs,
+            provider = recommendation.Provider,
+        });
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            db.ChangeTracker.Clear();
+            var current = await LoadAsync(publicId, ct);
+            if (current is null)
+            {
+                return WorkflowError.NotFound(publicId);
+            }
+
+            var currentRecommendation = current.Recommendations.SingleOrDefault(r => r.Id == recommendationId);
+            if (current.Status.IsTerminal())
+            {
+                return new WorkflowError("request.terminal", $"{current.PublicId} is {current.Status}; routing is closed.", 409);
+            }
+
+            if (currentRecommendation?.Status == RecommendationStatus.Confirmed)
+            {
+                return new WorkflowError("recommendation.already_confirmed", "This routing recommendation has already been confirmed.", 409);
+            }
+
+            if (currentRecommendation is null || currentRecommendation.Status == RecommendationStatus.Superseded
+                || currentRecommendation.DepartmentAtRecommendation != current.DepartmentId)
+            {
+                return new WorkflowError("recommendation.stale", "This routing recommendation is stale; get a current recommendation.", 409);
+            }
+
+            return new WorkflowError("request.concurrent_update", $"{current.PublicId} was changed by someone else. Reload and retry.", 409);
+        }
+
+        return Result<RequestDetailDto>.Ok(await ToDetailAsync(user, request, ct));
+    }
+
     public async Task<Result<RecommendationDto>> RecommendAsync(AppUser user, string publicId, CancellationToken ct)
     {
         var request = await LoadAsync(publicId, ct);

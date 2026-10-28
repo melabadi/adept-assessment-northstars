@@ -139,7 +139,7 @@ export function RequestDetailPage() {
         </section>
 
         <div className="detail-side area-side">
-          <TriagePanel detail={detail} onChanged={refresh} />
+          <TriagePanel detail={detail} history={history} onChanged={refresh} />
           {detail.permissions.canRoute ? <RoutingPanel detail={detail} onChanged={refresh} /> : null}
           <DecisionPanel detail={detail} onChanged={refresh} />
         </div>

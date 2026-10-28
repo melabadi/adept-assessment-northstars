@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RequestHub.Core.Data;
+using RequestHub.Core.Domain;
 using RequestHub.Core.Services;
 using RequestHub.Core.Triage;
 
@@ -50,6 +51,246 @@ public sealed class TriageTests(ApiFixture api) : IClassFixture<ApiFixture>
         Assert.Contains(policies, p => p.Id == "POL-GOV-001");
         Assert.All(policies, p => Assert.False(string.IsNullOrWhiteSpace(p.Version)));
     }
+}
+
+public sealed class RecommendationConfirmationTests(ApiFixture api) : IClassFixture<ApiFixture>
+{
+    [Fact]
+    public async Task Reviewer_confirmation_routes_to_the_suggestion_without_changing_priority_or_decision_and_records_one_audit()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC");
+
+        var response = await ConfirmAsync("u-ben", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var after = await response.Read<RequestDetailDto>();
+        Assert.Equal("FAC", after.DepartmentId);
+        Assert.Equal("InReview", after.Status);
+        Assert.Equal(request.Priority, after.Priority);
+        Assert.Null(after.Decision);
+        Assert.Equal("Confirmed", after.LatestRecommendation!.Status);
+
+        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{request.Id}/history")).Read<List<AuditEventDto>>();
+        var confirmation = Assert.Single(history, e => e.Action == "triage.confirmed");
+        Assert.Equal("u-ben", confirmation.Actor.Id);
+        Assert.Equal(recommendationId.ToString(), confirmation.Details.GetProperty("recommendationId").GetString());
+        Assert.Equal("IT", confirmation.Details.GetProperty("from").GetString());
+        Assert.Equal("FAC", confirmation.Details.GetProperty("to").GetString());
+        Assert.Equal("sample-rules", confirmation.Details.GetProperty("provider").GetString());
+        Assert.Contains(confirmation.Details.GetProperty("policyRefs").EnumerateArray(),
+            p => p.GetString() == "POL-ROUTE-003@2.1");
+        Assert.DoesNotContain(history, e => e.Action == "routing.changed");
+
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var requestId = await db.Requests.Where(r => r.Number == RequestNumber(request.Id)).Select(r => r.Id).SingleAsync();
+        Assert.NotEmpty(await db.Notifications.Where(n => n.RequestId == requestId && n.Type == "request.routed").ToListAsync());
+    }
+
+    [Fact]
+    public async Task Reviewer_confirmation_for_the_current_department_confirms_without_rerouting()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "IT");
+
+        var response = await ConfirmAsync("u-ben", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var after = await response.Read<RequestDetailDto>();
+        Assert.Equal("IT", after.DepartmentId);
+        Assert.Equal("Submitted", after.Status);
+        Assert.Equal("Confirmed", after.LatestRecommendation!.Status);
+        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{request.Id}/history")).Read<List<AuditEventDto>>();
+        Assert.Single(history, e => e.Action == "triage.confirmed");
+
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var requestId = await db.Requests.Where(r => r.Number == RequestNumber(request.Id)).Select(r => r.Id).SingleAsync();
+        Assert.Empty(await db.Notifications.Where(n => n.RequestId == requestId && n.Type == "request.routed").ToListAsync());
+    }
+
+    [Fact]
+    public async Task Requesters_and_approvers_cannot_confirm_a_recommendation()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC");
+
+        foreach (var persona in new[] { "u-ava", "u-chloe" })
+        {
+            var response = await ConfirmAsync(persona, request.Id, recommendationId);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal("auth.role_required", await response.Code());
+        }
+    }
+
+    [Fact]
+    public async Task Reviewer_without_access_to_the_current_department_cannot_confirm()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FIN");
+
+        var response = await ConfirmAsync("u-grace", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("auth.department_forbidden", await response.Code());
+    }
+
+    [Fact]
+    public async Task Reviewer_without_access_to_the_suggested_department_cannot_confirm()
+    {
+        var request = await CreateRequestAsync("FAC");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FIN");
+
+        var response = await ConfirmAsync("u-ben", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("auth.department_forbidden", await response.Code());
+    }
+
+    [Fact]
+    public async Task Superseded_recommendation_cannot_be_confirmed()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC", RecommendationStatus.Superseded);
+
+        var response = await ConfirmAsync("u-ben", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("recommendation.stale", await response.Code());
+    }
+
+    [Fact]
+    public async Task Recommendation_for_a_department_that_has_changed_cannot_be_confirmed()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC");
+        await SetRequestDepartmentAsync(request.Id, "FAC");
+
+        var response = await ConfirmAsync("u-ben", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("recommendation.stale", await response.Code());
+    }
+
+    [Fact]
+    public async Task Duplicate_confirmation_returns_already_confirmed_without_a_second_audit()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC");
+
+        Assert.Equal(HttpStatusCode.OK, (await ConfirmAsync("u-ben", request.Id, recommendationId)).StatusCode);
+        var duplicate = await ConfirmAsync("u-ben", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        Assert.Equal("recommendation.already_confirmed", await duplicate.Code());
+        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{request.Id}/history")).Read<List<AuditEventDto>>();
+        Assert.Single(history, e => e.Action == "triage.confirmed");
+    }
+
+    [Fact]
+    public async Task Concurrent_confirmation_records_exactly_one_audit()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC");
+
+        var responses = await Task.WhenAll(
+            ConfirmAsync("u-ben", request.Id, recommendationId),
+            ConfirmAsync("u-dan", request.Id, recommendationId));
+
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.OK);
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Conflict);
+        var conflict = responses.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        Assert.Equal("recommendation.already_confirmed", await conflict.Code());
+        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{request.Id}/history")).Read<List<AuditEventDto>>();
+        Assert.Single(history, e => e.Action == "triage.confirmed");
+    }
+
+    [Theory]
+    [InlineData("Approved")]
+    [InlineData("Rejected")]
+    public async Task Approved_or_rejected_request_cannot_have_its_recommendation_confirmed(string outcome)
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC");
+        var decision = await api.As("u-chloe").PostJson($"/api/requests/{request.Id}/decisions",
+            new { outcome, comment = outcome == "Rejected" ? "Outside the request scope." : null });
+        Assert.Equal(HttpStatusCode.Created, decision.StatusCode);
+
+        var response = await ConfirmAsync("u-dan", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("request.terminal", await response.Code());
+    }
+
+    [Fact]
+    public async Task Admin_can_confirm_a_recommendation()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC");
+
+        var response = await ConfirmAsync("u-dan", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("FAC", (await response.Read<RequestDetailDto>()).DepartmentId);
+    }
+
+    private async Task<RequestDetailDto> CreateRequestAsync(string department) =>
+        await (await api.As("u-ava").PostJson("/api/requests", new
+        {
+            title = $"Routing check {Guid.NewGuid():N}",
+            description = "A synthetic request for routing confirmation tests.",
+            category = "equipment",
+            departmentId = department,
+            priority = "Normal",
+        })).Read<RequestDetailDto>();
+
+    private async Task<Guid> AddRecommendationAsync(string publicId, string suggestedDepartment, RecommendationStatus status = RecommendationStatus.Proposed)
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var request = await db.Requests.Include(r => r.Recommendations).SingleAsync(r => r.Number == RequestNumber(publicId));
+        var recommendation = request.Recommendations.FirstOrDefault();
+        if (recommendation is null)
+        {
+            recommendation = new TriageRecommendation
+            {
+                Id = Guid.NewGuid(),
+                RequestId = request.Id,
+                Provider = "sample-rules",
+                IsSample = true,
+                SuggestedDepartmentId = suggestedDepartment,
+                SuggestedPriority = RequestPriority.Urgent,
+                Rationale = "Synthetic routing recommendation for the integration test.",
+                PolicyRefs = ["POL-ROUTE-003@2.1"],
+                Confidence = 0.9,
+                DepartmentAtRecommendation = request.DepartmentId,
+                CreatedById = "u-ben",
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            db.Recommendations.Add(recommendation);
+        }
+
+        recommendation.SuggestedDepartmentId = suggestedDepartment;
+        recommendation.Status = status;
+        recommendation.DepartmentAtRecommendation = request.DepartmentId;
+        await db.SaveChangesAsync();
+        return recommendation.Id;
+    }
+
+    private async Task SetRequestDepartmentAsync(string publicId, string department)
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var request = await db.Requests.SingleAsync(r => r.Number == RequestNumber(publicId));
+        request.DepartmentId = department;
+        await db.SaveChangesAsync();
+    }
+
+    private Task<HttpResponseMessage> ConfirmAsync(string persona, string publicId, Guid recommendationId) =>
+        api.As(persona).PostAsync($"/api/requests/{publicId}/triage-recommendations/{recommendationId}/confirm", null);
+
+    private static int RequestNumber(string publicId) => int.Parse(publicId.AsSpan("REQ-".Length));
 }
 
 /// <summary>A provider that misbehaves on purpose, to prove the app's guards (not the model) decide what is accepted.</summary>

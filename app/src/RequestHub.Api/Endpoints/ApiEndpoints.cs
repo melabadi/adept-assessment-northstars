@@ -58,6 +58,10 @@ public static class ApiEndpoints
             .ProducesProblem(StatusCodes.Status504GatewayTimeout);
         api.MapGet("/requests/{id}/triage-recommendations", ListRecommendations)
             .Produces<List<RecommendationDto>>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
+        api.MapPost("/requests/{id}/triage-recommendations/{recommendationId:guid}/confirm", ConfirmRecommendation)
+            .WithSummary("Confirm the recommended routing department. Does not change priority or make an approval decision.")
+            .Produces<RequestDetailDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         var admin = api.MapGroup("/admin").RequireAuthorization("Admin").WithTags("Admin");
         admin.MapPost("/reset", ResetDemo).WithSummary("Delete and reseed all demo data in this environment's database (Demo:AllowReset must be true).")
@@ -232,6 +236,12 @@ public static class ApiEndpoints
     private static async Task<IResult> ListRecommendations(HttpContext ctx, string id, RequestWorkflow workflow, CancellationToken ct)
     {
         var result = await workflow.ListRecommendationsAsync(ctx.User.ToAppUser(), id, ct);
+        return result.IsSuccess ? TypedResults.Ok(result.Value) : Problem(result.Error!);
+    }
+
+    private static async Task<IResult> ConfirmRecommendation(HttpContext ctx, string id, Guid recommendationId, RequestWorkflow workflow, CancellationToken ct)
+    {
+        var result = await workflow.ConfirmRecommendationAsync(ctx.User.ToAppUser(), id, recommendationId, ct);
         return result.IsSuccess ? TypedResults.Ok(result.Value) : Problem(result.Error!);
     }
 
