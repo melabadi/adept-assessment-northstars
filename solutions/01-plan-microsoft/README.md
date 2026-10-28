@@ -243,7 +243,7 @@ Run the commands from the repository root in PowerShell 7.
 
    ![The workflow's comment on the pull request: Backlog published after review, track microsoft: 5 updated, with EPIC-TRIAGE as #21 and TASK-1 to TASK-4 as #22 to #25](images/08-published.png)
 
-   The first time in a repository, every line says `created`. After a reset, the publisher reopens and updates the same Issues, so the lines say `updated`, as here. Open the epic: its top part is the screenshot at the top of this page. Below the open questions, it also lists the unresolved conflict and quotes the source paragraphs. Its four tasks are sub-issues, and those that depend on another task are marked blocked:
+   The first time in a repository, every line says `created`. After a reset, the publisher reopens and updates the same Issues, so the lines say `updated`, as here. If the new brief's tasks depend on each other differently from the last one's, the summary line also reports `stale dependencies removed: <n>`. Open the epic: its top part is the screenshot at the top of this page. Below the open questions, it also lists the unresolved conflict and quotes the source paragraphs. Its four tasks are sub-issues, and those that depend on another task are marked blocked:
 
    ![The epic's Sub-issues panel, 0 of 4 done: Implement Assistant Recommendation Engine (#22) comes first, and Reviewer Confirmation and Override UI (#23), Audit Logging for Recommendations and Lookups (#24), and Bilingual Support and Assistant Availability Handling (#25) are each marked blocked by a dependency](images/08-sub-issues.png)
 
