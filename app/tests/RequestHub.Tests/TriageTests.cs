@@ -361,6 +361,91 @@ public sealed class RecommendationConfirmationTests(ApiFixture api) : IClassFixt
     private static int RequestNumber(string publicId) => int.Parse(publicId.AsSpan("REQ-".Length));
 }
 
+public sealed class ConcurrentRecommendationFixture : ApiFixture
+{
+    protected override void ConfigureTestServices(IServiceCollection services)
+    {
+        services.RemoveAll<ITriageProvider>();
+        services.AddSingleton<ITriageProvider, ConcurrentRecommendationProvider>();
+    }
+}
+
+public sealed class ConcurrentRecommendationProvider : ITriageProvider
+{
+    private static int calls;
+    private static TaskCompletionSource bothCalls = NewSignal();
+
+    public string Id => "test-concurrent-recommendation";
+    public bool IsSample => true;
+
+    public static void Reset()
+    {
+        Interlocked.Exchange(ref calls, 0);
+        bothCalls = NewSignal();
+    }
+
+    public async Task<TriageResult> RecommendAsync(TriageContext context, CancellationToken cancellationToken)
+    {
+        if (Interlocked.Increment(ref calls) == 2)
+        {
+            bothCalls.TrySetResult();
+        }
+
+        await bothCalls.Task.WaitAsync(cancellationToken);
+        return new TriageResult("IT", "Normal", "Concurrent recommendation test.", ["POL-ROUTE-001"], 0.8, false);
+    }
+
+    private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+public sealed class ConcurrentRecommendationTests(ConcurrentRecommendationFixture api) : IClassFixture<ConcurrentRecommendationFixture>
+{
+    [Fact]
+    public async Task Concurrent_generation_conflict_returns_a_stable_conflict_instead_of_server_error()
+    {
+        ConcurrentRecommendationProvider.Reset();
+        var request = await (await api.As("u-ava").PostJson("/api/requests", new
+        {
+            title = $"Concurrent triage {Guid.NewGuid():N}",
+            description = "A synthetic request for concurrent recommendation testing.",
+            category = "equipment",
+            departmentId = "IT",
+            priority = "Normal",
+        })).Read<RequestDetailDto>();
+
+        await using (var scope = api.Factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+            var requestNumber = int.Parse(request.Id.AsSpan("REQ-".Length));
+            var entity = await db.Requests.SingleAsync(r => r.Number == requestNumber);
+            db.Recommendations.Add(new TriageRecommendation
+            {
+                Id = Guid.NewGuid(),
+                RequestId = entity.Id,
+                Provider = "sample-rules",
+                IsSample = true,
+                SuggestedDepartmentId = "IT",
+                SuggestedPriority = RequestPriority.Normal,
+                Rationale = "Existing recommendation for the concurrency test.",
+                PolicyRefs = ["POL-ROUTE-001@1.2"],
+                Confidence = 0.8,
+                DepartmentAtRecommendation = "IT",
+                CreatedById = "u-ben",
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var responses = await Task.WhenAll(
+            api.As("u-ben").PostAsync($"/api/requests/{request.Id}/triage-recommendations", null),
+            api.As("u-ben").PostAsync($"/api/requests/{request.Id}/triage-recommendations", null));
+
+        Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Created);
+        var conflict = Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Conflict);
+        Assert.Equal("recommendation.concurrent_update", await conflict.Code());
+    }
+}
+
 /// <summary>A provider that misbehaves on purpose, to prove the app's guards (not the model) decide what is accepted.</summary>
 public sealed class MisbehavingTriageProvider : ITriageProvider
 {

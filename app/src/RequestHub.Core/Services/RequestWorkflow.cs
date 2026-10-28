@@ -577,7 +577,17 @@ public sealed partial class RequestWorkflow(
             providerTraceId = result.ProviderTraceId,
             guard = conflictGuard ? "policy-conflict" : null,
         });
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            db.ChangeTracker.Clear();
+            return new WorkflowError("recommendation.concurrent_update",
+                $"{request.PublicId} received another triage recommendation at the same time. Refresh and try again.", 409);
+        }
+
         RequestHubTelemetry.TriageCalls.Add(1, new KeyValuePair<string, object?>("provider", triage.Id), new KeyValuePair<string, object?>("outcome", "ok"));
         return Result<RecommendationDto>.Ok(ToDto(recommendation, new PersonRef(user.Id, user.DisplayName)));
     }
