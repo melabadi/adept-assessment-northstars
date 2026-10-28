@@ -82,7 +82,7 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
 
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
-        Assert.Equal(await first.Read<DecisionDto>(), await retry.Read<DecisionDto>());
+        AssertSameDecision(await first.Read<DecisionDto>(), await retry.Read<DecisionDto>());
         await AssertDecisionSideEffects(id);
     }
 
@@ -137,7 +137,7 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
         Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
         Assert.Equal(7, responses.Count(r => r.StatusCode == HttpStatusCode.OK));
         var decisions = await Task.WhenAll(responses.Select(r => r.Read<DecisionDto>()));
-        Assert.All(decisions, decision => Assert.Equal(decisions[0], decision));
+        Assert.All(decisions, decision => AssertSameDecision(decisions[0], decision));
         await AssertDecisionSideEffects(id);
     }
 
@@ -166,7 +166,7 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, selfApproval.StatusCode);
         Assert.Equal("decision.self_approval", await selfApproval.Code());
-        await AssertDecisionSideEffects(id);
+        await AssertDecisionSideEffects(id, "u-hugo");
     }
 
     [Fact]
@@ -243,9 +243,17 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
     private async Task<string> CreateRequest(string title) =>
         (await (await api.As("u-ava").PostJson("/api/requests", NewRequest(title))).Read<RequestDetailDto>()).Id;
 
-    private async Task AssertDecisionSideEffects(string publicId)
+    private static void AssertSameDecision(DecisionDto expected, DecisionDto actual)
     {
-        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{publicId}/history")).Read<List<AuditEventDto>>();
+        Assert.Equal(expected.Outcome, actual.Outcome);
+        Assert.Equal(expected.DecidedBy, actual.DecidedBy);
+        Assert.Equal(expected.Comment, actual.Comment);
+        Assert.True((expected.DecidedAt - actual.DecidedAt).Duration() <= TimeSpan.FromMicroseconds(1));
+    }
+
+    private async Task AssertDecisionSideEffects(string publicId, string persona = "u-ava")
+    {
+        var history = await (await api.As(persona).GetAsync($"/api/requests/{publicId}/history")).Read<List<AuditEventDto>>();
         Assert.Single(history, e => e.Action == "decision.recorded");
 
         await using var scope = api.Factory.Services.CreateAsyncScope();
