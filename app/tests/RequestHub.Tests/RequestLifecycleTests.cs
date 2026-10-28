@@ -1,4 +1,8 @@
 using System.Net;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using RequestHub.Core.Data;
 using RequestHub.Core.Services;
 
 namespace RequestHub.Tests;
@@ -66,6 +70,103 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
 
         var history = await (await api.As("u-ava").GetAsync($"/api/requests/{id}/history")).Read<List<AuditEventDto>>();
         Assert.Contains(history, e => e.Action == "decision.recorded" && e.Actor.Id == "u-chloe");
+    }
+
+    [Fact]
+    public async Task Decision_retry_with_same_idempotency_key_returns_original_without_duplicate_side_effects()
+    {
+        var id = await CreateRequest("Monitor stand for desk 8A");
+        using var chloe = api.As("u-chloe");
+        var first = await chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved", comment = "Within catalogue." }, "decision-retry-1");
+        var retry = await chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved", comment = "Within catalogue." }, "decision-retry-1");
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        Assert.Equal(await first.Read<DecisionDto>(), await retry.Read<DecisionDto>());
+        await AssertDecisionSideEffects(id);
+    }
+
+    [Fact]
+    public async Task Later_decision_returns_conflict_with_the_existing_decision()
+    {
+        var id = await CreateRequest("Laptop riser for desk 8B");
+        var first = await api.As("u-chloe").PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" }, "decision-first-1");
+        var later = await api.As("u-dan").PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "Changed my mind." });
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        var reviewer = await api.As("u-ben").PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "Not an approver." });
+        Assert.Equal(HttpStatusCode.Forbidden, reviewer.StatusCode);
+        Assert.Equal("decision.not_approver", await reviewer.Code());
+
+        Assert.Equal(HttpStatusCode.Conflict, later.StatusCode);
+        Assert.Equal("decision.already_decided", await later.Code());
+        using var problem = JsonDocument.Parse(await later.Content.ReadAsStringAsync());
+        var existing = problem.RootElement.GetProperty("decision");
+        Assert.Equal("Approved", existing.GetProperty("outcome").GetString());
+        Assert.Equal("u-chloe", existing.GetProperty("decidedBy").GetProperty("id").GetString());
+
+        var detail = await (await api.As("u-ava").GetAsync($"/api/requests/{id}")).Read<RequestDetailDto>();
+        Assert.Equal("Approved", detail.Status);
+        Assert.Equal("u-chloe", detail.Decision!.DecidedBy.Id);
+        await AssertDecisionSideEffects(id);
+    }
+
+    [Fact]
+    public async Task Concurrent_double_click_records_one_decision_and_returns_conflicts_for_the_rest()
+    {
+        var id = await CreateRequest("Keyboard tray for desk 8C");
+        using var chloe = api.As("u-chloe");
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" })));
+
+        Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
+        Assert.Equal(7, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
+        await Task.WhenAll(responses.Where(r => r.StatusCode == HttpStatusCode.Conflict)
+            .Select(async response => Assert.Equal("decision.already_decided", await response.Code())));
+        await AssertDecisionSideEffects(id);
+    }
+
+    [Fact]
+    public async Task Concurrent_retries_with_the_same_key_return_the_original_decision()
+    {
+        var id = await CreateRequest("Monitor arm for desk 8E");
+        using var chloe = api.As("u-chloe");
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(_ => chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" }, "decision-retry-concurrent")));
+
+        Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
+        Assert.Equal(7, responses.Count(r => r.StatusCode == HttpStatusCode.OK));
+        var decisions = await Task.WhenAll(responses.Select(r => r.Read<DecisionDto>()));
+        Assert.All(decisions, decision => Assert.Equal(decisions[0], decision));
+        await AssertDecisionSideEffects(id);
+    }
+
+    [Fact]
+    public async Task Concurrent_decisions_by_two_approvers_record_only_the_first_decision()
+    {
+        var id = await CreateRequest("Desk lamp for desk 8D");
+        using var chloe = api.As("u-chloe");
+        using var dan = api.As("u-dan");
+        var responses = await Task.WhenAll(
+            chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" }),
+            dan.PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "Not needed." }));
+
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Created);
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Conflict);
+        await AssertDecisionSideEffects(id);
+    }
+
+    [Fact]
+    public async Task Requester_cannot_self_approve_after_another_approver_has_decided()
+    {
+        var id = (await (await api.As("u-hugo").PostJson("/api/requests", NewRequest("Footrest for desk 8F"))).Read<RequestDetailDto>()).Id;
+        var first = await api.As("u-chloe").PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" });
+        var selfApproval = await api.As("u-hugo").PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "Changed my mind." });
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, selfApproval.StatusCode);
+        Assert.Equal("decision.self_approval", await selfApproval.Code());
+        await AssertDecisionSideEffects(id);
     }
 
     [Fact]
@@ -137,5 +238,20 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
             var row = Assert.Single(found.Items);
             Assert.Equal(expected, row.Id);
         }
+    }
+
+    private async Task<string> CreateRequest(string title) =>
+        (await (await api.As("u-ava").PostJson("/api/requests", NewRequest(title))).Read<RequestDetailDto>()).Id;
+
+    private async Task AssertDecisionSideEffects(string publicId)
+    {
+        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{publicId}/history")).Read<List<AuditEventDto>>();
+        Assert.Single(history, e => e.Action == "decision.recorded");
+
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var number = int.Parse(publicId.AsSpan(4));
+        var requestId = await db.Requests.Where(r => r.Number == number).Select(r => r.Id).SingleAsync();
+        Assert.Equal(1, await db.Notifications.CountAsync(n => n.RequestId == requestId && n.Type == "request.decided"));
     }
 }
