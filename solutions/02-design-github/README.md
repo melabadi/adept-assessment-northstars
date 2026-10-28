@@ -124,12 +124,12 @@ About 20 minutes. Run the commands from the repository root.
 
    Then open [`standards/`](standards/). Each standard has an id, a version, and a scope. Point out what a good design must notice, without telling Copilot:
    - **A conflict.** STD-OBS-002 says to log full prompts and completions for 30 days. STD-SEC-002 says never to persist raw prompts that contain user free text. Nobody has decided which wins.
-   - **Profiles that pull apart.** STD-OPS-001 lets a small team add at most one runtime component and no gateway. STD-OPS-002 sends every enterprise model call through the central AI gateway.
+   - **Profiles that pull apart.** STD-OPS-001 lets a small team add at most one new runtime component per quarter, and no gateway unless a platform team already runs one. STD-OPS-002 sends every enterprise model call through the central AI gateway.
    - **Extend before you add.** STD-ARCH-001 prefers the existing service, and RequestHub already has a triage extension point, `ITriageProvider`.
 
    ![STD-OBS-002 v1.0 requires logging the full prompt and completion of every AI call for 30 days, while STD-SEC-002 v1.1 forbids persisting raw prompts or completions that contain user free text](images/01-standards-conflict.png)
 
-   **Point out:** the brief and the standards are all Copilot gets. Nothing tells it about the conflict or the profiles; watch whether it finds them.
+   **Point out:** Copilot gets the brief, the standards, and the code, but nothing tells it about the conflict or the profiles. Watch whether it finds them.
 
 2. **Ask Copilot for the ADR.** Pick one option.
 
@@ -174,7 +174,7 @@ About 20 minutes. Run the commands from the repository root.
 
    ![The pull request's checks, expanded: ADR checks and API contract compatibility from the design workflow, plus the repository's other checks, all successful](images/03-pr-checks.png)
 
-   Select **Details** next to either check, then **Summary**, to show what each check found:
+   Select either check, then **Summary** in the run's left menu, to show what each check found:
 
    ![The workflow run summary: ADR checks prints PASS for the ADR, and the API contract impact report lists 0 breaking and 0 additive changes](images/03-run-summary.png)
 
@@ -190,7 +190,7 @@ About 20 minutes. Run the commands from the repository root.
 
 5. **Review like an architect** (3 minutes). Open the ADR from the pull request (**Files changed** → **⋯** → **View file**) so the mermaid diagrams render. Look for:
    - the options compared in one table against the same standards, with a recommendation for each profile (the image at the top of this page);
-   - what Copilot found by reading the code, not the brief: in every run, that the workflow's 45-second triage timeout cannot meet the 8-second target, and that today's prompt sends more than the title, description, and category that BR-3 allows;
+   - what Copilot found by reading the code, not the brief: in every run, that the workflow's 45-second triage timeout cannot meet the 8-second target, and that the current prompt sends more than the title, description, and category that BR-3 allows;
    - the request flow, success and failure paths included:
 
    ![The ADR's sequence diagram rendered on GitHub: the reviewer's request goes through RequestWorkflow and the in-process provider to Foundry, with the unauthorized, valid, invalid-output, and timeout paths, and manual routing that never depends on the AI](images/05-adr-sequence.png)
@@ -257,7 +257,7 @@ About 20 minutes. Run the commands from the repository root.
 - **Grounded in the real system.** Copilot reads the code before it designs. In every run it reused the existing `ITriageProvider` extension point, rejected a separate triage service under STD-ARCH-001, and found gaps the brief does not mention, such as the 45-second timeout. The check proves every file the ADR cites exists.
 - **Standards, with versions.** Each driver cites `STD-xxx-nnn vX.Y`. The conflict between STD-OBS-002 and STD-SEC-002 reaches a person as a blocking open question instead of being settled silently.
 - **One question, two answers.** The recommendation follows the operating profile where the standards do: direct calls for the small team (STD-OPS-001), the central AI gateway for the enterprise (STD-OPS-002).
-- **Deterministic checks catch what reviewers miss.** Neither the first checker nor Copilot code review noticed that GitHub could not render the sequence diagrams, or that the cloud agent cited files by their absolute path on its runner. Rules in the checker now catch both, and Copilot fixes what they report.
+- **Deterministic checks catch what reviewers miss.** Neither the first checker nor Copilot code review noticed that GitHub could not render the sequence diagrams, or that the cloud agent cited files by their absolute path on its runner. Rules in the checker now catch both, and the agent runs the checker until it passes. In our run, Copilot fixed the diagrams as soon as the checker reported them.
 - **Contract impact as evidence.** The API impact is a deterministic report on every design pull request. Breaking changes fail; Copilot proposes any needed API change as an additive one.
 - **People decide.** Copilot proposes and Copilot code review questions; only a named person accepts. The checker and the standards come from the base branch, so the proposal cannot weaken them.
 - **Speed.** About 7 minutes from a reviewed brief to a reviewable design, and minutes for each revision.
