@@ -1,8 +1,8 @@
 # Test · Performance lab with Azure Load Testing
 
-Most teams find out how their app behaves under load in production, because a realistic load test is hard to set up, needs credentials, and produces charts nobody turns into a decision. In this solution, Azure Load Testing runs RequestHub's real request-and-approval journey, signed in as two managed identities, with explicit pass/fail criteria. A rehearsal slowdown on the deployed API shows the gate catching a regression: the run fails, the report shows the server-side cause next to the client results, the dashboard's AI insights summarize what went wrong, and a GitHub Issue tracks the failure until a passing run closes it. A GitHub Copilot agent and two skills change the scenario and explain results without ever relaxing a threshold to make a run pass.
+Most teams find out how their app behaves under load in production, because a realistic load test is hard to set up, needs credentials, and produces charts nobody turns into a decision. In this solution, Azure Load Testing runs RequestHub's real request-and-approval journey, signed in as two managed identities, with explicit pass/fail criteria. A rehearsal slowdown on the deployed API shows the gate catching a regression: the run fails, the report shows the server-side cause next to the client results, the dashboard's AI summary offers a first explanation to verify, and a GitHub Issue tracks the failure until a passing run closes it. A GitHub Copilot agent and two skills change the scenario and explain results without ever relaxing a threshold to make a run pass.
 
-![The slowdown run in the Azure Load Testing dashboard: Failed, test criteria not met. An AI summary links the slow my-requests and team-queue responses to longer server-side request durations, and the 90th percentile response time is 1.52 seconds](images/06-failed-run.png)
+![The slowdown run in the Azure Load Testing dashboard: Failed, test criteria not met. The AI summary ties the slow team-queue and my-requests responses to longer request durations and suggests backend resource constraints; the statistics show 579 requests, a 1.51 second 90th percentile response time, and 0 percent errors](images/06-failed-run.png)
 
 ## Where it fits
 
@@ -120,23 +120,23 @@ About 5 minutes, from `solutions/04-test-microsoft`.
    ![The starting-state checks: the PostgreSQL server is Ready, the API runs without a slowdown, cleanup finds 24 requests before and after, and no load-test Issue is open](images/00-starting-state.png)
 
    - **The database is not `Ready`:** start it with `az postgres flexible-server start -g rg-ai-sdlc-test -n $pg`, which takes 3 to 5 minutes. A tenant policy can stop the server on a schedule, and the API then fails its readiness probe.
-   - **A slowdown is configured:** run `python slowdown.py off` (about 3 minutes).
+   - **A slowdown is configured:** run `python slowdown.py off` (1 to 3 minutes).
    - **Cleanup deletes requests:** an earlier session left its data behind. That's fine; the count after cleanup is what matters.
    - **A `load-test` Issue is open:** close it with `gh issue close <number>`, so step 5 opens a fresh one.
 
 2. **Open in advance.** A PowerShell 7 terminal in this folder. In the browser, signed in: the Azure portal on resource group `rg-ai-sdlc-test` › the Load Testing resource › **Tests** › `requesthub-journey`, and the repository's **Actions** tab on **Test · Microsoft · load test RequestHub**. In your editor: [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml), [`loadtest/locustfile.py`](loadtest/locustfile.py), and [`.github/workflows/test-microsoft-load.yml`](.github/workflows/test-microsoft-load.yml).
 
-3. **Start early.** Every load test run takes about 12 minutes, most of it waiting. If time is short, start step 1 about 15 minutes before you begin and show its finished dashboard in step 2 instead of the live one. Start step 7 when you open questions.
+3. **Start early.** Every load test run takes 10 to 12 minutes, most of it waiting. If time is short, start step 1 about 15 minutes before you begin and show its finished dashboard in step 2 instead of the live one. Start step 7 when you open questions.
 
    | Step | Takes | Where the time goes |
    | --- | --- | --- |
-   | 1. Baseline run | about 12 minutes | 3 to start the engine, 2 of load, about 2 to finish, up to 5 for Application Insights |
-   | 4. Slowdown on | about 3 minutes | a new API revision rolls out |
-   | 5. Workflow run | about 13 minutes | the same run, from GitHub Actions |
-   | 7. Slowdown off, passing run | about 15 minutes | 3 for the revision, 12 for the run |
+   | 1. Baseline run | 10 to 12 minutes | 3 to start the engine, 2 of load, about 2 to finish, up to 5 for Application Insights |
+   | 4. Slowdown on | 1 to 3 minutes | a new API revision rolls out |
+   | 5. Workflow run | 12 to 13 minutes | the same run, from GitHub Actions |
+   | 7. Slowdown off, passing run | 11 to 15 minutes | 1 to 3 for the revision, 10 to 12 for the run |
    | 8. Cleanup | under 1 minute | |
 
-   Live from start to finish, the demo takes about 50 minutes; with step 1 started early and step 7 during questions, about 30.
+   Live from start to finish, the demo takes 40 to 50 minutes; with step 1 started early and step 7 during questions, about 25.
 
 ## Run the demo
 
@@ -144,7 +144,7 @@ Run the commands from `solutions/04-test-microsoft`.
 
 ### 1. Start the baseline run
 
-*About 12 minutes. Go on to step 2 while it runs.*
+*10 to 12 minutes. Go on to step 2 while it runs.*
 
 ```powershell
 python load_test.py run --open
@@ -152,7 +152,7 @@ python load_test.py run --open
 
 The script writes the test configuration for your deployment to `out/loadtest.yaml`, updates the test in Azure Load Testing, starts a run, opens its dashboard in your browser, and prints each state: `PROVISIONING`, then `EXECUTING` after about 3 minutes, then `DONE`.
 
-![The terminal during the baseline run: test requesthub-journey updated, run run-20261028-151640 started, its dashboard opened in the portal, EXECUTING at 205 seconds, DONE at 437 seconds, and the result PASSED](images/01-baseline-run.png)
+![The terminal during the baseline run: test requesthub-journey updated, run run-20261028-175809 started with 120 seconds of load, its dashboard opened in the portal, EXECUTING at 177 seconds, DONE at 413 seconds, and the result PASSED](images/01-baseline-run.png)
 
 **Point out:** no credential appears anywhere. The engines sign in as two managed identities that exist only for this test.
 
@@ -166,7 +166,7 @@ Open [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml): 10 
 
 Once the run is `EXECUTING`, switch to the dashboard that `--open` opened. Client-side metrics fill in every few seconds, with the API's server-side metrics below them; the criteria get their verdict when the run completes.
 
-![The run's dashboard while it executes: 10 virtual users, response times under a quarter of a second after the first seconds, about 4.8 requests per second, and no errors. Test criteria wait for the run to complete](images/02-live-dashboard.png)
+![The run's dashboard while it executes: 10 virtual users, 90th percentile response times between 20 and 60 ms, about 4.6 requests per second, and no errors. Test criteria wait for the run to complete](images/02-live-dashboard.png)
 
 **Point out:** the pass/fail criteria are a few lines of YAML in the repository, reviewed in pull requests like any code.
 
@@ -174,19 +174,19 @@ Once the run is `EXECUTING`, switch to the dashboard that `--open` opened. Clien
 
 *About 2 minutes.*
 
-When the run is done, the script reads Application Insights for the same window and prints the report, which it also saves in `out/report.md`. It says **PASSED** and *Accepted*. Every criterion is met, for example team queue p95 106 ms against 1,000 ms, with no errors in about 600 requests and the 401 and 403 checks behaving.
+When the run is done, the script reads Application Insights for the same window and prints the report, which it also saves in `out/report.md`. It says **PASSED** and *Accepted*. Every criterion is met, for example team queue p95 24 ms against 1,000 ms, with no errors in 589 requests and the 401 and 403 checks behaving. The server-side counts run lower than the client's because Application Insights samples at five traces per second by default.
 
-![The baseline report in the terminal: PASSED and Accepted; the criteria table with team-queue p95 106 ms against 1,000 ms; client-side and server-side tables; and what was tested: 10 virtual users, the 24 seeded requests, Container Apps with PostgreSQL Burstable in Central US](images/03-baseline-report.png)
+![The baseline report in the terminal: PASSED and Accepted; the criteria table with team-queue p95 24 ms against 1,000 ms; client-side and server-side tables; and what was tested: 10 virtual users, the 24 seeded requests, Container Apps with PostgreSQL Burstable in Central US](images/03-baseline-report.png)
 
 The dashboard shows the same verdict:
 
-![The baseline run in the Azure Load Testing dashboard: Passed and test criteria validated, 580 requests, 99 ms 90th percentile response time, 0 percent errors, and all five criteria passed](images/03-baseline-dashboard.png)
+![The baseline run in the Azure Load Testing dashboard: Passed and test criteria validated, 589 requests, 41 ms 90th percentile response time, 0 percent errors, a Get insights button for the AI summary, and all five criteria passed](images/03-baseline-dashboard.png)
 
 **Point out:** the report names the load, data, region, and compute next to the numbers, so nobody reads 10 users as a capacity claim.
 
 ### 4. Ship a slowdown
 
-*About 3 minutes.*
+*1 to 3 minutes.*
 
 ```powershell
 python slowdown.py on
@@ -194,13 +194,13 @@ python slowdown.py on
 
 This sets `Faults__QueueDelayMs=1500` and `Faults__ExpiresAtUtc` (30 minutes ahead) on the API, which rolls out a new revision. The script waits until the revision takes all traffic, then times three calls to the request list from your machine. That time includes your network, so look at the jump, not the absolute number.
 
-![slowdown.py on: 1,500 ms injected on the request list with an expiry; API revision 0000009 takes all traffic, the previous revisions are deactivated, and GET /api/requests now takes 2,218 ms](images/04-slowdown-on.png)
+![slowdown.py on: 1,500 ms injected on the request list with an expiry; API revision 0000011 takes all traffic, the previous revision 0000010 is deactivated, and GET /api/requests now takes 2,078 ms](images/04-slowdown-on.png)
 
 **Point out:** the fault switches itself off when it expires, even if the demo is interrupted.
 
 ### 5. Let the pipeline catch it
 
-*About 13 minutes.*
+*12 to 13 minutes.*
 
 ```powershell
 gh workflow run test-microsoft-load.yml
@@ -209,13 +209,13 @@ gh run watch
 
 While it runs, walk through [`.github/workflows/test-microsoft-load.yml`](.github/workflows/test-microsoft-load.yml): OIDC sign-in to Azure, the step that masks tenant and resource details before the load-test steps print anything, the `azure/load-testing` action, and the report step. The run fails on its criteria. Open it with `gh run view --web`: the job summary carries the report, labelled *Expected failure*.
 
-![The failed workflow run Test · Microsoft · load test RequestHub #10: its job summary says FAILED and Expected failure, because 150 server requests carried the injected delay, and the criteria table shows my-requests p95 1,590 ms and team-queue p95 1,580 ms against 1,000 ms](images/05-workflow-run.png)
+![The failed workflow run Test · Microsoft · load test RequestHub #14 on main: its job summary says FAILED and Expected failure, because 153 server requests carried the injected delay, and the criteria table shows my-requests p95 1,590 ms and team-queue p95 1,560 ms against 1,000 ms](images/05-workflow-run.png)
 
-The workflow also opens an Issue labelled `load-test`, with the same report and a link to the run. During the demo it shows **Open**; the screenshot below was taken after step 7 closed it, so it shows **Done**.
+The workflow also opens an Issue labelled `load-test`, with the same report and a link to the run.
 
-![Issue 122, opened by github-actions with the load-test label: the run missed its performance criteria, with the criteria table. It shows Done because the passing run in step 7 closed it](images/05-issue.png)
+![Issue 154, open with the status Backlog, opened by github-actions with the load-test label: GitHub run 14 missed its performance criteria in the linked workflow run, followed by the same report and criteria table](images/05-issue.png)
 
-**Point out:** the report names the cause. Its first lines say 150 server requests carried the injected delay, and the server-side table further down the job summary shows that's every `GET /api/requests`. So the run is labelled an expected failure, not acceptance.
+**Point out:** the report names the cause. Its first lines say 153 server requests carried the injected delay, and the server-side table further down the job summary shows that's every `GET /api/requests` Application Insights recorded. So the run is labelled an expected failure, not acceptance.
 
 ### 6. Read the failure in Azure Load Testing
 
@@ -230,30 +230,30 @@ python load_test.py report --run-id $id --open
 
 The dashboard can take a minute to draw its charts. Start with the criteria: the two list requests fail, and submit, decide, and the error rate pass.
 
-![The failed run's test criteria: team-queue p95 1,580 ms and my-requests p95 1,590 ms both failed against 1,000 ms; the error rate (0 percent), submit (269 ms), and decide (201 ms) passed](images/06-failed-criteria.png)
+![The failed run's test criteria: team-queue p95 1,560 ms and my-requests p95 1,590 ms both failed against 1,000 ms; the error rate (0 percent), submit (246 ms), and decide (89 ms) passed](images/06-failed-criteria.png)
 
-Above the statistics, **AI summary and insights** (experimental) explains the failure. For this run, the summary was already there when the dashboard opened; if a run has none yet, select **Get insights** to generate it. It ties the slow list requests to longer request durations in Application Insights.
+Above the statistics, **AI summary and insights** (experimental) explains the failure. In our sessions, a failed run had its summary as soon as the dashboard opened; on a run without one, such as the baseline, select **Get insights**. It ties the slow list requests to longer request durations, then reaches further: a CPU spike, "backend resource constraints", and failed HTTP requests that point to "impaired backend error handling".
 
-![The failed run with its AI summary: Failed, test criteria not met. The summary and key insights tie p95 response times above 1,500 ms on my-requests and team-queue to rising request durations in Application Insights; the statistics show 557 requests and a 1.52 second 90th percentile](images/06-failed-run.png)
+![The failed run with its AI summary: Failed, test criteria not met. The summary ties team-queue and my-requests response times above 1,500 ms to longer request durations, a CPU spike to 20 percent, failed HTTP requests, and backend resource constraints; the statistics show 579 requests, a 1.51 second 90th percentile, and 0 percent errors](images/06-failed-run.png)
 
-Scroll down for the client-side and server-side metrics of the same window.
+Scroll down for the client-side and server-side metrics of the same window. The client-side charts show five requests by default and leave out team-queue; add it from the **Requests** filter.
 
-![Client-side and server-side metrics of the failed run: my-requests at 1.55 seconds p90 while decide and submit stay under 0.2 seconds, with no errors; on the server side, the API container app's requests, response time, CPU, and replicas, and Application Insights' server response time averaging 485 ms](images/06-failed-metrics.png)
+![Client-side and server-side metrics of the failed run: my-requests at 1.53 seconds p90 while decide, open-request, and submit stay under 70 ms, with no errors. On the server side: the API container app's requests, a 514 ms average response time, CPU peaking at 20 percent on a single replica, Application Insights' server response time averaging 489 ms with 15 failed requests, and PostgreSQL CPU and connections staying flat](images/06-failed-metrics.png)
 
 The criteria and the metrics agree: only the two list requests are slow, the rest of the journey stays fast, and the server-side durations show the time is spent inside the API.
 
-**Point out:** the AI summary is a lead, not a verdict; check each claim against the dashboard. "Peak 5 VUs" counts the users behind a single request (5 requesters or 5 approvers); the header shows 10 virtual users in total. The "failed HTTP requests" are the journey's deliberate 403 checks: Application Insights counts a 403 as failed, while the error percentage here is 0%, and the server-side table further down the step 5 job summary lists them under Denied (401/403), with 0 server errors.
+**Point out:** the AI summary is a lead, not a verdict; check each claim against the evidence. "5 VUs" counts the users behind a single request (5 requesters or 5 approvers); the header shows 10 virtual users. The failed HTTP requests are the journey's deliberate 403 checks: Application Insights counts a 403 as failed, while the error percentage here is 0%, and the step 5 job summary lists them under Denied (401/403), with 0 server errors. And the cause isn't resource constraints: CPU peaked at 20% on one replica, and the job summary shows every request list Application Insights recorded carried the injected delay.
 
 ### 7. Fix and confirm
 
-*About 15 minutes: 3 for the revision, 12 for the run.*
+*11 to 15 minutes: 1 to 3 for the revision, 10 to 12 for the run.*
 
 ```powershell
 python slowdown.py off
 python load_test.py run --issue
 ```
 
-![slowdown.py off rolls out API revision 0000010 without the fault; load_test.py run --issue reports PASSED and Accepted, with team-queue p95 67 ms and my-requests p95 60 ms, and closes Issue 122](images/07-recovery.png)
+![slowdown.py off rolls out API revision 0000012 without the fault and deactivates 0000011; load_test.py run --issue reports PASSED and Accepted, with team-queue p95 94 ms and my-requests p95 47 ms, and closes Issue 154](images/07-recovery.png)
 
 **Point out:** the Issue closes itself with the passing report; nobody had to remember to follow up.
 
@@ -297,7 +297,7 @@ Expect `PASS` from the check, `Cleanup: deleted ... requests owned by u-ben`, an
 - **A real journey, signed in, with no secret.** The engines borrow two managed identities. The API applies the same roles and department checks as for people, and the denial checks prove it under load.
 - **Pass/fail, not a chart.** The criteria are code, reviewed in pull requests. A slowdown of 1.5 seconds on one endpoint fails the run within minutes.
 - **The cause is in the same report.** Client percentiles from Azure Load Testing and server percentiles from Application Insights for the same window, including how many requests carried the injected delay.
-- **AI that explains, criteria that decide.** The dashboard's AI summary turns charts into a paragraph a team can act on. It's a lead to verify, as its "failed requests" (the deliberate 403 checks) show; the criteria give the verdict.
+- **AI that explains, criteria that decide.** The dashboard's AI summary turns charts into a paragraph a team can act on. It's a lead to verify: in our run it suggested resource constraints and read the deliberate 403 checks as failures, while the report showed the injected delay. The criteria give the verdict.
 - **Honest evidence.** A failure during the rehearsal is labelled an expected failure, not acceptance. Every result names the load, data, region, and compute it ran on.
 - **Follow-up without anyone remembering.** The Issue opens on the first failure, collects later failures, and closes itself on the next pass.
 - **Nothing to leak.** Resource names live in environment secrets and are masked in logs; reports, job summaries, and Issues name runs, not hosts.
