@@ -48,21 +48,22 @@ storage" into evidence a reviewer can read before anything is deployed.
 ### Deployment preview (Azure what-if) · `rg-ai-sdlc-secure`
 - **Create** `Microsoft.Network/privateDnsZones` `privatelink.blob.core.windows.net` ✅ expected
 - **Create** `Microsoft.Network/privateDnsZones/virtualNetworkLinks` `vnet-link` ✅ expected
-- **Create** `Microsoft.Network/privateEndpoints` `pe-blob-...` ✅ expected
+- **Create** `Microsoft.Network/privateEndpoints` `pe-blob-…` ✅ expected
 - **Create** `Microsoft.Network/privateEndpoints/privateDnsZoneGroups` `default` ✅ expected
-- **Modify** `Microsoft.Network/virtualNetworks` `vnet-...` ✅ expected
+- **Modify** `Microsoft.Network/virtualNetworks` `vnet-…` ✅ expected
   - `properties.subnets[2]`: added `{"name": "snet-private-endpoints", ...}`
-- **Modify** `Microsoft.Storage/storageAccounts` `st...` ✅ expected
+- **Modify** `Microsoft.Storage/storageAccounts` `st…` ✅ expected
   - `properties.networkAcls.defaultAction`: `"Allow"` → `"Deny"`
 - 12 other resource(s) show differences what-if reports on every run ... not counted.
 **PASS**: every change is an expected resource type (...).
 ```
+The preview is posted on pull requests, so it shows the random token in resource names, and any GUID, as `…`.
 
 ## Failure handling
 - `FAIL: unexpected change(s)`: read each ⚠️ line. Remove the unintended change, or, if it is intended, explain it in the
   pull request. Never widen `--expect` in the workflow to make a check pass.
 - `... is not set`: run `azd provision` in the solution folder (locally), or rerun the azd hooks so the GitHub environment
-  has its variables.
+  has its variables and secrets.
 - `AuthorizationFailed`: the identity needs read access and `Microsoft.Resources/deployments/*` on the resource group.
 - No baseline (`compared with the deployed ... template` missing from the first line): the resource group has no
   `resources` deployment yet, so the preview lists raw changes. Run `azd provision` once.

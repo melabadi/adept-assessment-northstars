@@ -27,6 +27,7 @@
  *   --remove <selector>      remove these elements from the layout (repeatable). GitHub's staff bar is always removed.
  *   --width <px>, --height <px>  viewport size (default 1280 x 800)
  *   --scale <n>              device scale factor (default 2, for sharp images on high-density screens)
+ *   --theme <light|dark>     color scheme the page sees (default light, so every README looks the same)
  *   --delay <ms>             extra wait after the page settles (default 1500)
  *   --keep-guids             do not mask GUIDs
  *   --pick-account           when Microsoft's "Pick an account" page appears, click the tile of the account on your
@@ -59,6 +60,8 @@ const refuse = (code, message) => { throw new Refusal(code, message); };
 
 let chromium;
 try {
+  // Only the repository's own Playwright: Node would otherwise pick up any copy in a parent folder.
+  if (!existsSync(path.join(repo, 'app', 'web', 'node_modules', 'playwright', 'package.json'))) throw new Error('missing');
   ({ chromium } = createRequire(path.join(repo, 'app', 'web', 'package.json'))('playwright'));
 } catch {
   fail(2, 'Playwright is missing. Run: npm ci --prefix app/web');
@@ -316,6 +319,8 @@ async function capturePage(url, out) {
     const session = await context.newCDPSession(page);
     await session.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false });
     await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    // One look in every README: light unless --theme dark, whatever the operating system's setting.
+    await page.emulateMedia({ colorScheme: options.theme === 'dark' ? 'dark' : 'light' });
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
     await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
     await pickAccount(page);
@@ -344,33 +349,52 @@ async function capturePage(url, out) {
     if (before.length) refuse(3, `Refused before capture: unmasked ${before.join(', ')} on ${new URL(url).host}. Nothing was saved.`);
 
     mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
-    // Captured through the DevTools protocol: Playwright's own screenshot ignores the emulated scale on a connected
-    // browser. Clips are in CSS pixels relative to the viewport; the protocol wants document coordinates.
+    // Captured through the DevTools protocol (Playwright's own screenshot ignores the emulated scale on a connected
+    // browser), always within the viewport: capturing beyond it resizes the page and re-flows layouts such as
+    // GitHub's after the element was measured. When the target is taller than the viewport, the viewport grows first
+    // and the target is measured again.
     await page.addStyleTag({ content: '*, *::before, *::after { caret-color: transparent !important; animation-play-state: paused !important; transition: none !important; }' }).catch(() => {});
+    const setHeight = async (h) => {
+      await session.send('Emulation.setDeviceMetricsOverride', { width, height: Math.min(Math.ceil(h), 12_000), deviceScaleFactor: scale, mobile: false });
+      await sleep(700);
+    };
     const capture = async (clip) => {
       const metrics = await session.send('Page.getLayoutMetrics');
       const vp = metrics.cssVisualViewport ?? metrics.visualViewport;
-      const params = { format: 'png', fromSurface: true, captureBeyondViewport: Boolean(clip) };
+      const params = { format: 'png', fromSurface: true, captureBeyondViewport: false };
       if (clip) params.clip = { x: clip.x + vp.pageX, y: clip.y + vp.pageY, width: clip.width, height: clip.height, scale: 1 };
       const { data } = await session.send('Page.captureScreenshot', params);
       writeFileSync(out, Buffer.from(data, 'base64'));
     };
     if (options.selector) {
+      const pad = Number(options.padding ?? 8);
       const target = scope().locator(options.selector).first();
+      await page.evaluate(() => window.scrollTo(0, 0));
       await target.scrollIntoViewIfNeeded();
       await sleep(300);
-      const box = await target.boundingBox();
+      let box = await target.boundingBox();
       if (!box) refuse(2, `Element not visible: ${options.selector}`);
-      const pad = Number(options.padding ?? 8);
+      if (box.y < 0 || box.y + box.height + pad > height) {
+        // Grow the viewport so the whole element fits from the top of the page, then measure again.
+        await page.evaluate(() => window.scrollTo(0, 0));
+        box = await target.boundingBox();
+        await setHeight(Math.max(height, (box?.y ?? 0) + (box?.height ?? 0) + pad + 16));
+        await target.scrollIntoViewIfNeeded();
+        await sleep(300);
+        box = await target.boundingBox();
+        if (!box) refuse(2, `Element not visible: ${options.selector}`);
+      }
       await capture({ x: Math.max(0, box.x - pad), y: Math.max(0, box.y - pad), width: box.width + 2 * pad, height: box.height + 2 * pad });
     } else if (options.clip) {
       const [x, y, w, h] = options.clip.split(',').map(Number);
+      if (y + h > height) await setHeight(y + h);
       await capture({ x, y, width: w, height: h });
     } else if (options.full) {
+      await page.evaluate(() => window.scrollTo(0, 0));
       const metrics = await session.send('Page.getLayoutMetrics');
       const size = metrics.cssContentSize ?? metrics.contentSize;
-      const vp = metrics.cssVisualViewport ?? metrics.visualViewport;
-      await capture({ x: -vp.pageX, y: -vp.pageY, width: Math.ceil(size.width), height: Math.ceil(size.height) });
+      await setHeight(Math.max(height, size.height));
+      await capture(null);
     } else {
       await capture(null);
     }
