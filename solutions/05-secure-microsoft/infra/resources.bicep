@@ -49,10 +49,9 @@ module app '../../../app/infra/requesthub.bicep' = {
     automationRoleDefinitionIds: [roles.reader, roles.policyEnrollmentsContributor]
     automationCanPushImages: false
     automationAppRoleNames: ['Requester']
-    // Without a private endpoint, RequestHub reaches Blob storage through the account's public endpoint, which is open to
-    // the internet. Where Azure Policy closes public endpoints (many organizations do), attachment uploads fail instead.
-    // This solution starts without it, so Azure Policy and Defender for Cloud have a real finding to report.
-    storagePrivateEndpoint: false
+    // The private endpoint keeps Blob traffic on the app's virtual network and lets uploads work when public network access
+    // is disabled by Azure Policy. This solution enables it to satisfy the private-link control.
+    storagePrivateEndpoint: true
     tags: tags
   }
 }
