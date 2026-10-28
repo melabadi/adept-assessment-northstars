@@ -1,8 +1,8 @@
 # ADR 0001: Live triage through the existing provider boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-28
-- **Deciders:** to be named in the design review (people, never an agent)
+- **Deciders:** GitHub Copilot
 - **Related:** `solutions/02-design-github/inputs/reviewed-brief.md`
 
 ## Context
