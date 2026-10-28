@@ -7,7 +7,7 @@ first, then repairs the query. Actions independently replays both commits; a per
 **CodeQL code scanning and Copilot Autofix are a separate optional path for public or appropriately licensed repositories.**
 AI review is not code scanning, and a passing review does not prove a vulnerability is absent.
 
-![The trusted Actions summary records six failing cases before repair, ten passing cases afterward, and a passing full app suite](images/04-trusted-replay.png)
+![Copilot's high-severity GitHub review identifies SQL injection in the lab query and suggests a parameterized repair](images/02-copilot-finding.png)
 
 ## Where it fits
 
@@ -189,7 +189,7 @@ Use your new run's numbers in the commands, not those historical examples.
    **Point out:** the actual inline finding identifies untrusted input reaching the SQL sink at the reviewed SHA;
    a green review workflow alone would not demonstrate detection.
 
-   ![The authenticated current-run Copilot review identifies SQL injection, quote failures and the exact reviewed source location](images/02-copilot-finding.png)
+   ![The native GitHub review comment shows Copilot identifying SQL injection and quote failures alongside its suggested parameterized query](images/02-copilot-finding.png)
 
 3. **Create and assign the remediation Issue.** Append real evidence to the supplied task:
 
