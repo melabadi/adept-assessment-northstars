@@ -207,7 +207,7 @@ About 15 minutes. Steps 3–7 are the same whichever option you pick in step 2.
 
    ![The publish comment on the pull request after the brief-approved label: track github, the epic and TASK-1 to TASK-4 with their Issue links, all five updated, and dependencies set through the API](images/06-publish-comment.png)
 
-   The first time, every line says `created`. After a [reset](#reset-and-clean-up), the publisher finds the closed Issues by a hidden marker and reopens and updates them (`updated`), so the numbers stay the same from one session to the next. Open the epic (shown at the top of this page): its four tasks are sub-issues, and a red mark shows the ones blocked by another task.
+   The first time, every line says `created`. After a [reset](#reset-and-clean-up), the publisher finds the closed Issues by a hidden marker and reopens and updates them (`updated`), so the numbers stay the same from one session to the next. Their "blocked by" links follow the new brief: a link it no longer lists is removed. Open the epic (shown at the top of this page): its four tasks are sub-issues, and a red mark shows the ones blocked by another task.
 
    ![The epic's sub-issues: four Plan/Copilot tasks, three of them marked as blocked by another task](images/06-sub-issues.png)
 
@@ -249,16 +249,6 @@ gh pr close <number> --delete-branch                                            
 
 Closing Copilot's pull request does not close its Issue (its `Fixes #<issue>` only acts on merge), so close the Issue yourself.
 
-The publisher adds "blocked by" links between tasks but never removes them. Clear them, so the next brief's dependencies start clean:
-
-```powershell
-foreach ($n in gh issue list --label track:github --label type:task --state all --json number --jq '.[].number') {
-  foreach ($id in gh api "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --jq '.[].id') {
-    gh api -X DELETE "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by/$id" --silent
-  }
-}
-```
-
 Then run the starting-state check in [Before each session](#before-each-session). Do not merge the brief into `main`. Keeping it out keeps the demo repeatable.
 
 ## Use it in your own repository
@@ -273,6 +263,5 @@ Then run the starting-state check in [Before each session](#before-each-session)
 
 - **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person; the merge box shows **N workflows awaiting approval**. Select **Approve workflows to run**, or run `gh run list --branch <copilot-branch> --status action_required --json databaseId --jq '.[].databaseId' | ForEach-Object { gh run rerun $_ }`.
 - **Nothing is published after you apply `brief-approved` to Copilot's pull request.** That run waits for approval too, even though a person applied the label. Approve it the same way.
-- **A task shows more "Blocked by" Issues than its "Depends on" line.** The links come from an earlier session whose brief had other dependencies: the publisher adds links but never removes them. Run the clean-up loop in [Reset and clean up](#reset-and-clean-up), then apply the label again.
 - **`Refusing to publish: the backlog is not valid`.** The backlog changed after validation, or it cites something that does not exist. Fix it, then apply the label again.
 - **`dependencies: text-only`.** The Issue dependencies API is not available for the repository, so dependencies appear as links in each task instead.
