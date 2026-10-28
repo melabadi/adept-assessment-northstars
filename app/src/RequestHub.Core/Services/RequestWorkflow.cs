@@ -290,6 +290,11 @@ public sealed partial class RequestWorkflow(
             var updated = await LoadAsync(publicId, ct);
             if (updated?.Decision is { } concurrentDecision)
             {
+                if (!user.CanAccessDepartment(updated.DepartmentId))
+                {
+                    return WorkflowError.Forbidden($"You cannot decide requests routed to {updated.DepartmentId}.");
+                }
+
                 return ExistingDecisionOutcome(concurrentDecision, user, key);
             }
 
