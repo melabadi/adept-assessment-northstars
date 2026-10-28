@@ -168,6 +168,9 @@ def init(args) -> None:
     email = subprocess.run("git config user.email", shell=True, capture_output=True, text=True).stdout.strip()
     if email and not email.endswith("users.noreply.github.com"):
         add("git-email", email, "you@example.com")
+    git_name = subprocess.run("git config user.name", shell=True, capture_output=True, text=True).stdout.strip()
+    if " " in git_name:
+        add("git-name", git_name, "Demo User")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"note": "Local only: values that identify your demo tenant. Never commit this file.",
