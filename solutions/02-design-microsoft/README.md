@@ -103,7 +103,7 @@ python ingest_standards.py
 
 - Resource group `rg-ai-sdlc-design` with a Foundry account and project `design`, a `gpt-5.4-mini` deployment, an Azure AI Search service (Basic, keys disabled), the project connection `standards-search`, and a managed identity for GitHub Actions that trusts only this repository's `design-microsoft` GitHub environment. To put Azure AI Search in another region, run `azd env set AZURE_SEARCH_LOCATION <region>` before `azd up`.
 - Roles for you and for that identity: **Foundry User** on the Foundry account, and **Search Index Data Contributor** and **Search Service Contributor** on the search service. Foundry's own identities get read access to the index.
-- GitHub environment `design-microsoft` with secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`, variables `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL_DEPLOYMENT`, `SEARCH_ENDPOINT`, and `SEARCH_CONNECTION_NAME`, and the `design-advisor` label. These are sign-in identifiers, not passwords: OIDC needs none.
+- GitHub environment `design-microsoft` with secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `FOUNDRY_PROJECT_ENDPOINT`, and `SEARCH_ENDPOINT`, variables `FOUNDRY_MODEL_DEPLOYMENT` and `SEARCH_CONNECTION_NAME`, and the `design-advisor` label. None of them is a password: OIDC needs none. The endpoints are secrets because they name your resources, and GitHub masks secrets in workflow logs while it prints variables.
 
 The last command loads the twelve standards into the index. The scripts read every setting from the azd environment, so there is nothing to export.
 
