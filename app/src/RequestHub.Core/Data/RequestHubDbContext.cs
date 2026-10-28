@@ -115,6 +115,7 @@ public sealed class RequestHubDbContext(DbContextOptions<RequestHubDbContext> op
         model.Entity<TriageRecommendation>(b =>
         {
             b.HasKey(t => t.Id);
+            b.Property(t => t.Version).IsRowVersion();
             b.Property(t => t.Provider).HasMaxLength(40);
             b.Property(t => t.SuggestedDepartmentId).HasMaxLength(16);
             b.Property(t => t.DepartmentAtRecommendation).HasMaxLength(16);

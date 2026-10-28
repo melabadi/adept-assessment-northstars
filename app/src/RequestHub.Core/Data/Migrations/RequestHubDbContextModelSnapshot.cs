@@ -382,6 +382,12 @@ namespace RequestHub.Core.Data.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.Property<string>("SuggestedDepartmentId")
                         .IsRequired()
                         .HasMaxLength(16)

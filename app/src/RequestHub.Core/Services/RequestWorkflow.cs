@@ -341,6 +341,11 @@ public sealed partial class RequestWorkflow(
             request.Status = RequestStatus.InReview;
         }
 
+        foreach (var recommendation in request.Recommendations.Where(r => r.Status == RecommendationStatus.Proposed))
+        {
+            recommendation.Status = RecommendationStatus.Superseded;
+        }
+
         AddAudit(request.Id, user.Id, "routing.changed", now, new { request = request.PublicId, from, to = input.DepartmentId, reason = input.Reason });
         await NotifyDepartmentStaffAsync(request, "request.routed", now, ct);
         try

@@ -151,6 +151,8 @@ public sealed class Notification
 public sealed class TriageRecommendation
 {
     public Guid Id { get; set; }
+    /// <summary>Optimistic concurrency token (PostgreSQL xmin).</summary>
+    public uint Version { get; set; }
     public Guid RequestId { get; set; }
     /// <summary>Provider id, e.g. "sample-rules" or "foundry-agent".</summary>
     public required string Provider { get; set; }

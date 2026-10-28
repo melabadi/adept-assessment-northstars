@@ -156,6 +156,24 @@ describe('TriagePanel', () => {
     expect(within(panel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
   });
 
+  it('marks a superseded recommendation stale even when its original department matches the current department', async () => {
+    mockApi({
+      'GET /api/requests/REQ-1001': () =>
+        detail({
+          departmentId: 'IT',
+          latestRecommendation: recommendation({ status: 'Superseded', departmentAtRecommendation: 'IT' }),
+          permissions: { ...noPermissions, canRoute: true },
+        }),
+      'GET /api/requests/REQ-1001/history': () => [],
+    });
+
+    renderApp('/requests/REQ-1001', { persona: 'u-ben' });
+
+    const panel = await screen.findByRole('region', { name: 'Triage assistant' });
+    expect(within(panel).getByText('Stale: request was rerouted since this suggestion')).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
+  });
+
   it('localizes the confirmation action and confirmation history label in French', async () => {
     const rec = recommendation({ departmentAtRecommendation: 'IT' });
     mockApi({

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -174,6 +175,70 @@ public sealed class RecommendationConfirmationTests(ApiFixture api) : IClassFixt
     }
 
     [Fact]
+    public async Task Rerouting_away_and_back_supersedes_the_original_recommendation()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "FAC");
+
+        Assert.Equal(HttpStatusCode.OK, (await RerouteAsync(request.Id, "FAC")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await RerouteAsync(request.Id, "IT")).StatusCode);
+        var detail = await (await api.As("u-ben").GetAsync($"/api/requests/{request.Id}")).Read<RequestDetailDto>();
+        Assert.Equal("IT", detail.DepartmentId);
+        var recommendations = await (await api.As("u-ben").GetAsync($"/api/requests/{request.Id}/triage-recommendations")).Read<List<RecommendationDto>>();
+        var superseded = Assert.Single(recommendations, r => r.Id == recommendationId);
+        Assert.Equal("Superseded", superseded.Status);
+        Assert.Equal("IT", superseded.DepartmentAtRecommendation);
+
+        var response = await ConfirmAsync("u-ben", request.Id, recommendationId);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("recommendation.stale", await response.Code());
+    }
+
+    [Fact]
+    public async Task Concurrent_recommendation_superseding_confirmation_is_rejected_as_stale_by_postgres_xmin()
+    {
+        var request = await CreateRequestAsync("IT");
+        var recommendationId = await AddRecommendationAsync(request.Id, "IT");
+        await using var confirmingScope = api.Factory.Services.CreateAsyncScope();
+        await using var generatingScope = api.Factory.Services.CreateAsyncScope();
+        var confirmingDb = confirmingScope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var generatingDb = generatingScope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var confirmingRecommendation = await confirmingDb.Recommendations.SingleAsync(r => r.Id == recommendationId);
+        var originalVersion = confirmingRecommendation.Version;
+
+        var superseded = await generatingDb.Recommendations.SingleAsync(r => r.Id == recommendationId);
+        superseded.Status = RecommendationStatus.Superseded;
+        generatingDb.Recommendations.Add(new TriageRecommendation
+        {
+            Id = Guid.NewGuid(),
+            RequestId = superseded.RequestId,
+            Provider = "sample-rules",
+            IsSample = true,
+            SuggestedDepartmentId = "IT",
+            SuggestedPriority = RequestPriority.Normal,
+            Rationale = "A newer recommendation supersedes the earlier one.",
+            PolicyRefs = ["POL-ROUTE-001@1.2"],
+            Confidence = 0.8,
+            DepartmentAtRecommendation = "IT",
+            CreatedById = "u-ben",
+            CreatedAt = DateTimeOffset.UtcNow.AddSeconds(1),
+        });
+        await generatingDb.SaveChangesAsync();
+        Assert.NotEqual(originalVersion, superseded.Version);
+
+        confirmingRecommendation.Status = RecommendationStatus.Confirmed;
+        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => confirmingDb.SaveChangesAsync());
+
+        confirmingDb.ChangeTracker.Clear();
+        Assert.Equal(RecommendationStatus.Superseded,
+            (await confirmingDb.Recommendations.SingleAsync(r => r.Id == recommendationId)).Status);
+        var response = await ConfirmAsync("u-ben", request.Id, recommendationId);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("recommendation.stale", await response.Code());
+    }
+
+    [Fact]
     public async Task Duplicate_confirmation_returns_already_confirmed_without_a_second_audit()
     {
         var request = await CreateRequestAsync("IT");
@@ -289,6 +354,9 @@ public sealed class RecommendationConfirmationTests(ApiFixture api) : IClassFixt
 
     private Task<HttpResponseMessage> ConfirmAsync(string persona, string publicId, Guid recommendationId) =>
         api.As(persona).PostAsync($"/api/requests/{publicId}/triage-recommendations/{recommendationId}/confirm", null);
+
+    private Task<HttpResponseMessage> RerouteAsync(string publicId, string departmentId) =>
+        api.As("u-ben").PutAsJsonAsync($"/api/requests/{publicId}/routing", new { departmentId, reason = "Routing regression test." });
 
     private static int RequestNumber(string publicId) => int.Parse(publicId.AsSpan("REQ-".Length));
 }
