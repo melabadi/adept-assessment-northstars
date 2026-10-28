@@ -100,7 +100,7 @@ azd up
 - **The app**, as two container apps (API with web UI, and the notification worker).
 - **The Azure Policy assignment** `requesthub-storage-private-link`, on this resource group only.
 - **The GitHub identity**, trusted only by this repository's `secure-microsoft` environment. It has Reader and Policy Enrollments Contributor on the resource group and the Requester role in the app, and nothing else.
-- **GitHub environment `secure-microsoft`**, created by the hooks: secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and `AZURE_PRINCIPAL_ID`, and variables for the resource group, the deployment parameters, and the API. None of them is a password.
+- **GitHub environment `secure-microsoft`**, created by the hooks. Its secrets are the Azure sign-in values (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), your object id for the preview (`AZURE_PRINCIPAL_ID`), and the API's URL and identifier (`API_URL`, `API_IDENTIFIER_URI`). They are secrets because GitHub masks secrets in logs, while it prints variables in every step's environment listing. Its variables are documented names that identify nothing: the resource group, the environment name and region, and the policy assignment. None of these values is a password.
 
 Azure Policy evaluates the new storage account within about 30 minutes. Defender for Cloud can take up to 24 hours to assess it, which is why you set up the day before. Check that you are ready:
 

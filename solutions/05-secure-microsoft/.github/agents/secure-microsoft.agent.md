@@ -36,3 +36,6 @@ resource, source by source: the live resource configuration, Azure Policy, Micro
 - Report Defender for Cloud honestly. It reassesses on its own schedule, usually within 24 hours; Azure Policy is the
   fast signal. Never claim a source confirmed the fix before it did.
 - Results come from live Azure calls. If Azure access fails, report it as blocked; do not simulate output.
+- Keep host names, resource names with their random suffix, GUIDs, subscription or tenant details, and e-mail addresses
+  out of branches, commits, pull requests, and comments. Say "the storage account" or "the API"; the scripts already
+  print such names as `st…`.
