@@ -606,8 +606,8 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
     key = f"release-check-{label}-{utc_now():%Y%m%dT%H%M%S}"
     request = {
         "title": f"Release check {label}"[:120],
-        "description": "Synthetic request created by the release gate to check submit, read, the self-approval "
-                       "guard, and audit history on this revision.",
+        "description": "Synthetic request created by the release gate to check submit, read, an attachment, the "
+                       "self-approval guard, and audit history on this revision.",
         "category": categories[0]["id"],
         "departmentId": "OPS" if "OPS" in departments else departments[0],
         "priority": "Normal",
