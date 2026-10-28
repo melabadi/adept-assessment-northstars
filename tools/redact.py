@@ -74,7 +74,21 @@ def load_items() -> list[dict]:
     path = list_path()
     if not path.exists():
         sys.exit(f"No redaction list at {path}. Create it with: python tools/redact.py init")
-    return [i for i in json.loads(path.read_text(encoding="utf-8"))["items"] if meaningful(i["value"])]
+    items = [i for i in json.loads(path.read_text(encoding="utf-8"))["items"] if meaningful(i["value"])]
+    # Pages truncate long names ("ME-contoso-youralias…"), so identifying values also match by their prefixes.
+    prefix_kinds = {"windows-user", "tenant-prefix", "tenant-domain", "subscription-name", "account", "git-email",
+                    "git-name", "host-label", "name-token", "user-name"}
+    expanded = list(items)
+    for i in items:
+        v = i["value"]
+        if i["kind"] in prefix_kinds:
+            # A letters-only start of a host name ("centralus") is a common word, not an identifier.
+            expanded += [{"kind": i["kind"], "value": v[:n], "replacement": i["replacement"]}
+                         for n in range(len(v) - 1, max(6, -(-len(v) // 2)) - 1, -1)
+                         if i["kind"] not in ("host-label", "name-token") or re.search(r"\d", v[:n])]
+        elif re.match(r"[0-9a-f]{8}-", v, re.I) and re.search("subscription|tenant", i["kind"]):
+            expanded.append({"kind": i["kind"], "value": v[:8], "replacement": "00000000"})
+    return expanded
 
 
 def az(args: str):
