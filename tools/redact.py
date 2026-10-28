@@ -167,6 +167,23 @@ def init(args) -> None:
             if re.search(r"\d", token) and re.search(r"[a-z]", token):
                 add("name-token", token, "x" * 13)
 
+    # Portals also list resources outside the demo resource groups (the Foundry portal's resource list spans every
+    # subscription you can see). Their names can embed the tenant number or your name: list those, and every name
+    # with a random suffix.
+    tenant_number = ""
+    if "@" in upn:
+        tenant_number = (re.search(r"\d{4,}", upn.split("@", 1)[1].split(".")[0]) or [""])[0]
+        add("tenant-number", tenant_number, "0" * len(tenant_number))
+    login = subprocess.run("gh api user --jq .login", shell=True, capture_output=True, text=True).stdout.strip().lower()
+    personal = [p for p in (tenant_number, (os.environ.get("USERNAME") or "").lower(), login) if p and len(p) >= 4]
+    everything = ("resources | project name | union (resourcecontainers | where type =~ "
+                  "'microsoft.resources/subscriptions/resourcegroups' | project name)")
+    for r in (az(f'graph query -q "{everything}" --first 1000') or {}).get("data", []):
+        name = r["name"]
+        low = name.lower()
+        if any(p in low for p in personal) or (len(name) >= 8 and re.search(r"\d", name) and re.search(r"[a-z]", low)):
+            add("resource-name", name, re.sub(r"[A-Za-z0-9]", "x", name))
+
     env_globs = [str(REPO / "solutions" / "*" / ".azure" / "*" / ".env")] + list(args.env_glob or [])
     for pattern in env_globs:
         for env in glob.glob(pattern):
