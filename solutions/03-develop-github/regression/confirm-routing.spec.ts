@@ -34,6 +34,7 @@ test.describe('Confirm recommended routing', () => {
 
     await triage.getByRole('button', { name: 'Confirm routing' }).click();
     await expect(triage).toContainText('Confirmed by Ben Okafor');
+    await expect(triage).not.toContainText('Stale:');
     await expect(triage.getByRole('button', { name: 'Confirm routing' })).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Routing' })).toContainText('Current department: IT Services');
     await expect(page.getByText('Status: In review')).toBeVisible();
