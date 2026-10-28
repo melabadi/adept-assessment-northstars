@@ -2,7 +2,7 @@
 
 Cloud misconfigurations are usually found by one team in a security portal and fixed by another team in code, if they are fixed at all. In this solution, Azure Policy and Microsoft Defender for Cloud flag a real misconfiguration on RequestHub's attachment storage: it has no private endpoint. A scan turns the finding into one tracked GitHub Issue, with the evidence from each source kept apart. Copilot fixes it in Bicep, and an Azure what-if preview on the pull request proves the change touches only storage networking. After a person applies it, a verification run queries both services again and proves that attachments work.
 
-![The verification comment on the posture Issue: the storage account has an approved private endpoint, both Azure Policy assignments report Compliant, an attachment upload and download through RequestHub works, and Defender for Cloud is marked as not reassessed yet](images/06-verified.png)
+![The posture verification comment posted by GitHub Actions: one approved private endpoint, both Azure Policy assignments Compliant, Defender for Cloud Unhealthy and not reassessed since the fix, and the attachment upload and download through the RequestHub API working](images/06-verified.png)
 
 ## Where it fits
 
@@ -170,7 +170,7 @@ Run the commands from the repository root unless a step says otherwise.
 
    Optional: open the app (`azd env get-value API_URL` in the solution folder), open any request, and attach a file. Where public endpoints are closed by policy, the upload fails.
 
-   **Point out:** both services flag the same storage account, and neither says where the fix belongs: Defender links to general guidance, and Policy, which only audits here, offers no remediation task.
+   **Point out:** both services flag the storage account, and neither says where the fix belongs: Defender links to general guidance, and Policy, which only audits here, offers no remediation task.
 
 2. **Turn it into engineering work** (about 1 minute).
 
@@ -196,7 +196,7 @@ Run the commands from the repository root unless a step says otherwise.
 
    A draft pull request appears within seconds. When Copilot finishes, it has changed one line in `infra/resources.bicep` (`storagePrivateEndpoint: true`), rewritten the comment above it to say what the private endpoint does, and linked the Issue.
 
-   ![Copilot's pull request "Enable private networking for attachment storage": the description explains the one-line change, and the timeline shows Copilot starting and finishing the work](images/03-copilot-pull-request.png)
+   ![Copilot's draft pull request "Enable private networking for attachment storage": its description explains the change, storagePrivateEndpoint: true, and links the Issue it fixes; the timeline shows Copilot starting and finishing the work](images/03-copilot-pull-request.png)
 
    **Point out:** Copilot's description names the one value it changed, `storagePrivateEndpoint: true`, and links the Issue it fixes.
 
@@ -221,9 +221,9 @@ Run the commands from the repository root unless a step says otherwise.
    azd provision
    ```
 
-   ![azd provision applying the merged change: the private endpoint is created and the run succeeds in under five minutes](images/05-azd-provision.png)
+   ![azd provision in the solution folder: the private endpoint is among the resources it deployed, and it succeeds in 4 minutes 39 seconds](images/05-azd-provision.png)
 
-   **Point out:** you run the deployment from your own terminal, under your own sign-in, and its output includes the new private endpoint.
+   **Point out:** the change is deployed from your own terminal with `azd provision`, and the private endpoint is in its output.
 
 6. **Verify** (3 to 15 minutes, depending on when Azure Policy re-evaluates; 4 minutes in the run shown).
 
@@ -234,13 +234,13 @@ Run the commands from the repository root unless a step says otherwise.
 
    The run starts an Azure Policy evaluation, waits for this solution's assignment to report Compliant, and then uploads and downloads an attachment through the API. It comments the evidence on the Issue: an approved private endpoint, both Policy assignments `Compliant ✅`, the app check `works ✅`, and Defender for Cloud `Unhealthy ⏳ not reassessed since the fix`. Copilot's pull request closed the Issue when it merged; the verify run reopens it if the fix is not actually in place.
 
-   ![The verification comment on the posture Issue: one approved private endpoint, both Azure Policy assignments Compliant, Defender for Cloud Unhealthy and not reassessed since the fix, and the attachment upload and download working](images/06-verified.png)
+   ![The posture verification comment posted by GitHub Actions: one approved private endpoint, both Azure Policy assignments Compliant, Defender for Cloud Unhealthy and not reassessed since the fix, and the attachment upload and download working](images/06-verified.png)
 
    Show the same result in the portal and in the app: the Policy tab now reports the storage account compliant, and the request named in the app check row (for example REQ-1026, *Posture check: attachment round trip*) holds the file the check uploaded through the private endpoint.
 
-   ![The same Azure Policy assignment after the fix: compliant, 1 out of 1 resources, with the storage account (name masked) listed as compliant](images/06-policy-compliant.png)
+   ![The same Azure Policy assignment, now compliant: 1 out of 1 resources, with the storage account (name masked) listed as compliant](images/06-policy-compliant.png)
 
-   ![RequestHub's Attachments section: the posture-check file uploaded five minutes earlier, below one from the previous day's run, both uploaded by the workflow's app identity](images/06-attachment-in-app.png)
+   ![RequestHub's Attachments section: a posture-check file uploaded five minutes earlier, below one from the previous day, both uploaded by an app identity whose ID is masked](images/06-attachment-in-app.png)
 
    **Point out:** the verification comment keeps one row per source. The configuration, both Policy assignments, and the app check confirm the fix, and Defender for Cloud's row says it has not reassessed yet.
 
