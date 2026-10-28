@@ -565,8 +565,12 @@ class ProductionProbe(threading.Thread):
                 "builds": builds}
 
 
-def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = None) -> list[Check]:
-    """Use the API like a person would. Stops at the first failure that makes later checks meaningless."""
+def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = None,
+          expect_from: str = "the release commit") -> list[Check]:
+    """Use the API like a person would. Stops at the first failure that makes later checks meaningless.
+
+    expect_commit is the build the target must report; expect_from names where it comes from in the record.
+    """
     checks: list[Check] = []
 
     def add(name: str, ok: bool, detail: str, response: Response | None = None) -> bool:
@@ -584,7 +588,7 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
     detail = f"build {build[:12]}, contract {meta.get('contractVersion')}, auth {meta.get('authMode')}"
     if expect_commit:
         ok = ok and build == expect_commit
-        detail += " (matches the release commit)" if build == expect_commit else f" (expected {expect_commit[:12]})"
+        detail += f" (matches {expect_from})" if build == expect_commit else f" (expected {expect_commit[:12]})"
     add("build", ok, detail, r)
 
     r = http("GET", f"{base}/api/me")
@@ -951,7 +955,8 @@ def cmd_abort(args) -> int:
     record.data["trafficAfter"] = state.traffic_summary()
     record.note(f"Verifying production ({state.short(stable)}, 100% of traffic)")
     ok = record.checks("production", smoke(state.production_url, api_token(), label=state.short(stable),
-                                           expect_commit=commit_of(state.revisions[stable]) or None))
+                                           expect_commit=commit_of(state.revisions[stable]) or None,
+                                           expect_from=f"{state.short(stable)}'s commit"))
     return record.finish(ok, f"Users stayed on {state.short(stable)} and production passed the smoke test." if ok
                          else "Production failed the smoke test after the abort: investigate now.")
 
@@ -988,7 +993,8 @@ def cmd_rollback(args) -> int:
     _note_users(record)
     record.note(f"Verifying production ({state.short(target)})")
     ok = record.checks("production", smoke(state.production_url, bearer, label=state.short(target),
-                                           expect_commit=commit_of(state.revisions[target]) or None))
+                                           expect_commit=commit_of(state.revisions[target]) or None,
+                                           expect_from=f"{state.short(target)}'s commit"))
     ok = ok and state.weights.get(target) == 100
     return record.finish(ok, f"Rolled back in {seconds:.0f} s: {state.short(target)} serves 100% of traffic and passed "
                              f"the smoke test. {state.short(stable)} is kept as previous." if ok
@@ -1007,7 +1013,8 @@ def cmd_verify(args) -> int:
         return record.finish(False, f"No revision has the label {args.label}.")
     record.data.update(stable=state.describe(state.stable()), revision=revision, trafficAfter=state.traffic_summary())
     ok = record.checks(args.label or "production", smoke(url, api_token(), label=state.short(revision),
-                                                         expect_commit=commit_of(state.revisions[revision]) or None))
+                                                         expect_commit=commit_of(state.revisions[revision]) or None,
+                                                         expect_from=f"{state.short(revision)}'s commit"))
     return record.finish(ok, f"{state.short(revision)} passed the smoke test on {where}." if ok
                          else f"{state.short(revision)} failed the smoke test on {where}.")
 
