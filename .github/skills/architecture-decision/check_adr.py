@@ -9,14 +9,17 @@ Checks
   1. Sections: every `## ` section of the template is present: Context, Decision drivers, Options considered,
      Decision, Architecture, API impact, Threat model checklist, Consequences, Implementation tasks, Open questions.
   2. Options: at least two `### Option ...` headings.
-  3. Diagrams: a mermaid architecture diagram (`flowchart` or `graph`) and a mermaid `sequenceDiagram`.
+  3. Diagrams: a mermaid architecture diagram (`flowchart` or `graph`) and a mermaid `sequenceDiagram` with no `;`
+     inside a statement: in a sequence diagram a semicolon ends the statement, so one inside a message, note, or
+     participant name breaks the whole diagram ("Unable to render rich display"). Entity codes such as `#59;` are fine.
   4. Decisions belong to people: Status is Proposed, Accepted, Rejected, or Superseded, and any status other than
      Proposed must name the people who decided in **Deciders:**, never Copilot, an agent, a bot, or a placeholder.
   5. Standards: the ADR cites at least one standard, every cited id (STD-XXX-NNN) exists, and a cited version
      (`STD-OBS-001 v1.2`) matches the standard's current version.
-  6. Paths: every repository path written in backticks (for example `app/src/...`) exists and uses forward slashes.
-     A line or anchor suffix (`:42`, `#L42`) is allowed. Describe files that do not exist yet in plain words, without
-     backticks.
+  6. Paths: every repository path written in backticks (for example `app/src/...`) exists, uses forward slashes, and is
+     relative to the repository root: an absolute path from your machine or a CI runner points nowhere for readers and
+     can reveal a user folder. A line or anchor suffix (`:42`, `#L42`) is allowed. Describe files that do not exist
+     yet in plain words, without backticks.
   7. No template text left: placeholders from adr-template.md (such as `<option name>` or `YYYY-MM-DD`) are replaced.
 
 Usage
@@ -47,6 +50,35 @@ STANDARD_ID = re.compile(r"\bSTD-[A-Z]+-\d{3}\b")
 STANDARD_VERSION = re.compile(r"\b(STD-[A-Z]+-\d{3})\s*\(?\s*v(\d+(?:\.\d+)*)\b")
 BACKTICKED = re.compile(r"`([^`\s]+)`")
 LOCATION_SUFFIX = re.compile(r"(#.*|:\d+(-\d+)?)$")
+ENTITY_CODE = re.compile(r"#(?:\d+|[A-Za-z]+);")
+
+
+def mermaid_blocks(text: str) -> list[list[tuple[int, str]]]:
+    """The lines of each ```mermaid block, with their line numbers in the ADR."""
+    blocks: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] | None = None
+    for number, line in enumerate(text.splitlines(), start=1):
+        fence = line.strip()
+        if current is None:
+            if fence.startswith("```mermaid"):
+                current = []
+        elif fence.startswith("```"):
+            blocks.append(current)
+            current = None
+        else:
+            current.append((number, line))
+    return blocks
+
+
+def broken_sequence_lines(block: list[tuple[int, str]]) -> list[int]:
+    """ADR line numbers where a `;` cuts a sequence-diagram statement short. A trailing `;` is a valid terminator."""
+    broken, started = [], False
+    for number, line in block:
+        if re.match(r"^\s*sequenceDiagram\b", line):
+            started = True
+        elif started and not line.lstrip().startswith("%%") and re.search(r";\s*\S", ENTITY_CODE.sub("", line)):
+            broken.append(number)
+    return broken
 
 
 def find_repo(adr: Path) -> Path:
@@ -108,6 +140,22 @@ def repository_paths(text: str, repo: Path) -> dict[str, str]:
     return paths
 
 
+def absolute_repository_paths(text: str, repo: Path) -> list[str]:
+    """Backticked absolute paths (`/home/...`, `C:\\...`) that point into the repository, as repository-relative paths.
+
+    API routes such as `/api/requests/{id}` are not flagged: none of their segments is a top-level repository folder."""
+    top = {p.name for p in repo.iterdir() if p.is_dir() and p.name != ".git"}
+    relative = []
+    for token in BACKTICKED.findall(text):
+        parts = token.replace("\\", "/").split("/")
+        if not re.match(r"^(?:[A-Za-z]:)?$", parts[0]):
+            continue
+        start = next((i for i, part in enumerate(parts[1:], start=1) if part in top), None)
+        if start is not None:
+            relative.append("/".join(parts[start:]))
+    return sorted(set(relative))
+
+
 def check(adr: Path, standards: dict[str, str], repo: Path, placeholders: set[str]) -> list[str]:
     text = adr.read_text(encoding="utf-8")
     problems = []
@@ -126,6 +174,10 @@ def check(adr: Path, standards: dict[str, str], repo: Path, placeholders: set[st
         problems.append("add a mermaid architecture diagram (flowchart)")
     if not any(re.search(r"^\s*sequenceDiagram\b", d, re.MULTILINE) for d in diagrams):
         problems.append("add a mermaid sequence diagram of one request (sequenceDiagram)")
+    for block in mermaid_blocks(text):
+        for number in broken_sequence_lines(block):
+            problems.append(f"line {number}: ';' ends a statement in a mermaid sequence diagram, so GitHub cannot "
+                            "render the diagram; rephrase without it, or write #59;")
 
     status = re.search(r"\*\*Status:\*\*\s*([A-Za-z]+)", text)
     if not status or status.group(1) not in STATUSES:
@@ -153,6 +205,8 @@ def check(adr: Path, standards: dict[str, str], repo: Path, placeholders: set[st
             problems.append(f"references missing path `{path}`")
     for token in sorted(t for t in paths if "\\" in t):
         problems.append(f"write repository paths with forward slashes: `{token}`")
+    for path in absolute_repository_paths(text, repo):
+        problems.append(f"write repository paths relative to the repository root, as `{path}`, not as an absolute path")
 
     for placeholder in sorted(p for p in placeholders if p in text):
         problems.append(f"still contains template text {placeholder}")

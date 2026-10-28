@@ -6,13 +6,14 @@
 #     Breaking changes fail (STD-API-001); additive changes are listed in the run summary.
 # The checker, the contract tool, and the standards come from the base branch, so a pull request cannot weaken them.
 # Copilot code review and people judge the content; these checks decide whether it is complete and compatible.
+# It runs on design pull requests (an ADR added or changed) and on demand for any branch, never on other solutions'
+# pull requests. In your own repository, add your contract's path to `paths` so every API change gets the report.
 name: Design · GitHub · check the ADR and API impact
 
 on:
   pull_request:
     paths:
       - 'solutions/02-design-github/adr/**'
-      - 'app/contracts/**'
       - '.github/workflows/design-github-review.yml'
   workflow_dispatch:
     inputs:
