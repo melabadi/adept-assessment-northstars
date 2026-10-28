@@ -7,9 +7,13 @@ Each check prints PASS, WARN, or FAIL with what to do. The exit code is 1 when a
   App         multiple-revision mode (a candidate runs beside the stable revision), external ingress
   Traffic     exactly one revision serves 100%, and no candidate is left over from an interrupted release
   Probes      the revision users get has startup, liveness, and readiness probes (the gate trusts readiness)
+  Database    the PostgreSQL server is Ready: a tenant policy can stop it on a schedule, and then every revision fails
+              readiness, so a gate would fail for the wrong reason
+  Production  the production URL's readiness endpoint answers 200
   Identity    the GitHub Actions identity trusts the GitHub environment through OIDC and holds the two roles a
               release needs: Container Apps Contributor on the resource group and AcrPush on the registry
-  GitHub      the environment exists and holds the Azure sign-in secrets and the variables the workflows read
+  GitHub      the environment exists and holds, as secrets, the Azure sign-in values and every value that names a
+              deployed resource (GitHub masks secrets in logs; it prints variables), plus the resource group variable
 
 Settings come from the options, then environment variables, then the azd environment in --azd-dir:
 
@@ -24,7 +28,10 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
+
 
 def default_azd_dir() -> Path:
     """The solution folder, whether this runs from the root .github mirror or from the solution's own copy."""
@@ -36,8 +43,9 @@ def default_azd_dir() -> Path:
 
 RELEASE_ROLES = {"Container Apps Contributor": "resourcegroups/{rg}", "AcrPush": "/registries/"}
 BROAD_ROLES = {"Owner", "Contributor", "User Access Administrator", "Role Based Access Control Administrator"}
-SECRETS = ["AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID"]
-VARIABLES = ["AZURE_RESOURCE_GROUP", "API_APP_NAME", "API_URL", "API_IDENTIFIER_URI", "AZURE_CONTAINER_REGISTRY_ENDPOINT"]
+SECRETS = ["AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "API_APP_NAME", "API_IDENTIFIER_URI",
+           "AZURE_CONTAINER_REGISTRY_ENDPOINT"]
+VARIABLES = ["AZURE_RESOURCE_GROUP"]
 counts = {"PASS": 0, "WARN": 0, "FAIL": 0}
 
 
@@ -96,6 +104,36 @@ def check_app(s: dict) -> dict | None:
     report("PASS" if (kept or 0) >= 2 else "WARN", "App", f"maxInactiveRevisions {kept}",
            "Keep a few inactive revisions so older builds can be reactivated for a rollback.")
     return app
+
+
+def check_database(s: dict) -> None:
+    servers = az("postgres", "flexible-server", "list", "--resource-group", s["rg"])
+    if not servers:
+        report("WARN", "Database", f"no PostgreSQL flexible server in {s['rg']}", "The app's database lives in its resource group; check `azd up` finished.")
+        return
+    for server in servers:
+        state = server.get("state")
+        fix = (f"Start it: az postgres flexible-server start -g {s['rg']} -n {server['name']} (3 to 5 minutes). A tenant policy "
+               "can stop servers on a schedule; a stopped database makes every revision fail readiness.")
+        if state == "Ready":
+            report("PASS", "Database", f"{server['name']} is Ready")
+        elif state in ("Starting", "Updating"):
+            report("WARN", "Database", f"{server['name']} is {state}", "Wait until it is Ready (a few minutes), then run the preflight again.")
+        else:
+            report("FAIL", "Database", f"{server['name']} is {state}", fix)
+
+
+def check_production(app: dict) -> None:
+    fqdn = app["properties"]["configuration"]["ingress"].get("fqdn")
+    try:
+        with urllib.request.urlopen(f"https://{fqdn}/health/ready", timeout=20) as response:
+            status = response.status
+    except urllib.error.HTTPError as error:
+        status = error.code
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        status = f"no answer ({getattr(error, 'reason', error)})"
+    report("PASS" if status == 200 else "FAIL", "Production", f"/health/ready answers {status}",
+           "The revision users get is not ready. Check the Database line, then run the deployment-recovery skill's diagnose.py.")
 
 
 def check_traffic_and_probes(s: dict, app: dict) -> None:
@@ -173,15 +211,18 @@ def check_github(s: dict) -> None:
     names = {item["name"] for item in json.loads(out)} if code == 0 else set()
     missing = [name for name in SECRETS if name not in names]
     report("FAIL" if missing else "PASS", "GitHub", "secrets " + (f"missing {', '.join(missing)}" if missing else ", ".join(SECRETS)),
-           "Run `azd provision` (postprovision hook) to publish them.")
+           "Run `python configure_github.py publish` in the solution folder (or `azd provision`) to publish them.")
     code, out = run("gh", "variable", "list", "--env", s["environment"], "--repo", repo, "--json", "name,value")
     variables = {item["name"]: item["value"] for item in json.loads(out)} if code == 0 else {}
     missing = [name for name in VARIABLES if name not in variables]
-    stale = [name for name, expected in (("API_APP_NAME", s["app"]), ("AZURE_RESOURCE_GROUP", s["rg"]))
-             if variables.get(name) and variables[name] != expected]
+    stale = [name for name in VARIABLES if variables.get(name) and variables[name] != s["rg"]]
     report("FAIL" if missing or stale else "PASS", "GitHub",
-           "variables " + (f"missing {', '.join(missing)}" if missing else f"point to another app: {', '.join(stale)}" if stale else "present and pointing at this app"),
-           "Run `azd provision` (postprovision hook) to publish them.")
+           "variable " + (f"missing {', '.join(missing)}" if missing else f"points to another resource group: {', '.join(stale)}" if stale else "AZURE_RESOURCE_GROUP points at this app's resource group"),
+           "Run `python configure_github.py publish` in the solution folder (or `azd provision`) to publish it.")
+    exposed = [name for name in variables if name not in VARIABLES]
+    if exposed:
+        report("WARN", "GitHub", f"variables {', '.join(exposed)} name your resources, and workflow logs print every variable",
+               "Run `python configure_github.py publish` in the solution folder: it publishes them as secrets and deletes the variables.")
 
 
 def main() -> int:
@@ -204,6 +245,9 @@ def main() -> int:
         app = check_app(s)
         if app:
             check_traffic_and_probes(s, app)
+        check_database(s)
+        if app:
+            check_production(app)
         check_identity(s)
     check_github(s)
     print(f"\n{counts['PASS']} passed, {counts['WARN']} warnings, {counts['FAIL']} failed")

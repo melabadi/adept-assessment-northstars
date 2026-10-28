@@ -17,7 +17,8 @@ is one traffic change. `solutions/06-release-microsoft/release.py` does every st
 
 ## Inputs
 - Settings from the solution's azd environment (`azd env get-values` in `solutions/06-release-microsoft`), or the
-  environment variables `AZURE_RESOURCE_GROUP`, `API_APP_NAME`, and `API_IDENTIFIER_URI`.
+  process environment variables `AZURE_RESOURCE_GROUP`, `API_APP_NAME`, and `API_IDENTIFIER_URI`. The workflows set
+  them from the GitHub environment, where the last two are secrets: never store them as GitHub variables.
 - An image in the solution's registry. The workflow builds one per commit (`requesthub-api:<commit>`) and reuses it on
   reruns; from a terminal, `az acr build` does the same.
 - An Azure CLI sign-in with Container Apps Contributor on the resource group. The person who ran `azd up` has more.
@@ -46,20 +47,22 @@ is one traffic change. `solutions/06-release-microsoft/release.py` does every st
 ## Expected output
 ```
 PASS  Traffic   ca-api-xxxx--run12 serves 100% (label stable)
+PASS  Database  psql-xxxx is Ready
 PASS  Identity  Container Apps Contributor on rg-ai-sdlc-release
-12 passed, 0 warnings, 0 failed
+14 passed, 0 warnings, 0 failed
 
 Gate: readiness, smoke test, and bake on the candidate's own URL
-  · Ready 36 s after it was created. Smoke test on https://ca-api-xxxx---candidate.<domain>
-    ✓ build            build d4f49c7215eb, contract requesthub.v1, auth EasyAuth (matches the release commit)
+  · Ready 31 s after it was created. Smoke test on https://ca-api-xxxx---candidate.<domain>
+    ✓ build            build 2a50d1a5d475, contract requesthub.v1, auth EasyAuth (matches the release commit)
     ✓ approval guard   self-approval: HTTP 403 decision.self_approval
-  · Users meanwhile: 39/39 calls to production succeeded (100.0%)
+  · Users meanwhile: 86/86 calls to production succeeded (100.0%)
 ✓ Candidate run12 passed the gate and still has 0% of traffic.
 ```
 
 ## Failure handling
-- A preflight FAIL line names the fix, usually `azd provision` in the solution folder (it recreates the federated
-  credential, the role assignments, and the GitHub environment values).
+- A preflight FAIL line names the fix. A `Stopped` database: `az postgres flexible-server start` (3 to 5 minutes); a
+  tenant policy can stop it on a schedule. Missing identity roles or GitHub secrets: `azd provision` in the solution
+  folder (it recreates the federated credential, the role assignments, and the GitHub environment values).
 - `Traffic is split`: an earlier release stopped halfway. Finish it with `promote`, `abort`, or `rollback`.
 - `build ... (expected ...)`: the image does not contain the commit being released. Rebuild it; never pass another
   `--commit` to make the check match.

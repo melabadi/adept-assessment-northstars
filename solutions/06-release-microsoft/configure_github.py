@@ -6,8 +6,12 @@
       credential that lets this solution's GitHub environment sign in to Azure without a stored secret.
 
   python configure_github.py publish    (azd postprovision hook)
-      Creates or updates the GitHub environment `release-microsoft` and stores the Azure sign-in values (secrets)
-      and the names the release workflows read (variables). With OIDC there is no password or key to store.
+      Creates or updates the GitHub environment `release-microsoft` and stores what the release workflows need. The
+      Azure sign-in values and every value that names a deployed resource (the app's name, its API identifier, the
+      registry's host name) are secrets: GitHub masks secrets wherever they appear in logs and job summaries, while it
+      prints variables in every step's environment listing. Only the resource group, whose name identifies nothing,
+      is a variable. With OIDC there is no password or key to store. Variables that earlier versions published for the
+      other values are deleted.
 
 Needs the GitHub CLI signed in with admin rights on the repository (environments and secrets need them).
 To target another repository, run `azd env set GITHUB_REPOSITORY owner/name` first.
@@ -27,15 +31,16 @@ SECRETS = {
     "AZURE_CLIENT_ID": "AUTOMATION_CLIENT_ID",
     "AZURE_TENANT_ID": "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID": "AZURE_SUBSCRIPTION_ID",
+    "API_APP_NAME": "API_APP_NAME",
+    "API_IDENTIFIER_URI": "API_IDENTIFIER_URI",
+    "AZURE_CONTAINER_REGISTRY_ENDPOINT": "AZURE_CONTAINER_REGISTRY_ENDPOINT",
 }
 # GitHub variable name -> azd environment value
 VARIABLES = {
     "AZURE_RESOURCE_GROUP": "AZURE_RESOURCE_GROUP",
-    "API_APP_NAME": "API_APP_NAME",
-    "API_URL": "API_URL",
-    "API_IDENTIFIER_URI": "API_IDENTIFIER_URI",
-    "AZURE_CONTAINER_REGISTRY_ENDPOINT": "AZURE_CONTAINER_REGISTRY_ENDPOINT",
 }
+# Published as variables by earlier versions, so they appeared in workflow logs. Deleted when present.
+OBSOLETE_VARIABLES = ["API_APP_NAME", "API_URL", "API_IDENTIFIER_URI", "AZURE_CONTAINER_REGISTRY_ENDPOINT"]
 
 
 def run(*args: str, stdin: str | None = None) -> str:
@@ -72,7 +77,12 @@ def publish() -> None:
         run("gh", "secret", "set", secret, "--env", ENVIRONMENT, "--repo", repo, stdin=values[source])
     for variable, source in VARIABLES.items():
         run("gh", "variable", "set", variable, "--env", ENVIRONMENT, "--repo", repo, "--body", values[source])
-    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variables set.")
+    existing = {v["name"] for v in json.loads(run("gh", "variable", "list", "--env", ENVIRONMENT, "--repo", repo, "--json", "name"))}
+    removed = [name for name in OBSOLETE_VARIABLES if name in existing]
+    for name in removed:
+        run("gh", "variable", "delete", name, "--env", ENVIRONMENT, "--repo", repo)
+    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variable set"
+          + (f"; deleted the old variables {', '.join(removed)}." if removed else "."))
 
 
 def main() -> int:

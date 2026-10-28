@@ -6,6 +6,8 @@
 #   record     combines every step into one release record (run summary and artifact)
 # Run it from the Actions tab or `gh workflow run release-microsoft-rollout.yml`. Pick fault=fail-readiness to rehearse a
 # bad release. A pull request that changes the release tooling rehearses a release: the same steps, never promoted.
+# Nothing here prints what names your resources: the app name, API identifier, and registry are environment secrets,
+# which GitHub masks in logs and job summaries, and release.py writes placeholders into records and comments.
 name: Release · Microsoft · roll out a candidate revision
 
 on:
@@ -50,7 +52,7 @@ jobs:
     timeout-minutes: 20
     environment: release-microsoft
     outputs:
-      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.image.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Sign in to Azure with GitHub OIDC
@@ -62,9 +64,10 @@ jobs:
       - name: Build and push the image, or reuse the one already built for this commit
         id: image
         env:
-          REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
+          REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
         run: |
           name="${REGISTRY%%.*}"
+          echo "::add-mask::$name"
           tagged="$REGISTRY/requesthub-api:$GITHUB_SHA"
           if digest=$(az acr repository show --name "$name" --image "requesthub-api:$GITHUB_SHA" --query digest -o tsv 2>/dev/null) && [ -n "$digest" ]; then
             reused=true
@@ -78,12 +81,12 @@ jobs:
             digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$tagged" | cut -d@ -f2)
             reused=false
           fi
-          image="$REGISTRY/requesthub-api@$digest"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
+          # Only the digest leaves this job: the registry's host name stays a secret.
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
           mkdir -p "$SOLUTION/out/release"
-          jq -n --arg commit "$GITHUB_SHA" --arg image "$image" --argjson reused "$reused" \
+          jq -n --arg commit "$GITHUB_SHA" --arg image "requesthub-api@$digest" --argjson reused "$reused" \
             '{commit: $commit, image: $image, reused: $reused}' > "$SOLUTION/out/release/build.json"
-          { echo "### Image"; echo; echo "\`$image\` from commit \`$GITHUB_SHA\` ($([ "$reused" = true ] && echo 'reused: already built for this commit' || echo 'built in this run'))"; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Image"; echo; echo "\`requesthub-api@$digest\` from commit \`$GITHUB_SHA\` ($([ "$reused" = true ] && echo 'reused: already built for this commit' || echo 'built in this run'))"; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -98,8 +101,8 @@ jobs:
     environment: release-microsoft
     env:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-      API_APP_NAME: ${{ vars.API_APP_NAME }}
-      API_IDENTIFIER_URI: ${{ vars.API_IDENTIFIER_URI }}
+      API_APP_NAME: ${{ secrets.API_APP_NAME }}
+      API_IDENTIFIER_URI: ${{ secrets.API_IDENTIFIER_URI }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -113,7 +116,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Deploy the candidate revision (0% of traffic)
         env:
-          IMAGE: ${{ needs.build.outputs.image }}
+          IMAGE: ${{ secrets.AZURE_CONTAINER_REGISTRY_ENDPOINT }}/requesthub-api@${{ needs.build.outputs.digest }}
           FAULT: ${{ inputs.fault || 'none' }}
         run: python "$SOLUTION/release.py" deploy --image "$IMAGE" --commit "$GITHUB_SHA" --fault "$FAULT"
       - name: Gate (readiness, smoke test, and bake on the candidate's own URL)
@@ -132,13 +135,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: release-microsoft
-      url: ${{ vars.API_URL }}
+    environment: release-microsoft
     env:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-      API_APP_NAME: ${{ vars.API_APP_NAME }}
-      API_IDENTIFIER_URI: ${{ vars.API_IDENTIFIER_URI }}
+      API_APP_NAME: ${{ secrets.API_APP_NAME }}
+      API_IDENTIFIER_URI: ${{ secrets.API_IDENTIFIER_URI }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -172,8 +173,8 @@ jobs:
     environment: release-microsoft
     env:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-      API_APP_NAME: ${{ vars.API_APP_NAME }}
-      API_IDENTIFIER_URI: ${{ vars.API_IDENTIFIER_URI }}
+      API_APP_NAME: ${{ secrets.API_APP_NAME }}
+      API_IDENTIFIER_URI: ${{ secrets.API_IDENTIFIER_URI }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

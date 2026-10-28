@@ -35,7 +35,9 @@ Two situations, two different moves:
      ready before moving traffic. Or release an earlier image by digest:
      `python release.py deploy --image <registry>/requesthub-api@sha256:<digest>`, then `gate` and `promote`.
 3. Verify: `python release.py verify` runs the production smoke test. `rollback` and `abort` run it themselves.
-4. Record: `python release.py record` writes `out/release/release-record.md`. Attach it to the Issue or incident.
+4. Record: `python release.py record` writes `out/release/release-record.md`. It names revisions by suffix and uses
+   placeholders instead of host names and ids, so it is safe to attach to the Issue or incident. Paste nothing else from
+   your terminal: it shows the real host names.
 5. Fix the cause in code or configuration and release again through the gate.
 
 ## What a rollback does not undo
