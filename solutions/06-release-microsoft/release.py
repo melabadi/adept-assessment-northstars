@@ -31,6 +31,11 @@ Settings come from environment variables, or from this solution's azd environmen
 AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, API_APP_NAME, API_IDENTIFIER_URI.
 Azure calls use your Azure CLI sign-in (`az login`); in GitHub Actions, the workflow's OIDC sign-in.
 
+What is published never names your resources. Release records, job summaries, and pull request comments use
+placeholders (<app>, <environment domain>, <registry>, <id>) instead of host names, resource names with their unique
+token, and ids, and name revisions by their suffix (run12). In GitHub Actions the workflow log gets the same treatment,
+and every such value is masked with ::add-mask:: before it can be printed. Your own terminal shows the real values.
+
 Examples:
   python release.py status
   python release.py deploy --image <registry>.azurecr.io/requesthub-api:<commit> --commit <commit>
@@ -74,6 +79,55 @@ RUNNING = {"Running", "RunningAtMaxScale"}
 
 class ReleaseError(Exception):
     """A release step cannot continue. The message says why and what to do."""
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# What leaves this machine. Release records, job summaries, workflow logs, and pull request comments can become public,
+# so they never contain host names, resource names with their unique token, or ids. Those are replaced with placeholders
+# such as <app> and <environment domain>, and revisions are named by their suffix. Only your own terminal shows the
+# real values.
+# ---------------------------------------------------------------------------------------------------------------------
+
+GUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
+IN_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
+_private: dict[str, str] = {}  # lower-cased value that names a deployed resource -> placeholder
+
+
+def keep_private(value: str | None, placeholder: str) -> None:
+    """Never publish this value. In GitHub Actions, also mask it in the log before anything can print it."""
+    if not value or value.lower() in _private:
+        return
+    _private[value.lower()] = placeholder
+    if IN_ACTIONS:
+        # A workflow command: the runner consumes the line and masks the value from then on; the log never shows it.
+        sys.__stdout__.write(f"::add-mask::{value}\n")
+        sys.__stdout__.flush()
+
+
+def keep_image_private(image: str | None) -> None:
+    registry = (image or "").split("/")[0]
+    if "." in registry:  # a registry host such as <name>.azurecr.io
+        keep_private(registry, "<registry>")
+
+
+def public(text: str) -> str:
+    """The text with every private value replaced by its placeholder, and every id by <id>."""
+    for value in sorted(_private, key=len, reverse=True):
+        text = re.sub(re.escape(value), lambda _: _private[value], text, flags=re.IGNORECASE)
+    return GUID.sub("<id>", text)
+
+
+class PublicStream:
+    """In GitHub Actions, stdout and stderr go through public(), so the workflow log never shows a private value."""
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def write(self, text: str) -> int:
+        return self.raw.write(public(text))
+
+    def __getattr__(self, name):
+        return getattr(self.raw, name)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -324,6 +378,11 @@ def commit_of(revision: dict) -> str:
     return env.get("RELEASE_COMMIT") or env.get("BUILD_SHA") or ""
 
 
+def short_name(revision: str | None) -> str:
+    """A revision by its suffix (run12). The full name starts with the app's name, which carries its unique token."""
+    return (revision or "-").split("--", 1)[-1]
+
+
 @dataclass
 class State:
     """The app's revisions and traffic, normalized: labels map to revision names, weights per revision."""
@@ -338,6 +397,9 @@ class State:
     def load(cls, app: ContainerApp) -> "State":
         data = app.get()
         revisions = {r["name"]: r for r in app.revisions()}
+        keep_private(data["properties"]["configuration"]["ingress"]["fqdn"].split(".", 1)[1], "<environment domain>")
+        for revision in revisions.values():
+            keep_image_private(image_of(revision))
         latest_ready = data["properties"].get("latestReadyRevisionName")
         traffic, labels, weights = [], {}, {}
         for entry in data["properties"]["configuration"]["ingress"].get("traffic") or []:
@@ -383,8 +445,7 @@ class State:
     def describe(self, revision: str) -> dict:
         props = self.revisions.get(revision, {}).get("properties", {})
         return {"revision": revision, "image": image_of(self.revisions.get(revision, {})),
-                "commit": commit_of(self.revisions.get(revision, {})), "createdTime": props.get("createdTime"),
-                "fqdn": props.get("fqdn")}
+                "commit": commit_of(self.revisions.get(revision, {})), "createdTime": props.get("createdTime")}
 
     def traffic_summary(self) -> list[dict]:
         return [{"revision": t["revision"], "weight": t["weight"], "label": t["label"]} for t in self.traffic]
@@ -393,7 +454,10 @@ class State:
 def connect() -> ContainerApp:
     subscription = (os.environ.get("AZURE_SUBSCRIPTION_ID") or azd_values().get("AZURE_SUBSCRIPTION_ID")
                     or arm_session()["subscription"])
-    return ContainerApp(subscription, setting("AZURE_RESOURCE_GROUP"), setting("API_APP_NAME"))
+    name = setting("API_APP_NAME")
+    keep_private(subscription, "<subscription>")
+    keep_private(name, "<app>")
+    return ContainerApp(subscription, setting("AZURE_RESOURCE_GROUP"), name)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -446,11 +510,11 @@ class Record:
         print(f"{'✓' if ok else '✗'} {outcome}\n", flush=True)
         OUT.mkdir(parents=True, exist_ok=True)
         path = OUT / f"{self.started:%Y%m%dT%H%M%S}-{self.command}.json"
-        path.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
+        path.write_text(public(json.dumps(self.data, indent=2)), encoding="utf-8")
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:
             with open(summary, "a", encoding="utf-8") as handle:
-                handle.write(self.markdown())
+                handle.write(public(self.markdown()))
         return 0 if ok else 1
 
     def markdown(self) -> str:
@@ -529,8 +593,9 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
     r = http("GET", f"{base}/api/me", bearer=bearer)
     me = r.json() or {}
     roles = set(me.get("roles") or [])
+    # Roles only: the caller's name and ids identify an account, and this detail ends up in release records.
     if not add("signed in", r.status == 200 and {"Requester", "Approver"} <= roles,
-               f"HTTP {r.status}: {me.get('displayName', '?')} ({', '.join(sorted(roles)) or 'no roles'})", r):
+               f"HTTP {r.status}: roles {', '.join(sorted(roles)) or 'none'}", r):
         return checks
 
     categories = http("GET", f"{base}/api/categories", bearer=bearer).json() or []
@@ -768,7 +833,7 @@ def cmd_deploy(args) -> int:
     if state.weights.get(candidate, 0) != 0 or state.weights.get(stable) != 100:
         return record.finish(False, "Traffic did not stay on the stable revision; check the app in the portal.")
     record.note(f"Candidate URL {state.label_url('candidate')}")
-    _write_output("candidate", candidate)
+    _write_output("candidate", state.short(candidate))
     return record.finish(True, f"Candidate {suffix} created with 0% of traffic; {state.short(stable)} still serves 100%.")
 
 
@@ -1024,13 +1089,13 @@ def cmd_record(args) -> int:
         how = "" if not build else (" (reused: already built for this commit)" if build.get("reused") else " (built in this run)")
         rows.append(("Image", f"`{image}`{how}"))
     if candidate:
-        rows.append(("Candidate", f"`{candidate.get('revision', '')}`"
+        rows.append(("Candidate", f"`{short_name(candidate.get('revision'))}`"
                      + (f", fault `{candidate['fault']}`" if candidate.get("fault") not in (None, "none") else "")))
     before = next((r.get("stable") for r in records if r.get("stable")), None)
     if before:
-        rows.append(("Stable before", f"`{before.get('revision', '')}`"))
+        rows.append(("Stable before", f"`{short_name(before.get('revision'))}`"))
     if "rollback" in by and by["rollback"].get("rolledBackTo"):
-        rows.append(("Rolled back to", f"`{by['rollback']['rolledBackTo'].get('revision', '')}`"))
+        rows.append(("Rolled back to", f"`{short_name(by['rollback']['rolledBackTo'].get('revision'))}`"))
 
     lines = [f"## Release record: {outcome}", "", "| | |", "| --- | --- |"]
     lines += [f"| {k} | {v} |" for k, v in rows]
@@ -1069,11 +1134,11 @@ def cmd_record(args) -> int:
     after = next((r.get("trafficAfter") for r in reversed(records) if r.get("trafficAfter")), None)
     if after:
         lines += ["", "### Traffic after the release", "", "| Revision | Label | Traffic |", "| --- | --- | --- |"]
-        lines += [f"| `{t['revision']}` | {t.get('label') or ''} | {t['weight']}% |" for t in after]
-    markdown = "\n".join(lines) + "\n"
+        lines += [f"| `{short_name(t['revision'])}` | {t.get('label') or ''} | {t['weight']}% |" for t in after]
+    markdown = public("\n".join(lines) + "\n")
     (folder / "release-record.md").write_text(markdown, encoding="utf-8")
-    (folder / "release-record.json").write_text(json.dumps({"schema": RECORD_SCHEMA, "outcome": outcome, "build": build,
-                                                            "records": records}, indent=2), encoding="utf-8")
+    (folder / "release-record.json").write_text(public(json.dumps({"schema": RECORD_SCHEMA, "outcome": outcome, "build": build,
+                                                                   "records": records}, indent=2)), encoding="utf-8")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
             handle.write(markdown)
@@ -1096,6 +1161,8 @@ def _write_output(name: str, value: str) -> None:
 
 def main() -> int:
     utf8_stdout()
+    if IN_ACTIONS:
+        sys.stdout, sys.stderr = PublicStream(sys.stdout), PublicStream(sys.stderr)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True, metavar="command")
 

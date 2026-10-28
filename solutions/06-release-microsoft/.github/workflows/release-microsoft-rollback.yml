@@ -1,7 +1,8 @@
 # Release · Microsoft: roll RequestHub's API back to the previous revision on Azure Container Apps.
 # The previous revision is still running (promotion keeps it warm), so this is one atomic traffic change, then the same
 # production smoke test as a release. Nothing is rebuilt or redeployed. Running it twice rolls forward again.
-# Run it from the Actions tab or `gh workflow run release-microsoft-rollback.yml`.
+# Run it from the Actions tab or `gh workflow run release-microsoft-rollback.yml`. Like the rollout, it never prints what
+# names your resources: those values are environment secrets, and the release record uses placeholders.
 name: Release · Microsoft · roll back to the previous revision
 
 on:
@@ -32,13 +33,11 @@ jobs:
     name: Roll back and verify production
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: release-microsoft
-      url: ${{ vars.API_URL }}
+    environment: release-microsoft
     env:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
-      API_APP_NAME: ${{ vars.API_APP_NAME }}
-      API_IDENTIFIER_URI: ${{ vars.API_IDENTIFIER_URI }}
+      API_APP_NAME: ${{ secrets.API_APP_NAME }}
+      API_IDENTIFIER_URI: ${{ secrets.API_IDENTIFIER_URI }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

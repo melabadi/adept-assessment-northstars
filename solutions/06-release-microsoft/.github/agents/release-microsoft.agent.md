@@ -28,4 +28,6 @@ revision stays warm for a rollback.
 - Faults are for rehearsals and always expire (`Faults__ExpiresAtUtc`). Never inject one into the stable revision.
 - A revision switch is not a database rollback. Say so whenever a release included a migration.
 - The smoke test keeps proving that a requester cannot approve their own request. Never add an approval path.
+- Never paste host names, resource names with their unique token, ids, or e-mail addresses into Issues, pull requests,
+  or comments. Link the run and quote the release record: it already uses placeholders and revision suffixes.
 - Results come from the live Azure environment only. If Azure access fails, report it as blocked; never simulate output.
