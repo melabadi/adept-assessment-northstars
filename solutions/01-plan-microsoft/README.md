@@ -91,7 +91,9 @@ azd up
 
 - Resource group `rg-ai-sdlc-plan` with a Foundry account and project, a `gpt-4.1` deployment, and a managed identity for GitHub Actions. That identity trusts only the `plan-microsoft` GitHub environment of this repository.
 - The **Foundry User** role (formerly Azure AI User) on the Foundry account, for you and for that identity.
-- GitHub environment `plan-microsoft` with secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`, and variables `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL_DEPLOYMENT`. These are sign-in identifiers, not passwords: OIDC needs none.
+- GitHub environment `plan-microsoft` with secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and `FOUNDRY_PROJECT_ENDPOINT`, and the variable `FOUNDRY_MODEL_DEPLOYMENT`. None of them is a password: OIDC needs none. They are secrets because they identify your tenant and your Foundry resource: GitHub masks secrets in workflow logs, which anyone can read in a public repository, but prints variables in clear text.
+
+Set up before the endpoint became a secret? Run `azd hooks run postprovision` in this folder once. It stores the endpoint as a secret and deletes the old `FOUNDRY_PROJECT_ENDPOINT` variable.
 
 Also create the review label once, if the GitHub solution has not already: `gh label create brief-approved --color 0e8a16`.
 
