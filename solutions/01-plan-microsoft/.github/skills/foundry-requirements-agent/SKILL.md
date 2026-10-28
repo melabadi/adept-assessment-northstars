@@ -27,7 +27,7 @@ description: Run and iterate the Microsoft Foundry "requirements-analyst" agent 
    python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-microsoft/out/run1/backlog.json solutions/01-plan-microsoft/out/run2/backlog.json solutions/01-plan-microsoft/out/run3/backlog.json
    ```
    Keep the change only if validity and the planted-issue scores improve. Prefer generic analysis guidance (for example "look for disagreements before writing") over hints about this transcript.
-5. In the Foundry portal (ai.azure.com → your project → Agents → `requirements-analyst`), show the versions.
+5. In the Foundry portal (ai.azure.com → your project → **Build** → **Agents** → `requirements-analyst`), open the **Version** list to show the versions.
 
 ## Expected output
 ```
@@ -37,7 +37,7 @@ attempt 1: response resp_...: VALID
 Files: `backlog.json`, `brief.md`, `run.json` in `solutions/01-plan-microsoft/brief/`.
 
 ## Failure handling
-- `FOUNDRY_PROJECT_ENDPOINT is not set`: run `azd up` in `solutions/01-plan-microsoft`, or export the value.
+- `FOUNDRY_PROJECT_ENDPOINT is not set`: run `azd up` in `solutions/01-plan-microsoft`, or export the value. In a new clone or worktree the azd environment is missing (git ignores `.azure/`); recreate it there with `azd env new ai-sdlc-plan --subscription (az account show --query id -o tsv) --location eastus2`, then `azd env refresh -e ai-sdlc-plan`.
 - `401/403 PermissionDenied`: your identity lacks the **Foundry User** role on the Foundry account; re-run `azd provision` in the solution folder or wait a few minutes for role propagation.
 - `Unsupported parameter: 'temperature'`: the model is a reasoning model; replace `temperature` with `reasoning_effort: low` in `agent.yaml`.
 - `invalid_json_schema`: the schema adapter (`strict_schema`) must keep property names; do not loosen the validator.
