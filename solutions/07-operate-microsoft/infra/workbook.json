@@ -49,8 +49,7 @@
         "timeContextFromParameter": "TimeRange",
         "queryType": 0,
         "resourceType": "microsoft.insights/components",
-        "visualization": "timechart",
-        "chartSettings": { "showLegend": false }
+        "visualization": "timechart"
       },
       "customWidth": "50",
       "name": "oldest-pending-age"
@@ -65,8 +64,7 @@
         "timeContextFromParameter": "TimeRange",
         "queryType": 0,
         "resourceType": "microsoft.insights/components",
-        "visualization": "timechart",
-        "chartSettings": { "showLegend": false }
+        "visualization": "timechart"
       },
       "customWidth": "50",
       "name": "pending"

@@ -300,9 +300,10 @@ Run the commands in this folder.
    ![The agent verifying recovery: the new revision's gauge reached 0 pending about 77 seconds after it became ready, delivery spans without the fault take under a millisecond, and it waits for Azure Monitor to resolve the alert](images/06-agent-verifies.png)
 
    The alert resolves about 4.5 minutes after the backlog drains, after three healthy one-minute evaluations, and
-   `watch` stops by itself. The workbook now tells the whole story.
+   `watch` stops by itself. The workbook now tells the whole story; read the lines, because the numbers under the
+   first two charts add up every one-minute sample in the time range.
 
-   ![Workbook after the drill: the oldest pending notification climbs in steps to about 2,000 seconds and drops to zero at the fix, the pending count falls from 340 to zero, and deliveries jump from 6 to 165 a minute when the fault is removed](images/06-workbook-recovered.png)
+   ![Workbook after the drill: the oldest pending notification climbs in steps to about 1,000 seconds and drops to zero at the fix, the pending count falls from 340 to zero, and deliveries jump from about 6 to about 260 a minute when the fault is removed](images/06-workbook-recovered.png)
 
    **Point out:** recovery is measured, not assumed: the agent waits for post-change data and the resolved alert.
 
