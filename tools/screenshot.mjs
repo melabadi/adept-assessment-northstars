@@ -20,7 +20,7 @@
  *   --wait <selector>        wait until this element is visible (repeatable). Selectors are CSS, or text=<words> for
  *                            the innermost element showing those words.
  *   --select <sel>=<value>   choose this option in a list, or set this field (repeatable; runs before --wait). Example:
- *                            --select "select[aria-label='Demo persona']=u-ben" to view RequestHub as a reviewer
+ *                            --select "#persona-select=u-ben" to view RequestHub as a reviewer
  *   --click <selector>       click this element before capturing (repeatable, in order)
  *   --frame <url part>       apply --wait, --click, and --selector inside the first frame whose URL contains this
  *   --selector <selector>    capture only this element, with --padding pixels around it (default 8)
@@ -61,6 +61,8 @@ import { fileURLToPath } from 'node:url';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fail = (code, message) => { console.error(message); process.exit(code); };
 class Refusal extends Error { constructor(code, message) { super(message); this.code = code; } }
+// Thrown when the page rendered in the wrong color scheme ('theme') or at the wrong size or scale ('metrics'); the
+// capture is then loaded again.
 class ThemeRetry extends Error {}
 const refuse = (code, message) => { throw new Refusal(code, message); };
 
@@ -645,9 +647,19 @@ async function capturePage(url, out) {
     await sleep(200);
     await tab.metrics(height);
     await sleep(500);
-    if ((await tab.evalTop(`matchMedia('(prefers-color-scheme: dark)').matches`)) !== (theme === 'dark')) throw new ThemeRetry();
+    if ((await tab.evalTop(`matchMedia('(prefers-color-scheme: dark)').matches`)) !== (theme === 'dark')) throw new ThemeRetry('theme');
     const rendered = await tab.evalTop(RENDERED_LIGHT);
-    if (rendered !== null && rendered !== (theme === 'light')) throw new ThemeRetry();
+    if (rendered !== null && rendered !== (theme === 'light')) throw new ThemeRetry('theme');
+    // Another DevTools client can reset this tab's device metrics; an image captured then can come out tiled or at
+    // the wrong scale. Check them before and after the capture, like the color scheme.
+    const metricsKept = async () => {
+      // devicePixelRatio is a 32-bit float (2 reads as 2.0000000298…), so compare it with a tolerance.
+      const [dpr, w] = JSON.parse(await tab.evalTop('JSON.stringify([devicePixelRatio, innerWidth])'));
+      const kept = Math.abs(dpr - scale) < 0.01 && w === width;
+      if (!kept) debug(`viewport is ${w} CSS px at scale ${dpr}; expected ${width} at ${scale}`);
+      return kept;
+    };
+    if (!(await metricsKept())) throw new ThemeRetry('metrics');
 
     debug('scheme pinned');
     mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
@@ -707,10 +719,12 @@ async function capturePage(url, out) {
     const after = [...new Set((await tab.evalAll('globalThis.__scrub ? globalThis.__scrub.check() : ["unscrubbed-frame"]')).flat())];
     if (after.length) { try { unlinkSync(out); } catch {} saved = false; refuse(3, `Refused after capture: unmasked ${after.join(', ')} appeared. The image was deleted.`); }
     const renderedAfter = await tab.evalTop(RENDERED_LIGHT);
-    if ((await tab.evalTop(`matchMedia('(prefers-color-scheme: dark)').matches`)) !== (theme === 'dark') || (renderedAfter !== null && renderedAfter !== (theme === 'light'))) {
+    const schemeKept = (await tab.evalTop(`matchMedia('(prefers-color-scheme: dark)').matches`)) === (theme === 'dark') && (renderedAfter === null || renderedAfter === (theme === 'light'));
+    const metricsStill = await metricsKept();
+    if (!schemeKept || !metricsStill) {
       try { unlinkSync(out); } catch {}
       saved = false;
-      throw new ThemeRetry();
+      throw new ThemeRetry(schemeKept ? 'metrics' : 'theme');
     }
   };
   try {
@@ -720,8 +734,12 @@ async function capturePage(url, out) {
         break;
       } catch (error) {
         if (!(error instanceof ThemeRetry)) throw error;
-        if (attempt >= 3) refuse(2, `The page kept rendering in the wrong color scheme. If the site has its own theme setting, set it to ${theme}.`);
-        debug(`color scheme mismatch, loading again (attempt ${attempt + 1})`);
+        if (attempt >= 3) {
+          refuse(2, error.message === 'metrics'
+            ? 'The page kept losing its viewport size or scale; another tool attached to the capture browser may be resetting it. Close that tool and retry.'
+            : `The page kept rendering in the wrong color scheme. If the site has its own theme setting, set it to ${theme}.`);
+        }
+        debug(`${error.message === 'metrics' ? 'viewport size or scale' : 'color scheme'} mismatch, loading again (attempt ${attempt + 1})`);
       }
     }
   } finally {

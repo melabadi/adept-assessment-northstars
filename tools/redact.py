@@ -5,9 +5,10 @@ Subcommands:
            your account and tenant domain, every GUID and host name in the demo resource groups, the unique tokens in
            resource names, the values in the solutions' azd environments, the RequestHub app registrations, your
            Windows user name, and your git e-mail address. The list is written OUTSIDE the repository; never commit it.
-  check    Check images (read with Windows OCR) and text files for any value on the list, for e-mail addresses, for
-           *.onmicrosoft.com domains, and for user profile paths. Exits 1 when something is found. Run it on every
-           image before you commit it; tools/screenshot.mjs runs it for you.
+  check    Check images (read with Windows OCR) and every other file that is text, whatever its extension (.log,
+           .css, .csproj, ...), for any value on the list, for e-mail addresses, for *.onmicrosoft.com domains, and for
+           user profile paths. Binary files that are not images are listed as not checked. Exits 1 when something is
+           found. Run it on every image before you commit it; tools/screenshot.mjs runs it for you.
 
 Usage:
   python tools/redact.py init [--rg-prefix rg-ai-sdlc] [--env-glob <glob> ...] [--reset]
@@ -38,8 +39,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
-TEXT_EXT = {".md", ".json", ".yml", ".yaml", ".py", ".ps1", ".mjs", ".js", ".ts", ".tsx", ".cs", ".bicep", ".txt",
-            ".svg", ".html", ".csv", ".env", ".toml", ".xml", ".sh", ".http", ".bicepparam"}
 GUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
 HOST = re.compile(r"\b(?:[a-z0-9-]+\.)+(?:azurecontainerapps\.io|azure\.com|windows\.net|azurecr\.io|azure\.net)\b", re.I)
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
@@ -330,6 +329,15 @@ def optimize(png: Path) -> None:
         tmp.unlink()
 
 
+def is_text(path: Path) -> bool:
+    """Whether a file reads as text: no NUL byte in its first 8 KB."""
+    try:
+        with path.open("rb") as handle:
+            return b"\0" not in handle.read(8192)
+    except OSError:
+        return False
+
+
 def check(args) -> int:
     items = load_items()
     files: list[Path] = []
@@ -342,29 +350,40 @@ def check(args) -> int:
             files += [REPO / n for n in listed if (REPO / n).is_file()]
         elif p.is_dir():
             files += [f for f in p.rglob("*") if f.is_file()]
-        else:
+        elif p.is_file():
             files.append(p)
+        else:
+            print(f"not found: {target}", file=sys.stderr)
+            return 2
     if args.changed:
         files += changed_files()
-    files = sorted({f.resolve() for f in files if f.suffix.lower() in IMAGE_EXT | TEXT_EXT or f.name.endswith(".env")})
+    files = sorted({f.resolve() for f in files})
     if not files:
         print("nothing to check")
         return 0
     images = [f for f in files if f.suffix.lower() in IMAGE_EXT]
+    text_files = [f for f in files if f.suffix.lower() not in IMAGE_EXT and is_text(f)]
+    skipped = sorted(set(files) - set(images) - set(text_files))
     texts = ocr(images) if images else {}
     bad = 0
-    for f in files:
-        rel = f.relative_to(REPO) if f.is_relative_to(REPO) else f
+
+    def shown(f: Path) -> Path:
+        return f.relative_to(REPO) if f.is_relative_to(REPO) else f
+
+    for f in images + text_files:
         if f.suffix.lower() in IMAGE_EXT:
             kinds, details = findings(texts.get(f, ""), items, from_ocr=True)
         else:
             kinds, details = findings(f.read_text(encoding="utf-8", errors="ignore"), items, from_ocr=False)
         if kinds:
             bad += 1
-            print(f"FOUND {rel}: {', '.join(sorted(kinds))}" + (f" ({', '.join(sorted(set(details)))})" if details else ""))
+            print(f"FOUND {shown(f)}: {', '.join(sorted(kinds))}" + (f" ({', '.join(sorted(set(details)))})" if details else ""))
         elif args.optimize and f.suffix.lower() == ".png":
             optimize(f)
-    checked = f"{len(images)} images (OCR) and {len(files) - len(images)} text files"
+    if skipped:
+        print(f"warning: {len(skipped)} binary file(s) not checked; look at them yourself: "
+              + ", ".join(str(shown(f)) for f in skipped), file=sys.stderr)
+    checked = f"{len(images)} images (OCR) and {len(text_files)} text files"
     print(f"{'FAILED' if bad else 'OK'}: {checked} checked, {bad} with tenant or account details.")
     return 1 if bad else 0
 

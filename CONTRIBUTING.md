@@ -135,9 +135,11 @@ python solutions/07-operate-microsoft/incident.py verify *> out.txt
 node tools/screenshot.mjs terminal solutions/07-operate-microsoft/images/07-verify.png --input out.txt --title "PowerShell 7"
 ```
 
-`node tools/screenshot.mjs` without arguments lists every option (`--wait`, `--click`, `--selector`, `--clip`, `--full`, `--remove`, `--pick-account`).
+`node tools/screenshot.mjs` without arguments lists every option (`--wait`, `--click`, `--select`, `--selector`, `--clip`, `--full`, `--remove`, `--pick-account`).
 
-Before you commit, run `python tools/redact.py check --changed`; it must print `OK`. Then look at every image yourself. A pushed commit stays reachable through its pull request even after you remove the file, so an image must be clean before its first push. The same rule applies to text: never paste host names, subscription or tenant details, or e-mail addresses into Issues, pull requests, or comments.
+In the Azure portal, crop below the top bar (`--clip` or `--selector`): it shows your account and directory, and a crop keeps them out even if masking misses one. Prefer deeper pages to the portals' Home and Overview pages, which show endpoints and subscription details.
+
+Before you commit, run `python tools/redact.py check --changed`; it must print `OK`. It checks every image and every text file, whatever its extension, and lists any other binary file for you to look at. Then look at every image yourself, and make sure each caption says only what its image shows. A pushed commit stays reachable through its pull request even after you remove the file, so an image must be clean before its first push. The same rule applies to text: never paste host names, subscription or tenant details, or e-mail addresses into Issues, pull requests, or comments.
 
 ## Definition of done
 
