@@ -36,9 +36,12 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       POLICY_ASSIGNMENT_NAME: ${{ vars.POLICY_ASSIGNMENT_NAME }}
-      API_URL: ${{ vars.API_URL }}
-      API_IDENTIFIER_URI: ${{ vars.API_IDENTIFIER_URI }}
+      # Secrets, so GitHub masks them in logs: they name the deployed API.
+      API_URL: ${{ secrets.API_URL }}
+      API_IDENTIFIER_URI: ${{ secrets.API_IDENTIFIER_URI }}
     steps:
+      - name: Mask the API host name
+        run: echo "::add-mask::${API_URL#https://}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:

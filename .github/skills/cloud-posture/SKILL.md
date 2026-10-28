@@ -40,19 +40,22 @@ on RequestHub's attachment storage.
 
 ## Expected output
 ```
-Storage accounts should use private link · rg-ai-sdlc-secure/st...
+Storage accounts should use private link · rg-ai-sdlc-secure/st…
   Resource configuration
       no private endpoint ❌  ·  public network access Disabled, network rules default Allow; read from Azure Resource Manager at ...
   Azure Policy · requesthub-storage-private-link (this resource group)
       NonCompliant ❌  ·  evaluated ..., definition version 2.1.0
   Microsoft Defender for Cloud · Storage account should use a private link connection
-      Unhealthy ❌  ·  Medium severity, status since ..., assessment ...
+      Unhealthy ❌  ·  Medium severity, status since ... (Defender for Cloud > Recommendations)
   App check · attachment upload and download through the RequestHub API
       fails ❌  ·  upload to REQ-... returned HTTP 500 (An error occurred while processing your request.)
-st...: opened https://github.com/<owner>/<repo>/issues/<n>
+rg-ai-sdlc-secure/st…: opened https://github.com/<owner>/<repo>/issues/<n>
 ```
 `verify` ends with **Verified** (private endpoint in place, Policy Compliant, app check passed), **Pending**, **Not fixed**,
 or **Not verified** (configuration fixed but the app check failed).
+
+Everything the script prints, posts, or saves shows the random token in resource names, and any GUID, as `…`: the
+reports end up in Issues, workflow logs, and run artifacts. Keep it that way when you write about a finding by hand.
 
 ## Failure handling
 - `MISCONFIGURED, but neither Azure Policy nor Defender for Cloud has reported it yet`: the services have not evaluated the
