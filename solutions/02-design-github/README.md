@@ -230,11 +230,11 @@ About 20 minutes. Run the commands from the repository root.
    python .github/skills/architecture-decision/check_adr.py $adr
    ```
 
-   ![The checker fails the ADR accepted by GitHub Copilot with "status Accepted must name the people who decided in Deciders; an agent can only propose", then passes once a person is named as decider](images/07-people-decide.png)
+   ![The checker fails the ADR accepted by GitHub Copilot with "status Accepted must name the people who decided … an agent can only propose", then passes once a person is named as decider](images/07-people-decide.png)
 
    Commit and push after each change to show the same result on the pull request. The agent's acceptance fails **ADR checks**, even if that commit also edits `check_adr.py` to always pass, because the workflow runs the checker from the base branch; the person's acceptance passes, and the pull request's history shows who decided. Run `git checkout -- $adr` instead if you only want to show the failure locally.
 
-   ![The run that the agent's acceptance triggered on pull request #125: status Failure, ADR checks failed after 10 seconds with "status Accepted must name the people who decided; an agent can only propose", and no contract changes](images/07-failed-check.png)
+   ![The run that the agent's acceptance triggered on pull request #125: status Failure, ADR checks failed after 10 seconds with "status Accepted must name the people who decided … an agent can only propose", and no contract changes](images/07-failed-check.png)
 
    **Point out:** Copilot can propose, and only a named person can accept. The rule lives in a deterministic check, not in a prompt.
 
