@@ -6,8 +6,11 @@
       credential that lets this solution's GitHub environment sign in to Azure without a stored secret.
 
   python configure_github.py publish    (azd postprovision hook)
-      Creates or updates the GitHub environment and stores the Azure sign-in values (secrets) and the endpoints the
-      workflows read (variables). With OIDC there is no password or key to store.
+      Creates or updates the GitHub environment. The Azure sign-in values and the Foundry project endpoint become
+      secrets: GitHub masks secrets in workflow logs, while it prints variables in every step's environment listing, so
+      anything that names a deployed resource is a secret. Only the model deployment name, which identifies nothing, is a
+      variable. Variables that earlier versions created for values that are now secrets are deleted. With OIDC there is
+      no password or key to store.
 
 Needs the GitHub CLI signed in with admin rights on the repository (environments and secrets need them).
 To target another repository, run `azd env set GITHUB_REPOSITORY owner/name` first.
@@ -22,15 +25,15 @@ import subprocess
 import sys
 
 ENVIRONMENT = "develop-microsoft"
-# GitHub secret name -> azd environment value
+# GitHub secret name -> azd environment value: the sign-in values and everything that names a deployed resource
 SECRETS = {
     "AZURE_CLIENT_ID": "AUTOMATION_CLIENT_ID",
     "AZURE_TENANT_ID": "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID": "AZURE_SUBSCRIPTION_ID",
-}
-# GitHub variable name -> azd environment value
-VARIABLES = {
     "FOUNDRY_PROJECT_ENDPOINT": "FOUNDRY_PROJECT_ENDPOINT",
+}
+# GitHub variable name -> azd environment value: only values that identify nothing
+VARIABLES = {
     "FOUNDRY_MODEL_DEPLOYMENT": "FOUNDRY_MODEL_DEPLOYMENT",
 }
 
@@ -69,7 +72,12 @@ def publish() -> None:
         run("gh", "secret", "set", secret, "--env", ENVIRONMENT, "--repo", repo, stdin=values[source])
     for variable, source in VARIABLES.items():
         run("gh", "variable", "set", variable, "--env", ENVIRONMENT, "--repo", repo, "--body", values[source])
-    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variables set.")
+    existing = json.loads(run("gh", "variable", "list", "--env", ENVIRONMENT, "--repo", repo, "--json", "name"))
+    stale = sorted({v["name"] for v in existing} & set(SECRETS))
+    for variable in stale:
+        run("gh", "variable", "delete", variable, "--env", ENVIRONMENT, "--repo", repo)
+    removed = f" Removed variables now stored as secrets: {', '.join(stale)}." if stale else ""
+    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variables set.{removed}")
 
 
 def main() -> int:
