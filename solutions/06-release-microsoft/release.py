@@ -32,7 +32,7 @@ AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, API_APP_NAME, API_IDENTIFIER_URI.
 Azure calls use your Azure CLI sign-in (`az login`); in GitHub Actions, the workflow's OIDC sign-in.
 
 What is published never names your resources. Release records, job summaries, and pull request comments use
-placeholders (<app>, <environment domain>, <registry>, <id>) instead of host names, resource names with their unique
+placeholders ({app}, {environment domain}, {registry}, {id}) instead of host names, resource names with their unique
 token, and ids, and name revisions by their suffix (run12). In GitHub Actions the workflow log gets the same treatment,
 and every such value is masked with ::add-mask:: before it can be printed. Your own terminal shows the real values.
 
@@ -84,7 +84,7 @@ class ReleaseError(Exception):
 # ---------------------------------------------------------------------------------------------------------------------
 # What leaves this machine. Release records, job summaries, workflow logs, and pull request comments can become public,
 # so they never contain host names, resource names with their unique token, or ids. Those are replaced with placeholders
-# such as <app> and <environment domain>, and revisions are named by their suffix. Only your own terminal shows the
+# such as {app} and {environment domain}, and revisions are named by their suffix. Only your own terminal shows the
 # real values.
 # ---------------------------------------------------------------------------------------------------------------------
 
@@ -107,14 +107,14 @@ def keep_private(value: str | None, placeholder: str) -> None:
 def keep_image_private(image: str | None) -> None:
     registry = (image or "").split("/")[0]
     if "." in registry:  # a registry host such as <name>.azurecr.io
-        keep_private(registry, "<registry>")
+        keep_private(registry, "{registry}")
 
 
 def public(text: str) -> str:
-    """The text with every private value replaced by its placeholder, and every id by <id>."""
+    """The text with every private value replaced by its placeholder, and every id by {id}."""
     for value in sorted(_private, key=len, reverse=True):
         text = re.sub(re.escape(value), lambda _: _private[value], text, flags=re.IGNORECASE)
-    return GUID.sub("<id>", text)
+    return GUID.sub("{id}", text)
 
 
 class PublicStream:
@@ -397,7 +397,7 @@ class State:
     def load(cls, app: ContainerApp) -> "State":
         data = app.get()
         revisions = {r["name"]: r for r in app.revisions()}
-        keep_private(data["properties"]["configuration"]["ingress"]["fqdn"].split(".", 1)[1], "<environment domain>")
+        keep_private(data["properties"]["configuration"]["ingress"]["fqdn"].split(".", 1)[1], "{environment domain}")
         for revision in revisions.values():
             keep_image_private(image_of(revision))
         latest_ready = data["properties"].get("latestReadyRevisionName")
@@ -455,8 +455,8 @@ def connect() -> ContainerApp:
     subscription = (os.environ.get("AZURE_SUBSCRIPTION_ID") or azd_values().get("AZURE_SUBSCRIPTION_ID")
                     or arm_session()["subscription"])
     name = setting("API_APP_NAME")
-    keep_private(subscription, "<subscription>")
-    keep_private(name, "<app>")
+    keep_private(subscription, "{subscription}")
+    keep_private(name, "{app}")
     return ContainerApp(subscription, setting("AZURE_RESOURCE_GROUP"), name)
 
 
@@ -965,7 +965,7 @@ def cmd_rollback(args) -> int:
     target = target or state.labels.get("previous")
     if not target or target not in state.revisions or target == stable:
         return record.finish(False, "No previous revision to roll back to. Release an earlier image instead: "
-                                    "deploy --image <registry>/<repository>@sha256:<digest>, then gate and promote.")
+                                    "deploy --image REGISTRY/requesthub-api@sha256:DIGEST, then gate and promote.")
     bearer = api_token()
     record.data.update(stable=state.describe(stable), rolledBackTo=state.describe(target), trafficBefore=state.traffic_summary())
     if not state.active(target):
@@ -1000,14 +1000,16 @@ def cmd_verify(args) -> int:
     state = State.load(app)
     url = state.label_url(args.label) if args.label else state.production_url
     revision = state.labels.get(args.label) if args.label else state.stable()
-    record = Record("verify", f"Verify {'the ' + args.label + ' revision' if args.label else 'production'} ({url})")
+    where = f"the {args.label} label's URL" if args.label else "production"
+    record = Record("verify", f"Verify {where}")
+    print(f"  {url}")  # your terminal only: records name the target, never its host
     if not revision:
         return record.finish(False, f"No revision has the label {args.label}.")
-    record.data.update(stable=state.describe(state.stable()), url=url, revision=revision, trafficAfter=state.traffic_summary())
+    record.data.update(stable=state.describe(state.stable()), revision=revision, trafficAfter=state.traffic_summary())
     ok = record.checks(args.label or "production", smoke(url, api_token(), label=state.short(revision),
                                                          expect_commit=commit_of(state.revisions[revision]) or None))
-    return record.finish(ok, f"{state.short(revision)} passed the smoke test on {url}." if ok
-                         else f"{state.short(revision)} failed the smoke test on {url}.")
+    return record.finish(ok, f"{state.short(revision)} passed the smoke test on {where}." if ok
+                         else f"{state.short(revision)} failed the smoke test on {where}.")
 
 
 def cmd_watch(args) -> int:
