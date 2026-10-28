@@ -36,7 +36,7 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-  %% one request, end to end, including the failure path
+  %% one request, end to end, including the failure path. No ";" inside a message: it ends the statement.
 ```
 
 ## API impact
