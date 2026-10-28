@@ -17,6 +17,9 @@ What this script does
   4. Exits 1 when a change touches a resource type that matches no --expect pattern, so a remediation pull request cannot
      quietly change something else.
 
+The preview is posted on pull requests, so it never shows what identifies the deployment: GUIDs, and the random token
+in resource names (the 13 letters and digits in `st<token>` or `vnet-<token>`), appear as `…`.
+
 Usage
   python .github/skills/infrastructure-remediation/whatif.py
   python .github/skills/infrastructure-remediation/whatif.py --expect Microsoft.Storage/storageAccounts \
@@ -40,6 +43,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
@@ -52,6 +56,31 @@ AZ = shutil.which("az") or "az"
 PLACEHOLDER = re.compile(r"\$\{(?P<name>[A-Za-z0-9_]+)(?:=(?P<default>[^}]*))?\}")
 CHANGES = ("Create", "Delete", "Modify")
 NOT_PREVIEWABLE = ("Deploy", "Unsupported")
+GUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+NAME_TOKEN = re.compile(r"(?<![a-z0-9])[a-z0-9]{13}(?![a-z0-9])")
+
+
+class Masker:
+    """Hides what identifies a deployment: GUIDs, and the random token that azd-style templates put in every resource name
+    of a group (13 letters and digits, as in `st<token>` and `vnet-<token>`). learn() finds the token in resource names:
+    a 13-character word with letters and digits, or a 13-character ending that several names share."""
+
+    def __init__(self) -> None:
+        self.tokens: set[str] = set()
+
+    def learn(self, names: list[str]) -> None:
+        lowered = {n.lower() for n in names if n}
+        endings = Counter(n[-13:] for n in lowered if len(n) > 13 and re.fullmatch(r"[a-z0-9]{13}", n[-13:]))
+        self.tokens |= {t for t, count in endings.items() if count >= 2}
+        self.tokens |= {t for n in lowered for t in NAME_TOKEN.findall(n) if re.search(r"\d", t) and re.search(r"[a-z]", t)}
+
+    def __call__(self, text: str) -> str:
+        for token in sorted(self.tokens, key=len, reverse=True):
+            text = re.sub(re.escape(token), "…", text, flags=re.I)
+        return GUID.sub("…", text)
+
+
+mask = Masker()
 
 
 class ConfigError(RuntimeError):
@@ -261,11 +290,12 @@ def main(argv: list[str] | None = None) -> int:
             head_result = head_job.result()
             base_result = base_job.result() if base_job else None
     except (ConfigError, json.JSONDecodeError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {mask(str(exc))}", file=sys.stderr)
         return 2
 
     head = changes_by_resource(head_result)
     base = changes_by_resource(base_result) if base_result else None
+    mask.learn([c["id"].rstrip("/").split("/")[-1] for c in [*head.values(), *(base or {}).values()]])
     changes, noise = attributable(head, base)
     for change in changes:
         change["expected"] = any(fnmatch.fnmatchcase(change["type"].lower(), p.lower()) for p in args.expect)
@@ -293,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
     lines += ["", f"**PASS**: every change is an expected resource type ({', '.join(args.expect) or 'none expected'})."
               if not unexpected else f"**FAIL**: {len(unexpected)} unexpected change(s); expected only "
               f"{', '.join(args.expect) or 'no changes'}."]
-    report = "\n".join(lines)
+    report = mask("\n".join(lines))
     print(report)
     if args.markdown:
         args.markdown.parent.mkdir(parents=True, exist_ok=True)
