@@ -4,6 +4,8 @@
 # on the issue, pushes the ADR draft to a branch, and links a prefilled pull request for an architect to accept or
 # reject. The issue text is data: it reaches the advisor through a file, never through a shell command.
 # The workflow does not open the pull request itself, so it needs no permission to create pull requests.
+# Values that name deployed resources (the Foundry and Azure AI Search endpoints) are environment secrets, and the first
+# step masks the host and resource names derived from them, so no log, summary, or comment shows them.
 name: Design · Microsoft · ask the Foundry architecture advisor
 
 on:
@@ -46,6 +48,18 @@ jobs:
     timeout-minutes: 15
     environment: design-microsoft
     steps:
+      - name: Mask the deployed resource names
+        env:
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
+          SEARCH_ENDPOINT: ${{ secrets.SEARCH_ENDPOINT }}
+        run: |
+          # GitHub masks the secrets themselves; an error message could still print a host or resource name alone.
+          for url in "$FOUNDRY_PROJECT_ENDPOINT" "$SEARCH_ENDPOINT"; do
+            host="${url#https://}"; host="${host%%/*}"; name="${host%%.*}"
+            for value in "$host" "$name" "${name#*-}"; do
+              if [ -n "$value" ]; then echo "::add-mask::$value"; fi
+            done
+          done
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -87,9 +101,9 @@ jobs:
       - name: Ask the Foundry advisor (live call, deterministic checks)
         id: advise
         env:
-          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
           FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
-          SEARCH_ENDPOINT: ${{ vars.SEARCH_ENDPOINT }}
+          SEARCH_ENDPOINT: ${{ secrets.SEARCH_ENDPOINT }}
           SEARCH_CONNECTION_NAME: ${{ vars.SEARCH_CONNECTION_NAME }}
           ISSUE: ${{ github.event.issue.number }}
         run: |
