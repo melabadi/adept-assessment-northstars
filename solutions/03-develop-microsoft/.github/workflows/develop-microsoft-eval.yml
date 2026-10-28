@@ -127,19 +127,17 @@ jobs:
           # Issues track the agent that ships; pull requests get a comment instead.
           if [ "$EVENT" != "pull_request" ]; then args+=(--issues); fi
           python solutions/03-develop-microsoft/eval_triage.py "${args[@]}"
-      - name: Report
+      - name: Comment the report on the pull request
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPORT: solutions/03-develop-microsoft/out/eval/report.md
         run: |
-          if [ ! -f "$REPORT" ]; then exit 0; fi
-          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$PR" ]; then
-            { echo "Candidate agent \`$AGENT_NAME\` evaluated in [run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."; echo; cat "$REPORT"; } > comment.md
-            gh pr comment "$PR" --body-file comment.md
-          fi
+          # eval_triage.py writes the job summary itself; this step only comments on pull requests.
+          if [ ! -f "$REPORT" ] || [ -z "$PR" ]; then exit 0; fi
+          { echo "Candidate agent \`$AGENT_NAME\` evaluated in [run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."; echo; cat "$REPORT"; } > comment.md
+          gh pr comment "$PR" --body-file comment.md
       - name: Delete the candidate agent
         if: always() && github.event_name == 'pull_request'
         run: python solutions/03-develop-microsoft/publish_triage_agent.py --name "$AGENT_NAME" --delete
