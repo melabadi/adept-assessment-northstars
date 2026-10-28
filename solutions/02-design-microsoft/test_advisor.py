@@ -171,6 +171,24 @@ class GateTests(unittest.TestCase):
         self.assertIn("grounding: an answer must cite at least one standard", self.check(answer(constraints=[], options=[])))
 
 
+class AdrDraftTests(unittest.TestCase):
+    sample = {"question": "Where should the triage provider run?", "profile": "small-team", "startedAt": "2026-01-01T00:00:00+00:00",
+           "responseId": "resp_example", "agent": {"name": "architecture-advisor-small-team", "version": "1"},
+           "model": "gpt-5.4-mini", "searchCalls": 2, "retrievedStandards": ["STD-ARCH-001", "STD-OPS-001"], "checks": [],
+           "result": answer()}
+
+    def test_metadata_is_a_list_without_an_empty_table_row(self):
+        draft = advisor.adr_draft(self.sample)
+        self.assertNotIn("| | |", draft)
+        self.assertIn("- **Status:** Proposed.", draft)
+        self.assertIn("- **Deterministic checks:** passed", draft)
+
+    def test_evidence_keeps_the_timestamp_apart_from_the_standards(self):
+        evidence = next(line for line in advisor.adr_draft(self.sample).splitlines() if line.startswith("- **Evidence:**"))
+        self.assertIn("at 2026-01-01T00:00:00+00:00.", evidence)
+        self.assertTrue(evidence.endswith("retrieved STD-ARCH-001, STD-OPS-001."))
+
+
 class EvaluatorTests(unittest.TestCase):
     def test_conflict_and_scope_expectations(self):
         case = {"expectAnswerable": True, "expectStandards": ["STD-OBS-002", "STD-SEC-002"], "forbidStandards": ["STD-OPS-002"],
