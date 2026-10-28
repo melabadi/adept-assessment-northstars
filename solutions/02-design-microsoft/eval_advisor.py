@@ -169,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.repeat > 1:
         print("\nper-case stability: " + ", ".join(f"{cid} {s}" for cid, s in summary["stability"].items()))
     print(f"\n{passed}/{len(results)} runs passed in {summary['durationSeconds']} s · model {client.model} · "
-          f"results: {args.out / 'results.json'}")
+          f"results: {advisor.shown(args.out / 'results.json')}")
     if any(r["error"] for r in results):
         return 2
     return 0 if passed == len(results) else 1

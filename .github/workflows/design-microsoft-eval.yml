@@ -1,7 +1,8 @@
 # Design · Microsoft: keep the standards index in sync with the repository and measure the advisor on its ten labelled
 # cases. Runs on demand, and whenever a change to the standards, the agent definition, the advisor, or the evaluation
 # reaches main, so every change is measured. Signs in to Azure with OIDC (GitHub environment design-microsoft, no stored
-# secret); every result comes from live Foundry and Azure AI Search calls.
+# secret); every result comes from live Foundry and Azure AI Search calls. The endpoints are environment secrets, and the
+# first step masks the host and resource names derived from them, so the logs never show them.
 name: Design · Microsoft · sync the standards and evaluate the advisor
 
 on:
@@ -44,11 +45,20 @@ jobs:
     timeout-minutes: 20
     environment: design-microsoft
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL_DEPLOYMENT: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT }}
-      SEARCH_ENDPOINT: ${{ vars.SEARCH_ENDPOINT }}
+      SEARCH_ENDPOINT: ${{ secrets.SEARCH_ENDPOINT }}
       SEARCH_CONNECTION_NAME: ${{ vars.SEARCH_CONNECTION_NAME }}
     steps:
+      - name: Mask the deployed resource names
+        run: |
+          # GitHub masks the secrets themselves; an error message could still print a host or resource name alone.
+          for url in "$FOUNDRY_PROJECT_ENDPOINT" "$SEARCH_ENDPOINT"; do
+            host="${url#https://}"; host="${host%%/*}"; name="${host%%.*}"
+            for value in "$host" "$name" "${name#*-}"; do
+              if [ -n "$value" ]; then echo "::add-mask::$value"; fi
+            done
+          done
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
