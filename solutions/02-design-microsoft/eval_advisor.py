@@ -79,17 +79,20 @@ def markdown(summary: dict, cases: dict[str, dict]) -> str:
         f"**{summary['passed']}/{summary['runs']} runs passed** · model `{summary['model']}` · agents {agents} · "
         f"{summary['durationSeconds']} s",
         "",
-        "| Case | Profile | Tests | Question | Result | Time | Response |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Run | Profile | Tests | Result | Time | Response |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for r in summary["results"]:
         label = r["id"] if summary["repeat"] == 1 else f"{r['id']}.{r['attempt']}"
         result = "✅ pass" if r["passed"] else "❌ " + advisor.cell("; ".join(r["misses"]))
-        question = advisor.cell(cases[r["id"]]["question"])
-        lines.append(f"| {label} | {r['profile']} | {tests(cases[r['id']])} | {question} | {result} | "
-                     f"{r.get('durationSeconds', '')} s | `{r.get('responseId', '')}` |")
+        took = f"{r['durationSeconds']} s" if "durationSeconds" in r else "–"
+        response = f"`{r['responseId']}`" if r.get("responseId") else "–"
+        lines.append(f"| {label} | {r['profile']} | {tests(cases[r['id']])} | {result} | {took} | {response} |")
     if summary["repeat"] > 1:
         lines += ["", "Per-case stability: " + ", ".join(f"{cid} {s}" for cid, s in summary["stability"].items())]
+    # Each question once, so repeated runs keep the table short.
+    lines += ["", "| Case | Question |", "| --- | --- |"]
+    lines += [f"| {cid} | {advisor.cell(case['question'])} |" for cid, case in sorted(cases.items())]
     return "\n".join(lines) + "\n"
 
 

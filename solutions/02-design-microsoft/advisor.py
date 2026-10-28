@@ -334,14 +334,13 @@ def adr_draft(run: dict) -> str:
     lines = [
         f"# ADR draft: {title}",
         "",
-        "| | |",
-        "| --- | --- |",
-        "| Status | **Proposed**. An architect accepts or rejects it in review. |",
-        f"| Drafted by | Microsoft Foundry agent `{run['agent']['name']}` v{run['agent']['version']}, model `{run['model']}` |",
-        f"| Evidence | Response `{run['responseId']}`, {run['searchCalls']} search call(s) that retrieved "
-        f"{', '.join(run['retrievedStandards']) or 'nothing'}, {run['startedAt']} |",
-        f"| Operating profile | {run['profile']}: standards with scope {scopes} in the `{INDEX}` index |",
-        f"| Deterministic checks | {'Passed' if not run['checks'] else 'Failed: ' + cell('; '.join(run['checks']))} |",
+        # A list, not a table: GitHub renders a table's empty header row as a blank first row.
+        "- **Status:** Proposed. An architect accepts or rejects it in review.",
+        f"- **Drafted by:** Microsoft Foundry agent `{run['agent']['name']}` v{run['agent']['version']}, model `{run['model']}`",
+        f"- **Evidence:** response `{run['responseId']}` at {run['startedAt']}. Its {run['searchCalls']} search call(s) "
+        f"retrieved {', '.join(run['retrievedStandards']) or 'no standards'}.",
+        f"- **Operating profile:** {run['profile']}, which may retrieve the standards with scope {scopes} in the `{INDEX}` index",
+        f"- **Deterministic checks:** {'passed' if not run['checks'] else 'failed: ' + '; '.join(run['checks'])}",
         "",
         "## Context", "", run["question"].strip(), "",
         "## Summary", "", data["summary"], "",
