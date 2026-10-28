@@ -8,6 +8,7 @@ The app is shared on purpose. Each [solution](../README.md#the-fourteen-solution
 
 - **Requesters** create requests with comments and attachments.
 - **Reviewers** work their department's queue and can ask for a **triage recommendation**: which department should handle the request, under which routing policy. The recommendation is advisory.
+- The latest recommendation remains visible after a manual reroute, labeled stale and unavailable for confirmation.
 - **Approvers** make the human decision. Nobody can decide their own request, and no triage provider or agent can approve anything.
 - Every business action is written to an **audit history**. A background **worker** turns events into notification records.
 

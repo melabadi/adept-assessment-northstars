@@ -701,7 +701,7 @@ public sealed partial class RequestWorkflow(
 
     internal async Task<RequestDetailDto> ToDetailAsync(AppUser user, Request r, CancellationToken ct)
     {
-        var latest = r.Recommendations.Where(x => x.Status != RecommendationStatus.Superseded).OrderByDescending(x => x.CreatedAt).FirstOrDefault();
+        var latest = r.Recommendations.OrderByDescending(x => x.CreatedAt).FirstOrDefault();
         var people = await NamesAsync(r.Attachments.Select(a => a.UploadedById).Concat(latest is null ? [] : [latest.CreatedById]), ct);
         return new RequestDetailDto(
             r.PublicId, r.Title, r.Description, r.Category, r.DepartmentId, r.Priority.ToString(), r.Status.ToString(),
