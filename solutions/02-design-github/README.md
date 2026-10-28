@@ -129,7 +129,7 @@ About 20 minutes. Run the commands from the repository root.
 
    ![STD-OBS-002 v1.0 requires logging the full prompt and completion of every AI call for 30 days, while STD-SEC-002 v1.1 forbids persisting raw prompts or completions that contain user free text](images/01-standards-conflict.png)
 
-   **Point out:** Copilot gets the brief, the standards, and the code, but nothing tells it about the conflict or the profiles. Watch whether it finds them.
+   **Point out:** Copilot gets the brief, the standards, and the code. Nothing tells it which standards conflict, or that the two profiles may need different answers. Watch whether it finds both.
 
 2. **Ask Copilot for the ADR.** Pick one option.
 
@@ -144,7 +144,7 @@ About 20 minutes. Run the commands from the repository root.
    gh pr create --fill
    ```
 
-   In bash, use `-p "$(cat solutions/02-design-github/adr-task.md)"`. Copilot lists each step as it works. In our run it read the brief, all twelve standards, the contract, the triage code, and parts of the web UI before writing:
+   In bash, use `-p "$(cat solutions/02-design-github/adr-task.md)"`. Copilot lists each step as it works. The image below is shortened: in our run Copilot read the brief, all twelve standards, the contract, the triage code, and parts of the web UI before it wrote the ADR.
 
    ![The Copilot CLI run, shortened: the agent loads its two skills, reads the brief, the triage code, and the standards, runs the contract tool, writes the ADR, runs the checker, and summarizes the recommendation for the reviewer](images/02a-copilot-cli.png)
 
@@ -154,7 +154,7 @@ About 20 minutes. Run the commands from the repository root.
 
    ![The issue form "Design: architecture decision with Copilot" with the design question, the input files, and what to produce already filled in, and the ai-sdlc and phase:design labels](images/02b-issue-form.png)
 
-   On the new Issue, select **Assign to Agent** in the sidebar, open the custom-agent picker (the document icon next to the branch icon), select **design-github**, and then **Assign**.
+   On the new Issue, select **Assign to Agent** in the sidebar. In the dialog, open the custom-agent picker (the document icon, left of the model picker **Auto**), select **design-github**, and then **Assign**.
 
    ![The "Assign agent to issue" dialog with the custom agent menu open and design-github selected among the repository's custom agents](images/02b-assign-agent.png)
 
@@ -168,15 +168,15 @@ About 20 minutes. Run the commands from the repository root.
 
    **Point out:** the same agent and skills run on GitHub, from an Issue, with nobody at a keyboard. Nothing Copilot pushes runs in Actions until a person approves it.
 
-3. **Watch the gate** (about 1 minute). The **Design · GitHub · check the ADR and API impact** workflow adds two checks, each taking about 10 seconds:
+3. **Watch the gate** (about 1 minute). The **Design · GitHub · check the ADR and API impact** workflow adds two checks to the pull request:
    - **ADR checks**: the template's sections, at least two options, an architecture diagram and a sequence diagram (with no `;` inside a sequence message, which stops GitHub from rendering it), standards and versions that exist, real repository-relative paths, and Status Proposed.
    - **API contract compatibility**: compares `app/contracts/openapi.json` with the commit the branch started from. An ADR-only pull request reports `Breaking changes: 0` and `No contract changes.`
 
    ![The pull request's checks, expanded: ADR checks and API contract compatibility from the design workflow, plus the repository's other checks, all successful](images/03-pr-checks.png)
 
-   Select either check, then **Summary** in the run's left menu, to show what each check found:
+   Select either check, then **Summary** in the run's left menu. The run page shows how long each job took, about 10 seconds, and what each check found:
 
-   ![The workflow run summary: ADR checks prints PASS for the ADR, and the API contract impact report lists 0 breaking and 0 additive changes](images/03-run-summary.png)
+   ![The workflow run page: triggered via pull request #125 with status Success; ADR checks took 10 seconds and API contract compatibility 9 seconds; ADR checks prints PASS for the ADR, and the API contract impact report lists 0 breaking and 0 additive changes](images/03-run-summary.png)
 
    **Point out:** these checks are deterministic. They run the checker, the contract tool, and the standards from `main`, so the pull request under review cannot change its own gate.
 
@@ -189,11 +189,14 @@ About 20 minutes. Run the commands from the repository root.
    **Point out:** Copilot code review questions the substance and names the decisions that belong to people. It is a reviewer, not an approver.
 
 5. **Review like an architect** (3 minutes). Open the ADR from the pull request (**Files changed** → **⋯** → **View file**) so the mermaid diagrams render. Look for:
-   - the options compared in one table against the same standards, with a recommendation for each profile (the image at the top of this page);
-   - what Copilot found by reading the code, not the brief: in every run, that the workflow's 45-second triage timeout cannot meet the 8-second target, and that the current prompt sends more than the title, description, and category that BR-3 allows;
-   - the request flow, success and failure paths included:
+   - the options compared in one table against the same standards (the image at the top of this page), and under **Decision**, a recommendation for each profile:
 
-   ![The ADR's sequence diagram rendered on GitHub: the reviewer's request goes through RequestWorkflow and the in-process provider to Foundry, with the unauthorized, valid, invalid-output, and timeout paths, and manual routing that never depends on the AI](images/05-adr-sequence.png)
+   ![The Decision section of Copilot's ADR: recommend option A for the small team and option B for the enterprise, keeping business authority and tools in RequestHub, and calling itself a recommendation, not deployment approval](images/05-adr-decision.png)
+
+   - what Copilot found by reading the code, not the brief: in every run, that the workflow's 45-second triage timeout cannot meet the 8-second target, and that the current prompt sends more than the title, description, and category that BR-3 allows;
+   - the request flow, success and failure paths included (this diagram is from the cloud agent's ADR):
+
+   ![The sequence diagram from the cloud agent's ADR, rendered on GitHub: the reviewer's request goes through RequestWorkflow and the in-process provider to Foundry, with the unauthorized, valid, invalid-output, and timeout paths, and manual routing that never depends on the AI](images/05-adr-sequence.png)
 
    - the open questions, starting with the conflict Copilot left for you:
 
@@ -231,7 +234,7 @@ About 20 minutes. Run the commands from the repository root.
 
    Commit and push after each change to show the same result on the pull request. The agent's acceptance fails **ADR checks**, even if that commit also edits `check_adr.py` to always pass, because the workflow runs the checker from the base branch; the person's acceptance passes, and the pull request's history shows who decided. Run `git checkout -- $adr` instead if you only want to show the failure locally.
 
-   ![The ADR checks summary of the failed run on the pull request: FAIL, status Accepted must name the people who decided; an agent can only propose](images/07-failed-check.png)
+   ![The run that the agent's acceptance triggered on pull request #125: status Failure, ADR checks failed after 10 seconds with "status Accepted must name the people who decided; an agent can only propose", and no contract changes](images/07-failed-check.png)
 
    **Point out:** Copilot can propose, and only a named person can accept. The rule lives in a deterministic check, not in a prompt.
 
@@ -246,9 +249,9 @@ About 20 minutes. Run the commands from the repository root.
 
    ![The contract tool reports a breaking change, schema RecommendationDto property providerTraceId removed, and exits with code 1](images/08-breaking-change.png)
 
-   Exit code 1 is what fails the **API contract compatibility** check. Adding a property instead reports `Compatible` with `➕`. To show the same failure in GitHub Actions without opening a pull request, write the edited contract to `app/contracts/openapi.json` on a scratch branch, push it, and run `gh workflow run design-github-review.yml -f ref=<branch>`:
+   Exit code 1 is what fails the **API contract compatibility** check. Adding a property instead reports `Compatible` with `➕`. To show the same failure in GitHub Actions without opening a pull request, write the edited contract to `app/contracts/openapi.json` on a scratch branch, push it, and run `gh workflow run design-github-review.yml -f ref=<branch>`. The run page names `main`, where the workflow file comes from; the branch you passed in `ref` is the one it checks:
 
-   ![The workflow run started on demand for the scratch branch: no ADR added or changed, and the API contract impact report shows one breaking change, property providerTraceId removed](images/08-dispatch-run.png)
+   ![A run started on demand: manually triggered, on workflow_dispatch, status Failure. ADR checks finds no ADR added or changed, and API contract compatibility fails with one breaking change, property providerTraceId removed](images/08-dispatch-run.png)
 
    **Point out:** API compatibility is a deterministic report against `requesthub.v1`, not an opinion. Removing a field fails; adding one passes (STD-API-001).
 
