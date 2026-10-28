@@ -215,7 +215,7 @@ The workflow also opens an Issue labelled `load-test`, with the same report and 
 
 ![Issue 122, opened by github-actions with the load-test label: the run missed its performance criteria, with the criteria table. It shows Done because the passing run in step 7 closed it](images/05-issue.png)
 
-**Point out:** the report proves the cause. Every `GET /api/requests` in Application Insights carried the injected delay (150 of 150), so the run is labelled an expected failure, not acceptance.
+**Point out:** the report names the cause. Its first lines say 150 server requests carried the injected delay, and the server-side table further down the job summary shows that's every `GET /api/requests`. So the run is labelled an expected failure, not acceptance.
 
 ### 6. Read the failure in Azure Load Testing
 
@@ -242,7 +242,7 @@ Scroll down for the client-side and server-side metrics of the same window.
 
 The criteria and the metrics agree: only the two list requests are slow, the rest of the journey stays fast, and the server-side durations show the time is spent inside the API.
 
-**Point out:** the AI summary is a lead, not a verdict; check each claim against the charts. "Peak 5 VUs" counts the users per request, while the run had 10 in total. The "failed HTTP requests" are the journey's deliberate 403 checks: Application Insights counts them as failed, and the report lists them as denied, next to 0 server errors and 0% client errors.
+**Point out:** the AI summary is a lead, not a verdict; check each claim against the dashboard. "Peak 5 VUs" counts the users behind a single request (5 requesters or 5 approvers); the header shows 10 virtual users in total. The "failed HTTP requests" are the journey's deliberate 403 checks: Application Insights counts a 403 as failed, while the error percentage here is 0%, and the server-side table further down the step 5 job summary lists them under Denied (401/403), with 0 server errors.
 
 ### 7. Fix and confirm
 

@@ -159,6 +159,8 @@ def render_config(users: int | None = None, duration: int | None = None) -> Path
 def run_test(args) -> str:
     """Create or update the test from the rendered configuration, start a run, and wait until it finishes."""
     path = render_config(args.users, args.duration)
+    load_seconds = next((item["value"] for item in yaml.safe_load(path.read_text(encoding="utf-8")).get("env", [])
+                         if item["name"] == "LOCUST_RUN_TIME"), "?")
     resource, group = setting("LOAD_TEST_NAME"), setting("AZURE_RESOURCE_GROUP")
     test_id = yaml.safe_load(TEMPLATE.read_text(encoding="utf-8"))["testId"]
     common = ["--load-test-resource", resource, "--resource-group", group, "--test-id", test_id]
@@ -175,7 +177,7 @@ def run_test(args) -> str:
     description = args.description or "Started from a terminal with load_test.py"
     az("load", "test-run", "create", *common, "--test-run-id", run_id, "--display-name", run_id,
        "--description", description, "--no-wait", parse=False)
-    print(f"Started test run {run_id}. Engines take a few minutes to start; the run itself lasts LOCUST_RUN_TIME seconds.")
+    print(f"Started test run {run_id}. Engines take a few minutes to start, then the load runs for {load_seconds} seconds.")
 
     started, status, opened = time.monotonic(), "", not args.open
     while status not in TERMINAL:
