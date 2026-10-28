@@ -77,8 +77,10 @@ public sealed partial class RequestWorkflow(
             }
             else
             {
+                // EscapeLike escapes with a backslash. Name it as the escape character: EF Core (and so Npgsql) applies no
+                // escape character unless one is given, which would make "%" and "_" searches match nothing.
                 var pattern = $"%{EscapeLike(term)}%";
-                query = query.Where(r => EF.Functions.ILike(r.Title, pattern) || EF.Functions.ILike(r.Description, pattern));
+                query = query.Where(r => EF.Functions.ILike(r.Title, pattern, "\\") || EF.Functions.ILike(r.Description, pattern, "\\"));
             }
         }
 

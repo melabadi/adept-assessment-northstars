@@ -13,6 +13,10 @@ Subcommands
   approve    Used by the approval workflow: runs every verify check, checks the approver, then writes
              approval-record.json and the final release notes. It never publishes; the workflow does that with gh.
 
+Draft releases are found by tag, or by their title ("RequestHub demo-vX.Y.Z (demo)") when GitHub has removed the
+draft's pending tag name. GitHub does that when an API update of a draft omits the tag name, as the AI summary's
+update does, and then lists the draft as untagged-<id>. The approval workflow sets the tag again when it publishes.
+
 It calls the GitHub CLI (gh api), so it uses your gh login locally and GH_TOKEN in GitHub Actions.
 Standard library only (Python 3.12+).
 
@@ -50,6 +54,8 @@ from summarize_tests import parse_junit, sha256_file  # noqa: E402
 
 TAG_PREFIX = "demo-v"
 TAG_RE = re.compile(r"^demo-v(\d+)\.(\d+)\.(\d+)$")
+RELEASE_TITLE = "RequestHub {tag} (demo)"  # the candidate workflow's --title; finds drafts that lost their tag name
+UNTAGGED_PREFIX = "untagged-"
 ENVIRONMENT = "release-github"
 CANDIDATE_WORKFLOW = ".github/workflows/release-github-candidate.yml"
 SOLUTION_PATH = "solutions/06-release-github"
@@ -143,10 +149,28 @@ def server_url() -> str:
     return os.environ.get("GITHUB_SERVER_URL", "https://github.com")
 
 
+def release_title(tag: str) -> str:
+    return RELEASE_TITLE.format(tag=tag)
+
+
+def is_draft_of(release: dict, tag: str) -> bool:
+    """A draft of this version: it carries the tag, or GitHub removed its pending tag name (untagged-…) and only
+    the title still names the version."""
+    if not release.get("draft"):
+        return False
+    if release.get("tag_name") == tag:
+        return True
+    return (release.get("tag_name") or "").startswith(UNTAGGED_PREFIX) and release.get("name") == release_title(tag)
+
+
 def find_release(repo: str, tag: str) -> dict | None:
-    """Find a release by tag, including drafts (the tag endpoint never returns drafts)."""
-    for release in api(f"repos/{repo}/releases?per_page=100", paginate=True) or []:
+    """Find a release by tag, including drafts (the tag endpoint never returns drafts), then a draft by its title."""
+    releases = api(f"repos/{repo}/releases?per_page=100", paginate=True) or []
+    for release in releases:
         if release.get("tag_name") == tag:
+            return release
+    for release in releases:
+        if is_draft_of(release, tag):
             return release
     return None
 
@@ -309,7 +333,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             checks.append(Check("new version", "FAIL", f"tag `{tag}` exists without a release; delete it or choose another version"))
         else:
             replaced = " (an earlier draft of this version will be replaced)" if any(
-                r.get("draft") and r.get("tag_name") == tag for r in releases) else ""
+                is_draft_of(r, tag) for r in releases) else ""
             checks.append(Check("new version", "PASS",
                                 f"previous demo release: `{previous_tag}`{replaced}" if previous_tag
                                 else f"first demo release{replaced}"))
@@ -510,6 +534,24 @@ def render_notes(manifest: dict, whats_changed: str, approval: dict | None = Non
 
 # --------------------------------------------------------------------------------------------------- verify
 
+def token_can_read_packages(token: str) -> bool | None:
+    """False when a classic or OAuth token lacks a packages scope; None when GitHub does not report scopes
+    (GITHUB_TOKEN in Actions, fine-grained tokens), in which case the registry itself decides."""
+    api_url = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    request = urllib.request.Request(f"{api_url}/rate_limit", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            header = response.headers.get("X-OAuth-Scopes")
+    except urllib.error.HTTPError as error:
+        header = error.headers.get("X-OAuth-Scopes") if error.headers else None
+    except (urllib.error.URLError, OSError):
+        return None
+    if header is None:
+        return None
+    scopes = {scope.strip() for scope in header.split(",") if scope.strip()}
+    return bool(scopes & {"read:packages", "write:packages", "delete:packages"})
+
+
 def registry_check(image: dict, user: str | None, token: str | None) -> tuple[bool, str]:
     """HEAD the manifest by digest in the registry (GitHub Container Registry token exchange)."""
     name = image["name"]
@@ -525,7 +567,8 @@ def registry_check(image: dict, user: str | None, token: str | None) -> tuple[bo
         with urllib.request.urlopen(request, timeout=30) as response:
             served = response.headers.get("Docker-Content-Digest", image["digest"])
     except urllib.error.HTTPError as error:
-        return False, f"{name}@{image['digest'][:19]}…: registry answered HTTP {error.code}"
+        return False, (f"{name}@{image['digest'][:19]}…: registry answered HTTP {error.code} (the image is missing, "
+                       "or this token cannot read the package)")
     except (urllib.error.URLError, OSError, KeyError, ValueError) as error:
         return False, f"{name}: {error}"
     if served != image["digest"]:
@@ -636,6 +679,11 @@ def verify_release(repo: str, tag: str, folder: Path, release: dict, expect: str
     if not registry_token:
         checks.append(Check("images", "FAIL" if require_images else "SKIP",
                             "no registry token (set GHCR_TOKEN to a token that can read packages)"))
+    elif token_can_read_packages(registry_token) is False:
+        checks.append(Check("images", "FAIL" if require_images else "SKIP",
+                            "GHCR_TOKEN cannot read packages (no read:packages scope), so this check proves nothing "
+                            "either way; run `gh auth refresh -s read:packages` first. The approval workflow checks "
+                            "the images with its own token"))
     else:
         results = [registry_check(image, registry_user, registry_token) for image in manifest.get("images", [])]
         bad = [detail for ok, detail in results if not ok]
@@ -655,7 +703,10 @@ def verify_release(repo: str, tag: str, folder: Path, release: dict, expect: str
         else:
             checks.append(Check("git tag", "FAIL", f"`{tag}` points to {target.get('sha')}, not {commit}"))
     elif release.get("target_commitish") == commit:
-        checks.append(Check("git tag", "PASS", f"the draft will tag `{short(commit)}` when published"))
+        pending = release.get("tag_name")
+        note = "" if pending == tag else (f"; GitHub lists the draft as `{pending}` because an update removed its "
+                                          f"pending tag name, and the approval workflow sets `{tag}` again")
+        checks.append(Check("git tag", "PASS", f"the draft will tag `{short(commit)}` when published{note}"))
     else:
         checks.append(Check("git tag", "FAIL", f"the draft targets {release.get('target_commitish')}, not {commit}"))
 
@@ -689,7 +740,7 @@ def load_release(args: argparse.Namespace, repo: str) -> tuple[dict, Path]:
         raise UsageError(f"tag must look like {TAG_PREFIX}1.0.0, got {args.tag!r}")
     release = find_release(repo, args.tag)
     if release is None:
-        raise UsageError(f"no release (draft or published) with tag {args.tag} in {repo}; "
+        raise UsageError(f"no release with tag {args.tag}, and no draft titled '{release_title(args.tag)}', in {repo}; "
                          "draft releases are only visible to people and tokens that can write to the repository")
     folder = args.workdir or Path(tempfile.mkdtemp(prefix="release-"))
     if folder.exists():
@@ -788,7 +839,8 @@ def cmd_approve(args: argparse.Namespace) -> int:
         notes += f"\n{ai_section}\n"
     args.notes.parent.mkdir(parents=True, exist_ok=True)
     args.notes.write_text(notes, encoding="utf-8")
-    write_outputs({"approval_record": str(folder / APPROVAL), "notes": str(args.notes), "commit": manifest["commit"]})
+    write_outputs({"approval_record": str(folder / APPROVAL), "notes": str(args.notes), "commit": manifest["commit"],
+                   "release_id": str(release["id"])})
     print(f"Approval recorded in {folder / APPROVAL}; final notes in {args.notes}"
           + (" (AI summary kept)" if ai_section else " (no AI summary on the draft)"))
     return 0

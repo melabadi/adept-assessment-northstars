@@ -95,7 +95,7 @@ About 15 minutes. Run the commands from the repository root.
 
    In bash, use `-p "$(cat solutions/02-design-github/adr-task.md)"`.
 
-   **B. Delegate to the Copilot cloud agent (about 10 minutes; start it before the session).** Create an Issue from the **Design: architecture decision with Copilot** template, assign it to **Copilot**, and pick the **design-github** agent. Copilot opens a draft pull request when it is done.
+   **B. Delegate to the Copilot cloud agent (start it before the session).** Create an Issue from the **Design: architecture decision with Copilot** template, assign it to **Copilot**, and pick the **design-github** agent. Copilot opens a draft pull request within a minute, works in it, and asks for your review when the ADR is ready. In our run Copilot worked for about 7 minutes once its environment was ready; preparing the environment (the repository's Copilot setup steps) took another 17 minutes.
 
    Workflows on Copilot's pull requests wait for a person. Select **Approve and run workflows** on the pull request, or re-run the waiting runs from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids).
 
@@ -103,13 +103,15 @@ About 15 minutes. Run the commands from the repository root.
    - **ADR checks** prints `solutions/02-design-github/adr/0001-live-triage-provider.md: PASS`: the template's sections, at least two options, both diagrams, real standards and versions, real paths, and Status Proposed.
    - **API contract compatibility** compares `app/contracts/openapi.json` with the commit the branch started from. An ADR-only pull request reports `Breaking changes: 0` and `No contract changes.` in the run summary.
 
-4. **Ask Copilot for a code review.** Select **Reviewers** → **Copilot** on the pull request, or run `gh pr edit <number> --add-reviewer "@copilot"`. Within a few minutes Copilot posts a review that summarizes the decision and names what still needs people. In our runs it flagged the prompt-logging versus privacy conflict, the boundary for data sent to the AI service, and latency that has not been measured yet.
+4. **Ask Copilot for a code review.** Select **Reviewers** → **Copilot** on the pull request, or run `gh pr edit <number> --add-reviewer "@copilot"`. Within a few minutes Copilot posts a review that summarizes the decision and names what still needs people. In our runs it flagged the prompt-logging versus privacy conflict and unmeasured latency, and on one ADR it asked for changes with three inline comments: nothing screens personal data typed into the allowed free-text fields, the current department is still needed after it stops being sent to the AI service, and the gateway's per-department quotas have no trusted department key.
 
 5. **Review like an architect.** Open the ADR from the pull request (**Files changed** → **⋯** → **View file**) so the mermaid diagrams render. Look for:
    - the options compared in one table against the same standards, and a recommendation for each profile;
    - the STD-OBS-002 vs STD-SEC-002 conflict under **Open questions**, left for you to decide;
    - what Copilot found by reading the code, not the brief: in our runs, that the workflow's 45-second triage timeout cannot meet the 8-second target, and that today's prompt sends more than the title, description, and category that BR-3 allows;
    - the API impact tied to real endpoints and fields, the threat model for the real data flow, and the bounded tasks.
+
+   To ask for changes on the cloud agent's pull request, comment with `@copilot` and what to change, for example "address the three review comments and keep the status Proposed". Copilot pushes a revision and replies (about 6 minutes in our run); approve the workflows again so the checks rerun. With option A, run the same `copilot` command with your request in place of the task file.
 
 6. **Show that only people decide.** On the pull request branch, let the agent "accept" its own ADR, and run the checker:
 
@@ -134,6 +136,8 @@ About 15 minutes. Run the commands from the repository root.
 
    The report says `Breaking change` with `❌ schema RecommendationDto: property providerTraceId removed`, and the command exits with 1, which is what fails the **API contract compatibility** check on a pull request. Adding a property instead reports `Compatible` with `➕`.
 
+   To show the same failure in GitHub Actions without opening a pull request, write the edited contract to `app/contracts/openapi.json` on a scratch branch, push it, and run `gh workflow run design-github-review.yml -f ref=<branch>`. The **API contract compatibility** job fails with the same line in its summary.
+
 ## What to observe
 
 - **Grounded in the real system.** Copilot reads the code before it designs. In our runs it reused the existing `ITriageProvider` extension point, rejected a separate triage service under STD-ARCH-001, and found gaps the brief does not mention, such as the 45-second timeout. The check proves every file the ADR cites exists.
@@ -150,6 +154,7 @@ gh pr close <number> --delete-branch    # close the ADR pull request
 gh issue close <number>                 # option B: close the design Issue
 git switch main
 git branch -D design/copilot-adr        # option A: drop the local branch
+git push origin --delete <branch>       # step 7 in Actions: drop the scratch branch
 ```
 
 Do not merge the ADR into `main`. Keeping it out keeps the demo repeatable: the next run starts again from ADR 0001.
