@@ -174,6 +174,35 @@ describe('TriagePanel', () => {
     expect(within(panel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
   });
 
+  it('does not mark a confirmed recommendation stale or offer confirmation again', async () => {
+    const rec = recommendation({ status: 'Confirmed', departmentAtRecommendation: 'IT' });
+    mockApi({
+      'GET /api/requests/REQ-1001': () =>
+        detail({
+          departmentId: 'FAC',
+          latestRecommendation: rec,
+          permissions: { ...noPermissions, canRoute: true },
+        }),
+      'GET /api/requests/REQ-1001/history': () => [
+        {
+          id: 1,
+          action: 'triage.confirmed',
+          actor: { id: 'u-ben', displayName: 'Ben Okafor' },
+          occurredAt: '2026-10-28T12:00:00Z',
+          details: { recommendationId: rec.id, from: 'IT', to: 'FAC' },
+          correlationId: null,
+        },
+      ],
+    });
+
+    renderApp('/requests/REQ-1001', { persona: 'u-ben' });
+
+    const panel = await screen.findByRole('region', { name: 'Triage assistant' });
+    expect(within(panel).queryByText('Stale: request was rerouted since this suggestion')).not.toBeInTheDocument();
+    expect(within(panel).getByText('Confirmed by Ben Okafor')).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
+  });
+
   it('localizes the confirmation action and confirmation history label in French', async () => {
     const rec = recommendation({ departmentAtRecommendation: 'IT' });
     mockApi({
