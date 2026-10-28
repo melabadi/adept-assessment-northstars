@@ -5,6 +5,7 @@ The test itself is loadtest/locustfile.py (the journey) and loadtest/requesthub-
 pass/fail criteria). This script adds what depends on your deployment, runs the test, and explains the result:
 
   python load_test.py run                 render the configuration, create or update the test, run it, and report
+  python load_test.py run --open          ...and open the run's live dashboard in the Azure portal as soon as it starts
   python load_test.py run --issue         ...and open, update, or close the GitHub Issue that tracks a failing journey
   python load_test.py config              only render out/loadtest.yaml (the GitHub workflow passes it to azure/load-testing)
   python load_test.py report --run-id ID  report on an existing test run (criteria, percentiles, server-side telemetry)
@@ -21,7 +22,8 @@ What `report` shows
   rehearsal slowdown (requesthub.fault.queue_delay_ms). A failure while the slowdown was active is labelled an expected
   failure, a rehearsal of the gate rather than an acceptance run. The report also names the tested load, dataset,
   region, and compute shape, because a performance result means nothing without them. Output: out/report.md and
-  out/run.json, plus the GitHub job summary when running in Actions.
+  out/run.json, plus the GitHub job summary when running in Actions. The report is posted to pull requests and Issues,
+  so it never contains host names, resource names, ids, or subscription details; out/run.json does, and stays local.
 
 Settings come from environment variables, else from this solution's azd environment (after `azd up`):
   AZURE_RESOURCE_GROUP, LOAD_TEST_NAME, LOAD_TEST_REQUESTER_IDENTITY, LOAD_TEST_APPROVER_IDENTITY, API_URL,
@@ -37,12 +39,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -57,6 +61,7 @@ OUT = HERE / "out"
 ISSUE_LABEL = "load-test"
 TERMINAL = {"DONE", "FAILED", "CANCELLED"}
 FAULT_TAG = "requesthub.fault.queue_delay_ms"
+GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 
 class AzError(RuntimeError):
@@ -162,7 +167,8 @@ def run_test(args) -> str:
         verb = "update"
     except AzError:
         verb = "create"
-    print(f"{'Updating' if verb == 'update' else 'Creating'} test '{test_id}' in {resource} from {path.relative_to(HERE)} ...")
+    print(f"{'Updating' if verb == 'update' else 'Creating'} test '{test_id}' in the Load Testing resource of {group} "
+          f"from {path.relative_to(HERE).as_posix()} ...")
     az("load", "test", verb, *common, "--load-test-config-file", str(path), parse=False)
 
     run_id = "run-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -171,13 +177,18 @@ def run_test(args) -> str:
        "--description", description, "--no-wait", parse=False)
     print(f"Started test run {run_id}. Engines take a few minutes to start; the run itself lasts LOCUST_RUN_TIME seconds.")
 
-    started, status = time.monotonic(), ""
+    started, status, opened = time.monotonic(), "", not args.open
     while status not in TERMINAL:
         if time.monotonic() - started > 3600:
             raise AzError(f"test run {run_id} did not finish within an hour; check it in the Azure portal")
         time.sleep(15)
         run = az("load", "test-run", "show", "--load-test-resource", resource, "--resource-group", group,
-                 "--test-run-id", run_id, "--query", "{status:status, vu:virtualUsers}")
+                 "--test-run-id", run_id, "--query", "{status:status, portal:portalUrl}")
+        if not opened and run.get("portal"):
+            # Opened, not printed: the link contains the subscription id.
+            webbrowser.open(run["portal"])
+            print("Opened the run's dashboard in the Azure portal; it fills in once the engines start.")
+            opened = True
         if run["status"] != status:
             status = run["status"]
             print(f"  {int(time.monotonic() - started):>4}s  {status}")
@@ -233,17 +244,35 @@ def server_side(start: str, end: str) -> list[dict]:
 
 
 def compute_shape() -> str:
+    """What the load ran against, without host or resource names: compute, database tier, and region."""
     group = setting("AZURE_RESOURCE_GROUP")
     try:
         app = az("containerapp", "show", "--resource-group", group, "--name", setting("API_APP_NAME"), "--query",
                  "{cpu:properties.template.containers[0].resources.cpu, memory:properties.template.containers[0].resources.memory,"
-                 " min:properties.template.scale.minReplicas, max:properties.template.scale.maxReplicas}")
+                 " min:properties.template.scale.minReplicas, max:properties.template.scale.maxReplicas, region:location}")
         server = az("postgres", "flexible-server", "show", "--resource-group", group, "--name",
                     setting("POSTGRES_HOST").split(".")[0], "--query", "{sku:sku.name, tier:sku.tier}")
-        return (f"API on Azure Container Apps ({app['cpu']} vCPU, {app['memory']}, {app['min']} to {app['max']} replicas); "
-                f"PostgreSQL Flexible Server {server['tier']} {server['sku']}")
-    except AzError as exc:
-        return f"unknown ({exc})"
+        return (f"RequestHub API on Azure Container Apps ({app['cpu']} vCPU, {app['memory']}, {app['min']} to {app['max']} "
+                f"replicas) with PostgreSQL Flexible Server {server['tier']} {server['sku']}, in {app['region']}")
+    except AzError:
+        return "RequestHub API (compute details unavailable)"
+
+
+def engine_region() -> str:
+    """Display name of the Load Testing resource's region, where the test engines run."""
+    try:
+        location = az("load", "show", "--name", setting("LOAD_TEST_NAME"), "--resource-group", setting("AZURE_RESOURCE_GROUP"),
+                      "--query", "location")
+        names = az("account", "list-locations", "--query", f"[?name=='{location}'].displayName")
+        return names[0] if names else location
+    except AzError:
+        return "the Load Testing resource's region"
+
+
+def run_label(run: dict) -> str:
+    """How the report names a run: its display name, or its id unless that is a GUID (runs started by the GitHub action)."""
+    name = run.get("displayName") or run.get("testRunId") or "test run"
+    return "a test run" if GUID.match(name) else name
 
 
 def fmt_ms(value) -> str:
@@ -280,9 +309,9 @@ def build_report(run: dict, server: list[dict]) -> tuple[str, dict]:
     seconds = run.get("duration", 0) / 1000 if run.get("duration") else None
 
     lines = [
-        f"## Load test: {run.get('displayName') or run.get('testRunId')}",
+        f"## Load test: {run_label(run)}",
         "",
-        f"**{result}** · test `{run.get('testId')}` · run `{run.get('testRunId')}` · "
+        f"**{result}** · test `{run.get('testId')}` · "
         f"{run.get('virtualUsers') or env.get('LOCUST_USERS')} virtual users · "
         f"{env.get('LOCUST_RUN_TIME', '?')} s of load{f' ({seconds:,.0f} s measured)' if seconds else ''}",
         "",
@@ -327,8 +356,8 @@ def build_report(run: dict, server: list[dict]) -> tuple[str, dict]:
     elif result.startswith("NOT RUN"):
         lines.append("The test did not run, so there is no server-side telemetry.")
     else:
-        lines.append("No server-side telemetry for this window yet. Run `python load_test.py report --run-id "
-                     f"{run.get('testRunId')}` again in a few minutes.")
+        lines.append("No server-side telemetry for this window yet. Run `python load_test.py report --run-id <test run id>` "
+                     "again in a few minutes.")
 
     lines += [
         "",
@@ -339,16 +368,16 @@ def build_report(run: dict, server: list[dict]) -> tuple[str, dict]:
         f"{env.get('PACING_SECONDS')} s; approvers decide {env.get('DECIDE_PERCENT')}% of new requests.",
         f"- **Dataset:** the 24 seeded requests plus {env.get('DATASET_REQUESTS', '0')} extra, after cleanup "
         f"`{env.get('CLEANUP')}` of earlier load-test requests; departments {env.get('DEPARTMENTS')}.",
-        f"- **Target:** {env.get('LOCUST_HOST')}, {compute_shape()}.",
+        f"- **Target:** {compute_shape()}.",
         f"- **Engines:** {(run.get('loadTestConfiguration') or {}).get('engineInstances', 1)} Azure Load Testing engine(s) "
-        f"in the Load Testing resource's region; window {start} to {end}.",
+        f"in {engine_region()}; window {start} to {end}.",
         "",
-        f"Dashboard: Azure portal › Load Testing resource `{setting('LOAD_TEST_NAME')}` › Tests › `{run.get('testId')}` › "
-        f"run `{run.get('displayName') or run.get('testRunId')}` (client and server metrics side by side).",
+        f"Dashboard: Azure portal › resource group `{setting('AZURE_RESOURCE_GROUP')}` › the Load Testing resource › Tests › "
+        f"`{run.get('testId')}` › `{run_label(run)}` (client and server metrics side by side).",
     ]
     summary = {
-        "testRunId": run.get("testRunId"), "testId": run.get("testId"), "result": result, "status": run.get("status"),
-        "startDateTime": start, "endDateTime": end, "virtualUsers": run.get("virtualUsers"),
+        "testRunId": run.get("testRunId"), "label": run_label(run), "testId": run.get("testId"), "result": result,
+        "status": run.get("status"), "startDateTime": start, "endDateTime": end, "virtualUsers": run.get("virtualUsers"),
         "delayedServerRequests": delayed,
     }
     return "\n".join(lines).rstrip() + "\n", summary
@@ -377,12 +406,12 @@ def sync_issue(summary: dict, report: str) -> None:
     if summary["result"] == "PASSED":
         if existing:
             gh("issue", "close", str(existing["number"]), *scope, "--comment",
-               f"Run `{summary['testRunId']}` passed every criterion{where}. Closing.\n\n{report}")
+               f"`{summary['label']}` passed every criterion{where}. Closing.\n\n{report}")
             print(f"Closed Issue #{existing['number']}: the journey passes again.")
         return
     if summary["result"] != "FAILED":
         return
-    body = (f"Run `{summary['testRunId']}` missed its performance criteria{where}.\n\n{report}\n"
+    body = (f"`{summary['label']}` missed its performance criteria{where}.\n\n{report}\n"
             "Reproduce: `python solutions/04-test-microsoft/load_test.py run`. This Issue closes automatically when a run passes.\n")
     if existing:
         gh("issue", "comment", str(existing["number"]), *scope, "--body-file", "-", stdin=body)
@@ -393,7 +422,7 @@ def sync_issue(summary: dict, report: str) -> None:
         print(f"Opened {url}")
 
 
-def report(run_id: str, issue: bool) -> int:
+def report(run_id: str, issue: bool, open_portal: bool = False) -> int:
     run = fetch_run(run_id)
     server = []
     executed = any(s.get("sampleCount") for s in (run.get("testRunStatistics") or {}).values())
@@ -412,10 +441,10 @@ def report(run_id: str, issue: bool) -> int:
             fh.write(markdown)
     print()
     print(markdown)
-    if run.get("portalUrl"):
-        # Printed, not written to the report: the link contains the subscription id, which stays out of Issues and comments.
-        print(f"Open the test run in the Azure portal: {run['portalUrl']}")
-    print(f"Report: {(OUT / 'report.md').relative_to(HERE)} · raw result: {(OUT / 'run.json').relative_to(HERE)}")
+    if open_portal and run.get("portalUrl"):
+        webbrowser.open(run["portalUrl"])
+        print("Opened the test run in the Azure portal.")
+    print(f"Report: {(OUT / 'report.md').relative_to(HERE).as_posix()} · raw result: {(OUT / 'run.json').relative_to(HERE).as_posix()}")
     if issue:
         sync_issue(summary, markdown)
     return {"PASSED": 0, "FAILED": 1}.get(summary["result"], 2)
@@ -457,7 +486,9 @@ def cleanup() -> int:
         print(f"error: cleanup returned HTTP {status}: {body}", file=sys.stderr)
         return 2
     _, after = api_call("GET", "/api/requests?scope=all&pageSize=1", token)
-    print(f"Deleted {body['deleted']} requests submitted by {', '.join(body['owners'])}.")
+    owners = len(body["owners"])
+    who = "the load-test identity" if owners == 1 else f"the {owners} load-test identities"
+    print(f"Deleted {body['deleted']} requests that {who} submitted.")
     print(f"Requests in RequestHub: {before['totalCount']} before, {after['totalCount']} after. Nothing else changed.")
     return 0
 
@@ -470,12 +501,14 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--users", type=int, help="override LOCUST_USERS (concurrent virtual users) for this run")
     run_parser.add_argument("--duration", type=int, help="override LOCUST_RUN_TIME (seconds of load) for this run")
     run_parser.add_argument("--description", help="description stored with the test run")
+    run_parser.add_argument("--open", action="store_true", help="open the run's live dashboard in the Azure portal as soon as it starts")
     run_parser.add_argument("--issue", action="store_true", help="open, update, or close the GitHub Issue that tracks a failing journey")
     config_parser = sub.add_parser("config", help="write out/loadtest.yaml for this deployment")
     config_parser.add_argument("--users", type=int, help="override LOCUST_USERS in the written configuration")
     config_parser.add_argument("--duration", type=int, help="override LOCUST_RUN_TIME (seconds) in the written configuration")
     report_parser = sub.add_parser("report", help="report on an existing test run")
     report_parser.add_argument("--run-id", required=True, help="test run id, for example run-20260101-120000")
+    report_parser.add_argument("--open", action="store_true", help="open the test run in the Azure portal")
     report_parser.add_argument("--issue", action="store_true", help="open, update, or close the GitHub Issue that tracks a failing journey")
     sub.add_parser("cleanup", help="as an Admin, delete every request the load-test identities submitted")
     args = parser.parse_args(argv)
@@ -491,7 +524,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "cleanup":
             return cleanup()
         run_id = run_test(args) if args.command == "run" else args.run_id
-        return report(run_id, args.issue)
+        # `run --open` already opened the dashboard when the run started.
+        return report(run_id, args.issue, open_portal=args.open and args.command == "report")
     except (AzError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
