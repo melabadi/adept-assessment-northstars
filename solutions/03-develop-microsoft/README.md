@@ -121,7 +121,7 @@ The first time you open the app, Microsoft Entra asks you to pick your account a
   - If a demo pull request or a `triage-eval` Issue is still open, follow [Reset and clean up](#reset-and-clean-up).
   - Reset the demo data (the commands are in [Reset and clean up](#reset-and-clean-up)), then open **REQ-1001** in the app. Its **Triage assistant** shows **No recommendation yet**:
 
-  ![REQ-1001's Triage assistant panel in its starting state: No recommendation yet, and the Get recommendation button](images/00-starting-state.png)
+  ![The Triage assistant panel in its starting state: No recommendation yet, and the Get recommendation button](images/00-starting-state.png)
 
 - [ ] **Start the slow parts early.** Sign in to the app once before the audience arrives, so Microsoft Entra's account picker, and the first time its permissions prompt, do not appear on stage. If you show the local evaluation in step 6, start the API in its own terminal a few minutes before: the first build takes about a minute.
 - [ ] **Open in advance.**
@@ -171,9 +171,9 @@ Run the commands from the repository root unless a step says otherwise. The scre
 
 5. **People route and decide.** Below the **Triage assistant** are the **Routing** and **Decision** panels.
 
-   ![The Routing panel, where a reviewer changes the department with a reason, and the Decision panel with Approve and Reject](images/05-people-decide.png)
+   ![The Routing panel, where a reviewer picks a new department and can add a reason, and the Decision panel with Approve and Reject](images/05-people-decide.png)
 
-   *About 1 minute.* **Point out:** the recommendation has no "apply" button. A reviewer changes the routing, audited and with a reason, and only an approver can approve or reject, never on their own request.
+   *About 1 minute.* **Point out:** the recommendation has no "apply" button. A reviewer changes the routing, which is audited and can carry a reason, and only an approver can approve or reject, never on their own request.
 
 6. **Evaluate the agent.** The evaluation needs several personas, so it runs against RequestHub with the development persona switcher: in GitHub Actions, or on your machine. In GitHub Actions:
 
@@ -284,6 +284,7 @@ gh api -X DELETE 'repos/{owner}/{repo}/environments/develop-microsoft'
 ## Troubleshooting
 
 - **A button in the app fails with HTTP 403 and no body** (the panel says *Something went wrong. Details: HTTP 403*). Container Apps authentication rejects a browser `POST` from an origin that is not in its `login.allowedExternalRedirectUrls` list, and deployments made before #134 lack the app's own origin there. Run `azd deploy api` in this folder from an up-to-date `main`. Calls with a bearer token, such as the reset command, are not affected.
+- **The app still shows the old screens after `azd deploy api`.** The browser reused its cached copy of the page. Reload it with Ctrl+F5.
 - **The app times out or fails its readiness probe.** Its PostgreSQL server was stopped, for example by a tenant policy that stops servers on a schedule. Start it; it takes 3 to 5 minutes:
 
   ```powershell
