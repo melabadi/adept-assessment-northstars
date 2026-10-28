@@ -59,6 +59,8 @@ const refuse = (code, message) => { throw new Refusal(code, message); };
 
 let chromium;
 try {
+  // Only the repository's own Playwright: Node would otherwise pick up any copy in a parent folder.
+  if (!existsSync(path.join(repo, 'app', 'web', 'node_modules', 'playwright', 'package.json'))) throw new Error('missing');
   ({ chromium } = createRequire(path.join(repo, 'app', 'web', 'package.json'))('playwright'));
 } catch {
   fail(2, 'Playwright is missing. Run: npm ci --prefix app/web');
