@@ -14,7 +14,7 @@ description: Run and interpret the ten-case evaluation of the Foundry architectu
 - A live Foundry project and a synced standards index (standards-grounding skill).
 
 ## Procedure
-1. `python solutions/02-design-microsoft/eval_advisor.py` (about one minute; four cases run in parallel).
+1. `python solutions/02-design-microsoft/eval_advisor.py` (about 1.5 minutes; two cases run in parallel).
 2. Stability: `python solutions/02-design-microsoft/eval_advisor.py --repeat 3`, or a subset with `--cases E06,E07 --repeat 3`. Models are not deterministic: judge a change on repeated runs, never on one.
 3. Read each FAIL line:
    - `did not cite X`: check `retrievedStandards` in the run (results.json). Not retrieved: a retrieval gap (standards-grounding skill). Retrieved but not cited: an instruction gap.
