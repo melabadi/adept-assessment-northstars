@@ -6,9 +6,12 @@
       credential that lets this solution's GitHub environment sign in to Azure without a stored secret.
 
   python configure_github.py publish    (azd postprovision hook)
-      Creates or updates the GitHub environment and stores the Azure sign-in values (secrets) and the endpoints the
-      workflows read (variables). With OIDC there is no password or key to store. Also creates the `design-advisor`
-      label that the issue form applies to start the advisor workflow.
+      Creates or updates the GitHub environment. Secrets hold the Azure sign-in values and every value that names a
+      deployed resource (the Foundry and Azure AI Search endpoints): GitHub masks secrets wherever they appear, while
+      workflow logs print variables in every step's environment listing. Variables hold only fixed names with no
+      random suffix (the model deployment and the search connection). With OIDC there is no password or key to store.
+      Variables from earlier versions that now are secrets are deleted. Also creates the `design-advisor` label that
+      the issue form applies to start the advisor workflow.
 
 Needs the GitHub CLI signed in with admin rights on the repository (environments and secrets need them).
 To target another repository, run `azd env set GITHUB_REPOSITORY owner/name` first.
@@ -23,19 +26,21 @@ import subprocess
 import sys
 
 ENVIRONMENT = "design-microsoft"
-# GitHub secret name -> azd environment value
+# GitHub secret name -> azd environment value. Anything that names a deployed resource is a secret, so GitHub masks it.
 SECRETS = {
     "AZURE_CLIENT_ID": "AUTOMATION_CLIENT_ID",
     "AZURE_TENANT_ID": "AZURE_TENANT_ID",
     "AZURE_SUBSCRIPTION_ID": "AZURE_SUBSCRIPTION_ID",
-}
-# GitHub variable name -> azd environment value
-VARIABLES = {
     "FOUNDRY_PROJECT_ENDPOINT": "FOUNDRY_PROJECT_ENDPOINT",
-    "FOUNDRY_MODEL_DEPLOYMENT": "FOUNDRY_MODEL_DEPLOYMENT",
     "SEARCH_ENDPOINT": "SEARCH_ENDPOINT",
+}
+# GitHub variable name -> azd environment value. Only fixed names without a random suffix.
+VARIABLES = {
+    "FOUNDRY_MODEL_DEPLOYMENT": "FOUNDRY_MODEL_DEPLOYMENT",
     "SEARCH_CONNECTION_NAME": "SEARCH_CONNECTION_NAME",
 }
+# Variables that earlier versions published and that are secrets now: removed from the environment.
+RETIRED_VARIABLES = ["FOUNDRY_PROJECT_ENDPOINT", "SEARCH_ENDPOINT"]
 # Repository labels the solution's issue form and workflows rely on: name -> (color, description)
 LABELS = {
     "design-advisor": ("5319e7", "Design: ask the Foundry architecture advisor"),
@@ -76,10 +81,16 @@ def publish() -> None:
         run("gh", "secret", "set", secret, "--env", ENVIRONMENT, "--repo", repo, stdin=values[source])
     for variable, source in VARIABLES.items():
         run("gh", "variable", "set", variable, "--env", ENVIRONMENT, "--repo", repo, "--body", values[source])
+    existing = {v["name"] for v in json.loads(run("gh", "variable", "list", "--env", ENVIRONMENT, "--repo", repo,
+                                                  "--json", "name"))}
+    retired = [name for name in RETIRED_VARIABLES if name in existing]
+    for variable in retired:
+        run("gh", "variable", "delete", variable, "--env", ENVIRONMENT, "--repo", repo)
     for label, (color, description) in LABELS.items():
         run("gh", "label", "create", label, "--repo", repo, "--color", color, "--description", description, "--force")
-    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variables set; "
-          f"label{'s' if len(LABELS) > 1 else ''} {', '.join(LABELS)} ready.")
+    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(SECRETS)} secrets, {len(VARIABLES)} variables set"
+          + (f", {len(retired)} old variables removed ({', '.join(retired)})" if retired else "")
+          + f"; label{'s' if len(LABELS) > 1 else ''} {', '.join(LABELS)} ready.")
 
 
 def main() -> int:
