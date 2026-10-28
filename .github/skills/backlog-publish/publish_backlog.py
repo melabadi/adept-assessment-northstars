@@ -7,7 +7,9 @@ What it does
   3. Creates or updates one epic issue and one issue per task. Each issue body carries a hidden marker
      <!-- ai-sdlc-backlog: <scenario>/<track>/<item id> -->, so re-running updates instead of duplicating.
   4. Links every task as a sub-issue of the epic and records "blocked by" dependencies between tasks
-     (falls back to a text link when the dependencies API is unavailable).
+     (falls back to a text link when the dependencies API is unavailable). Links between this backlog's own issues
+     that its dependsOn no longer lists are removed, so a new brief never inherits an old one's dependencies;
+     links to any other issue are left alone.
   5. Optionally adds the issues to a GitHub Project (--project-title). Projects need a token with the
      `project` scope (your `gh auth login`); the Actions GITHUB_TOKEN cannot access projects.
 
@@ -202,26 +204,37 @@ def link_sub_issues(repo: str, epic: dict, tasks: list[dict], dry_run: bool) -> 
     return linked
 
 
-def link_dependencies(repo: str, data: dict, issues: dict[str, dict], dry_run: bool) -> str:
-    """Record 'blocked by' relationships. Returns 'api', 'text-only', or 'skipped'."""
+def link_dependencies(repo: str, data: dict, issues: dict[str, dict], dry_run: bool) -> tuple[str, int]:
+    """Make each task's 'blocked by' links match its dependsOn.
+
+    Adds missing links, and removes links to this backlog's own Issues that dependsOn no longer lists (for example
+    after a reset and a new brief). Links to any other Issue are left alone. Returns the mode ('api', 'text-only', or
+    'skipped') and the number of links removed.
+    """
     if dry_run:
-        return "skipped"
-    mode = "api"
+        return "skipped", 0
+    mode, removed = "api", 0
+    own = {issue["id"] for issue in issues.values() if issue.get("id")}
     for task in data["tasks"]:
         issue = issues[task["id"]]
+        path = f"repos/{repo}/issues/{issue['number']}/dependencies/blocked_by"
         try:
-            current = gh(f"repos/{repo}/issues/{issue['number']}/dependencies/blocked_by", ok404=True)
+            current = gh(f"{path}?per_page=100", ok404=True)
         except GitHubError:
             current = None
         if current is None:
             mode = "text-only"
             continue
         current_ids = {i["id"] for i in current}
-        for dep in task["dependsOn"]:
-            blocker = issues[dep]
-            if blocker["id"] not in current_ids:
-                gh(f"repos/{repo}/issues/{issue['number']}/dependencies/blocked_by", "POST", {"issue_id": blocker["id"]})
-    return mode
+        wanted = [issues[dep]["id"] for dep in task["dependsOn"]]
+        for blocker_id in wanted:
+            if blocker_id not in current_ids:
+                gh(path, "POST", {"issue_id": blocker_id})
+        for blocker in current:
+            if blocker["id"] in own and blocker["id"] not in wanted:
+                gh(f"{path}/{blocker['id']}", "DELETE")
+                removed += 1
+    return mode, removed
 
 
 def add_to_project(repo: str, title: str, issues: list[dict]) -> str:
@@ -320,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
 
         task_issues = [issues[t["id"]] for t in data["tasks"]]
         linked = link_sub_issues(repo, epic, task_issues, args.dry_run)
-        dependency_mode = link_dependencies(repo, data, issues, args.dry_run)
+        dependency_mode, dependencies_removed = link_dependencies(repo, data, issues, args.dry_run)
         project_url = add_to_project(repo, args.project_title, [epic, *task_issues]) if args.project_title and not args.dry_run else None
     except (GitHubError, OSError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -329,12 +342,15 @@ def main(argv: list[str] | None = None) -> int:
     counts = {a: sum(1 for r in results if r["action"] == a) for a in {r["action"] for r in results}}
     if args.json:
         print(json.dumps({"repo": repo, "track": args.track, "results": results, "counts": counts,
-                          "subIssuesLinked": linked, "dependencies": dependency_mode, "project": project_url}, indent=2))
+                          "subIssuesLinked": linked, "dependencies": dependency_mode,
+                          "dependenciesRemoved": dependencies_removed, "project": project_url}, indent=2))
     else:
         print(f"{repo} · {data['scenario']} · track {args.track}: " + ", ".join(f"{n} {a}" for a, n in sorted(counts.items())))
         for r in results:
             print(f"  {r['action']:>12}  {r['id']:<14} #{r['number']}  {r['url']}")
-        print(f"  sub-issues newly linked: {linked} · dependencies: {dependency_mode}" + (f" · project: {project_url}" if project_url else ""))
+        print(f"  sub-issues newly linked: {linked} · dependencies: {dependency_mode}"
+              + (f" · stale dependencies removed: {dependencies_removed}" if dependencies_removed else "")
+              + (f" · project: {project_url}" if project_url else ""))
     write_summary([f"### Plan backlog published ({TRACK_NAMES[args.track]} track)", "",
                    "| Item | Issue | Result |", "| --- | --- | --- |",
                    *[f"| {r['id']} | [#{r['number']}]({r['url']}) | {r['action']} |" for r in results]])
