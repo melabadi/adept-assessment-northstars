@@ -112,11 +112,11 @@ Check them with `gh label list --search phase:develop`: the first line reads `ph
 
 ## Run the demo
 
-1. **Show the feature.** Open **Issues → New issue → Develop: bounded feature for Copilot**. The form is prefilled from [`feature-issue.md`](feature-issue.md): one problem, an additive scope, eight numbered acceptance criteria (roles, effect, audit, stale, duplicate, closed requests, UI, contract and tests), and an explicit out of scope. *1 minute.*
+1. **Show the feature.** Open **Issues → New issue → Develop: bounded feature for Copilot**. The form is prefilled from [`feature-issue.md`](feature-issue.md): one problem, an additive scope, eight numbered acceptance criteria (roles, effect, audit, stale, duplicate, closed requests, UI, contract and tests), and an explicit out of scope. Scroll to the **Out of scope** field at the bottom of the form: who can approve or reject is excluded. *1 minute.*
 
-   ![The prefilled issue form: the title, Problem, Scope, and numbered acceptance criteria, with the ai-sdlc and phase:develop labels already applied](images/01-issue-form.png)
+   ![The prefilled issue form: the title, Problem, Scope, and the first five numbered acceptance criteria, with the ai-sdlc and phase:develop labels already applied](images/01-issue-form.png)
 
-   **Point out:** every criterion can become a test, and the out-of-scope line keeps "who can approve or reject" off the table.
+   **Point out:** every criterion is specific enough to become a test, down to the status and error codes (`403`, `409` with `recommendation.stale`).
 
 2. **Create the Issue.** Select **Create**. Or from a terminal:
 
@@ -158,9 +158,9 @@ Check them with `gh label list --search phase:develop`: the first line reads `ph
    gh pr checks <number>
    ```
 
-   ![The approval commands, then gh pr checks: CI's API, web, and browser tests, the feature bounds check, and the other solutions' checks all pass](images/04-checks-pass.png)
+   ![The approval commands, then gh pr checks: CI's API, web, and browser tests and the feature bounds check pass, listed next to checks from other solutions in this repository](images/04-checks-pass.png)
 
-   Besides **CI** and **Develop · GitHub · feature bounds**, the checks of other solutions that watch `app/` run too, such as Design's API contract compatibility. *1 minute; the bounds check takes about 15 seconds and CI about 3 minutes.* Approve again after each new push from Copilot. **Point out:** nothing Copilot wrote ran in Actions until a person approved it.
+   The checks that decide are **CI** and **Develop · GitHub · feature bounds**, which also fails any API contract change that is not additive. Checks from other solutions in this repository can appear in the list too; the ADR and API contract checks in this screenshot came from Design, and newer runs don't show them. *1 minute; the bounds check takes about 15 seconds and CI about 3 minutes.* Approve again after each new push from Copilot. **Point out:** nothing Copilot wrote ran in Actions until a person approved it.
 
 5. **Review like a tech lead.** In the pull request:
    - **Files changed**: a new operation in `RequestWorkflow` with role and department checks and stable error codes, one new route, an additive contract change, the button in `TriagePanel`, a History label, and English and French strings. Schema changes come as a *new* migration; in our latest run Copilot needed none, because it used PostgreSQL's built-in `xmin` column as the concurrency token.
@@ -208,15 +208,17 @@ Check them with `gh label list --search phase:develop`: the first line reads `ph
 
 7. **See it and decide.** Start the app from the branch (`npm ci --prefix app/web`, `npm run build --prefix app/web`, then `dotnet run --project app/src/RequestHub.Api`) and open http://localhost:5080. Use **Demo persona** at the top to switch users. As **Ava**, file an *equipment* request under **Facilities**. As **Ben**, open it, select **Get recommendation**, then **Confirm routing**.
 
-   ![Ben's view of a request filed under Facilities: the triage assistant suggests IT Services under policy POL-ROUTE-001 and offers Confirm routing](images/07-confirm-routing.png)
+   ![Ben's view of REQ-1025, filed under Facilities: the triage assistant suggests IT Services under policy POL-ROUTE-001 and offers Confirm routing](images/07-confirm-routing.png)
 
-   ![After Confirm routing: the request is routed to IT Services and In review, the panel says Confirmed by Ben Okafor, the History reads "Routing confirmed: IT Services", and the decision still waits for an approver](images/07-confirmed.png)
+   Clicking through is part of the review. In our latest run, confirming REQ-1025 routed it to IT Services, but the panel labeled the recommendation Ben had just confirmed "Stale", which no test caught:
 
-   Clicking through is part of the review. In our latest run it showed the just-confirmed recommendation labeled "Stale", which no test caught:
+   ![The review finding on REQ-1025: right after Confirm routing, the request is in IT Services and the panel says Confirmed by Ben Okafor, yet it still shows "Stale: request was rerouted since this suggestion"](images/07-review-finding.png)
 
-   ![The review finding: right after confirming, the panel still said "Stale: request was rerouted since this suggestion" on the recommendation Ben had just confirmed](images/07-review-finding.png)
+   We sent it back with an `@copilot` comment. Copilot fixed the rule and added a unit test in under 3 minutes, and the reviewer's browser test now checks it too. The same steps on the fixed build, with a new request:
 
-   We sent it back with an `@copilot` comment. Copilot fixed the rule and added a unit test in under 3 minutes, and the reviewer's browser test now checks it too. Then approve the pull request or ask for changes. For the demo, do not merge it (see [Reset](#reset-and-clean-up)). *5 minutes, plus 2 minutes to build and start the app.* **Point out:** the decision panel still says "Awaiting a decision": the feature routes requests, it never approves them.
+   ![After Copilot's fix, REQ-1026 confirmed the same way: routed to IT Services and In review, Confirmed by Ben Okafor with no stale notice, the History reads "Routing confirmed: IT Services", and the decision still waits for an approver](images/07-confirmed.png)
+
+   Then approve the pull request or ask for changes. For the demo, do not merge it (see [Reset](#reset-and-clean-up)). *5 minutes, plus 2 minutes to build and start the app.* **Point out:** the decision panel still says "Awaiting a decision": the feature routes requests, it never approves them.
 
 ## What to observe
 
