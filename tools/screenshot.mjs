@@ -19,6 +19,8 @@
  * Page options:
  *   --wait <selector>        wait until this element is visible (repeatable). Selectors are CSS, or text=<words> for
  *                            the innermost element showing those words.
+ *   --select <sel>=<value>   choose this option in a list, or set this field (repeatable; runs before --wait). Example:
+ *                            --select "select[aria-label='Demo persona']=u-ben" to view RequestHub as a reviewer
  *   --click <selector>       click this element before capturing (repeatable, in order)
  *   --frame <url part>       apply --wait, --click, and --selector inside the first frame whose URL contains this
  *   --selector <selector>    capture only this element, with --padding pixels around it (default 8)
@@ -100,7 +102,7 @@ if (mode === 'browser') {
 if (!['page', 'terminal'].includes(mode)) fail(2, 'Usage: node tools/screenshot.mjs browser | page <url> <out.png> [options] | terminal <out.png> --input <file> [options]. See the header of this file.');
 const positional = [];
 const options = {};
-const repeatable = new Set(['wait', 'click', 'hide', 'remove']);
+const repeatable = new Set(['wait', 'click', 'hide', 'remove', 'select']);
 for (let i = 0; i < rest.length; i++) {
   const arg = rest[i];
   if (!arg.startsWith('--')) { positional.push(arg); continue; }
@@ -574,6 +576,33 @@ async function capturePage(url, out) {
       }
     };
     const ensureHelpers = async (s) => s.evaluate(`${FIND_SOURCE}; true`);
+    // --select "<css>=<value>": choose an option (or set a field) the way a person would, so frameworks such as
+    // React see the change. Runs before --wait, so the waits see the result.
+    for (const spec of options.select ?? []) {
+      const at = spec.lastIndexOf('=');
+      if (at < 1) refuse(2, `--select needs <selector>=<value>: ${spec}`);
+      const sel = JSON.stringify(spec.slice(0, at));
+      const value = JSON.stringify(spec.slice(at + 1));
+      const until = Date.now() + 60_000;
+      for (;;) {
+        const s = await scope();
+        await ensureHelpers(s);
+        const result = await s.evaluate(`(() => {
+          const el = __find(${sel});
+          if (!el) return 'missing';
+          const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${value});
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return el.value === ${value} ? 'ok' : 'no such option';
+        })()`).catch(() => 'missing');
+        if (result === 'ok') break;
+        if (result !== 'missing' || Date.now() > until) refuse(2, `--select ${spec}: ${result}`);
+        await sleep(400);
+      }
+      await sleep(500);
+      await settle(tab, { loadTimeout: 5_000 });
+    }
     for (const sel of options.wait ?? []) {
       const until = Date.now() + 120_000;
       for (;;) {
