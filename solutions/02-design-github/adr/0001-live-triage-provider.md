@@ -117,13 +117,13 @@ sequenceDiagram
   API->>DB: Load current request
   API->>API: Check staff/department access and nonterminal state
   alt Unauthorized or closed
-    API-->>R: 403 / 404 / 409; no AI call
+    API-->>R: 403 / 404 / 409, no AI call
   else Authorized
-    API->>P: Bound local context; start deadline and trace
-    P->>E: Start pinned agent; no raw request identifiers
+    API->>P: Bound local context, start deadline and trace
+    P->>E: Start pinned agent, no raw request identifiers
     E-->>P: Read-only tool requests
     P->>API: Execute tools bound to this request only
-    API->>API: Allowlist, sanitize or refuse; audit safe returned result
+    API->>API: Allowlist, sanitize or refuse, audit safe returned result
     API-->>P: Sanitized title/description/category and approved policies
     P->>E: Tool results within same deadline
     alt Valid recommendation before deadline
@@ -135,7 +135,7 @@ sequenceDiagram
     else Invalid output
       P-->>API: Invalid-output failure
       API->>DB: Persist safe failure/tool audits
-      API-->>R: 502 triage.invalid_output; manual routing available
+      API-->>R: 502 triage.invalid_output, manual routing available
     else Deadline or dependency outage
       P-->>API: Cancel or unavailable failure
       API->>DB: Persist safe failure/tool audits
@@ -145,7 +145,7 @@ sequenceDiagram
     opt Reviewer chooses manual routing (AI success not required)
       R->>API: PUT /api/requests/{id}/routing
       API->>API: Recheck reviewer role, both departments and current state
-      API->>DB: Save routing and audit; no approval
+      API->>DB: Save routing and audit, no approval
     end
   end
 ```
