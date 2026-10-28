@@ -86,9 +86,8 @@ jobs:
           {
             echo "### Standards index"
             echo
-            echo '```'
-            cat ingest.txt
-            echo '```'
+            # A list wraps on narrow screens; a code block would scroll sideways.
+            sed -e 's/^ *//' -e 's/^/- /' ingest.txt
             echo
             if [ -f out/eval/results.md ]; then cat out/eval/results.md; fi
           } >> "$GITHUB_STEP_SUMMARY"
