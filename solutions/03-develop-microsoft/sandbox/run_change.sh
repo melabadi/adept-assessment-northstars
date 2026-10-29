@@ -53,7 +53,9 @@ run() {
     echo $? > "$RUN/api.exit"
   fi
 
-  # Web UI: typecheck and unit tests, as CI runs them. A failed test run is repeated once to tell flaky from failing.
+  # Web UI: typecheck and unit tests, as CI runs them. A session has 4 vCPUs that the test workers share, so a test may
+  # take longer than on CI: the sandbox allows each test 30 s instead of vitest's 5 s. A failed run is repeated once to
+  # tell flaky from failing.
   if [ -f "$SRC/app/web/package.json" ]; then
     mark web-install
     (cd "$SRC/app/web" && timeout 300 npm ci --no-audit --no-fund) > "$RUN/web-install.log" 2>&1
@@ -62,11 +64,11 @@ run() {
     (cd "$SRC/app/web" && timeout 300 npm run typecheck) > "$RUN/web-typecheck.log" 2>&1
     echo $? > "$RUN/web-typecheck.exit"
     mark web-tests
-    (cd "$SRC/app/web" && timeout 300 npm test) > "$RUN/web-tests.log" 2>&1
+    (cd "$SRC/app/web" && timeout 300 npm test -- --testTimeout=30000) > "$RUN/web-tests.log" 2>&1
     echo $? > "$RUN/web-tests.exit"
     if [ "$(cat "$RUN/web-tests.exit")" != "0" ]; then
       mark web-tests-rerun
-      (cd "$SRC/app/web" && timeout 300 npm test) > "$RUN/web-tests-rerun.log" 2>&1
+      (cd "$SRC/app/web" && timeout 300 npm test -- --testTimeout=30000) > "$RUN/web-tests-rerun.log" 2>&1
       echo $? > "$RUN/web-tests-rerun.exit"
     fi
   fi

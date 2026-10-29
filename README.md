@@ -24,7 +24,7 @@ Each solution is self-contained, and its README is the demo script: every step h
 Everything a demo needs lives in its folder. The only shared piece is the app.
 
 ```text
-solutions/03-develop-microsoft/
+solutions/04-test-microsoft/
 ├── README.md          what it shows, setup, the demo script, what to observe, how to adopt it
 ├── .github/           GitHub solutions: Copilot custom agent, skills, workflows, and issue templates. Microsoft solutions: only thin workflow triggers and issue templates
 ├── azure.yaml         (Microsoft solutions) azd project for the solution's own resource group

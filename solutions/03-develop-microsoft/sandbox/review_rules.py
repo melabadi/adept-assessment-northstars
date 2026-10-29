@@ -13,8 +13,9 @@ Rules
                              code, and no endpoint loses RequireAuthorization or gains AllowAnonymous.
   contract-additive          app/contracts/openapi.json changes only additively (STD-API-001).
   tests-with-changes         A change to app code comes with a test change, and no test case is removed or skipped.
-  synthetic-data             Added lines contain no secrets, tenant-style GUIDs, or e-mail addresses outside the
-                             synthetic domains.
+  synthetic-data             Added lines contain no secrets, no e-mail addresses outside the synthetic domains, and no
+                             GUID that names a tenant, subscription, principal, or client. Public built-in ids, such as
+                             Azure role and policy definitions, are fine.
 
 Usage
   python3 review_rules.py --base base.tgz --head head.tgz             # JSON on stdout; "markdown" holds the table
@@ -58,6 +59,11 @@ EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-
 ALLOWED_EMAIL = re.compile(r"(@example\.(com|org|net)|@([a-z0-9-]+\.)*contoso\.com|@noreply\.github\.com|"
                            r"@users\.noreply\.github\.com)$", re.I)
 GUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
+# A GUID is private when its line says what it identifies: a tenant, subscription, principal, object, client, or directory.
+# Built-in ids that are the same in every tenant (role and policy definitions) are public.
+PRIVATE_ID_CONTEXT = re.compile(r"(?i)\btenant|\bsubscription(?!ResourceId)|principal|object[\s_-]*id|client[\s_-]*id|"
+                                r"directory|microsoftonline\.com|\bAZURE_\w*ID\b")
+BUILT_IN_ID_CONTEXT = re.compile(r"(?i)role\s*definition|roleDefinitions|policy(set)?\s*definition|built-?in")
 SECRETS = [
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("GitHub token", re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b")),
@@ -343,16 +349,17 @@ def synthetic_data(change: Change) -> dict:
                 if not ALLOWED_EMAIL.search(m):
                     evidence.append(f"{path}:{line_no}: e-mail address outside the synthetic domains ({masked(m)})")
             for m in GUID.findall(text):
-                # Placeholders such as 00000000-… or 7d2c1f00-0000-4000-8000-000000000001 are synthetic: a random GUID
-                # has about two zeros among its 32 hex digits.
-                if m.count("0") < 12 and len(set(m.replace("-", ""))) > 2:
-                    evidence.append(f"{path}:{line_no}: GUID that could be a tenant, subscription, or object id ({masked(m)})")
+                # Placeholders such as 00000000-… are synthetic: a random GUID has about two zeros among its 32 digits.
+                if m.count("0") >= 12 or len(set(m.replace("-", ""))) <= 2:
+                    continue
+                if PRIVATE_ID_CONTEXT.search(text) and not BUILT_IN_ID_CONTEXT.search(text):
+                    evidence.append(f"{path}:{line_no}: GUID that names a tenant, subscription, or principal ({masked(m)})")
             for label, pattern in SECRETS:
                 m = pattern.search(text)
                 if m:
                     evidence.append(f"{path}:{line_no}: possible {label} ({masked(m.group(0))})")
     return rule("synthetic-data", "Data is synthetic", evidence,
-                "no secrets, tenant-style ids, or real-looking e-mail addresses in added lines")
+                "no secrets, tenant or subscription ids, or real-looking e-mail addresses in added lines")
 
 
 def judge(base: dict[str, bytes], head: dict[str, bytes]) -> dict:

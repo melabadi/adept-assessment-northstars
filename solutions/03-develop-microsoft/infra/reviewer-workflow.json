@@ -283,7 +283,7 @@
         "Rules": {
           "type": "Compose",
           "description": "The checker's verdicts. This step fails, and the review stops before any pull request code runs, unless the checker produced them.",
-          "inputs": "@json(coalesce(body('Judge_check_the_team_rules')?['result']?['stdout'], body('Judge_check_the_team_rules')?['properties']?['stdout'], body('Judge_check_the_team_rules')?['stdout']))['rules']",
+          "inputs": "@json(body('Judge_check_the_team_rules')?['result']?['stdout'])['rules']",
           "runAfter": { "Judge_check_the_team_rules": ["Succeeded"] }
         },
         "Run_upload_the_runner": {
@@ -336,7 +336,7 @@
         },
         "Run_wait_for_the_build": {
           "type": "Until",
-          "expression": "@contains(string(coalesce(body('Run_build_status')?['result']?['stdout'], body('Run_build_status')?['properties']?['stdout'], body('Run_build_status')?['stdout'], '')), '\"state\":\"done\"')",
+          "expression": "@contains(string(coalesce(body('Run_build_status')?['result']?['stdout'], '')), '\"state\":\"done\"')",
           "limit": { "count": 60, "timeout": "PT20M" },
           "actions": {
             "Pause": {
@@ -372,7 +372,7 @@
         "Sandbox_results": {
           "type": "Compose",
           "description": "Reported by the pull request's own code: evidence, not a verdict.",
-          "inputs": "@string(coalesce(body('Run_get_the_results')?['result']?['stdout'], body('Run_get_the_results')?['properties']?['stdout'], body('Run_get_the_results')?['stdout'], ''))",
+          "inputs": "@string(coalesce(body('Run_get_the_results')?['result']?['stdout'], ''))",
           "runAfter": { "Run_get_the_results": ["Succeeded", "Failed"] }
         },
         "Agent_input": {
@@ -466,7 +466,7 @@
         },
         "Review": {
           "type": "Compose",
-          "inputs": "@json(coalesce(body('Judge_write_the_review')?['result']?['stdout'], body('Judge_write_the_review')?['properties']?['stdout'], body('Judge_write_the_review')?['stdout']))",
+          "inputs": "@json(body('Judge_write_the_review')?['result']?['stdout'])",
           "runAfter": { "Judge_write_the_review": ["Succeeded"] }
         },
         "Unless_this_is_a_dry_run": {

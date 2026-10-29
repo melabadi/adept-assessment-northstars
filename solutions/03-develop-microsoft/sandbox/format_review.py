@@ -70,10 +70,12 @@ def plain(value: object, limit: int = 500) -> str:
     return "".join(parts)
 
 
-def code(value: object, limit: int = 120) -> str:
+def code(value: object, limit: int = 160) -> str:
     """A file name or test name from the pull request, as a code span it can't break out of."""
     text = redact(" ".join(str(value or "").split())).replace("`", "'")
-    return f"`{text[:limit]}`" if text else ""
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    return f"`{text}`" if text else ""
 
 
 def duration(seconds: object) -> str:
@@ -99,10 +101,13 @@ def rules_section(judge: dict, checker_ref: str) -> list[str]:
 # ---------------------------------------------------------------- part 2: the sandbox
 
 def counts(tests: object) -> str:
+    """'50 of 50 passed' or '1 of 14 failed'."""
     if not isinstance(tests, dict) or not isinstance(tests.get("total"), int):
         return ""
-    passed, total = tests.get("passed"), tests["total"]
-    return f"{passed} of {total} passed" if isinstance(passed, int) else f"{total} tests"
+    failed, total = tests.get("failed"), tests["total"]
+    if isinstance(failed, int) and failed:
+        return f"{failed} of {total} failed"
+    return f"{tests['passed']} of {total} passed" if isinstance(tests.get("passed"), int) else f"{total} tests"
 
 
 def failed_names(tests: object) -> str:
@@ -124,29 +129,29 @@ def sandbox_section(raw: object) -> list[str]:
                   else "- No test results came back from the sandbox."]
         return lines
     api, web = summary.get("api") or {}, summary.get("web") or {}
-    api_status = api.get("status")
-    if api_status == "passed":
-        api_line = f"✅ passed, {counts(api)}"
-    elif api_status == "failed":
-        api_line = f"❌ failed, {counts(api) or 'see the log'}.{failed_names(api)}"
+    took = f" ({duration(api.get('seconds'))})" if duration(api.get("seconds")) else ""
+    if api.get("status") == "passed":
+        api_line = f"✅ {counts(api)}{took}"
+    elif api.get("status") == "failed":
+        api_line = f"❌ {counts(api) or 'failed, see the log'}{took}.{failed_names(api)}"
     else:
-        api_line = "not run (no API solution in this change)"
-    lines += ["", f"- API integration tests: {api_line}" + (f" ({duration(api.get('seconds'))})" if duration(api.get("seconds")) else "")]
+        api_line = "not run (this change has no API solution)"
+    lines += ["", f"- API integration tests: {api_line}"]
     web_status = web.get("status")
     if web_status in ("passed", "flaky", "failed"):
         typecheck = "✅ passed" if web.get("typecheck") == "passed" else "❌ failed"
-        tests = web.get("tests")
+        tests, rerun = web.get("tests"), web.get("rerun")
         if web_status == "passed":
-            unit = f"✅ passed, {counts(tests)}"
+            unit = f"✅ {counts(tests)}"
         elif web_status == "flaky":
-            unit = f"⚠️ flaky: failed once ({counts(tests)}), then passed on a rerun.{failed_names(tests)}"
+            unit = f"⚠️ flaky: {counts(tests)}, then all passed on a rerun.{failed_names(tests)}"
         else:
-            unit = f"❌ failed, {counts(web.get('rerun') or tests)}, also on a rerun.{failed_names(web.get('rerun') or tests)}"
+            unit = f"❌ {counts(rerun or tests)}, also on a rerun.{failed_names(rerun or tests)}"
         lines.append(f"- Web UI: typecheck {typecheck} · unit tests {unit}")
     elif web_status == "error":
         lines.append("- Web UI: ❌ dependencies didn't install, so nothing ran.")
     else:
-        lines.append("- Web UI: not run (no web UI in this change)")
+        lines.append("- Web UI: not run (this change has no web UI)")
     times = [f"toolchain setup {duration(summary.get('setup_seconds'))}" if duration(summary.get("setup_seconds")) else "",
              f"total {duration(summary.get('seconds'))}" if duration(summary.get("seconds")) else ""]
     if any(times):
@@ -156,38 +161,40 @@ def sandbox_section(raw: object) -> list[str]:
 
 # ---------------------------------------------------------------- part 3: the agent
 
-def agent_answer(response: object, status: object) -> tuple[dict | None, str | None, int, str | None]:
-    """(answer, error, tool calls, model) from the Responses API result. Only error codes are kept, never messages."""
+def agent_answer(response: object, status: object) -> tuple[dict | None, str | None, int, str]:
+    """(answer, error, tool calls, who) from the Responses API result. Only error codes are kept, never messages."""
     if not isinstance(response, dict):
-        return None, f"the call didn't complete ({plain(status, 40) or 'no response'})", 0, None
-    model = response.get("model") if isinstance(response.get("model"), str) else None
+        return None, f"the call didn't complete ({plain(status, 40) or 'no response'})", 0, ""
+    ref = response.get("agent_reference") if isinstance(response.get("agent_reference"), dict) else {}
+    who = " ".join(filter(None, [f"v{plain(ref.get('version'), 10)}" if ref.get("version") else "",
+                                 f"on {plain(response.get('model'), 40)}" if isinstance(response.get("model"), str) else ""]))
     output = response.get("output") if isinstance(response.get("output"), list) else []
     tool_calls = sum(1 for item in output if isinstance(item, dict) and str(item.get("type", "")).endswith("_call"))
     error = response.get("error")
     if isinstance(error, dict) and error:
-        return None, f"the agent returned an error ({plain(error.get('code') or 'unknown', 60)})", tool_calls, model
+        return None, f"the agent returned an error ({plain(error.get('code') or 'unknown', 60)})", tool_calls, who
     if response.get("status") != "completed":
-        return None, f"the agent's response is {plain(response.get('status') or status or 'missing', 40)}", tool_calls, model
+        return None, f"the agent's response is {plain(response.get('status') or status or 'missing', 40)}", tool_calls, who
     texts = [part.get("text") for item in output if isinstance(item, dict) and item.get("type") == "message"
              for part in item.get("content") or [] if isinstance(part, dict) and part.get("type") == "output_text"]
     if not texts:
-        return None, "the agent returned no answer", tool_calls, model
+        return None, "the agent returned no answer", tool_calls, who
     try:
         answer = json.loads(texts[-1])
     except ValueError:
-        return None, "the agent's answer wasn't valid JSON", tool_calls, model
+        return None, "the agent's answer wasn't valid JSON", tool_calls, who
     if not isinstance(answer, dict) or not all(isinstance(answer.get(k), str) for k in ("summary", "tests_note", "for_the_person")):
-        return None, "the agent's answer didn't match its schema", tool_calls, model
+        return None, "the agent's answer didn't match its schema", tool_calls, who
     answer["observations"] = [o for o in answer.get("observations") or []
                               if isinstance(o, dict) and o.get("severity") in SEVERITY and isinstance(o.get("text"), str)]
     answer["rule_notes"] = [n for n in answer.get("rule_notes") or []
                             if isinstance(n, dict) and n.get("rule_id") in RULE_IDS and isinstance(n.get("note"), str)]
-    return answer, None, tool_calls, model
+    return answer, None, tool_calls, who
 
 
-def agent_section(answer: dict | None, error: str | None, tool_calls: int, model: str | None, agent_name: str,
+def agent_section(answer: dict | None, error: str | None, tool_calls: int, version: str, agent_name: str,
                   titles: dict[str, str]) -> list[str]:
-    who = f"`{plain(agent_name, 80)}` in Microsoft Foundry" + (f", {plain(model, 40)}" if model else "")
+    who = f"`{plain(agent_name, 80)}`{' ' + version if version else ''} in Microsoft Foundry"
     if answer is None:
         return [f"**Commentary from the reviewer agent** ({who}): not available, because {error}. The rule results and "
                 "sandbox results above stand on their own."]
@@ -209,14 +216,14 @@ def agent_section(answer: dict | None, error: str | None, tool_calls: int, model
 
 def compose(judge: dict, request: dict) -> dict:
     pr = request.get("pr") or {}
-    answer, error, tool_calls, model = agent_answer(request.get("agent"), request.get("agent_status"))
+    answer, error, tool_calls, version = agent_answer(request.get("agent"), request.get("agent_status"))
     titles = {r["id"]: r["title"] for r in judge["rules"]}
     run = plain(request.get("run"), 80)
     head = str(pr.get("head") or "")
     body = ["### Azure pull request review · advisory", ""]
     body += rules_section(judge, str(request.get("checker_ref") or "main"))
     body += [""] + sandbox_section(request.get("sandbox"))
-    body += [""] + agent_section(answer, error, tool_calls, model, str(request.get("agent_name") or "reviewer agent"), titles)
+    body += [""] + agent_section(answer, error, tool_calls, version, str(request.get("agent_name") or "reviewer agent"), titles)
     body += ["", "---",
              f"<sub>The Azure pull request reviewer never approves and never requests changes; a person decides. "
              f"Commit `{head[:7]}` · Logic App run `{run}` · rule checker v{plain(judge['checker']['version'], 10)}.</sub>",
