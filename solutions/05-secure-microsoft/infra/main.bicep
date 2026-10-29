@@ -1,4 +1,5 @@
-// Secure · Microsoft: RequestHub hosted in Azure, plus an Azure Policy assignment that audits its storage account, in this
+// Secure · Microsoft: RequestHub hosted in Azure, an Azure Policy assignment that audits its storage account, and the
+// posture automation that turns the finding into a reviewed fix (Logic Apps, a Foundry agent, a what-if job), all in this
 // solution's own resource group. Deploy from this folder with `azd up`; remove everything with `azd down --purge`.
 targetScope = 'subscription'
 
@@ -16,11 +17,12 @@ param principalId string
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@description('GitHub repository (owner/name) whose workflows scan, preview, and verify through OIDC. Set by the preprovision hook.')
+@description('GitHub repository (owner/name) the posture automation files Issues and pull requests in. Set by the preprovision hook.')
 param githubRepository string = ''
 
-@description('OIDC subject prefix for repositories that use immutable subjects. Set by the preprovision hook.')
-param githubOidcSubjectPrefix string = ''
+@secure()
+@description('Fine-grained GitHub token for this repository only (Contents, Issues, Pull requests, Commit statuses). Created by a person; see the README.')
+param postureGithubToken string = ''
 
 var tags = {
   'azd-env-name': environmentName
@@ -33,8 +35,8 @@ resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   tags: tags
 }
 
-// Everything inside the resource group lives in resources.bicep, so a change can be previewed with a resource-group
-// what-if (the infrastructure-remediation skill) by an identity that has no rights on the subscription.
+// RequestHub and the Policy assignment live in resources.bicep, the file a posture fix changes. A pull request is
+// previewed with a what-if of that file alone, by an identity that has no rights on the subscription.
 module resources 'resources.bicep' = {
   name: 'resources'
   scope: rg
@@ -43,17 +45,39 @@ module resources 'resources.bicep' = {
     location: location
     principalId: principalId
     principalType: principalType
+  }
+}
+
+// The posture automation that runs in Azure: Logic Apps, the Foundry agent, the what-if job, and the Defender automation.
+module automation 'automation.bicep' = {
+  name: 'automation'
+  scope: rg
+  params: {
+    environmentName: environmentName
+    location: location
+    principalId: principalId
+    principalType: principalType
     githubRepository: githubRepository
-    githubOidcSubjectPrefix: githubOidcSubjectPrefix
+    githubToken: postureGithubToken
+    automationIdentityName: resources.outputs.automationIdentityName
+    containerAppsEnvironmentName: resources.outputs.containerAppsEnvironmentName
+    storageAccountId: resources.outputs.storageAccountId
+    policyAssignmentName: resources.outputs.policyAssignmentName
   }
 }
 
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenant().tenantId
 output AZURE_RESOURCE_GROUP string = rg.name
-output GITHUB_ENVIRONMENT string = resources.outputs.githubEnvironment
 output POLICY_ASSIGNMENT_NAME string = resources.outputs.policyAssignmentName
 output STORAGE_ACCOUNT_NAME string = resources.outputs.storageAccountName
+output FOUNDRY_PROJECT_ENDPOINT string = automation.outputs.foundryProjectEndpoint
+output FOUNDRY_MODEL_DEPLOYMENT string = automation.outputs.foundryModelDeployment
+output REMEDIATION_AGENT_NAME string = automation.outputs.agentName
+output PREVIEW_WORKFLOW_NAME string = automation.outputs.previewWorkflowName
+output INTAKE_WORKFLOW_NAME string = automation.outputs.intakeWorkflowName
+output VERIFY_WORKFLOW_NAME string = automation.outputs.verifyWorkflowName
+output WHATIF_JOB_NAME string = automation.outputs.whatifJobName
 
 // Read by app/infra/api.parameters.json and worker.parameters.json when `azd deploy` ships the container apps.
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = resources.outputs.registryLoginServer
@@ -71,4 +95,3 @@ output WORKER_APP_NAME string = resources.outputs.workerAppName
 output API_URL string = resources.outputs.apiUrl
 output API_CLIENT_ID string = resources.outputs.apiClientId
 output API_IDENTIFIER_URI string = resources.outputs.apiIdentifierUri
-output AUTOMATION_CLIENT_ID string = resources.outputs.automationClientId
