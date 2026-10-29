@@ -10,15 +10,14 @@
     "runPool": { "type": "String" },
     "projectEndpoint": { "type": "String" },
     "agentName": { "type": "String" },
-    "scriptsPath": { "type": "String", "defaultValue": "solutions/03-develop-microsoft/sandbox" },
-    "diffLimit": { "type": "Int", "defaultValue": 60000 }
+    "scriptsPath": { "type": "String", "defaultValue": "solutions/03-develop-microsoft/sandbox" }
   },
   "triggers": {
     "When_a_pull_request_event_arrives": {
       "type": "Request",
       "kind": "Http",
       "description": "GitHub's pull_request webhook, or {\"dryRun\": true, \"pr\": <number>} from eval_reviewer.py. Only the pull request number is used; everything else is read again from GitHub.",
-      "inputs": { "method": "POST", "schema": { "type": "object" } },
+      "inputs": { "method": "POST", "schema": {"type": "object"} },
       "conditions": [
         {
           "expression": "@or(equals(triggerBody()?['dryRun'], true), and(not(equals(triggerBody()?['pull_request'], null)), or(and(equals(triggerBody()?['action'], 'labeled'), equals(triggerBody()?['label']?['name'], parameters('reviewLabel'))), and(contains(createArray('synchronize', 'reopened', 'ready_for_review'), coalesce(triggerBody()?['action'], '')), contains(string(coalesce(triggerBody()?['pull_request']?['labels'], createArray())), parameters('reviewLabel'))))))"
@@ -49,7 +48,7 @@
               "X-GitHub-Api-Version": "2022-11-28"
             }
           },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": { "PR_number": ["Succeeded"] }
         },
         "Label_names": {
@@ -66,13 +65,7 @@
           "expression": "@or(equals(triggerBody()?['dryRun'], true), and(equals(body('Get_the_pull_request')?['state'], 'open'), equals(body('Get_the_pull_request')?['draft'], false), equals(body('Get_the_pull_request')?['base']?['ref'], body('Get_the_pull_request')?['base']?['repo']?['default_branch']), contains(body('Label_names'), parameters('reviewLabel'))))",
           "actions": {},
           "else": {
-            "actions": {
-              "Not_for_review": {
-                "type": "Terminate",
-                "inputs": { "runStatus": "Cancelled" },
-                "runAfter": {}
-              }
-            }
+            "actions": { "Not_for_review": {"type": "Terminate", "inputs": {"runStatus": "Cancelled"}, "runAfter": {}} }
           },
           "runAfter": { "Label_names": ["Succeeded"] }
         },
@@ -88,7 +81,7 @@
               "X-GitHub-Api-Version": "2022-11-28"
             }
           },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": { "Is_it_ready_for_review": ["Succeeded"] }
         },
         "Merge_base": {
@@ -107,7 +100,7 @@
               "X-GitHub-Api-Version": "2022-11-28"
             }
           },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": { "Merge_base": ["Succeeded"] }
         },
         "Get_the_head_archive": {
@@ -121,7 +114,7 @@
               "X-GitHub-Api-Version": "2022-11-28"
             }
           },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": { "Merge_base": ["Succeeded"] }
         },
         "Get_the_rule_checker": {
@@ -137,7 +130,7 @@
               "X-GitHub-Api-Version": "2022-11-28"
             }
           },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": { "Merge_base": ["Succeeded"] }
         },
         "Get_the_review_formatter": {
@@ -153,7 +146,7 @@
               "X-GitHub-Api-Version": "2022-11-28"
             }
           },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": { "Merge_base": ["Succeeded"] }
         },
         "Get_the_sandbox_runner": {
@@ -169,29 +162,8 @@
               "X-GitHub-Api-Version": "2022-11-28"
             }
           },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": { "Merge_base": ["Succeeded"] }
-        },
-        "Get_the_diff": {
-          "type": "Http",
-          "inputs": {
-            "method": "GET",
-            "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls/@{outputs('PR_number')}",
-            "headers": {
-              "Accept": "application/vnd.github.diff",
-              "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
-              "User-Agent": "azure-pr-reviewer",
-              "X-GitHub-Api-Version": "2022-11-28"
-            }
-          },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
-          "runAfter": { "Merge_base": ["Succeeded"] }
-        },
-        "Diff": {
-          "type": "Compose",
-          "description": "GitHub refuses diffs that are too large; the review then goes on without one.",
-          "inputs": "@if(equals(actions('Get_the_diff')?['status'], 'Succeeded'), if(equals(body('Get_the_diff')?['$content'], null), string(body('Get_the_diff')), base64ToString(body('Get_the_diff')?['$content'])), '')",
-          "runAfter": { "Get_the_diff": ["Succeeded", "Failed"] }
         },
         "Judge_upload_the_checker": {
           "type": "Http",
@@ -280,11 +252,17 @@
           },
           "runAfter": { "Judge_upload_the_head": ["Succeeded"] }
         },
+        "Judge_output": {
+          "type": "Compose",
+          "description": "What the rule checker printed: its verdicts, and the change as a unified diff for the agent.",
+          "inputs": "@json(body('Judge_check_the_team_rules')?['result']?['stdout'])",
+          "runAfter": { "Judge_check_the_team_rules": ["Succeeded"] }
+        },
         "Rules": {
           "type": "Compose",
           "description": "The checker's verdicts. This step fails, and the review stops before any pull request code runs, unless the checker produced them.",
-          "inputs": "@json(body('Judge_check_the_team_rules')?['result']?['stdout'])['rules']",
-          "runAfter": { "Judge_check_the_team_rules": ["Succeeded"] }
+          "inputs": "@outputs('Judge_output')['rules']",
+          "runAfter": { "Judge_output": ["Succeeded"] }
         },
         "Run_upload_the_runner": {
           "type": "Http",
@@ -339,11 +317,7 @@
           "expression": "@contains(string(coalesce(body('Run_build_status')?['result']?['stdout'], '')), '\"state\":\"done\"')",
           "limit": { "count": 60, "timeout": "PT20M" },
           "actions": {
-            "Pause": {
-              "type": "Wait",
-              "inputs": { "interval": { "count": 20, "unit": "Second" } },
-              "runAfter": {}
-            },
+            "Pause": { "type": "Wait", "inputs": {"interval": {"count": 20, "unit": "Second"}}, "runAfter": {} },
             "Run_build_status": {
               "type": "Http",
               "inputs": {
@@ -389,10 +363,10 @@
             "rules": "@outputs('Rules')",
             "sandbox": "@outputs('Sandbox_results')",
             "run_session": "run-@{workflow()?['run']?['name']}",
-            "diff_truncated": "@greater(length(outputs('Diff')), parameters('diffLimit'))",
-            "diff": "@take(outputs('Diff'), parameters('diffLimit'))"
+            "diff_truncated": "@outputs('Judge_output')?['diff_truncated']",
+            "diff": "@outputs('Judge_output')?['diff']"
           },
-          "runAfter": { "Sandbox_results": ["Succeeded"], "Diff": ["Succeeded"] }
+          "runAfter": { "Sandbox_results": ["Succeeded"] }
         },
         "Ask_the_reviewer_agent": {
           "type": "Http",
@@ -492,7 +466,7 @@
                 },
                 "retryPolicy": { "type": "none" }
               },
-              "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+              "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
               "runAfter": {}
             }
           },
@@ -560,7 +534,7 @@
             },
             "retryPolicy": { "type": "none" }
           },
-          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": {}
         }
       },
@@ -569,8 +543,18 @@
     },
     "Mark_the_run_failed": {
       "type": "Terminate",
-      "inputs": { "runStatus": "Failed", "runError": { "code": "ReviewFailed", "message": "The review didn't finish. See the failed step in Run_the_review." } },
-      "runAfter": { "If_the_review_failed": ["Succeeded", "Failed"], "Delete_the_judge_session": ["Succeeded", "Failed"], "Delete_the_run_session": ["Succeeded", "Failed"] }
+      "inputs": {
+        "runStatus": "Failed",
+        "runError": {
+          "code": "ReviewFailed",
+          "message": "The review didn't finish. See the failed step in Run_the_review."
+        }
+      },
+      "runAfter": {
+        "If_the_review_failed": ["Succeeded", "Failed"],
+        "Delete_the_judge_session": ["Succeeded", "Failed"],
+        "Delete_the_run_session": ["Succeeded", "Failed"]
+      }
     }
   },
   "outputs": {}

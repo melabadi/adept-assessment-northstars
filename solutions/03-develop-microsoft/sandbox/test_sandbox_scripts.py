@@ -161,6 +161,18 @@ class RuleCheckerTests(unittest.TestCase):
         self.assertNotIn("<!--", table)
         self.assertIn("@\u200boctocat", table)
 
+    def test_the_diff_shows_code_first_and_lists_generated_files(self):
+        result = review_rules.judge(tree({}), tree({
+            "README.md": "# RequestHub\nMore docs.\n",
+            "app/web/src/pages/Page.tsx": "export const Page = () => 1;\n",
+            "app/src/RequestHub.Core/Data/Migrations/20260101_Add.cs": "partial class Add {}\n",
+        }))
+        diff = result["diff"]
+        self.assertLess(diff.index("b/app/web/src/pages/Page.tsx"), diff.index("b/README.md"))
+        self.assertIn("# added, not shown: app/src/RequestHub.Core/Data/Migrations/20260101_Add.cs", diff)
+        self.assertFalse(result["diff_truncated"])
+        self.assertTrue(review_rules.judge(tree({}), tree({"README.md": "x\n" * 500}), diff_limit=100)["diff_truncated"])
+
     def test_archives_are_read_in_memory_and_links_are_skipped(self):
         with tempfile.TemporaryDirectory() as folder:
             archive = Path(folder) / "head.tgz"

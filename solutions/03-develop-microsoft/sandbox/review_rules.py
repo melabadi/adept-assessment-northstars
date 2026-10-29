@@ -19,7 +19,9 @@ Rules
                              Azure role and policy definitions, are fine.
 
 Usage
-  python3 review_rules.py --base base.tgz --head head.tgz             # JSON on stdout; "markdown" holds the table
+  python3 review_rules.py --base base.tgz --head head.tgz             # JSON on stdout: the verdicts, the same verdicts
+                                                                      # as a Markdown table ("markdown"), and the change
+                                                                      # as a unified diff for the reviewer agent ("diff")
   python3 review_rules.py --base base.tgz --head head.tgz --markdown  # only the verdicts as a Markdown table
   python3 review_rules.py --base old-tree/ --head new-tree/           # directories work too
 
@@ -370,13 +372,14 @@ def synthetic_data(change: Change) -> dict:
                 "no secrets, tenant or subscription ids, or real-looking e-mail addresses in added lines")
 
 
-def judge(base: dict[str, bytes], head: dict[str, bytes]) -> dict:
+def judge(base: dict[str, bytes], head: dict[str, bytes], diff_limit: int = 60000) -> dict:
     change = Change(base, head)
     contract, additive = contract_additive(change)
     rules = [approval_authority(change), authorization_in_workflow(change), contract, tests_with_changes(change),
              synthetic_data(change)]
     counts = {k: sum(1 for kind, _ in change.files if kind == k) for k in "AMD"}
     outside = [p for _, p in change.files if not p.startswith("app/")]
+    diff, truncated = unified_diff(change, diff_limit)
     return {
         "checker": {"name": "RequestHub review rules", "version": VERSION},
         "summary": {"changed_files": len(change.files), "added": counts["A"], "modified": counts["M"], "deleted": counts["D"],
@@ -384,7 +387,29 @@ def judge(base: dict[str, bytes], head: dict[str, bytes]) -> dict:
         "rules": rules,
         "contract_additive_changes": additive[:20],
         "changed": [{"status": kind, "path": path} for kind, path in change.files[:300]],
+        "diff": diff,
+        "diff_truncated": truncated,
     }
+
+
+def unified_diff(change: Change, limit: int) -> tuple[str, bool]:
+    """The change as a unified diff for the reviewer agent: app code first, then tests and the contract, then the rest, so
+    a long diff loses documentation before code. Generated migrations and binary files are listed, not shown."""
+    def order(path: str) -> int:
+        if path.startswith(("app/src/", "app/web/src/")) and not TEST_FILE.search(path):
+            return 0
+        return 1 if TEST_FILE.search(path) or path == CONTRACT else 2
+    parts = []
+    for kind, path in sorted(change.files, key=lambda f: (order(f[1]), f[1])):
+        if not is_text(path) or path.startswith(MIGRATIONS):
+            parts.append(f"# {'added' if kind == 'A' else 'deleted' if kind == 'D' else 'changed'}, not shown: {path}\n")
+            continue
+        old = change.before(path).splitlines(keepends=True)
+        new = change.after(path).splitlines(keepends=True)
+        parts.append("".join(difflib.unified_diff(old, new, "/dev/null" if kind == "A" else f"a/{path}",
+                                                  "/dev/null" if kind == "D" else f"b/{path}")))
+    text = "".join(p if p.endswith("\n") else p + "\n" for p in parts if p)
+    return text[:limit], len(text) > limit
 
 
 def markdown(result: dict) -> str:
@@ -407,11 +432,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base", type=Path, required=True, help="Merge base: a .tar.gz archive or a directory")
     parser.add_argument("--head", type=Path, required=True, help="Pull request head: a .tar.gz archive or a directory")
     parser.add_argument("--markdown", action="store_true", help="Print the verdicts as a Markdown table instead of JSON")
+    parser.add_argument("--diff-limit", type=int, default=60000, help="Characters of the unified diff to include (default 60000)")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     try:
-        result = judge(load_tree(args.base), load_tree(args.head))
+        result = judge(load_tree(args.base), load_tree(args.head), args.diff_limit)
     except (OSError, tarfile.TarError) as exc:
         print(json.dumps({"error": f"cannot read the source trees: {exc}"}))
         return 2
