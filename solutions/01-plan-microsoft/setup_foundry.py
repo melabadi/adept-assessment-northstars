@@ -4,18 +4,20 @@ change agent.yaml, the inputs, or an evaluator.
 
   python setup_foundry.py prepare    (azd preprovision hook)
       Stores the GitHub repository (`gh repo view`) in the azd environment as GITHUB_REPOSITORY, unless it's set.
-      The Logic App creates its Issues there. Reminds you when GITHUB_TOKEN isn't set yet.
+      The Logic App creates its Issues there. Its token comes from PLAN_GITHUB_TOKEN only: a GITHUB_TOKEN stored in
+      the azd environment is moved there, so a GITHUB_TOKEN in your shell never reaches Azure. Reminds you when
+      PLAN_GITHUB_TOKEN isn't set yet.
 
   python setup_foundry.py publish    (azd postprovision hook)
       1. Uploads inputs/ (the transcript and the policies) to a Foundry vector store. The store's name includes a
          hash of the files, so unchanged inputs are reused instead of uploaded again.
       2. Publishes the prompt agent defined in agent.yaml: model, instructions, file search over that vector store,
-         and the JSON schema in backlog.schema.json that its answer must match. A new agent version is created only
-         when the definition changes.
+         and the JSON schema in backlog.schema.json that its answer must match. The Logic App runs the agent's latest
+         version, so a new version is created whenever the latest one differs from this definition.
       3. Publishes each file in evaluators/ to the project's evaluator catalog as a code-based evaluator. A new
          version is created only when the code changes.
       4. Creates the evaluation "plan-brief-checks" that the Logic App runs on every brief, and creates it again
-         when an evaluator or a threshold changes.
+         when the newest one doesn't use these evaluator versions and thresholds.
 
 Configuration (environment variables, or read from `azd env get-values`, run in this folder):
   FOUNDRY_PROJECT_ENDPOINT   https://<account>.services.ai.azure.com/api/projects/<project>
@@ -62,10 +64,16 @@ def run(*args: str) -> str:
     return proc.stdout.strip()
 
 
+def env_args() -> list[str]:
+    """azd runs hooks with AZURE_ENV_NAME set: read and write that environment, not whichever one is the default."""
+    name = os.environ.get("AZURE_ENV_NAME")
+    return ["-e", name] if name else []
+
+
 def azd_env() -> dict[str, str]:
     if not shutil.which("azd"):
         return {}
-    proc = subprocess.run(["azd", "env", "get-values", "--output", "json"], capture_output=True, text=True, cwd=HERE)
+    proc = subprocess.run(["azd", "env", "get-values", "--output", "json", *env_args()], capture_output=True, text=True, cwd=HERE)
     try:
         return json.loads(proc.stdout) if proc.returncode == 0 else {}
     except json.JSONDecodeError:
@@ -132,9 +140,11 @@ def ensure_agent(project, spec: dict, model: str, vector_store_id: str):
         versions = list(project.agents.list_versions(agent_name=spec["name"]))
     except Exception:  # first run: the agent does not exist yet
         versions = []
-    for version in versions:
-        if (version.metadata or {}).get("definitionHash") == definition_hash:
-            return version, True
+    # The Logic App calls the agent by name, which runs its latest version. Reuse only that one: after a change and a
+    # revert, an older version with the same definition isn't the one that runs.
+    latest = max(versions, key=lambda v: int(v.version), default=None)
+    if latest is not None and (latest.metadata or {}).get("definitionHash") == definition_hash:
+        return latest, True
     created = project.agents.create_version(
         agent_name=spec["name"], definition=definition, description=spec["description"],
         metadata={"definitionHash": definition_hash, "source": "solutions/01-plan-microsoft/agent.yaml"})
@@ -193,16 +203,21 @@ def ensure_evaluation(client, evaluators: dict[str, tuple[str, bool]]) -> tuple[
         "initialization_parameters": {"pass_threshold": threshold},
     } for stem, threshold in THRESHOLDS.items()]
     definition_hash = hashlib.sha256(json.dumps(criteria, sort_keys=True).encode()).hexdigest()[:16]
-    current = None
+    # The Logic App runs the newest evaluation with this name. Reuse it only when it matches; delete the superseded
+    # ones that never ran, and keep the others for their history.
+    newest, reused = None, False
     for evaluation in list(client.evals.list(order="desc", limit=100)):
         if evaluation.name != EVALUATION_NAME:
             continue
-        if current is None and (evaluation.metadata or {}).get("definitionHash") == definition_hash:
-            current = evaluation.id
-        elif not list(client.evals.runs.list(eval_id=evaluation.id, limit=1)):
-            client.evals.delete(eval_id=evaluation.id)  # superseded and never run: nothing to keep
-    if current:
-        return current, True
+        if newest is None:
+            newest = evaluation
+            if (evaluation.metadata or {}).get("definitionHash") == definition_hash:
+                reused = True
+                continue
+        if not list(client.evals.runs.list(eval_id=evaluation.id, limit=1)):
+            client.evals.delete(eval_id=evaluation.id)
+    if reused:
+        return newest.id, True
     created = client.evals.create(
         name=EVALUATION_NAME,
         data_source_config={"type": "custom", "include_sample_schema": False, "item_schema": {
@@ -220,10 +235,18 @@ def prepare() -> int:
         if not shutil.which("gh"):
             raise SystemExit("error: set GITHUB_REPOSITORY (owner/name) with `azd env set`, or install and sign in to the GitHub CLI.")
         repo = run("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner")
-        run("azd", "env", "set", "GITHUB_REPOSITORY", repo)
+        run("azd", "env", "set", "GITHUB_REPOSITORY", repo, *env_args())
         print(f"GitHub repository: {repo}")
-    if not values.get("GITHUB_TOKEN"):
-        print("GITHUB_TOKEN is not set yet: the Logic App deploys, but can't create Issues until you set it "
+    # The Logic App's token comes from PLAN_GITHUB_TOKEN only. azd also fills a parameter from your shell, and many
+    # shells hold a broader GITHUB_TOKEN for other tools. A GITHUB_TOKEN stored in this azd environment (never one from
+    # the shell) is the token you set last: it replaces PLAN_GITHUB_TOKEN and is removed.
+    if values.get("GITHUB_TOKEN"):
+        run("azd", "env", "set", "PLAN_GITHUB_TOKEN", values["GITHUB_TOKEN"], *env_args())
+        run("azd", "env", "unset", "GITHUB_TOKEN", "--force", *env_args())
+        values["PLAN_GITHUB_TOKEN"] = values["GITHUB_TOKEN"]
+        print("Moved GITHUB_TOKEN to PLAN_GITHUB_TOKEN in the azd environment.")
+    if not values.get("PLAN_GITHUB_TOKEN"):
+        print("PLAN_GITHUB_TOKEN is not set yet: the Logic App deploys, but can't create Issues until you set it "
               "(README, Set up) and run `azd provision` again.")
     return 0
 

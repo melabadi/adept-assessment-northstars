@@ -7,6 +7,6 @@
     "principalId": { "value": "${AZURE_PRINCIPAL_ID}" },
     "principalType": { "value": "${AZURE_PRINCIPAL_TYPE=User}" },
     "githubRepository": { "value": "${GITHUB_REPOSITORY=}" },
-    "githubToken": { "value": "${GITHUB_TOKEN=}" }
+    "githubToken": { "value": "${PLAN_GITHUB_TOKEN=}" }
   }
 }

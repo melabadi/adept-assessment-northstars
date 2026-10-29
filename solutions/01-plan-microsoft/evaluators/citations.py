@@ -1,8 +1,11 @@
-"""Citations: every source the brief cites exists in the inputs.
+"""Citations: every item cites at least one source, and every source exists in the inputs.
 
 A citation is a transcript paragraph id (T07) or a policy id (POL-ROUTE-004). setup_foundry.py fills VALID_SOURCES
-from inputs/ when it publishes this evaluator, so an invented citation can't pass.
-Score: share of citations that exist (1.0 = all). Gates publishing.
+from inputs/ when it publishes this evaluator, so an invented citation can't pass. The response schema can't require a
+non-empty list, so this check does: the problem, goals, requirements, out-of-scope items, success measures, the epic,
+tasks, open questions, conflicts, and decisions must each cite something.
+Score: 0.0 if any of those items cites nothing, otherwise the share of citations that exist (1.0 = all). Gates
+publishing.
 """
 import json
 
@@ -14,24 +17,25 @@ def load(item):
     return value if isinstance(value, dict) else json.loads(value or "")
 
 
-def cited(data):
-    brief = data.get("brief", {})
-    yield from brief.get("problem", {}).get("sources", [])
+def citing_items(data):
+    brief = data.get("brief") or {}
+    yield brief.get("problem") or {}
     for key in ("goals", "requirements", "outOfScope", "successMeasures"):
-        for entry in brief.get(key, []):
-            yield from entry.get("sources", [])
-    yield from data.get("epic", {}).get("sources", [])
+        yield from brief.get(key) or []
+    yield data.get("epic") or {}
     for key in ("tasks", "openQuestions", "conflicts", "decisions"):
-        for entry in data.get(key, []):
-            yield from entry.get("sources", [])
-    for conflict in data.get("conflicts", []):
-        if conflict.get("resolvedBy"):
-            yield conflict["resolvedBy"]
+        yield from data.get(key) or []
 
 
 def grade(sample, item) -> float:
     try:
-        sources = list(cited(load(item)))
-        return sum(1 for source in sources if source in VALID_SOURCES) / len(sources) if sources else 0.0
+        data = load(item)
+        entries = list(citing_items(data))
+        if any(not isinstance(entry, dict) or not isinstance(entry.get("sources"), list) or not entry["sources"]
+               for entry in entries):
+            return 0.0
+        sources = [source for entry in entries for source in entry["sources"]]
+        sources += [conflict["resolvedBy"] for conflict in data.get("conflicts") or [] if conflict.get("resolvedBy")]
+        return sum(1 for source in sources if source in VALID_SOURCES) / len(sources)
     except Exception:
         return 0.0

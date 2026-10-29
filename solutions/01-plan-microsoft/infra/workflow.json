@@ -55,6 +55,7 @@
           { "name": "erroredGates", "type": "integer", "value": 0 },
           { "name": "decision", "type": "string", "value": "waiting" },
           { "name": "createdTasks", "type": "array", "value": [] },
+          { "name": "epicIssue", "type": "integer", "value": 0 },
           { "name": "evaluationItems", "type": "array", "value": [] }
         ]
       },
@@ -147,8 +148,9 @@
             },
             "Brief": {
               "type": "Compose",
-              "inputs": "@json(outputs('Brief_text'))",
-              "runAfter": { "Brief_text": [ "Succeeded" ] }
+              "inputs": "@json(replace(outputs('Brief_text'), '@', '@\u200b'))",
+              "runAfter": { "Brief_text": [ "Succeeded" ] },
+              "description": "The brief as JSON for the Issues. Each @ gets a zero-width space after it, so text from the model can't mention anyone. The evaluation scores the unchanged text."
             },
             "Foundry_item": {
               "type": "Compose",
@@ -336,13 +338,22 @@
               },
               "runAfter": { "Foundry_results": [ "Succeeded" ] }
             },
-            "Failed_gates": {
-              "type": "Query",
+            "Passed_gate_names": {
+              "type": "Select",
               "inputs": {
                 "from": "@coalesce(first(body('Foundry_results'))?['results'], json('[]'))",
-                "where": "@and(contains(parameters('gates'), item()?['name']), not(equals(item()?['passed'], true)))"
+                "select": "@if(equals(item()?['passed'], true), item()?['name'], '')"
               },
               "runAfter": { "Copilot_results": [ "Succeeded" ] }
+            },
+            "Gates_not_passed": {
+              "type": "Query",
+              "description": "Every gate needs a result that passed: a gate whose result is missing counts as not passed.",
+              "inputs": {
+                "from": "@parameters('gates')",
+                "where": "@not(contains(body('Passed_gate_names'), item()))"
+              },
+              "runAfter": { "Passed_gate_names": [ "Succeeded" ] }
             }
           },
           "runAfter": { "Score_the_brief": [ "Succeeded" ] }
@@ -353,27 +364,22 @@
             "and": [
               { "equals": [ "@variables('evaluationStatus')", "completed" ] },
               { "equals": [ "@length(body('Foundry_results'))", 1 ] },
-              { "equals": [ "@length(body('Failed_gates'))", 0 ] }
+              { "equals": [ "@length(body('Gates_not_passed'))", 0 ] }
             ]
           },
           "actions": {},
           "else": {
             "actions": {
-              "Failed_gate_names": {
-                "type": "Select",
-                "inputs": { "from": "@body('Failed_gates')", "select": "@item()?['name']" },
-                "runAfter": {}
-              },
               "Stop_brief_failed_the_gates": {
                 "type": "Terminate",
                 "inputs": {
                   "runStatus": "Failed",
                   "runError": {
                     "code": "BriefFailedEvaluation",
-                    "message": "The evaluation ended as '@{variables('evaluationStatus')}', and these gates didn't pass: @{join(body('Failed_gate_names'), ', ')}. Nothing was sent to GitHub."
+                    "message": "The evaluation ended as '@{variables('evaluationStatus')}', and these gates didn't pass: @{join(body('Gates_not_passed'), ', ')}. Nothing was sent to GitHub."
                   }
                 },
-                "runAfter": { "Failed_gate_names": [ "Succeeded" ] }
+                "runAfter": {}
               }
             }
           },
@@ -498,7 +504,8 @@
               "title": "Plan: requirements brief for review (Foundry)",
               "body": "@{outputs('Review_issue_body')}",
               "labels": [ "ai-sdlc", "phase:plan", "track:microsoft", "type:brief" ]
-            }
+            },
+            "retryPolicy": { "type": "none" }
           },
           "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
           "runAfter": { "Write_the_review_issue": [ "Succeeded" ] }
@@ -561,80 +568,50 @@
         "Approved": {
           "case": "approved",
           "actions": {
-            "Write_the_epic": {
+            "Publish_the_backlog": {
               "type": "Scope",
-              "description": "Writes the epic's open questions, unresolved conflicts, and sources.",
+              "description": "Creates the epic and the four tasks, links the tasks as sub-issues, and marks their dependencies. These calls aren't retried, so a timeout can't create an Issue twice.",
               "actions": {
-                "Open_question_lines": {
-                  "type": "Select",
-                  "inputs": {
-                    "from": "@outputs('Brief')?['openQuestions']",
-                    "select": "@concat('- [ ] **', item()?['id'], '**', if(equals(item()?['blocking'], true), ' (blocking)', ''), ': ', item()?['question'], ' (', join(item()?['sources'], ', '), ')')"
+                "Write_the_epic": {
+                  "type": "Scope",
+                  "description": "Writes the epic's open questions, unresolved conflicts, and sources.",
+                  "actions": {
+                    "Open_question_lines": {
+                      "type": "Select",
+                      "inputs": {
+                        "from": "@outputs('Brief')?['openQuestions']",
+                        "select": "@concat('- [ ] **', item()?['id'], '**', if(equals(item()?['blocking'], true), ' (blocking)', ''), ': ', item()?['question'], ' (', join(item()?['sources'], ', '), ')')"
+                      },
+                      "runAfter": {}
+                    },
+                    "Unresolved_conflicts": {
+                      "type": "Query",
+                      "inputs": {
+                        "from": "@outputs('Brief')?['conflicts']",
+                        "where": "@empty(item()?['resolution'])"
+                      },
+                      "runAfter": { "Open_question_lines": [ "Succeeded" ] }
+                    },
+                    "Unresolved_conflict_lines": {
+                      "type": "Select",
+                      "inputs": {
+                        "from": "@body('Unresolved_conflicts')",
+                        "select": "@concat('- **', item()?['id'], '**: ', item()?['summary'], ' (', join(item()?['sources'], ', '), ')')"
+                      },
+                      "runAfter": { "Unresolved_conflicts": [ "Succeeded" ] }
+                    },
+                    "Epic_source_lines": {
+                      "type": "Select",
+                      "inputs": {
+                        "from": "@outputs('Brief')?['epic']?['sources']",
+                        "select": "@concat('- **', item(), '**: ', replace(coalesce(parameters('sourceExcerpts')?[item()], 'see solutions/01-plan-microsoft/inputs/'), '@', '@\u200b'))"
+                      },
+                      "runAfter": { "Unresolved_conflict_lines": [ "Succeeded" ] }
+                    }
                   },
                   "runAfter": {}
                 },
-                "Unresolved_conflicts": {
-                  "type": "Query",
-                  "inputs": { "from": "@outputs('Brief')?['conflicts']", "where": "@empty(item()?['resolution'])" },
-                  "runAfter": { "Open_question_lines": [ "Succeeded" ] }
-                },
-                "Unresolved_conflict_lines": {
-                  "type": "Select",
-                  "inputs": {
-                    "from": "@body('Unresolved_conflicts')",
-                    "select": "@concat('- **', item()?['id'], '**: ', item()?['summary'], ' (', join(item()?['sources'], ', '), ')')"
-                  },
-                  "runAfter": { "Unresolved_conflicts": [ "Succeeded" ] }
-                },
-                "Epic_source_lines": {
-                  "type": "Select",
-                  "inputs": {
-                    "from": "@outputs('Brief')?['epic']?['sources']",
-                    "select": "@concat('- **', item(), '**: ', coalesce(parameters('sourceExcerpts')?[item()], 'see solutions/01-plan-microsoft/inputs/'))"
-                  },
-                  "runAfter": { "Unresolved_conflict_lines": [ "Succeeded" ] }
-                }
-              },
-              "runAfter": {}
-            },
-            "Create_the_epic": {
-              "type": "Http",
-              "inputs": {
-                "method": "POST",
-                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues",
-                "headers": {
-                  "Authorization": "Bearer @{parameters('githubToken')}",
-                  "Accept": "application/vnd.github+json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-                  "User-Agent": "ai-sdlc-plan-microsoft"
-                },
-                "body": {
-                  "title": "[Plan/Foundry] @{outputs('Brief')?['epic']?['title']}",
-                  "body": "> Published by the Plan phase (Microsoft track) after a person approved review Issue #@{outputs('Review_issue')}. The four tasks are linked as sub-issues.\n\n## Summary\n\n@{outputs('Brief')?['epic']?['summary']}\n\n## Acceptance criteria\n\n- [ ] @{join(outputs('Brief')?['epic']?['acceptanceCriteria'], concat(parameters('newline'), '- [ ] '))}\n\n## Open questions\n\n@{if(empty(body('Open_question_lines')), '- None.', join(body('Open_question_lines'), parameters('newline')))}\n\n## Unresolved conflicts\n\n@{if(empty(body('Unresolved_conflict_lines')), '- None.', join(body('Unresolved_conflict_lines'), parameters('newline')))}\n\n## Sources\n\n@{join(body('Epic_source_lines'), parameters('newline'))}\n",
-                  "labels": [ "ai-sdlc", "phase:plan", "track:microsoft", "type:epic" ]
-                }
-              },
-              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
-              "runAfter": { "Write_the_epic": [ "Succeeded" ] }
-            },
-            "Epic_issue": {
-              "type": "Compose",
-              "inputs": "@body('Create_the_epic')?['number']",
-              "runAfter": { "Create_the_epic": [ "Succeeded" ] }
-            },
-            "Create_the_tasks": {
-              "type": "Foreach",
-              "foreach": "@outputs('Brief')?['tasks']",
-              "actions": {
-                "Task_source_lines": {
-                  "type": "Select",
-                  "inputs": {
-                    "from": "@items('Create_the_tasks')?['sources']",
-                    "select": "@concat('- **', item(), '**: ', coalesce(parameters('sourceExcerpts')?[item()], 'see solutions/01-plan-microsoft/inputs/'))"
-                  },
-                  "runAfter": {}
-                },
-                "Create_a_task": {
+                "Create_the_epic": {
                   "type": "Http",
                   "inputs": {
                     "method": "POST",
@@ -646,91 +623,135 @@
                       "User-Agent": "ai-sdlc-plan-microsoft"
                     },
                     "body": {
-                      "title": "[Plan/Foundry] @{items('Create_the_tasks')?['title']}",
-                      "body": "**Epic:** #@{outputs('Epic_issue')} · **Owner role:** @{items('Create_the_tasks')?['ownerRole']} · **Depends on:** @{if(empty(items('Create_the_tasks')?['dependsOn']), 'none', join(items('Create_the_tasks')?['dependsOn'], ', '))} · **Backlog id:** `@{items('Create_the_tasks')?['id']}`\n\n## Description\n\n@{items('Create_the_tasks')?['description']}\n\n## Acceptance criteria\n\n- [ ] @{join(items('Create_the_tasks')?['acceptanceCriteria'], concat(parameters('newline'), '- [ ] '))}\n\n## Sources\n\n@{join(body('Task_source_lines'), parameters('newline'))}\n",
-                      "labels": [ "ai-sdlc", "phase:plan", "track:microsoft", "type:task" ]
-                    }
-                  },
-                  "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
-                  "runAfter": { "Task_source_lines": [ "Succeeded" ] }
-                },
-                "Remember_the_task": {
-                  "type": "AppendToArrayVariable",
-                  "inputs": {
-                    "name": "createdTasks",
-                    "value": {
-                      "taskId": "@{items('Create_the_tasks')?['id']}",
-                      "number": "@body('Create_a_task')?['number']",
-                      "issueId": "@body('Create_a_task')?['id']",
-                      "dependsOn": "@items('Create_the_tasks')?['dependsOn']"
-                    }
-                  },
-                  "runAfter": { "Create_a_task": [ "Succeeded" ] }
-                },
-                "Link_as_a_sub_issue": {
-                  "type": "Http",
-                  "inputs": {
-                    "method": "POST",
-                    "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Epic_issue')}/sub_issues",
-                    "headers": {
-                      "Authorization": "Bearer @{parameters('githubToken')}",
-                      "Accept": "application/vnd.github+json",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                      "User-Agent": "ai-sdlc-plan-microsoft"
+                      "title": "[Plan/Foundry] @{outputs('Brief')?['epic']?['title']}",
+                      "body": "> Published by the Plan phase (Microsoft track) after a person approved review Issue #@{outputs('Review_issue')}. The four tasks are linked as sub-issues.\n\n## Summary\n\n@{outputs('Brief')?['epic']?['summary']}\n\n## Acceptance criteria\n\n- [ ] @{join(outputs('Brief')?['epic']?['acceptanceCriteria'], concat(parameters('newline'), '- [ ] '))}\n\n## Open questions\n\n@{if(empty(body('Open_question_lines')), '- None.', join(body('Open_question_lines'), parameters('newline')))}\n\n## Unresolved conflicts\n\n@{if(empty(body('Unresolved_conflict_lines')), '- None.', join(body('Unresolved_conflict_lines'), parameters('newline')))}\n\n## Sources\n\n@{join(body('Epic_source_lines'), parameters('newline'))}\n\n<!-- plan-microsoft: review #@{outputs('Review_issue')}, epic -->\n",
+                      "labels": [ "ai-sdlc", "phase:plan", "track:microsoft", "type:epic" ]
                     },
-                    "body": { "sub_issue_id": "@body('Create_a_task')?['id']" }
+                    "retryPolicy": { "type": "none" }
                   },
                   "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
-                  "runAfter": { "Remember_the_task": [ "Succeeded" ] }
-                }
-              },
-              "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
-              "runAfter": { "Epic_issue": [ "Succeeded" ] }
-            },
-            "Link_the_dependencies": {
-              "type": "Foreach",
-              "foreach": "@variables('createdTasks')",
-              "actions": {
-                "For_each_blocker": {
+                  "runAfter": { "Write_the_epic": [ "Succeeded" ] }
+                },
+                "Remember_the_epic": {
+                  "type": "SetVariable",
+                  "inputs": { "name": "epicIssue", "value": "@body('Create_the_epic')?['number']" },
+                  "runAfter": { "Create_the_epic": [ "Succeeded" ] }
+                },
+                "Create_the_tasks": {
                   "type": "Foreach",
-                  "foreach": "@coalesce(items('Link_the_dependencies')?['dependsOn'], json('[]'))",
+                  "foreach": "@outputs('Brief')?['tasks']",
                   "actions": {
-                    "Find_the_blocking_task": {
-                      "type": "Query",
+                    "Task_source_lines": {
+                      "type": "Select",
                       "inputs": {
-                        "from": "@variables('createdTasks')",
-                        "where": "@equals(item()?['taskId'], items('For_each_blocker'))"
+                        "from": "@items('Create_the_tasks')?['sources']",
+                        "select": "@concat('- **', item(), '**: ', replace(coalesce(parameters('sourceExcerpts')?[item()], 'see solutions/01-plan-microsoft/inputs/'), '@', '@\u200b'))"
                       },
                       "runAfter": {}
                     },
-                    "Mark_as_blocked_by": {
+                    "Create_a_task": {
                       "type": "Http",
                       "inputs": {
                         "method": "POST",
-                        "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{items('Link_the_dependencies')?['number']}/dependencies/blocked_by",
+                        "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues",
                         "headers": {
                           "Authorization": "Bearer @{parameters('githubToken')}",
                           "Accept": "application/vnd.github+json",
                           "X-GitHub-Api-Version": "2022-11-28",
                           "User-Agent": "ai-sdlc-plan-microsoft"
                         },
-                        "body": { "issue_id": "@first(body('Find_the_blocking_task'))?['issueId']" }
+                        "body": {
+                          "title": "[Plan/Foundry] @{items('Create_the_tasks')?['title']}",
+                          "body": "**Epic:** #@{variables('epicIssue')} · **Owner role:** @{items('Create_the_tasks')?['ownerRole']} · **Depends on:** @{if(empty(items('Create_the_tasks')?['dependsOn']), 'none', join(items('Create_the_tasks')?['dependsOn'], ', '))} · **Backlog id:** `@{items('Create_the_tasks')?['id']}`\n\n## Description\n\n@{items('Create_the_tasks')?['description']}\n\n## Acceptance criteria\n\n- [ ] @{join(items('Create_the_tasks')?['acceptanceCriteria'], concat(parameters('newline'), '- [ ] '))}\n\n## Sources\n\n@{join(body('Task_source_lines'), parameters('newline'))}\n\n<!-- plan-microsoft: review #@{outputs('Review_issue')}, @{items('Create_the_tasks')?['id']} -->\n",
+                          "labels": [ "ai-sdlc", "phase:plan", "track:microsoft", "type:task" ]
+                        },
+                        "retryPolicy": { "type": "none" }
                       },
                       "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
-                      "runAfter": { "Find_the_blocking_task": [ "Succeeded" ] }
+                      "runAfter": { "Task_source_lines": [ "Succeeded" ] }
+                    },
+                    "Remember_the_task": {
+                      "type": "AppendToArrayVariable",
+                      "inputs": {
+                        "name": "createdTasks",
+                        "value": {
+                          "taskId": "@{items('Create_the_tasks')?['id']}",
+                          "number": "@body('Create_a_task')?['number']",
+                          "issueId": "@body('Create_a_task')?['id']",
+                          "dependsOn": "@items('Create_the_tasks')?['dependsOn']"
+                        }
+                      },
+                      "runAfter": { "Create_a_task": [ "Succeeded" ] }
+                    },
+                    "Link_as_a_sub_issue": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "POST",
+                        "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{variables('epicIssue')}/sub_issues",
+                        "headers": {
+                          "Authorization": "Bearer @{parameters('githubToken')}",
+                          "Accept": "application/vnd.github+json",
+                          "X-GitHub-Api-Version": "2022-11-28",
+                          "User-Agent": "ai-sdlc-plan-microsoft"
+                        },
+                        "body": { "sub_issue_id": "@body('Create_a_task')?['id']" },
+                        "retryPolicy": { "type": "none" }
+                      },
+                      "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+                      "runAfter": { "Remember_the_task": [ "Succeeded" ] }
                     }
                   },
                   "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
-                  "runAfter": {}
+                  "runAfter": { "Remember_the_epic": [ "Succeeded" ] }
+                },
+                "Link_the_dependencies": {
+                  "type": "Foreach",
+                  "foreach": "@variables('createdTasks')",
+                  "actions": {
+                    "For_each_blocker": {
+                      "type": "Foreach",
+                      "foreach": "@coalesce(items('Link_the_dependencies')?['dependsOn'], json('[]'))",
+                      "actions": {
+                        "Find_the_blocking_task": {
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@variables('createdTasks')",
+                            "where": "@equals(item()?['taskId'], items('For_each_blocker'))"
+                          },
+                          "runAfter": {}
+                        },
+                        "Mark_as_blocked_by": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "POST",
+                            "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{items('Link_the_dependencies')?['number']}/dependencies/blocked_by",
+                            "headers": {
+                              "Authorization": "Bearer @{parameters('githubToken')}",
+                              "Accept": "application/vnd.github+json",
+                              "X-GitHub-Api-Version": "2022-11-28",
+                              "User-Agent": "ai-sdlc-plan-microsoft"
+                            },
+                            "body": { "issue_id": "@first(body('Find_the_blocking_task'))?['issueId']" },
+                            "retryPolicy": { "type": "none" }
+                          },
+                          "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+                          "runAfter": { "Find_the_blocking_task": [ "Succeeded" ] }
+                        }
+                      },
+                      "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                      "runAfter": {}
+                    }
+                  },
+                  "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                  "runAfter": { "Create_the_tasks": [ "Succeeded" ] }
                 }
               },
-              "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
-              "runAfter": { "Create_the_tasks": [ "Succeeded" ] }
+              "runAfter": {}
             },
             "Task_links": {
               "type": "Select",
               "inputs": { "from": "@variables('createdTasks')", "select": "@concat('#', string(item()?['number']))" },
-              "runAfter": { "Link_the_dependencies": [ "Succeeded", "Failed" ] }
+              "runAfter": { "Publish_the_backlog": [ "Succeeded" ] }
             },
             "Comment_the_backlog": {
               "type": "Http",
@@ -744,7 +765,7 @@
                   "User-Agent": "ai-sdlc-plan-microsoft"
                 },
                 "body": {
-                  "body": "### Backlog published after review\n\nA person applied `brief-approved`, so Logic Apps run `@{workflow()?['run']?['name']}` created the backlog:\n\n- Epic: #@{outputs('Epic_issue')}\n- Tasks, linked to the epic as sub-issues: @{join(body('Task_links'), ', ')}\n"
+                  "body": "### Backlog published after review\n\nA person applied `brief-approved`, so Logic Apps run `@{workflow()?['run']?['name']}` created the backlog:\n\n- Epic: #@{variables('epicIssue')}\n- Tasks, linked to the epic as sub-issues: @{join(body('Task_links'), ', ')}\n"
                 }
               },
               "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
@@ -765,6 +786,40 @@
               },
               "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
               "runAfter": { "Comment_the_backlog": [ "Succeeded" ] }
+            },
+            "Created_task_links": {
+              "type": "Select",
+              "inputs": { "from": "@variables('createdTasks')", "select": "@concat('#', string(item()?['number']))" },
+              "runAfter": { "Publish_the_backlog": [ "Failed", "TimedOut" ] }
+            },
+            "Comment_what_was_created": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Review_issue')}/comments",
+                "headers": {
+                  "Authorization": "Bearer @{parameters('githubToken')}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "ai-sdlc-plan-microsoft"
+                },
+                "body": {
+                  "body": "### Publishing stopped\n\nLogic Apps run `@{workflow()?['run']?['name']}` failed while publishing the backlog, so this review stays open. Created so far: @{if(equals(variables('epicIssue'), 0), 'no epic', concat('epic #', string(variables('epicIssue'))))}; tasks: @{if(empty(body('Created_task_links')), 'none', join(body('Created_task_links'), ', '))}. Their sub-issue links and dependencies may be incomplete: finish or close them by hand, then start a new run if needed.\n"
+                }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+              "runAfter": { "Created_task_links": [ "Succeeded" ] }
+            },
+            "Stop_publishing_failed": {
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Failed",
+                "runError": {
+                  "code": "PublishingFailed",
+                  "message": "Publishing stopped partway; the comment on review Issue #@{outputs('Review_issue')} lists what was created."
+                }
+              },
+              "runAfter": { "Comment_what_was_created": [ "Succeeded", "Failed" ] }
             }
           }
         },
