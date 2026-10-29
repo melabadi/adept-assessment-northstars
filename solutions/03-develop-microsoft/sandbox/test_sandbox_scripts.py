@@ -266,6 +266,13 @@ class ReviewFormatterTests(unittest.TestCase):
         self.assertNotIn("https://", out)
         self.assertNotIn("www.evil", out)
 
+    def test_urls_glued_to_a_word_are_not_rendered(self):
+        for text in ("_https://evil.example/approve_", "foo_https://evil.example", "1https://evil.example",
+                     "\u00e9https://evil.example", "_www.evil.example_"):
+            for out in (format_review.plain(text), review_rules.cell(text)):
+                self.assertNotIn("://", out, text)
+                self.assertNotIn("www.", out, text)
+
     def test_evidence_cells_are_inert_too(self):
         cell = review_rules.cell("`<h3>x</h3>` &#64;octocat [link](https://evil.example) a|b")
         self.assertNotIn("<h3>", cell)

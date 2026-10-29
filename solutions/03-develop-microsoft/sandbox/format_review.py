@@ -58,8 +58,7 @@ def redact(text: str) -> str:
 
 
 ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
-URL_SCHEME = re.compile(r"(?i)\b(https?|ftp)://")
-WWW = re.compile(r"(?i)\bwww\.")
+WWW = re.compile(r"(?i)www\.")
 
 
 def unmention(text: str) -> str:
@@ -71,7 +70,7 @@ def inert_text(text: str) -> str:
     """Text outside code spans: no HTML or entities, no mentions, no links, no autolinked URLs."""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = text.replace("[", "\\[").replace("]", "\\]")
-    text = WWW.sub("www\u200b.", URL_SCHEME.sub(lambda m: m.group(1) + ":/\u200b/", text))
+    text = WWW.sub("www\u200b.", text.replace("://", ":/\u200b/"))
     return unmention(text)
 
 

@@ -426,8 +426,8 @@ def cell(text: str) -> str:
     links or autolinked URLs, and no @mentions."""
     text = text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "'")
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("[", "\\[").replace("]", "\\]")
-    text = re.sub(r"(?i)\b(https?|ftp)://", lambda m: m.group(1) + ":/\u200b/", text)
-    text = re.sub(r"(?i)\bwww\.", "www\u200b.", text)
+    text = text.replace("://", ":/\u200b/")
+    text = re.sub(r"(?i)www\.", "www\u200b.", text)
     return text.replace("@", "@\u200b")
 
 
