@@ -148,9 +148,9 @@
             },
             "Brief": {
               "type": "Compose",
-              "inputs": "@json(replace(outputs('Brief_text'), '@', '@\u200b'))",
+              "inputs": "@json(replace(string(json(outputs('Brief_text'))), '@', '@\u200b'))",
               "runAfter": { "Brief_text": [ "Succeeded" ] },
-              "description": "The brief as JSON for the Issues. Each @ gets a zero-width space after it, so text from the model can't mention anyone. The evaluation scores the unchanged text."
+              "description": "The brief as JSON for the Issues. Each @ gets a zero-width space after it, so text from the model can't mention anyone; parsing first turns an escaped \\u0040 into @ before the replace. The evaluation scores the unchanged text."
             },
             "Foundry_item": {
               "type": "Compose",

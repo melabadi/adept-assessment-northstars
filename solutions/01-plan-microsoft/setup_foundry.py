@@ -243,7 +243,7 @@ def prepare() -> int:
     # the shell) is the token you set last: it replaces PLAN_GITHUB_TOKEN and is removed.
     if values.get("GITHUB_TOKEN"):
         run("azd", "env", "set", "PLAN_GITHUB_TOKEN", values["GITHUB_TOKEN"], *env_args())
-        run("azd", "env", "unset", "GITHUB_TOKEN", "--force", *env_args())
+        run("azd", "env", "set", "GITHUB_TOKEN", "", *env_args())  # `azd env unset` needs azd 1.37 or later
         values["PLAN_GITHUB_TOKEN"] = values["GITHUB_TOKEN"]
         print("Moved GITHUB_TOKEN to PLAN_GITHUB_TOKEN in the azd environment.")
     if not values.get("PLAN_GITHUB_TOKEN"):

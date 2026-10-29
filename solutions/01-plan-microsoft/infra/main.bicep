@@ -20,7 +20,7 @@ param principalType string = 'User'
 param githubRepository string = ''
 
 @secure()
-@description('Fine-grained GitHub token for this repository only, with Issues read and write. Empty until you set GITHUB_TOKEN (README, Set up).')
+@description('Fine-grained GitHub token for this repository only, with Issues read and write. Empty until you set PLAN_GITHUB_TOKEN (README, Set up).')
 param githubToken string = ''
 
 @description('Chat model for the requirements analyst agent. agent.yaml sets temperature, so pick a non-reasoning model or switch agent.yaml to reasoning_effort.')
