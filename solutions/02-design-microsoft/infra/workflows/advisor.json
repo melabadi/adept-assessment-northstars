@@ -1,0 +1,183 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "functionBaseUrl": { "type": "String" },
+    "responsesUrl": { "type": "String" },
+    "identityId": { "type": "String" },
+    "functionAudience": { "type": "String" }
+  },
+  "triggers": {
+    "When_GitHub_sends_a_design_question": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "method": "POST",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "issue": { "type": "integer" },
+            "title": { "type": "string" },
+            "profile": { "type": "string", "enum": [ "small-team", "enterprise" ] },
+            "question": { "type": "string" }
+          },
+          "required": [ "issue", "profile", "question" ]
+        }
+      }
+    }
+  },
+  "actions": {
+    "Answer_and_check": {
+      "type": "Scope",
+      "runAfter": {},
+      "actions": {
+        "Ask_the_architecture_advisor": {
+          "type": "Http",
+          "runAfter": {},
+          "inputs": {
+            "method": "POST",
+            "uri": "@parameters('responsesUrl')",
+            "headers": { "Content-Type": "application/json" },
+            "body": {
+              "input": "@triggerBody()?['question']",
+              "agent_reference": {
+                "type": "agent_reference",
+                "name": "@{concat('architecture-advisor-', triggerBody()?['profile'])}"
+              },
+              "max_output_tokens": 8000
+            },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "https://ai.azure.com"
+            },
+            "retryPolicy": { "type": "exponential", "count": 3, "interval": "PT20S" }
+          },
+          "limit": { "timeout": "PT2M" }
+        },
+        "Check_the_answer": {
+          "type": "Http",
+          "runAfter": { "Ask_the_architecture_advisor": [ "Succeeded" ] },
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('functionBaseUrl')}/api/advisor/check",
+            "body": {
+              "issue": "@triggerBody()?['issue']",
+              "profile": "@triggerBody()?['profile']",
+              "question": "@triggerBody()?['question']",
+              "workflowRun": "@{workflow()['run']['name']}",
+              "response": "@body('Ask_the_architecture_advisor')"
+            },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "@parameters('functionAudience')"
+            }
+          }
+        }
+      }
+    },
+    "Checks_passed": {
+      "type": "If",
+      "runAfter": { "Answer_and_check": [ "Succeeded" ] },
+      "expression": {
+        "and": [ { "equals": [ "@body('Check_the_answer')?['passed']", true ] } ]
+      },
+      "actions": {
+        "Create_the_ADR_branch": {
+          "type": "Http",
+          "runAfter": {},
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('functionBaseUrl')}/api/repo/branch",
+            "body": { "issue": "@triggerBody()?['issue']" },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "@parameters('functionAudience')"
+            }
+          }
+        },
+        "Commit_the_ADR_draft": {
+          "type": "Http",
+          "runAfter": { "Create_the_ADR_branch": [ "Succeeded" ] },
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('functionBaseUrl')}/api/repo/commit",
+            "body": { "issue": "@triggerBody()?['issue']", "run": "@body('Check_the_answer')?['run']" },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "@parameters('functionAudience')"
+            }
+          }
+        },
+        "Open_the_ADR_pull_request": {
+          "type": "Http",
+          "runAfter": { "Commit_the_ADR_draft": [ "Succeeded" ] },
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('functionBaseUrl')}/api/repo/pull-request",
+            "body": { "issue": "@triggerBody()?['issue']", "run": "@body('Check_the_answer')?['run']" },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "@parameters('functionAudience')"
+            }
+          }
+        },
+        "Comment_with_the_answer": {
+          "type": "Http",
+          "runAfter": { "Open_the_ADR_pull_request": [ "Succeeded" ] },
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('functionBaseUrl')}/api/repo/comment",
+            "body": {
+              "issue": "@triggerBody()?['issue']",
+              "run": "@body('Check_the_answer')?['run']",
+              "pullRequest": "@body('Open_the_ADR_pull_request')?['number']"
+            },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('identityId')",
+              "audience": "@parameters('functionAudience')"
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Comment_that_the_checks_failed": {
+            "type": "Http",
+            "runAfter": {},
+            "inputs": {
+              "method": "POST",
+              "uri": "@{parameters('functionBaseUrl')}/api/repo/comment",
+              "body": { "issue": "@triggerBody()?['issue']", "run": "@body('Check_the_answer')?['run']" },
+              "authentication": {
+                "type": "ManagedServiceIdentity",
+                "identity": "@parameters('identityId')",
+                "audience": "@parameters('functionAudience')"
+              }
+            }
+          }
+        }
+      }
+    },
+    "Comment_that_the_advisor_is_unavailable": {
+      "type": "Http",
+      "runAfter": { "Answer_and_check": [ "Failed", "TimedOut" ] },
+      "inputs": {
+        "method": "POST",
+        "uri": "@{parameters('functionBaseUrl')}/api/repo/comment",
+        "body": { "issue": "@triggerBody()?['issue']", "kind": "unavailable", "workflowRun": "@{workflow()['run']['name']}" },
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "identity": "@parameters('identityId')",
+          "audience": "@parameters('functionAudience')"
+        }
+      }
+    }
+  },
+  "outputs": {}
+}
