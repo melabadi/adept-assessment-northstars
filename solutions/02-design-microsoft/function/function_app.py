@@ -151,12 +151,16 @@ def github_client() -> github.GitHub:
 
 
 def start_workflow(secret_name: str, payload: dict) -> None:
-    """Start a Logic App run through its trigger URL, which only Key Vault holds (never logged)."""
+    """Start a Logic App run through its trigger URL, which only Key Vault holds. The URL carries a signature, so an
+    error never includes it: requests puts the full URL in its exception messages."""
     import requests
     url = secret(secret_name)
     if not url:
         raise RuntimeError(f"Key Vault has no {secret_name}; run azd provision")
-    response = requests.post(url, json=payload, timeout=30)
+    try:
+        response = requests.post(url, json=payload, timeout=30)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"could not reach the Logic App ({type(exc).__name__})") from None
     if response.status_code >= 300:
         raise RuntimeError(f"the Logic App refused the run: HTTP {response.status_code}")
 
@@ -262,8 +266,12 @@ def github_setup_complete(req: func.HttpRequest) -> func.HttpResponse:
         return page(setup_flow.error_page("The setup link expired or does not match."))
     if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", code):
         return page(setup_flow.error_page("GitHub did not return a code."))
-    exchange = requests.post(f"https://api.github.com/app-manifests/{code}/conversions", timeout=30,
-                             headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+    try:  # the URL contains the one-time code, and requests puts URLs in its exception messages
+        exchange = requests.post(f"https://api.github.com/app-manifests/{code}/conversions", timeout=30,
+                                 headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+    except requests.RequestException as exc:
+        log.warning("app-manifest conversion failed: %s", type(exc).__name__)
+        return page(setup_flow.error_page("The Function could not reach GitHub. Open the setup link again.", 502))
     if exchange.status_code != 201:
         log.warning("app-manifest conversion refused: HTTP %s", exchange.status_code)
         return page(setup_flow.error_page("GitHub did not accept the code (it works once, for one hour).", 502))
@@ -283,9 +291,10 @@ def github_setup_complete(req: func.HttpRequest) -> func.HttpResponse:
 
 # ---------------------------------------------------------------- the gate
 def standards_snapshot(search_filter: str | None = None) -> dict:
+    """The index as it is now: read on every check (two cheap queries), so a re-indexed standard counts at once."""
     from advisor_core import standards
-    return cached(("snapshot", search_filter), 300, lambda: standards.snapshot(
-        env("SEARCH_ENDPOINT"), credential(), env("SEARCH_INDEX", "architecture-standards"), search_filter))
+    return standards.snapshot(env("SEARCH_ENDPOINT"), credential(), env("SEARCH_INDEX", "architecture-standards"),
+                              search_filter)
 
 
 def project_client():
@@ -360,8 +369,13 @@ def repo_write(req: func.HttpRequest) -> func.HttpResponse:
         title, text = report.pull_request_text(body["run"], github.adr_path_for(issue))
         result = client.open_pull_request(issue, title, text)
     elif operation == "comment":
-        text = (report.unavailable_markdown(body.get("workflowRun", "")) if body.get("kind") == "unavailable"
-                else report.comment_markdown(body["run"], body.get("pullRequest")))
+        kind = body.get("kind")
+        if kind == "unavailable":
+            text = report.unavailable_markdown(body.get("workflowRun", ""))
+        elif kind == "incomplete":
+            text = report.incomplete_markdown(body.get("workflowRun", ""))
+        else:
+            text = report.comment_markdown(body["run"], body.get("pullRequest"))
         result = client.comment(issue, text)
     else:
         return respond({"error": f"unknown operation {operation}"}, 404)
@@ -378,10 +392,14 @@ def merged_spec(client: github.GitHub, sha: str) -> dict:
     return agents.load_spec(text)
 
 
-def commit_of(body: dict) -> str:
+def merged_commit(client: github.GitHub, body: dict) -> str:
+    """The commit to publish from: a full commit id that is already on the default branch. Unmerged commits are
+    proposals; only reviewed and merged standards reach the index and the agents."""
     sha = str(body.get("sha", ""))
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("sha must be a full commit id")
+    if not client.on_default_branch(sha):
+        raise ValueError(f"commit {sha[:7]} is not on the default branch; only merged changes are published")
     return sha
 
 
@@ -390,11 +408,11 @@ def commit_of(body: dict) -> str:
 def standards_sync(req: func.HttpRequest) -> func.HttpResponse:
     from advisor_core import standards
 
-    sha, client = commit_of(req.get_json()), github_client()
+    client = github_client()
+    sha = merged_commit(client, req.get_json())
     spec = merged_spec(client, sha)
     docs, skipped = standards.parse(client.read_folder(standards.SOURCE_DIR, sha), spec)
     result = standards.sync(env("SEARCH_ENDPOINT"), credential(), env("SEARCH_INDEX", "architecture-standards"), docs, spec)
-    forget(("snapshot", None))
     return respond({"commit": sha, "skipped": skipped, "summary": standards.summary_lines(result), "result": result})
 
 
@@ -403,7 +421,8 @@ def standards_sync(req: func.HttpRequest) -> func.HttpResponse:
 def agents_publish(req: func.HttpRequest) -> func.HttpResponse:
     from advisor_core import agents, knowledge
 
-    sha, client = commit_of(req.get_json()), github_client()
+    client = github_client()
+    sha = merged_commit(client, req.get_json())
     spec = merged_spec(client, sha)
     lines = knowledge.sync(env("SEARCH_ENDPOINT"), credential(), spec, spec["search"]["index"]) if spec["knowledge"] == "foundry-iq" else []
     published = agents.publish(project_client(), spec, env("FOUNDRY_MODEL_DEPLOYMENT"), env("SEARCH_ENDPOINT"))
@@ -415,7 +434,8 @@ def agents_publish(req: func.HttpRequest) -> func.HttpResponse:
 def evaluations_start(req: func.HttpRequest) -> func.HttpResponse:
     from advisor_core import agents, evaluation
 
-    sha, client = commit_of(req.get_json()), github_client()
+    client = github_client()
+    sha = merged_commit(client, req.get_json())
     spec = merged_spec(client, sha)
     cases_text = client.read_text(f"{SOLUTION}/eval_cases.jsonl", sha) or ""
     cases = [json.loads(line) for line in cases_text.splitlines() if line.strip()]

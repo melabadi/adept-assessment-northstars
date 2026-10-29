@@ -17,11 +17,12 @@ import re
 STANDARD_ID = r"STD-[A-Z]+-\d{3}"
 SEARCH_MARKER = r"\s*【[^】]*】"
 CHECK_KINDS = ("citations", "access", "grounding", "abstention", "conflicts")
+MIN_EXCERPT_WORDS = 6
 
 
-def normalize(text: str) -> str:
+def words(text: str) -> list:
     """Lowercase words only, so an excerpt matches the standard regardless of punctuation, quotes, or line breaks."""
-    return " ".join(re.findall(r"[a-z0-9%]+", str(text).lower()))
+    return re.findall(r"[a-z0-9%]+", str(text).lower())
 
 
 def bare_version(text: str) -> str:
@@ -29,11 +30,33 @@ def bare_version(text: str) -> str:
     return str(text).strip().lstrip("vV")
 
 
+def _position(haystack: list, needle: list, start: int) -> int:
+    """Index of the first run of whole words equal to needle at or after start, or -1."""
+    for index in range(start, len(haystack) - len(needle) + 1):
+        if haystack[index:index + len(needle)] == needle:
+            return index
+    return -1
+
+
 def excerpt_found(excerpt: str, source: str) -> bool:
-    """True when every part of the excerpt (split on an ellipsis) appears word for word in the source."""
-    parts = [normalize(part) for part in re.split(r"\.\.\.|…", str(excerpt))]
+    """True when the excerpt is the standard's own words. Split on an ellipsis, every part must appear in the source
+    as whole words, in the source's order, and be either at least MIN_EXCERPT_WORDS words long or a whole sentence
+    of the standard, so a stray word or a stitched fragment ("personal data ... be sent") never passes."""
+    text = words(source)
+    sentences = [words(s) for s in re.split(r"(?<=[.!?])\s+|\n+", str(source))]
+    parts = [words(part) for part in re.split(r"\.\.\.|…", str(excerpt))]
     parts = [part for part in parts if part]
-    return bool(parts) and all(part in normalize(source) for part in parts)
+    if not parts:
+        return False
+    position = 0
+    for part in parts:
+        if len(part) < MIN_EXCERPT_WORDS and part not in sentences:
+            return False
+        found = _position(text, part, position)
+        if found < 0:
+            return False
+        position = found + len(part)
+    return True
 
 
 def strip_markers(node):

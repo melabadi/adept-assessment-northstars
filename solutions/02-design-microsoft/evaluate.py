@@ -23,7 +23,8 @@ Usage
 Settings: environment variables, or this folder's azd environment (FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL_DEPLOYMENT,
 SEARCH_ENDPOINT). Your identity needs Foundry User on the Foundry account and read access to the search index.
 
-Exit codes: 0 every case passed (or --no-wait), 1 a case failed, 2 a run could not start or ended in error.
+Exit codes: 0 every case passed (or --no-wait), 1 a case failed, 2 a run could not start, ended in error, or an
+evaluator could not grade an answer (Foundry counts such an item as passed; this script does not).
 """
 from __future__ import annotations
 
@@ -39,16 +40,24 @@ sys.path.insert(0, str(HERE / "function"))
 from azd_env import credential, setting, utf8_stdout  # noqa: E402
 
 CASES = HERE / "eval_cases.jsonl"
+CHECKS = ("citations", "access", "grounding", "abstention", "conflicts")
 
 
-def case_results(openai, run: dict) -> list[tuple[str, list[str]]]:
-    """(case id, failed evaluators) for every item of a finished run."""
+def case_results(openai, run: dict) -> list[tuple[str, list[str], list[str]]]:
+    """(case id, failed checks, checks that could not grade) for every item of a finished run. Computed from each
+    evaluator's own result: Foundry's run totals count an item as passed even when one of its evaluators errored."""
     rows = []
     for output in openai.evals.runs.output_items.list(run_id=run["runId"], eval_id=run["evalId"]):
         data = output.model_dump() if hasattr(output, "model_dump") else dict(output)
         item = data.get("datasource_item") or {}
-        failed = [r.get("name", "?") for r in data.get("results") or [] if not r.get("passed")]
-        rows.append((item.get("id", "?"), [name.replace("advisor_", "") for name in failed]))
+        failed, errored = [], []
+        for result in data.get("results") or []:
+            name = str(result.get("name", "?")).replace("advisor_", "")
+            if (result.get("sample") or {}).get("error"):
+                errored.append(name)
+            elif not result.get("passed"):
+                failed.append(name)
+        rows.append((item.get("id", "?"), failed, errored))
     return sorted(rows)
 
 
@@ -135,14 +144,22 @@ def main(argv: list[str] | None = None) -> int:
     errored = False
     for run in runs:
         state = results[run["runId"]]
-        errored |= state["status"] != "completed" or state["errored"] > 0
-        passed, total = passed + state["passed"], total + state["total"]
-        print(f"\n{run['agent']}: {state['status']}, {state['passed']}/{state['total']} cases passed every check")
-        print("  " + " · ".join(f"{name.replace('advisor_', '')} {rate}" for name, rate in state["criteria"].items()))
-        for case_id, failed in case_results(openai, run):
-            print(f"  {case_id}  {'PASS' if not failed else 'FAIL: ' + ', '.join(failed)}")
+        rows = case_results(openai, run)
+        good = sum(1 for _, failed, errors in rows if not failed and not errors)
+        errored |= state["status"] != "completed" or any(errors for _, _, errors in rows)
+        passed, total = passed + good, total + len(rows)
+        print(f"\n{run['agent']}: {state['status']}, {good}/{len(rows)} cases passed every check")
+        rates = [f"{kind} {sum(1 for _, f, e in rows if kind not in f and kind not in e)}/{len(rows)}" for kind in CHECKS]
+        print("  " + " · ".join(rates))
+        for case_id, failed, errors in rows:
+            verdict = "PASS" if not failed and not errors else "FAIL: " + ", ".join(failed) if failed else ""
+            if errors:
+                verdict = (verdict + "; " if failed else "") + "COULD NOT GRADE: " + ", ".join(errors)
+            print(f"  {case_id}  {verdict}")
     print(f"\n{passed}/{total} cases passed in {round(time.monotonic() - started)} s")
     if errored:
+        print("error: an evaluator could not grade some answers (see COULD NOT GRADE); run the evaluation again",
+              file=sys.stderr)
         return 2
     return 0 if passed == total else 1
 

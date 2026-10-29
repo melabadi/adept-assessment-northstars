@@ -3,23 +3,36 @@
 Everything here is plain text built from the checked answer, so the Function stays the only place that talks to
 GitHub. Nothing names an Azure host, resource, or tenant: only the agent, the model, the response id, and the
 Logic App run name, which identify the evidence without exposing where it lives.
+
+The model's text reaches GitHub only when the gate passed. A rejected answer's comment says which checks failed,
+inside a code block (so nothing in it renders as a link or notifies anyone), and shows none of the answer. In an
+accepted answer, @mentions are neutralized so the model can't notify people.
 """
 from __future__ import annotations
+
+import re
 
 from . import checks
 
 ADVISORY = "Advisory only: an architect accepts or rejects the ADR draft."
+HEADING = "### Foundry architecture advisor"
 
 
 def cell(text) -> str:
-    return " ".join(str(text).split()).replace("|", "\\|")
+    return " ".join(quiet(text).split()).replace("|", "\\|")
+
+
+def quiet(text) -> str:
+    """Wrap @mentions in backticks: GitHub renders them as code and notifies nobody."""
+    return re.sub(r"(?<![\w`])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))", r"`@\1`", str(text))
 
 
 def checks_line(run: dict) -> str:
     if not run["checks"]:
         return (f"✅ Deterministic checks passed: every citation exists in the index, is inside the {run['profile']} scope, "
                 "matches the indexed version, and quotes the standard word for word.")
-    return "❌ Deterministic checks failed:\n" + "\n".join(f"- {problem}" for problem in run["checks"])
+    problems = "\n".join(f"- {problem}" for problem in run["checks"]).replace("```", "'''")
+    return f"❌ The deterministic checks rejected this answer:\n\n```text\n{problems}\n```"
 
 
 def evidence_line(run: dict) -> str:
@@ -30,14 +43,14 @@ def evidence_line(run: dict) -> str:
 
 
 def summary_markdown(run: dict) -> str:
-    """The answer, as the issue comment shows it."""
+    """The accepted answer, as the issue comment shows it."""
     data = run["result"]
-    lines = [f"### Foundry architecture advisor · {run['profile']} profile", ""]
+    lines = [f"{HEADING} · {run['profile']} profile", ""]
     if data["answerable"]:
-        lines += [f"**Recommendation:** {data.get('recommendation') or '_none_'}", ""]
+        lines += [f"**Recommendation:** {quiet(data.get('recommendation') or '_none_')}", ""]
     else:
         lines += ["**Abstained:** the approved standards do not answer this question.", ""]
-    lines += [data.get("summary", ""), ""]
+    lines += [quiet(data.get("summary", "")), ""]
     if data["constraints"]:
         if not data["answerable"]:
             lines += ["Related standards it found, none of which answers the question:", ""]
@@ -47,22 +60,23 @@ def summary_markdown(run: dict) -> str:
         lines += [""]
     if data["conflicts"]:
         lines += ["**Conflicts needing a decision:**", ""]
-        lines += [f"- {', '.join(c['standards'])}: {c['description']}" for c in data["conflicts"]] + [""]
+        lines += [f"- {quiet(', '.join(c['standards']))}: {quiet(c['description'])}" for c in data["conflicts"]] + [""]
     if data["unknowns"]:
-        lines += ["**Unknowns:**", ""] + [f"- {u}" for u in data["unknowns"]] + [""]
+        lines += ["**Unknowns:**", ""] + [f"- {quiet(u)}" for u in data["unknowns"]] + [""]
     lines += [checks_line(run), ""]
     return "\n".join(lines)
 
 
 def comment_markdown(run: dict, pull_request: int | None = None) -> str:
-    """The issue comment: the answer, then where the ADR draft is, then the evidence."""
-    lines = [summary_markdown(run)]
-    if pull_request:
-        lines += [f"**ADR draft: #{pull_request}.** An architect accepts it by merging the pull request or rejects it by "
-                  "closing it.", ""]
-    elif run["checks"]:
-        lines += ["No ADR draft was proposed, because a deterministic check failed. Rephrase the question or ask an "
-                  "architect.", ""]
+    """The issue comment. Accepted: the answer, the ADR draft, the evidence. Rejected: only the failed checks."""
+    if run["checks"]:
+        lines = [f"{HEADING} · {run['profile']} profile", "", checks_line(run), "",
+                 "The answer is not shown and no ADR draft was proposed. Rephrase the question or ask an architect.", ""]
+    else:
+        lines = [summary_markdown(run)]
+        if pull_request:
+            lines += [f"**ADR draft: #{pull_request}.** An architect accepts it by merging the pull request or rejects it "
+                      "by closing it.", ""]
     lines += [f"<sub>{evidence_line(run)}. {ADVISORY}</sub>", ""]
     return "\n".join(lines)
 
@@ -70,8 +84,15 @@ def comment_markdown(run: dict, pull_request: int | None = None) -> str:
 def unavailable_markdown(workflow_run: str = "") -> str:
     """The issue comment when the advisor could not answer (service error), so the question is never left silent."""
     where = f" Logic App run `{workflow_run}` has the details." if workflow_run else ""
-    return ("### Foundry architecture advisor\n\n⚠️ The advisor could not answer this question right now, so no ADR "
-            f"draft was proposed.{where} A maintainer can resubmit the run once the service is available.\n")
+    return (f"{HEADING}\n\n⚠️ The advisor could not answer this question right now, so no ADR draft was proposed."
+            f"{where} A maintainer can resubmit the run once the service is available.\n")
+
+
+def incomplete_markdown(workflow_run: str = "") -> str:
+    """The issue comment when the answer passed the gate but a GitHub step after it failed."""
+    where = f" Logic App run `{workflow_run}` has the details." if workflow_run else ""
+    return (f"{HEADING}\n\n⚠️ The advisor answered, but the ADR draft or its comment could not be completed.{where} "
+            "A maintainer can resubmit the run: it reuses the branch and the pull request it already created.\n")
 
 
 def adr_markdown(run: dict) -> str:

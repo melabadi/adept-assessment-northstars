@@ -53,7 +53,7 @@ flowchart LR
 
 - **Foundry Agent Service** hosts one prompt agent per operating profile, published from [`agent.yaml`](agent.yaml): instructions, model settings, a knowledge tool, and a strict JSON output schema.
 - **Foundry IQ** gives each profile its own knowledge base over the `architecture-standards` index in Azure AI Search. The profile's scope filter (`scope eq 'all' or scope eq 'small-team'`) is stored in the knowledge source, so the search service, not the prompt, decides what a team can retrieve.
-- **The advisor Logic App** is the orchestration a presenter shows: ask the agent, check the answer, then create the ADR branch, commit the draft, open the pull request, and comment on the issue. When a check fails it comments the failures and opens nothing.
+- **The advisor Logic App** is the orchestration a presenter shows: ask the agent, check the answer, then create the ADR branch, commit the draft, open the pull request, and comment on the issue. When a check fails it comments only the failed checks and opens nothing. When the agent or a GitHub step fails, it says so on the issue, so no question goes unanswered.
 - **The Azure Function** receives the GitHub App's webhooks, runs the gate ([`checks.py`](function/advisor_core/checks.py)), and is the only code that writes to GitHub. Every citation must exist in the index, be inside the profile's scope, have the indexed version, and be quoted word for word, and the knowledge base must not have returned anything outside the profile.
 - **The Foundry evaluation** sends the ten labelled cases in [`eval_cases.jsonl`](eval_cases.jsonl) to the agents and scores every answer with five code-based evaluators that embed `checks.py`, one report column each: citations, access, grounding, abstention, conflicts.
 - **Application Insights**, connected to the Foundry project, traces every agent run: duration, tokens, estimated cost, and the evaluation scores attached to it.
@@ -68,6 +68,8 @@ This build runs the preferred path of both preview features: the agents retrieve
 - **GitHub access.** A private GitHub App, installed on this repository only, with Contents, Issues, and Pull requests write and Metadata read, and the Issues and Push events. GitHub creates it from a manifest and hands its id, private key, and webhook secret straight to the Function, which stores only those three in Key Vault. The Function mints 1-hour installation tokens scoped to this repository.
 - **Writes are fenced in code.** The Function refuses any write except a branch matching `refs/heads/design/advisor-*`, a Markdown file under `solutions/02-design-microsoft/adr/` on such a branch, a pull request from such a branch, and an issue comment. It checks before sending the request, whatever the token allows.
 - **Webhooks.** The Function verifies GitHub's signature, ignores a delivery it has already handled (`X-GitHub-Delivery`), and starts at most one advisor run per issue, so a redelivery never opens a second ADR pull request.
+- **What reaches GitHub.** The model's text reaches GitHub only after the gate passed, with @mentions neutralized. A rejected answer's comment lists only the failed checks, inside a code block, and none of the answer.
+- **Only merged changes are published.** The merge path re-indexes and re-publishes only from a commit that is on the default branch, so an unmerged proposal never reaches the index or the agents.
 - **Logic Apps to the Function, without keys.** The Logic Apps call with a short-lived Microsoft Entra token for their user-assigned managed identity. Entra doesn't issue tokens whose audience is a managed identity, and an app registration would be a tenant object outside the resource group, so the audience is Azure Storage, a resource that identity has no role on. The Function verifies the token's signature, tenant, audience, and expiry, and pins the identity's object id and client id.
 - **No keys anywhere else.** Foundry, Azure AI Search, and storage have local authentication disabled. The Logic Apps call Foundry with their managed identity. The Logic Apps' trigger URLs, which carry a signature, live only in Key Vault.
 - **Private network.** Key Vault and the Function's storage have no public network access; the Function reaches them through private endpoints in the solution's virtual network.
@@ -180,11 +182,15 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    ```powershell
    $vault = az keyvault show -n (azd env get-value KEY_VAULT_NAME) --query id -o tsv
-   foreach ($name in 'github-token', 'github-webhook-secret') {
-     $value = Read-Host "Value of $name" -MaskInput
-     @{ properties = @{ value = $value } } | ConvertTo-Json -Compress | Set-Content secret.json
-     az rest --method put --url "https://management.azure.com$vault/secrets/$($name)?api-version=2023-07-01" --body '@secret.json' -o none
-     Remove-Item secret.json
+   $file = Join-Path $env:TEMP "github-secret-$PID.json"   # outside the repository, removed even if a command fails
+   try {
+     foreach ($name in 'github-token', 'github-webhook-secret') {
+       $value = Read-Host "Value of $name" -MaskInput
+       @{ properties = @{ value = $value } } | ConvertTo-Json -Compress | Set-Content $file
+       az rest --method put --url "https://management.azure.com$vault/secrets/$($name)?api-version=2023-07-01" --body "@$file" -o none
+     }
+   } finally {
+     Remove-Item $file -ErrorAction SilentlyContinue
    }
    ```
 
@@ -335,7 +341,8 @@ foreach ($name in 'github-app-id', 'github-app-private-key', 'github-webhook-sec
 - **`ModuleNotFoundError` in an azd hook.** The hooks run `python` from your PATH. Activate the solution's virtual environment before `azd up`.
 - **azd shows no hook output.** azd doesn't print hook output when it isn't attached to a terminal. Run the hook yourself to see it: `python setup_azure.py foundry`.
 - **`setup_azure.py github --check` warns that the Function answered 404 or 503 right after a deploy.** The Function restarts after a deployment and indexes its routes for up to a minute. Run the check again.
-- **An issue gets no answer.** Check that the issue has the `design-advisor` label (GitHub skips labels that don't exist in the repository), then look at the advisor Logic App's **Runs history**. No run means the webhook didn't reach the Function: GitHub → **Settings** → **GitHub Apps** → the app → **Advanced** lists each delivery and its response.
+- **An issue gets no answer.** Check that the issue has the `design-advisor` label (GitHub skips labels that don't exist in the repository), then look at the advisor Logic App's **Runs history**. No run means the webhook didn't reach the Function: GitHub → **Settings** → **Developer settings** → **GitHub Apps** → the app → **Advanced** → **Recent Deliveries** lists each delivery and the Function's response.
 - **An evaluation run fails with `use of builtin 'compile()' is not allowed in Python graders`.** Foundry runs `checks.py` as a Python grader, which refuses any call named `compile()`, even `re.compile`. Use pattern strings with `re.findall` and `re.sub`; the tests check this.
+- **`python evaluate.py` reports `COULD NOT GRADE` right after the checks changed.** Foundry rolls out new evaluator versions over a few minutes, and an evaluator that isn't ready errors on every item. The Foundry portal still counts those items as passed, so trust `evaluate.py` here. Run the evaluation again a few minutes later.
 - **`DefaultAzureCredential failed to retrieve a token` from a script.** The Azure CLI took too long to return a token. Run `az account get-access-token --resource https://ai.azure.com` to check that it responds, then run the script again.
 - **The Foundry portal opens another project.** It reopens the project you used last. Pick `design` in the project switcher next to **Microsoft Foundry**, at the top left.

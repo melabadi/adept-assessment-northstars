@@ -112,7 +112,7 @@ def github(check_only: bool, print_url: bool) -> int:
     base, key = function_access()
     deadline = time.monotonic() + 240  # right after a deployment the host restarts and answers 404 or 503 for a while
     while True:
-        status = requests.get(f"{base}/api/github/status", params={"code": key}, timeout=180)
+        status = requests.get(f"{base}/api/github/status", headers={"x-functions-key": key}, timeout=180)
         if status.status_code == 200 or time.monotonic() > deadline:
             break
         time.sleep(15)
@@ -159,7 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit:
         raise
     except Exception as exc:  # surface service and auth errors clearly; there is no offline fallback
-        print(f"error: {args.command} failed: {exc}", file=sys.stderr)
+        # Error messages can quote request URLs: drop their query strings, which may carry a key or a code.
+        message = re.sub(r"\?[^\s'\"]*", "?…", str(exc))
+        print(f"error: {args.command} failed: {type(exc).__name__}: {message}", file=sys.stderr)
         return 1
 
 

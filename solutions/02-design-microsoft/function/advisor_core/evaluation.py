@@ -121,10 +121,19 @@ def ensure_eval(openai, model: str, versions: dict[str, str]) -> str:
                 name=EVAL_NAME, metadata={"evaluators": signature},
                 data_source_config={"type": "custom", "item_schema": ITEM_SCHEMA, "include_sample_schema": True},
                 testing_criteria=criteria)
-            return created.id
+            break
         except openai_errors.NotFoundError:
             time.sleep(15)
-    raise RuntimeError("the evaluators did not appear in the Foundry evaluator catalog")
+    else:
+        raise RuntimeError("the evaluators did not appear in the Foundry evaluator catalog")
+    # Keep one evaluation under EVAL_NAME: earlier ones (older evaluator code) keep their runs under another name.
+    for existing in openai.evals.list(limit=100):
+        if existing.name == EVAL_NAME and existing.id != created.id:
+            try:
+                openai.evals.update(existing.id, name=f"{EVAL_NAME} (earlier evaluators)")
+            except Exception:  # renaming is cosmetic; the new evaluation is ready either way
+                pass
+    return created.id
 
 
 def items(cases: list[dict], every: dict[str, dict], permitted: list[str]) -> list[dict]:

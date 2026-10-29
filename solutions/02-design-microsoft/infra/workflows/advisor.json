@@ -177,6 +177,20 @@
           "audience": "@parameters('functionAudience')"
         }
       }
+    },
+    "Comment_that_the_ADR_draft_is_incomplete": {
+      "type": "Http",
+      "runAfter": { "Checks_passed": [ "Failed", "TimedOut" ] },
+      "inputs": {
+        "method": "POST",
+        "uri": "@{parameters('functionBaseUrl')}/api/repo/comment",
+        "body": { "issue": "@triggerBody()?['issue']", "kind": "incomplete", "workflowRun": "@{workflow()['run']['name']}" },
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "identity": "@parameters('identityId')",
+          "audience": "@parameters('functionAudience')"
+        }
+      }
     }
   },
   "outputs": {}

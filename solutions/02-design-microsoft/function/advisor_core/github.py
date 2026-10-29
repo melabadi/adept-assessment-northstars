@@ -161,6 +161,11 @@ class GitHub:
         listing = self._get(f"/contents/{folder}", ref=ref) or []
         return {entry["name"]: self.read_text(entry["path"], ref) for entry in listing if entry.get("type") == "file"}
 
+    def on_default_branch(self, sha: str) -> bool:
+        """True when the commit is the default branch's head or one of its ancestors: merged, not a proposal."""
+        compared = self._get(f"/compare/{self.default_branch()}...{sha}")
+        return bool(compared) and compared.get("status") in ("identical", "behind")
+
     # ---------- the advisor's writes ----------
     def ensure_branch(self, issue) -> dict:
         branch = branch_for(issue)

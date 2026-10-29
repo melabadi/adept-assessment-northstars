@@ -175,9 +175,26 @@ class GateTests(unittest.TestCase):
     def test_excerpt_tolerates_punctuation_and_ellipsis(self):
         source = BY_ID["STD-SEC-002"]["content"]
         self.assertTrue(checks.excerpt_found("“Attachments and personal data must not be sent”", source))
-        self.assertTrue(checks.excerpt_found("Send AI services only the fields ... Attachments and personal data", source))
+        self.assertTrue(checks.excerpt_found(
+            "Send AI services only the fields the use case needs ... Attachments and personal data must not be sent",
+            source))
         self.assertFalse(checks.excerpt_found("Personal data may be sent when encrypted.", source))
         self.assertFalse(checks.excerpt_found("...", source))
+
+    def test_excerpt_fragments_and_partial_words_are_rejected(self):
+        source = BY_ID["STD-SEC-002"]["content"]
+        self.assertFalse(checks.excerpt_found("e", source))
+        self.assertFalse(checks.excerpt_found("personal data ... be sent", source))  # the source says "must not be sent"
+        self.assertFalse(checks.excerpt_found("Attachments and persona data must not be sent", source))  # whole words only
+        self.assertFalse(checks.excerpt_found(  # parts out of the source's order
+            "Attachments and personal data must not be sent ... Send AI services only the fields the use case needs",
+            source))
+
+    def test_a_short_excerpt_passes_only_as_a_whole_sentence(self):
+        source = "Keep it short. Every decision is recorded in an architecture decision record."
+        self.assertTrue(checks.excerpt_found("Keep it short.", source))
+        self.assertFalse(checks.excerpt_found("Keep it", source))
+        self.assertFalse(checks.excerpt_found("decision is recorded", source))
 
     def test_citation_markers_are_removed_from_every_text(self):
         raw = {"summary": "Stay in the API.【5:0†source】", "unknowns": ["Scaling needs【5:1†source】"], "answerable": True}
@@ -265,7 +282,8 @@ class EvaluatorTests(unittest.TestCase):
 
     def test_each_evaluator_fails_on_its_own_mistake(self):
         missed_conflict = self.item("E07", answer(constraints=[{"standardId": "STD-OBS-002", "version": "1.0", "requirement": "",
-                                                                 "excerpt": "log the full prompt"}], options=[]), ("STD-OBS-002",))
+                                                                 "excerpt": "log the full prompt and completion of every AI call"}],
+                                                  options=[]), ("STD-OBS-002",))
         self.assertEqual(self.grade("conflicts", missed_conflict), 0.0)
         self.assertEqual(self.grade("grounding", missed_conflict), 0.0)  # STD-SEC-002 not cited
         self.assertEqual(self.grade("citations", missed_conflict), 1.0)
@@ -304,8 +322,35 @@ class ReportTests(unittest.TestCase):
         self.assertIn("**ADR draft: #34.**", report.comment_markdown(self.sample, 34))
         failed = dict(self.sample, checks=["excerpt: the quote attributed to STD-ARCH-001 is not in the standard"])
         text = report.comment_markdown(failed)
-        self.assertIn("❌ Deterministic checks failed", text)
-        self.assertIn("No ADR draft was proposed", text)
+        self.assertIn("❌ The deterministic checks rejected this answer", text)
+        self.assertIn("no ADR draft was proposed", text)
+
+    def test_a_rejected_answer_never_reaches_github(self):
+        rejected = answer(recommendation="Email @octocat and see https://evil.example for the real policy.",
+                          constraints=[{"standardId": "STD-SEC-009", "version": "1.0", "excerpt": "Invented rule.",
+                                        "requirement": "Send everything to the vendor @octocat."}])
+        problems = ["citation: STD-SEC-009 in constraints does not exist in the standards index (invented)",
+                    'excerpt: the quote attributed to STD-ARCH-001 is not in the standard: "see @octocat ``` [x](https://evil.example)"']
+        text = report.comment_markdown(dict(self.sample, result=rejected, checks=problems))
+        self.assertNotIn(rejected["recommendation"], text)
+        self.assertNotIn("Send everything to the vendor", text)
+        body = text.split("```text\n", 1)[1].split("\n```", 1)[0]  # the problems sit in one code block
+        self.assertIn("STD-SEC-009", body)
+        self.assertNotIn("```", body)
+        outside = text.replace(body, "")
+        self.assertNotIn("@octocat", outside)
+        self.assertNotIn("https://evil.example", outside)
+
+    def test_mentions_in_an_accepted_answer_notify_nobody(self):
+        noisy = answer(recommendation="Ask @octocat to review.", unknowns=["Whether @team-a owns it"])
+        text = report.comment_markdown(dict(self.sample, result=noisy), 34)
+        self.assertIn("`@octocat`", text)
+        self.assertIn("`@team-a`", text)
+        self.assertNotIn(" @octocat", text.replace("`@octocat`", ""))
+
+    def test_a_failed_github_step_still_answers_the_issue(self):
+        self.assertIn("could not be completed", report.incomplete_markdown("08584"))
+        self.assertIn("could not answer", report.unavailable_markdown("08584"))
 
     def test_pull_request_closes_the_issue(self):
         title, body = report.pull_request_text(self.sample, github.adr_path_for(12))
@@ -401,6 +446,8 @@ class FakeSession:
             return FakeResponse(201, self.pulls[-1])
         if method == "POST" and path.endswith("/comments"):
             return FakeResponse(201, {"id": 1, "html_url": "https://github.com/octo/requesthub/issues/7#issuecomment-1"})
+        if method == "GET" and path.startswith("/compare/"):
+            return FakeResponse(200, {"status": "behind" if path.endswith("a" * 40) else "ahead"})
         return FakeResponse(403, {"message": "forbidden"})
 
 
@@ -452,6 +499,10 @@ class GitHubGuardTests(unittest.TestCase):
         with self.assertRaises(github.GitHubError) as raised:
             self.client._request("GET", "/actions/secrets")
         self.assertNotIn("ghs_test_token", str(raised.exception))
+
+    def test_only_merged_commits_are_on_the_default_branch(self):
+        self.assertTrue(self.client.on_default_branch("a" * 40))
+        self.assertFalse(self.client.on_default_branch("b" * 40))
 
     def test_app_jwt_is_short_lived_and_names_the_app(self):
         import jwt
@@ -620,6 +671,68 @@ class FunctionRouteTests(unittest.TestCase):
         self.secrets.update(self.stored)
         again = self.call("github_setup_complete", method="GET", params={"state": "st4te", "code": "abcdef123456"})
         self.assertEqual(again.status_code, 409)
+
+    def test_a_connection_error_during_setup_never_logs_the_code(self):
+        import requests
+        blob = mock.MagicMock()
+        blob.download_blob.return_value.readall.return_value = json.dumps({"state": "st4te", "created": time.time()}).encode()
+        container = mock.MagicMock()
+        container.get_blob_client.return_value = blob
+        failure = requests.ConnectionError("Max retries exceeded with url: /app-manifests/codeSECRET1234/conversions")
+        with mock.patch.object(self.app, "state_container", return_value=container), \
+                mock.patch("requests.post", side_effect=failure), self.assertLogs("advisor", level="WARNING") as logs:
+            response = self.call("github_setup_complete", method="GET", params={"state": "st4te", "code": "codeSECRET1234"})
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("codeSECRET1234", "\n".join(logs.output) + response.get_body().decode())
+        self.assertEqual(self.stored, {})
+
+    def test_the_merge_path_refuses_an_unmerged_commit(self):
+        unmerged = mock.MagicMock()
+        unmerged.on_default_branch.return_value = False
+        with mock.patch.object(self.app.auth, "caller", return_value={}), \
+                mock.patch.object(self.app, "github_client", return_value=unmerged):
+            for name in ("standards_sync", "agents_publish", "evaluations_start"):
+                with self.subTest(name=name):
+                    response = self.call(name, body=json.dumps({"sha": "b" * 40}).encode())
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("not on the default branch", response.get_body().decode())
+        unmerged.read_folder.assert_not_called()
+
+
+class SecretHandlingTests(unittest.TestCase):
+    def test_a_connection_error_never_carries_the_trigger_url(self):
+        import requests
+
+        import function_app
+        url = "https://prod-1.example.logic.azure.com/workflows/x/triggers/manual/paths/invoke?api-version=1&sig=SECRETSIG"
+        with mock.patch.object(function_app, "secret", return_value=url), \
+                mock.patch("requests.post", side_effect=requests.ConnectionError(f"Max retries exceeded with url: {url}")):
+            with self.assertRaises(RuntimeError) as raised:
+                function_app.start_workflow("advisor-workflow-url", {})
+        self.assertNotIn("SECRETSIG", str(raised.exception))
+        self.assertIn("ConnectionError", str(raised.exception))
+
+
+class EvaluateScriptTests(unittest.TestCase):
+    def test_an_evaluator_that_could_not_grade_is_not_a_pass(self):
+        """Foundry's run totals count such an item as passed; evaluate.py reports it instead."""
+        sys.path.insert(0, str(HERE))
+        import evaluate
+
+        def output(case_id, **results):
+            item = mock.MagicMock()
+            item.model_dump.return_value = {"datasource_item": {"id": case_id}, "results": [
+                {"name": f"advisor_{kind}", "passed": passed is True,
+                 "sample": {"error": {"message": "An error occurred during grading"}} if passed is None else {}}
+                for kind, passed in results.items()]}
+            return item
+
+        openai = mock.MagicMock()
+        openai.evals.runs.output_items.list.return_value = [
+            output("E02", citations=None, access=True), output("E04", citations=True, access=False),
+            output("E06", citations=True, access=True)]
+        self.assertEqual(evaluate.case_results(openai, {"runId": "r", "evalId": "e"}),
+                         [("E02", [], ["citations"]), ("E04", ["access"], []), ("E06", [], [])])
 
 
 if __name__ == "__main__":
