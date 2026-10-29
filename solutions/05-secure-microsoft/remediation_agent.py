@@ -37,9 +37,10 @@ EDITABLE = "solutions/05-secure-microsoft/infra/resources.bicep"
 READ_ONLY = ["app/infra/requesthub.bicep"]
 REASONING_EFFORT = "low"
 # The checks posture-intake applies to a proposal before it opens a pull request (infra/logic/intake.json, Edit_problems).
-# Logic Apps' indexOf ignores case, so the region and uniqueness checks do too. The guard is the result: everything
-# outside the editable region stays byte-identical, and between the markers the edited file holds only // comments and
-# one ALLOWED_LINES line. The protected names are a second check on the agent's texts.
+# Logic Apps' indexOf ignores case, so the region and uniqueness checks do too; its equals and replace do not. The guard
+# is the result: everything outside the editable region stays byte-identical, and between the markers the edited file
+# holds only // comments and one ALLOWED_LINES line, with lines split at LF and CR as Bicep's lexer splits them. The
+# protected names are a second check on the agent's texts.
 REGION = ("// posture:editable-begin", "// posture:editable-end")
 ALLOWED_LINES = ("storageprivateendpoint: true", "storageprivateendpoint: false")
 PROTECTED = ("automationRoleDefinitionIds", "automationAppRoleNames", "automationCanPushImages",
@@ -154,7 +155,7 @@ def edit_problems(content: str, proposal: dict) -> list[str]:
     before = region(content)
     result = content.replace(find, replace) if find else content
     after = region(result)
-    code = [line.strip() for line in result[after["start"]:max(after["end"], 0)].split("\n")
+    code = [line.strip() for line in result[after["start"]:max(after["end"], 0)].replace("\r", "\n").split("\n")
             if line.strip() and not line.strip().startswith("//")]
     problems = []
     if proposal.get("path") != EDITABLE:
@@ -163,6 +164,9 @@ def edit_problems(content: str, proposal: dict) -> list[str]:
         problems.append("its search text does not occur exactly once in the file")
     if not replace.strip():
         problems.append("its replacement is empty")
+    if "\r" in replace:
+        # Bicep ends a line, and a // comment, at a bare carriage return.
+        problems.append("its replacement contains a carriage return, which Bicep reads as a line break")
     if find == replace:
         problems.append("it changes nothing")
     if len(find) > MAX_TEXT or len(replace) > MAX_TEXT:

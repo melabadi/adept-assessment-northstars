@@ -2,8 +2,9 @@
 
 remediation_agent.edit_problems mirrors the Logic App's Edit_problems (infra/logic/intake.json): both apply one exact
 replacement to infra/resources.bicep, then require everything outside the posture:editable markers to stay byte-identical
-and every line between them to be a // comment or exactly storagePrivateEndpoint: true or false. These cases include
-edits that a check on the agent's texts alone would let through.
+and every line between them (split at LF and CR, as Bicep's lexer does) to be a // comment or exactly
+storagePrivateEndpoint: true or false. These cases include edits that a check on the agent's texts alone would let
+through.
 
   python -m unittest test_edit_checks.py      (from this folder; no Azure access needed)
 """
@@ -57,6 +58,12 @@ class Rejected(unittest.TestCase):
     def test_unicode_escape_in_a_quoted_name(self):
         self.assertRejected("    " + SETTING, "    storagePrivateEndpoint: true\n    'storage\\u{41}llowSharedKeyAccess': true",
                             "neither a // comment")
+
+    def test_bare_carriage_return_ends_the_comment(self):
+        replace = ("    // Reach Blob storage through a private endpoint.\r    githubRepository: 'someone/elsewhere'\r"
+                   "    githubEnvironment: 'any'\n    storagePrivateEndpoint: true")
+        self.assertRejected(INSIDE, replace, "carriage return")
+        self.assertRejected(INSIDE, replace, "neither a // comment")
 
     def test_search_starting_inside_the_begin_marker_line(self):
         rest_of_marker_line = BEGIN_LINE.strip()[len("// posture:editable-begin"):]
