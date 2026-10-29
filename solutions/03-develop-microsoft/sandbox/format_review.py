@@ -132,7 +132,8 @@ def rules_section(judge: dict, checker_ref: str) -> list[str]:
     verdict = f"✅ all {total} passed" if not failed else f"❌ {failed} of {total} failed"
     return [
         f"**Team rules: {verdict}.** Checked by the rule checker from `{plain(checker_ref, 60)}` before any of this pull "
-        "request's code ran. The agent below can explain a result but can't change it.",
+        "request's code ran. The agent below can explain a result but can't change it. A PASS means none of the checker's "
+        "patterns matched: evidence, not proof, so read the diff too.",
         "",
         judge["markdown"],
     ]

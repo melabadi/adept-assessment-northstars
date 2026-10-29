@@ -7,16 +7,22 @@ the merge base and the pull request's head, as the .tar.gz archives GitHub serve
 word. The reviewer agent may explain a verdict, but never overrides a FAIL.
 
 Rules
-  approval-authority         RequestWorkflow.DecideAsync and the approval rules in PermissionsFor are unchanged, and no
-                             other code starts recording decisions or calling the decision API.
+  approval-authority         RequestWorkflow.DecideAsync and PermissionsFor are unchanged, no other code starts recording
+                             decisions or calling the decision API, and no code outside RequestWorkflow grants or checks
+                             the Approver or Admin role by name.
   authorization-in-workflow  Authorization stays in RequestWorkflow: no role or department checks added in other API
-                             code, and no endpoint loses RequireAuthorization or gains AllowAnonymous.
+                             code, no endpoint loses RequireAuthorization or gains AllowAnonymous, and no endpoint is
+                             mapped outside the authorized route group.
   contract-additive          app/contracts/openapi.json changes only additively (STD-API-001).
-  tests-with-changes         A change to app code (beyond comments) comes with a test change, and no test case is removed or
-                             skipped.
+  tests-with-changes         A change to app code (beyond comments) comes with a test change, and no test case is removed,
+                             skipped, made explicit-only, or marked todo.
   synthetic-data             Added lines contain no secrets, no e-mail addresses outside the synthetic domains, and no
                              GUID that names a tenant, subscription, principal, or client. Public built-in ids, such as
                              Azure role and policy definitions, are fine.
+
+These are pattern checks for the usual ways the rules get broken. A PASS means none of the patterns matched: evidence, not
+proof. A change elsewhere, such as a new body for CanAccessDepartment or a test that no longer asserts anything, can pass,
+so a person still reviews the diff.
 
 Usage
   python3 review_rules.py --base base.tgz --head head.tgz             # JSON on stdout: the verdicts, the same verdicts
@@ -37,7 +43,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-VERSION = "1"
+VERSION = "2"
 WORKFLOW = "app/src/RequestHub.Core/Services/RequestWorkflow.cs"
 MIGRATIONS = "app/src/RequestHub.Core/Data/Migrations/"
 CONTRACT = "app/contracts/openapi.json"
@@ -49,14 +55,22 @@ CODE_FILE = re.compile(r"^app/(src|web/src)/.*\.(cs|tsx?)$")
 API_CODE = re.compile(r"^app/src/.*\.cs$")
 CS_TEST = re.compile(r"\[(Fact|Theory)\b")
 TS_TEST = re.compile(r"^\s*(test|it)(\.\w+)?\(", re.M)
-SKIPPED = re.compile(r"\bSkip\s*=|\b(test|it|describe)\.(skip|fixme|only)\(")
+# Ways to stop a test from running: xUnit v3 attribute properties and Assert.Skip*, and the Vitest or Playwright modifiers.
+SKIPPED = re.compile(r"\b(Skip|SkipUnless|SkipWhen|Explicit)\s*=(?!=)|\bAssert\s*\.\s*Skip(When|Unless)?\s*\(|"
+                     r"\.(skip|fixme|only|todo|skipIf|runIf|fails?)\s*\(")
 DECISION_WRITE = re.compile(
     r"\bnew\s+ApprovalDecision\b|\bDecisions\s*\.\s*Add(Range)?\s*\(|\bStatus\s*=(?!=)[^;,(){}]*\bRequestStatus\s*\.\s*(Approved|Rejected)\b")
 DECISION_CALL = re.compile(r"\bapi\s*\.\s*decide\s*\(")
+# The Approver or Admin role named by string on a line about roles or claims, for example roles.Add("Approver") or
+# new Claim(ClaimTypes.Role, "Admin"). "Admin" alone is also a policy name, an OpenAPI tag, and a log category.
+ROLE_NAME = re.compile(r"\"(RequestHub\.)?(Approver|Admin)\"")
+ROLE_CONTEXT = re.compile(r"(?i)role|claim")
 ROLE_CHECK = re.compile(r"\bHasRole\s*\(|\bIsInRole\s*\(|\bIsAdmin\b|\bRoles\s*\.\s*(Admin|Approver|Reviewer|Requester)\b|"
                         r"\bCanAccessDepartment\s*\(|\[Authorize\b")
 REQUIRE_AUTH = re.compile(r"\.RequireAuthorization\s*\(")
 ALLOW_ANON = re.compile(r"AllowAnonymous")
+# Endpoints belong on the route group that requires authorization (api.MapGet...). Health checks use MapHealthChecks.
+UNGROUPED_ENDPOINT = re.compile(r"\bapp\s*\.\s*Map(Get|Post|Put|Patch|Delete|Methods)?\s*\(")
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 ALLOWED_EMAIL = re.compile(r"(@example\.(com|org|net)|@([a-z0-9-]+\.)*contoso\.com|@noreply\.github\.com|"
@@ -157,13 +171,6 @@ def member(source: str, signature: str) -> str:
         if depth == 0:
             return re.sub(r"\s+", " ", source[start:j + 1])
     return ""
-
-
-def approval_rules(source: str) -> list[str]:
-    """The parts of PermissionsFor that decide who may approve: the `blocked` reason chain and CanDecide."""
-    body = member(source, PERMISSIONS)
-    return (re.findall(r"(?:if|else if) \([^;]*blocked = \"[a-z_]+\";", body)
-            + re.findall(r"\b(?:CanDecide|DecideBlockedReason):[^,)]*", body))
 
 
 def test_cases(path: str, text: str) -> int:
@@ -278,8 +285,8 @@ def approval_authority(change: Change) -> dict:
     base_wf, head_wf = change.before(WORKFLOW), change.after(WORKFLOW)
     if member(base_wf, DECIDE) != member(head_wf, DECIDE):
         evidence.append(f"{WORKFLOW}: DecideAsync differs from the base")
-    if approval_rules(base_wf) != approval_rules(head_wf):
-        evidence.append(f"{WORKFLOW}: the approval rules in PermissionsFor differ from the base")
+    if member(base_wf, PERMISSIONS) != member(head_wf, PERMISSIONS):
+        evidence.append(f"{WORKFLOW}: PermissionsFor differs from the base")
     for kind, path in change.files:
         if kind == "D" or not CODE_FILE.match(path) or TEST_FILE.search(path) or path.startswith(MIGRATIONS):
             continue
@@ -288,8 +295,10 @@ def approval_authority(change: Change) -> dict:
                 evidence.append(f"{path}:{line_no}: records a decision or sets Approved/Rejected: {short(text)}")
             if DECISION_CALL.search(text):
                 evidence.append(f"{path}:{line_no}: calls the decision API: {short(text)}")
+            if API_CODE.match(path) and path != WORKFLOW and ROLE_NAME.search(text) and ROLE_CONTEXT.search(text):
+                evidence.append(f"{path}:{line_no}: grants or checks the Approver or Admin role by name: {short(text)}")
     return rule("approval-authority", "Approval authority is untouched", evidence,
-                "DecideAsync and the approval rules are unchanged, and no new code records decisions")
+                "DecideAsync and PermissionsFor are unchanged, and no new code records decisions or names an approval role")
 
 
 def authorization_in_workflow(change: Change) -> dict:
@@ -302,6 +311,8 @@ def authorization_in_workflow(change: Change) -> dict:
                 evidence.append(f"{path}:{line_no}: role or department check outside RequestWorkflow: {short(text)}")
             if ALLOW_ANON.search(text):
                 evidence.append(f"{path}:{line_no}: endpoint allows anonymous access: {short(text)}")
+            if UNGROUPED_ENDPOINT.search(text):
+                evidence.append(f"{path}:{line_no}: endpoint mapped outside the authorized route group: {short(text)}")
         before, after = change.before(path), change.after(path)
         removed = len(REQUIRE_AUTH.findall(before)) - len(REQUIRE_AUTH.findall(after))
         if removed > 0:

@@ -125,6 +125,39 @@ class RuleCheckerTests(unittest.TestCase):
         self.assertIn("tests-with-changes", failing({
             "app/tests/RequestHub.Tests/WorkflowTests.cs": TEST_SOURCE.replace("[Fact] public void Two", "[Fact(Skip = \"later\")] public void Two")}))
 
+    def test_every_xunit_way_to_not_run_a_test_fails(self):
+        for marker in ("[Fact(Explicit = true)] public void Two", "[Fact(SkipUnless = nameof(Ci))] public void Two",
+                       "[Fact(SkipWhen = nameof(Ci))] public void Two"):
+            self.assertIn("tests-with-changes", failing({
+                "app/tests/RequestHub.Tests/WorkflowTests.cs": TEST_SOURCE.replace("[Fact] public void Two", marker)}), marker)
+        for call in ("Assert.Skip(\"later\");", "Assert.SkipWhen(true, \"later\");", "Assert.SkipUnless(false, \"later\");"):
+            self.assertIn("tests-with-changes", failing({
+                "app/tests/RequestHub.Tests/WorkflowTests.cs": TEST_SOURCE.replace("void Two() { }", "void Two() { " + call + " }")}), call)
+
+    def test_every_vitest_way_to_not_run_a_test_fails(self):
+        base = "import { test } from 'vitest';\ntest('saves', () => {});\n"
+        for changed in ("test.todo('saves');\n", "test.skipIf(true)('saves', () => {});\n",
+                        "test.runIf(false)('saves', () => {});\n", "test.fails('saves', () => {});\n"):
+            result = review_rules.judge(tree({"app/web/src/pages/Page.test.tsx": base}),
+                                        tree({"app/web/src/pages/Page.test.tsx": base.replace("test('saves', () => {});\n", changed)}))
+            self.assertEqual({r["id"]: r["result"] for r in result["rules"]}["tests-with-changes"], "FAIL", changed)
+
+    def test_any_change_to_permissions_for_fails_approval_authority(self):
+        widened = WORKFLOW_SOURCE.replace("CanDecide: blocked is null", "CanDecide: blocked is null || user.IsAdmin")
+        self.assertIn("approval-authority", failing({WORKFLOW: widened}))
+
+    def test_naming_an_approval_role_outside_the_workflow_fails(self):
+        auth = "app/src/RequestHub.Api/Auth/Authentication.cs"
+        for line in ("roles.Add(\"Approver\");", "claims.Add(new Claim(ClaimTypes.Role, \"Admin\"));"):
+            self.assertIn("approval-authority", failing({auth: line + "\n"}), line)
+        tagged = BASE[ENDPOINTS] + "app.MapGroup(\"/x\").WithTags(\"Admin\");\n"
+        self.assertNotIn("approval-authority", failing({ENDPOINTS: tagged}))
+
+    def test_an_endpoint_outside_the_authorized_group_fails(self):
+        self.assertIn("authorization-in-workflow", failing({ENDPOINTS: BASE[ENDPOINTS] + "app.MapGet(\"/api/export\", Export);\n"}))
+        self.assertNotIn("authorization-in-workflow", failing({ENDPOINTS: BASE[ENDPOINTS] + "api.MapGet(\"/export\", Export);\n"}))
+        self.assertNotIn("authorization-in-workflow", failing({ENDPOINTS: BASE[ENDPOINTS] + "app.MapHealthChecks(\"/health/x\");\n"}))
+
     def test_a_real_looking_email_address_fails(self):
         address = "pat.doe" + "@" + "gmail.com"
         self.assertIn("synthetic-data", failing({"README.md": f"# RequestHub\nContact {address}\n"}))

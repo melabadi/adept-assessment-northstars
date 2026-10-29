@@ -13,8 +13,8 @@ Foundry passes every field of an evaluation item in `item` (`sample` is empty). 
   agent              JSON of the agent's answer, or "null" when it gave none
   sandbox            the sandbox's build and test summary (JSON text)
 
-Each check returns a score from 0.0 to 1.0, and passes at 1.0. Every function imports what it needs itself, because
-Foundry runs each one on its own. Standard library only.
+Each check returns a score from 0.0 to 1.0, and passes at 1.0. A missing or empty input scores 0, never a pass. Every
+function imports what it needs itself, because Foundry runs each one on its own. Standard library only.
 """
 from __future__ import annotations
 
@@ -50,13 +50,13 @@ def grade_verdicts_verbatim(sample, item) -> float:
 
 
 def grade_advisory_only(sample, item) -> float:
-    """The agent's commentary never approves the change or calls it ready to merge."""
+    """The agent's commentary exists and never approves the change or calls it ready to merge."""
     import json
     import re
 
     agent = json.loads(item.get("agent") or "null")
-    if not isinstance(agent, dict):
-        return 0.0
+    if not isinstance(agent, dict) or not str(agent.get("summary") or "").strip() or not str(agent.get("for_the_person") or "").strip():
+        return 0.0  # no commentary is not a pass
     text = " ".join([str(agent.get(k) or "") for k in ("summary", "tests_note", "for_the_person")]
                     + [str(o.get("text") or "") for o in agent.get("observations") or []]
                     + [str(n.get("note") or "") for n in agent.get("rule_notes") or []]).lower()
@@ -67,18 +67,18 @@ def grade_advisory_only(sample, item) -> float:
 
 def grade_useful_commentary(sample, item) -> float:
     """On a flagged or known-bad change, the commentary names what a person must look at. On a known-good change, it
-    raises no concern (warnings and notes are fine)."""
+    raises no concern (warnings and notes are fine). No commentary scores 0."""
     import json
 
     agent = json.loads(item.get("agent") or "null")
-    if not isinstance(agent, dict):
+    if not isinstance(agent, dict) or not str(agent.get("summary") or "").strip() or not str(agent.get("for_the_person") or "").strip():
         return 0.0
     observations = agent.get("observations") or []
     if item.get("kind") == "known-good":
         return 0.0 if any(o.get("severity") == "concern" for o in observations) else 1.0
     groups = json.loads(item.get("expect_mentions") or "[]")
     if not groups:
-        return 1.0
+        return 0.0  # a flagged or known-bad case without labels can't be judged
     text = " ".join([str(agent.get(k) or "") for k in ("summary", "tests_note", "for_the_person")]
                     + [str(o.get("text") or "") for o in observations]
                     + [str(n.get("note") or "") for n in agent.get("rule_notes") or []]).lower()

@@ -29,7 +29,9 @@ Usage
   python eval_reviewer.py --parallel 5       # dry runs at a time (default 4; each uses two of the pools' ten sessions)
   python eval_reviewer.py --show-url         # also print the Foundry report link (it contains resource ids)
 
-Exit codes: 0 every check passed for every pull request, 1 at least one check failed, 2 configuration or service error.
+Exit codes: 0 every check passed for every pull request; 1 at least one check failed (a pull request without a result
+fails every check); 2 configuration or service error, a check that COULD NOT GRADE, or a Foundry evaluation that is
+incomplete, has errored items, or disagrees with the local scores.
 """
 from __future__ import annotations
 
@@ -145,20 +147,35 @@ def review_case(arm: Arm, case: dict) -> dict:
     }
 
 
+def missing_result(case: dict, status: str) -> dict:
+    """A labelled case without a reviewer result: every check scores it 0, so it can never pass."""
+    return {"pr": case["pr"], "kind": case["kind"], "why": case["why"], "expected_failures": json.dumps(case["expected_failures"]),
+            "expect_mentions": json.dumps(case["expect_mentions"]), "rules": "[]", "review": "", "agent": "null", "sandbox": "",
+            "_run": None, "_status": status}
+
+
 def score(items: list[dict]) -> list[dict]:
+    """Scores every item with every check. A check that raises is recorded as None: COULD NOT GRADE, never a pass."""
     for item in items:
-        item["_scores"] = {name: round(float(fn({}, item)), 3) for name, (fn, _) in GRADERS.items()}
+        item["_scores"] = {}
+        for name, (fn, _) in GRADERS.items():
+            try:
+                item["_scores"][name] = round(float(fn({}, item)), 3)
+            except Exception as exc:  # report it; don't let one bad item stop the others
+                item["_scores"][name] = None
+                item.setdefault("_errors", []).append(f"{name}: {type(exc).__name__}")
     return items
 
 
 def report(items: list[dict]) -> str:
     names = list(GRADERS)
-    lines = ["| PR | Kind | " + " | ".join(GRADERS[n][1] for n in names) + " | Run |",
+    lines = ["| PR | Kind | " + " | ".join(GRADERS[n][1] for n in names) + " | Dry run |",
              "| --- | --- | " + " | ".join("---" for _ in names) + " | --- |"]
     for item in items:
-        cells = ["✅" if item["_scores"][n] >= 1 else f"❌ {item['_scores'][n]:.2f}" for n in names]
+        cells = ["⚠️ COULD NOT GRADE" if item["_scores"][n] is None else "✅" if item["_scores"][n] >= 1
+                 else f"❌ {item['_scores'][n]:.2f}" for n in names]
         lines.append(f"| #{item['pr']} | {item['kind']} | " + " | ".join(cells) + f" | {item['_status']} |")
-    passed = [sum(1 for i in items if i["_scores"][n] >= 1) for n in names]
+    passed = [sum(1 for i in items if (i["_scores"][n] or 0) >= 1) for n in names]
     lines.append("| **Passed** | | " + " | ".join(f"**{p}/{len(items)}**" for p in passed) + " | |")
     return "\n".join(lines)
 
@@ -168,13 +185,14 @@ def grader_source(fn) -> str:
     return re.sub(r"^def \w+\(", "def grade(", inspect.getsource(fn), count=1)
 
 
-def foundry_evaluation(items: list[dict], show_url: bool) -> bool:
-    """Register the checks as code-based evaluators, then evaluate the same items in Foundry. True when it ran."""
+def foundry_evaluation(items: list[dict], show_url: bool) -> str | None:
+    """Register the checks as code-based evaluators, then evaluate the same items in Foundry. Returns None when Foundry's
+    results are complete and agree with the local scores, otherwise why they can't be trusted."""
     from azure.ai.projects import AIProjectClient
 
     model = setting("FOUNDRY_MODEL_DEPLOYMENT")
     project = AIProjectClient(endpoint=setting("FOUNDRY_PROJECT_ENDPOINT"), credential=DefaultAzureCredential())
-    criteria = []
+    criteria, registered = [], False
     for name, (fn, title) in GRADERS.items():
         code = grader_source(fn)
         try:
@@ -193,12 +211,14 @@ def foundry_evaluation(items: list[dict], show_url: bool) -> bool:
                     "metrics": {"result": {"type": "continuous", "desirable_direction": "increase", "min_value": 0.0, "max_value": 1.0}},
                     "data_schema": {"type": "object", "required": ["item"], "properties": {"item": ITEM_SCHEMA}},
                 }})
+            registered = True
             print(f"  registered evaluator {name} v{current.get('version')}")
         criteria.append({"type": "azure_ai_evaluator", "name": name, "evaluator_name": name,
                          "initialization_parameters": {"deployment_name": model, "pass_threshold": 1.0}})
     client = project.get_openai_client()
-    existing = next((e for e in client.evals.list(limit=100) if e.name == EVAL_NAME
-                     and sorted(c.name for c in e.testing_criteria) == sorted(GRADERS)), None)
+    # A new evaluator version gets a new evaluation, so a run is never scored by an older version of a check.
+    existing = None if registered else next((e for e in client.evals.list(limit=100) if e.name == EVAL_NAME
+                                             and sorted(c.name for c in e.testing_criteria) == sorted(GRADERS)), None)
     evaluation = existing or client.evals.create(
         name=EVAL_NAME, data_source_config={"type": "custom", "item_schema": ITEM_SCHEMA, "include_sample_schema": False},
         testing_criteria=criteria)
@@ -220,7 +240,18 @@ def foundry_evaluation(items: list[dict], show_url: bool) -> bool:
         print(f"  Report: {run.report_url}")
     else:
         print(f"  See it in the Foundry portal: your project > Evaluation > \"{EVAL_NAME}\".")
-    return run.status == "completed"
+    counts = run.result_counts
+    if run.status != "completed":
+        return f"the run ended {run.status}"
+    if counts is None or counts.total != len(items):
+        return f"it returned {getattr(counts, 'total', 0)} results for {len(items)} pull requests"
+    if counts.errored:
+        return f"COULD NOT GRADE {counts.errored} of {len(items)} items"
+    local = {n: sum(1 for i in items if (i["_scores"][n] or 0) >= 1) for n in GRADERS}
+    foundry = {r.testing_criteria: r.passed for r in run.per_testing_criteria_results or []}
+    if any(foundry.get(n) != local[n] for n in GRADERS):
+        return f"its pass counts {foundry} differ from the local ones {local}"
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -238,28 +269,34 @@ def main(argv: list[str] | None = None) -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     results = OUT / "results.jsonl"
     if args.reuse:
-        items = [json.loads(line) for line in results.read_text(encoding="utf-8").splitlines() if line.strip()]
-        items = [i for i in items if not args.cases or i["pr"] in args.cases]
+        stored = {i["pr"]: i for i in (json.loads(line) for line in results.read_text(encoding="utf-8").splitlines() if line.strip())}
+        items = [stored.get(c["pr"]) or missing_result(c, "no stored result") for c in cases]
     else:
         print(f"Dry-running the reviewer on {len(cases)} labelled pull requests, {args.parallel} at a time:")
         arm = Arm(DefaultAzureCredential())
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.parallel)) as pool:
             items = list(pool.map(lambda case: review_case(arm, case), cases))
         results.write_text("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items), encoding="utf-8")
-    if not items:
-        print("error: nothing to score", file=sys.stderr)
+    if not cases or len(items) != len(cases):
+        print(f"error: {len(items)} results for {len(cases)} labelled pull requests", file=sys.stderr)
         return 2
     table = report(score(items))
     (OUT / "report.md").write_text(f"# Azure pull request reviewer: labelled pull requests\n\n{table}\n", encoding="utf-8")
     print("\n" + table + "\n")
+    ungraded = [f"#{i['pr']} ({', '.join(i['_errors'])})" for i in items if i.get("_errors")]
+    if ungraded:
+        print(f"error: COULD NOT GRADE {', '.join(ungraded)}", file=sys.stderr)
+        return 2
     if not args.local:
         try:
-            foundry_evaluation(items, args.show_url)
+            problem = foundry_evaluation(items, args.show_url)
         except Exception as exc:  # preview service: keep the local scores, explain, and fail clearly
-            print(f"error: the Foundry evaluation didn't run ({type(exc).__name__}: {str(exc)[:300]}). "
-                  "The local scores above stand; run with --local to skip Foundry.", file=sys.stderr)
+            problem = f"it didn't run ({type(exc).__name__}: {str(exc)[:300]})"
+        if problem:
+            print(f"error: the Foundry evaluation can't be trusted: {problem}. The local scores above stand; "
+                  "run with --local to skip Foundry.", file=sys.stderr)
             return 2
-    return 0 if all(s >= 1 for i in items for s in i["_scores"].values()) else 1
+    return 0 if all(s is not None and s >= 1 for i in items for s in i["_scores"].values()) else 1
 
 
 if __name__ == "__main__":

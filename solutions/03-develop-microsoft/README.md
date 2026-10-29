@@ -57,6 +57,7 @@ sequenceDiagram
 
 - **The judge runs before the defendant.** The rule checker comes from `main`, never from the pull request, and runs in its own session before any of the pull request's code runs anywhere. The Logic App doesn't start the build until it has the verdicts.
 - **Verdicts are posted word for word.** The review copies the checker's table from the file the checker wrote. The agent sees the verdicts and may explain them, but nothing it writes can change them, and its commentary comes after them under its own heading.
+- **A PASS is evidence, not proof.** The checker looks for the usual ways each rule gets broken (see [`sandbox/review_rules.py`](sandbox/review_rules.py)). A change it has no pattern for, such as a new body for `CanAccessDepartment` or a test that no longer asserts anything, can pass. The review says so, and the person still reads the diff.
 - **The webhook is untrusted.** The Logic App takes only the pull request number from it, then reads the pull request, its head commit, and its labels from GitHub's API. The other message it accepts is a dry run, `{"dryRun": true, "pr": <number>}`, which is what `eval_reviewer.py` sends: it skips the open, draft, default-branch, and label checks and never posts. Only the trigger URL's signature keeps others from sending one, so keep the URL secret.
 - **Only this repository's branches.** A pull request from a fork is never built or reviewed, not even in a dry run: otherwise its code would run in the sandbox, and reach the agent, on every push, without anyone approving it.
 - **The pull request is untrusted.** Its code, comments, test output, and description are data for the agent, never instructions. Text from the pull request or the model is posted inert: no HTML or HTML entities, no links, no @mentions, and a backtick can't hide any of them. GUIDs and Azure host names are removed before anything is posted.
@@ -88,6 +89,7 @@ solutions/03-develop-microsoft/
 ├── eval_cases.jsonl            ten labelled pull requests of this repository
 ├── review_graders.py           the five checks that score the reviewer (Foundry code-based evaluators)
 ├── eval_reviewer.py            dry-runs the reviewer on the labelled pull requests and evaluates the results in Foundry
+├── test_eval_reviewer.py       tests for the scoring rules (python -m unittest)
 ├── azd_env.py                  reads settings from the azd environment
 ├── images/                     screenshots for this README
 └── requirements.txt            Python packages for publish_reviewer_agent.py and eval_reviewer.py
@@ -238,7 +240,7 @@ git push
 
 ![The Foundry Evaluation view: ten labelled pull requests scored by five code-based evaluators: rule verdicts match the labels, the review shows the verdicts unchanged, the commentary never approves, the commentary names the problem without false alarms, and the change was built and tested](images/08-evaluation.png)
 
-To run it (about 12 minutes; start it before the session):
+Run it about 15 minutes before the session; it takes about 12. It exits with 0 only when every check passed for every pull request. A pull request without a result fails every check (exit 1). A check that couldn't grade an item, or a Foundry run that is incomplete, has errored items, or disagrees with the local scores, exits with 2.
 
 ```powershell
 cd solutions/03-develop-microsoft
