@@ -181,12 +181,14 @@ Allow 15 minutes, most of it for the portal pages to load. Run the commands in t
 3. **The token and your sign-ins work** (1 minute):
 
    ```powershell
-   $env:GH_TOKEN = azd env get-value POSTURE_GITHUB_TOKEN; gh api 'repos/{owner}/{repo}' --jq .full_name; Remove-Item Env:GH_TOKEN
+   $token = azd env get-value POSTURE_GITHUB_TOKEN
+   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
+   (Invoke-RestMethod "https://api.github.com/repos/$repo" -Headers @{ Authorization = "Bearer $token" }).full_name
    az account get-access-token --query expiresOn -o tsv
    gh auth status
    ```
 
-   The first line prints the repository's name using the automation's token. `HTTP 401` means the token expired: create a new one ([Set up](#set-up), step 1), store it with `azd env set`, and run `azd provision`. Also make sure your clone is on an up-to-date `main` (`git switch main`, then `git pull`), because `azd provision` deploys your local copy.
+   The third line prints the repository's name, read with the automation's token and nothing else. An error that the key `POSTURE_GITHUB_TOKEN` is not found means the token was never stored; `401` (Bad credentials) means it expired or was revoked. Either way, create a new one ([Set up](#set-up), step 1), store it with `azd env set`, and run `azd provision`. Also make sure your clone is on an up-to-date `main` (`git switch main`, then `git pull`), because `azd provision` deploys your local copy.
 
 4. **Open these tabs** (the portal pages can take a minute to load the first time):
    - Azure portal: **Microsoft Defender for Cloud** > **Recommendations**. Search for *private link*, open *Storage account should use a private link connection*, and select the storage account.
