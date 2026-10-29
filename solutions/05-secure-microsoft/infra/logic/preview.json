@@ -107,7 +107,7 @@
                     },
                     "Touches_infra": {
                       "type": "If",
-                      "expression": "@greater(length(body('Infra_files')), 0)",
+                      "expression": "@or(greater(length(body('Infra_files')), 0), greater(int(coalesce(body('Get_pull_request')?['changed_files'], 0)), 100))",
                       "runAfter": { "Infra_files": ["Succeeded"] },
                       "actions": {
                         "Get_statuses": {
@@ -135,7 +135,7 @@
                         },
                         "Not_previewed_yet": {
                           "type": "If",
-                          "expression": "@equals(length(body('Previews_of_this_commit')), 0)",
+                          "expression": "@or(equals(length(body('Previews_of_this_commit')), 0), equals(first(body('Previews_of_this_commit'))?['state'], 'error'))",
                           "runAfter": { "Previews_of_this_commit": ["Succeeded"] },
                           "actions": {
                             "Set_pending_status": {
@@ -204,6 +204,26 @@
                               },
                               "operationOptions": "DisableAsyncPattern",
                               "runAfter": { "Job_container": ["Succeeded"] }
+                            },
+                            "Report_start_failure": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "POST",
+                                "uri": "https://api.github.com/repos/@{parameters('repository')}/statuses/@{body('Get_pull_request')?['head']?['sha']}",
+                                "headers": {
+                                  "Authorization": "Bearer @{parameters('githubToken')}",
+                                  "Accept": "application/vnd.github+json",
+                                  "X-GitHub-Api-Version": "2022-11-28",
+                                  "User-Agent": "posture-preview"
+                                },
+                                "body": {
+                                  "state": "error",
+                                  "context": "posture/what-if",
+                                  "description": "The preview could not start in Azure; see the Logic App posture-preview's run history"
+                                }
+                              },
+                              "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+                              "runAfter": { "Start_job": ["Failed", "TimedOut", "Skipped"] }
                             }
                           },
                           "else": { "actions": {} }

@@ -544,6 +544,20 @@ def preview_pull_request(number: int, expect: list[str], baseline_deployment: st
 
     print(f"previewing pull request #{number} at {sha[:7]}", flush=True)
     try:
+        return report_pull_request(github, number, sha, status, expect, baseline_deployment, resource_group)
+    except Exception as exc:  # noqa: BLE001 - whatever fails, the commit status must not stay pending
+        print(f"error: {type(exc).__name__}: {mask(str(exc))}", file=sys.stderr)
+        try:
+            status("error", "The preview failed in Azure; see the posture-whatif job's log")
+        except Exception as again:  # noqa: BLE001
+            print(f"error: the commit status could not be set either: {mask(str(again))}", file=sys.stderr)
+        return 2
+
+
+def report_pull_request(github: GitHub, number: int, sha: str, status, expect: list[str], baseline_deployment: str,
+                        resource_group: str) -> int:
+    """Preview the pull request's Bicep, then report: a sanitized comment and the commit status posture/what-if."""
+    try:
         changed = [f["filename"] for f in github.call("GET", f"pulls/{number}/files?per_page=100") or []
                    if f["filename"].startswith(f"{SOLUTION_INFRA}/")]
         uncovered = [p.removeprefix("solutions/05-secure-microsoft/") for p in changed if p != ENTRY]
