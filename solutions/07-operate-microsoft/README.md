@@ -300,7 +300,7 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    notification climbs in steps, because the slowed worker reports its backlog only after each batch. The **Ready for
    a drill** table now shows the worker fault as **Injected**.
 
-   ![Workbook during the incident: the worker fault row says Injected and Not ready, the oldest pending notification climbs past the 60-second threshold, and about 360 notifications are pending](images/03-workbook-incident.png)
+   <!-- batch 2: ![Workbook during the incident: the worker fault row says Injected and Not ready, the oldest pending notification climbs past the 60-second threshold, and about 360 notifications are pending](images/03-workbook-incident.png) -->
 
    About 6 minutes after the requests, Application Insights **Alerts** lists the Sev2 alert with condition *Fired*.
    The agent has already acknowledged it.
@@ -365,7 +365,7 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    and calls its GitHub Issue tool to file it. The guard hook has already checked the text for identifiers, and the
    platform holds the call for you: the card shows the repository, the title, the labels, and the whole body.
 
-   ![The approval card for the GitHub Issue tool: the repository, the title Incident record: notification backlog, the labels ai-sdlc and phase:operate, and the body with the impact table, UTC timeline, root cause, mitigation with placeholders, and one follow-up](images/07-issue-approval.png)
+   <!-- batch 2: ![The approval card for the GitHub Issue tool: the repository, the title Incident record: notification backlog, the labels ai-sdlc and phase:operate, and the body with the impact table, UTC timeline, root cause, mitigation with placeholders, and one follow-up](images/07-issue-approval.png) -->
 
    Read it with the audience, then select **Allow once**. The agent replies with the Issue number.
 
