@@ -1,12 +1,15 @@
 // Reports every finished load test run to GitHub, from Azure.
 //
 // Azure Load Testing's notification rule (created by sync_test.py, because notification rules are data-plane objects)
-// sends each finished run of the test to this action group, which calls the Logic App. The Logic App, with its own
-// managed identity:
-//   - reads the run from Azure Load Testing (Load Test Reader);
-//   - waits for Application Insights, then runs report.kql on the workspace (Log Analytics Reader) to turn the run and
-//     the API's telemetry into a Markdown report, including how many requests carried the rehearsal slowdown;
-//   - opens a GitHub Issue for a failing run, comments on it for the next failures, and closes it when a run passes.
+// sends each finished run of the test to this action group, which calls the Logic App, one run at a time. The Logic
+// App, with its own managed identity:
+//   - reads the run from Azure Load Testing (Load Test Reader), stops unless it is a run of this test, and waits for
+//     its verdict;
+//   - waits (up to about 8 minutes) until Application Insights has the run's last requests, then runs report.kql on
+//     the workspace (Log Analytics Reader) to turn the run and the API's telemetry into a Markdown report and a
+//     verdict, including how many requests carried the rehearsal slowdown;
+//   - opens a GitHub Issue for a failing run, comments on it for the next failures, and closes it only when a run that
+//     started after the Issue opened passes and the report accepts it.
 // GitHub access is a fine-grained token that a person creates for this repository only, with Issues read and write, and
 // sets with `azd env set GITHUB_ISSUES_TOKEN`. It is a secure parameter: GET never returns it, and the actions that use
 // it have secure inputs, so it never appears in the run history. Without a token the report is built but not posted.

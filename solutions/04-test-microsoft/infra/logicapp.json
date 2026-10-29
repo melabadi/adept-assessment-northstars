@@ -53,7 +53,13 @@
       "inputs": {
         "schema": {}
       },
-      "description": "Called by the action group that the test's notification rule sends finished runs to (Azure Monitor common alert schema)."
+      "runtimeConfiguration": {
+        "concurrency": {
+          "runs": 1,
+          "maximumWaitingRuns": 10
+        }
+      },
+      "description": "Called by the action group that the test's notification rule sends finished runs to. One run at a time, so two notifications never race to open, comment on, or close the Issue."
     }
   },
   "actions": {
@@ -62,6 +68,40 @@
       "description": "The notification uses the Azure Monitor common alert schema; its alert context names the run that ended.",
       "inputs": "@coalesce(triggerBody()?['data']?['data']?['alertContext']?['testRunId'], triggerBody()?['data']?['alertContext']?['testRunId'], '')",
       "runAfter": {}
+    },
+    "Stop_when_the_notification_names_no_run": {
+      "type": "If",
+      "description": "Without a run id there is nothing to report: stop at once instead of polling Azure Load Testing.",
+      "expression": {
+        "and": [
+          {
+            "equals": [
+              "@empty(outputs('Test_run_id'))",
+              true
+            ]
+          }
+        ]
+      },
+      "actions": {
+        "No_run_id": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Failed",
+            "runError": {
+              "code": "NoTestRunId",
+              "message": "The notification carried no test run id."
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Test_run_id": [
+          "Succeeded"
+        ]
+      }
     },
     "Initialize_run": {
       "type": "InitializeVariable",
@@ -75,7 +115,24 @@
         ]
       },
       "runAfter": {
-        "Test_run_id": [
+        "Stop_when_the_notification_names_no_run": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Initialize_telemetry_check": {
+      "type": "InitializeVariable",
+      "inputs": {
+        "variables": [
+          {
+            "name": "telemetryReady",
+            "type": "boolean",
+            "value": false
+          }
+        ]
+      },
+      "runAfter": {
+        "Initialize_run": [
           "Succeeded"
         ]
       }
@@ -93,7 +150,7 @@
           "type": "Http",
           "inputs": {
             "method": "GET",
-            "uri": "@{parameters('loadTestingEndpoint')}/test-runs/@{outputs('Test_run_id')}",
+            "uri": "@{parameters('loadTestingEndpoint')}/test-runs/@{encodeUriComponent(outputs('Test_run_id'))}",
             "queries": {
               "api-version": "2024-12-01-preview"
             },
@@ -158,7 +215,7 @@
         }
       },
       "runAfter": {
-        "Initialize_run": [
+        "Initialize_telemetry_check": [
           "Succeeded"
         ]
       }
@@ -169,6 +226,42 @@
       "inputs": "@variables('run')",
       "runAfter": {
         "Wait_for_the_verdict": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Stop_when_the_run_belongs_to_another_test": {
+      "type": "If",
+      "description": "Reports only runs of this Logic App's test. A run of another test, or an id that names no run, stops here.",
+      "expression": {
+        "and": [
+          {
+            "not": {
+              "equals": [
+                "@outputs('Run')?['testId']",
+                "@parameters('testId')"
+              ]
+            }
+          }
+        ]
+      },
+      "actions": {
+        "Not_this_test": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Failed",
+            "runError": {
+              "code": "NotThisTest",
+              "message": "The run does not belong to the test this Logic App reports."
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Run": [
           "Succeeded"
         ]
       }
@@ -200,7 +293,7 @@
         "actions": {}
       },
       "runAfter": {
-        "Run": [
+        "Stop_when_the_run_belongs_to_another_test": [
           "Succeeded"
         ]
       }
@@ -227,9 +320,87 @@
         ]
       }
     },
+    "Wait_for_the_telemetry": {
+      "type": "Until",
+      "description": "Application Insights receives the API's telemetry a few minutes late. Waits until requests from the run's last 90 seconds have arrived, for up to about 8 minutes; if they never do, the report says the telemetry is not available instead of guessing.",
+      "expression": "@equals(variables('telemetryReady'), true)",
+      "limit": {
+        "count": 8,
+        "timeout": "PT10M"
+      },
+      "actions": {
+        "Check_the_telemetry": {
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "https://api.loganalytics.azure.com/v1/workspaces/@{parameters('workspaceId')}/query",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "query": "AppRequests | where TimeGenerated between (datetime(@{outputs('Run')?['startDateTime']}) .. datetime(@{outputs('Run')?['endDateTime']})) | where Name has '/api/' | summarize newest = max(TimeGenerated) | project ready = isnotnull(newest) and newest >= datetime(@{outputs('Run')?['endDateTime']}) - 90s"
+            },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://api.loganalytics.io"
+            }
+          },
+          "runAfter": {}
+        },
+        "Set_telemetry_ready": {
+          "type": "SetVariable",
+          "inputs": {
+            "name": "telemetryReady",
+            "value": "@equals(body('Check_the_telemetry')?['tables']?[0]?['rows']?[0]?[0], true)"
+          },
+          "runAfter": {
+            "Check_the_telemetry": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Not_arrived_yet": {
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "equals": [
+                  "@variables('telemetryReady')",
+                  false
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "Wait_a_minute_for_the_telemetry": {
+              "type": "Wait",
+              "inputs": {
+                "interval": {
+                  "count": 1,
+                  "unit": "Minute"
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          },
+          "runAfter": {
+            "Set_telemetry_ready": [
+              "Succeeded"
+            ]
+          }
+        }
+      },
+      "runAfter": {
+        "Run_summary": [
+          "Succeeded"
+        ]
+      }
+    },
     "Build_the_report": {
       "type": "Http",
-      "description": "Runs infra/report.kql on the workspace with this Logic App's managed identity (Log Analytics Reader).",
+      "description": "Runs infra/report.kql on the workspace with this Logic App's managed identity (Log Analytics Reader). It returns the Markdown report, the delayed request count, and the verdict.",
       "inputs": {
         "method": "POST",
         "uri": "https://api.loganalytics.azure.com/v1/workspaces/@{parameters('workspaceId')}/query",
@@ -245,8 +416,10 @@
         }
       },
       "runAfter": {
-        "Run_summary": [
-          "Succeeded"
+        "Wait_for_the_telemetry": [
+          "Succeeded",
+          "Failed",
+          "TimedOut"
         ]
       }
     },
@@ -255,6 +428,16 @@
       "inputs": "@body('Build_the_report')?['tables']?[0]?['rows']?[0]?[0]",
       "runAfter": {
         "Build_the_report": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Verdict": {
+      "type": "Compose",
+      "description": "accepted, warning, expected-failure, regression, no-telemetry, or no-verdict (see report.kql).",
+      "inputs": "@body('Build_the_report')?['tables']?[0]?['rows']?[0]?[2]",
+      "runAfter": {
+        "Report": [
           "Succeeded"
         ]
       }
@@ -273,7 +456,7 @@
         ]
       },
       "actions": {
-        "Find_the_open_load_test_Issue": {
+        "Find_the_open_load_test_Issues": {
           "type": "Http",
           "inputs": {
             "method": "GET",
@@ -287,7 +470,7 @@
             "queries": {
               "state": "open",
               "labels": "load-test",
-              "per_page": "5"
+              "per_page": "100"
             }
           },
           "runtimeConfiguration": {
@@ -299,11 +482,24 @@
           },
           "runAfter": {}
         },
+        "This_tests_open_Issues": {
+          "type": "Query",
+          "description": "Only this test's Issues, titled the way the Logic App titles them. The Issues API also lists pull requests: skip them.",
+          "inputs": {
+            "from": "@body('Find_the_open_load_test_Issues')",
+            "where": "@and(startsWith(item()?['title'], concat('[load-test ', parameters('testId'), '] ')), equals(item()?['pull_request'], null))"
+          },
+          "runAfter": {
+            "Find_the_open_load_test_Issues": [
+              "Succeeded"
+            ]
+          }
+        },
         "The_open_Issue": {
           "type": "Compose",
-          "inputs": "@first(body('Find_the_open_load_test_Issue'))",
+          "inputs": "@first(body('This_tests_open_Issues'))",
           "runAfter": {
-            "Find_the_open_load_test_Issue": [
+            "This_tests_open_Issues": [
               "Succeeded"
             ]
           }
@@ -404,57 +600,125 @@
                     ]
                   },
                   "actions": {
-                    "Comment_that_it_passes": {
-                      "type": "Http",
-                      "inputs": {
-                        "method": "POST",
-                        "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('The_open_Issue')?['number']}/comments",
-                        "headers": {
-                          "Authorization": "Bearer @{parameters('githubToken')}",
-                          "Accept": "application/vnd.github+json",
-                          "X-GitHub-Api-Version": "2022-11-28",
-                          "User-Agent": "requesthub-load-test-logic-app"
-                        },
-                        "body": {
-                          "body": "`@{outputs('Run')?['displayName']}` passed every criterion. Closing.\n\n@{outputs('Report')}"
-                        }
-                      },
-                      "runtimeConfiguration": {
-                        "secureData": {
-                          "properties": [
-                            "inputs"
-                          ]
-                        }
-                      },
-                      "runAfter": {}
-                    },
-                    "Close_the_Issue": {
-                      "type": "Http",
-                      "inputs": {
-                        "method": "PATCH",
-                        "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('The_open_Issue')?['number']}",
-                        "headers": {
-                          "Authorization": "Bearer @{parameters('githubToken')}",
-                          "Accept": "application/vnd.github+json",
-                          "X-GitHub-Api-Version": "2022-11-28",
-                          "User-Agent": "requesthub-load-test-logic-app"
-                        },
-                        "body": {
-                          "state": "closed",
-                          "state_reason": "completed"
-                        }
-                      },
-                      "runtimeConfiguration": {
-                        "secureData": {
-                          "properties": [
-                            "inputs"
-                          ]
-                        }
-                      },
-                      "runAfter": {
-                        "Comment_that_it_passes": [
-                          "Succeeded"
+                    "The_run_started_after_the_Issue_opened": {
+                      "type": "If",
+                      "description": "A replayed notification of an older run says nothing about a fix.",
+                      "expression": {
+                        "and": [
+                          {
+                            "greater": [
+                              "@ticks(outputs('Run')?['startDateTime'])",
+                              "@ticks(outputs('The_open_Issue')?['created_at'])"
+                            ]
+                          }
                         ]
+                      },
+                      "actions": {
+                        "The_report_accepts_the_run": {
+                          "type": "If",
+                          "description": "Closes the Issue only for an accepted run: the telemetry arrived, and no request carried the rehearsal slowdown.",
+                          "expression": {
+                            "and": [
+                              {
+                                "equals": [
+                                  "@outputs('Verdict')",
+                                  "accepted"
+                                ]
+                              }
+                            ]
+                          },
+                          "actions": {
+                            "Comment_that_it_passes": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "POST",
+                                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('The_open_Issue')?['number']}/comments",
+                                "headers": {
+                                  "Authorization": "Bearer @{parameters('githubToken')}",
+                                  "Accept": "application/vnd.github+json",
+                                  "X-GitHub-Api-Version": "2022-11-28",
+                                  "User-Agent": "requesthub-load-test-logic-app"
+                                },
+                                "body": {
+                                  "body": "`@{outputs('Run')?['displayName']}` passed every criterion. Closing.\n\n@{outputs('Report')}"
+                                }
+                              },
+                              "runtimeConfiguration": {
+                                "secureData": {
+                                  "properties": [
+                                    "inputs"
+                                  ]
+                                }
+                              },
+                              "runAfter": {}
+                            },
+                            "Close_the_Issue": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "PATCH",
+                                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('The_open_Issue')?['number']}",
+                                "headers": {
+                                  "Authorization": "Bearer @{parameters('githubToken')}",
+                                  "Accept": "application/vnd.github+json",
+                                  "X-GitHub-Api-Version": "2022-11-28",
+                                  "User-Agent": "requesthub-load-test-logic-app"
+                                },
+                                "body": {
+                                  "state": "closed",
+                                  "state_reason": "completed"
+                                }
+                              },
+                              "runtimeConfiguration": {
+                                "secureData": {
+                                  "properties": [
+                                    "inputs"
+                                  ]
+                                }
+                              },
+                              "runAfter": {
+                                "Comment_that_it_passes": [
+                                  "Succeeded"
+                                ]
+                              }
+                            }
+                          },
+                          "else": {
+                            "actions": {
+                              "Comment_that_the_Issue_stays_open": {
+                                "type": "Http",
+                                "inputs": {
+                                  "method": "POST",
+                                  "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('The_open_Issue')?['number']}/comments",
+                                  "headers": {
+                                    "Authorization": "Bearer @{parameters('githubToken')}",
+                                    "Accept": "application/vnd.github+json",
+                                    "X-GitHub-Api-Version": "2022-11-28",
+                                    "User-Agent": "requesthub-load-test-logic-app"
+                                  },
+                                  "body": {
+                                    "body": "`@{outputs('Run')?['displayName']}` passed its criteria, but the report does not accept it, so this Issue stays open.\n\n@{outputs('Report')}"
+                                  }
+                                },
+                                "runtimeConfiguration": {
+                                  "secureData": {
+                                    "properties": [
+                                      "inputs"
+                                    ]
+                                  }
+                                },
+                                "runAfter": {}
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Older_run": {
+                            "type": "Compose",
+                            "inputs": "The run started before the open Issue was created, so it does not close it."
+                          }
+                        }
                       }
                     }
                   },
@@ -484,7 +748,7 @@
         }
       },
       "runAfter": {
-        "Report": [
+        "Verdict": [
           "Succeeded"
         ]
       }

@@ -14,7 +14,7 @@ Most teams find out how their app behaves under load in production: a realistic 
 | Realism | Anonymous calls to a home page. | The real journey, signed in: submit a request, list "my requests" and the team queue, open a request, approve or reject. |
 | Credentials | A test account's password or a long-lived token in a pipeline secret. | Two managed identities the test engines borrow during a run. No secret exists. |
 | The decision | Someone eyeballs a chart. | Pass/fail criteria (p95 per request, error rate) turn each run into Passed or Failed. |
-| Follow-up | A message in chat. | Azure opens a GitHub Issue with the report; the next passing run closes it. |
+| Follow-up | A message in chat. | Azure opens a GitHub Issue with the report; the next accepted run closes it. |
 | Diagnosis | Load-tool numbers and app logs live in different places. | The run's dashboard shows client and server metrics side by side with an AI summary, the Observability Agent answers questions about the telemetry, and the report counts the requests that carried the injected delay. |
 | Changing the test | A script on someone's laptop. | The journey and its criteria are files in the repository, reviewed in pull requests and applied with `azd provision`. |
 
@@ -39,7 +39,7 @@ flowchart LR
 - **Azure Load Testing** runs [`loadtest/locustfile.py`](loadtest/locustfile.py) on managed engines with the settings and criteria in [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml). Its run dashboard shows client and server metrics side by side and an experimental **AI summary and insights**. The test has a weekday schedule, created paused, and a notification rule that sends every finished run to an action group.
 - **Two managed identities** sign the virtual users in. Requesters submit synthetic requests; approvers, a different identity, decide some of them, because RequestHub never lets anyone decide their own request. Each run deletes the requests it submitted, so the seeded data is all that remains.
 - **RequestHub** enforces the same roles and department access as for people. Every few journeys the test also checks that an invalid token gets 401 and a request from another department gets 403. The API marks every request it slows down on purpose with the telemetry property `requesthub.fault.queue_delay_ms`.
-- **A Logic App** ([`infra/logicapp.json`](infra/logicapp.json)), called by the action group, works with its own managed identity. It reads the run from Azure Load Testing (Load Test Reader), waits for the verdict, and runs [`infra/report.kql`](infra/report.kql) on the API's telemetry (Log Analytics Reader). Then it opens, updates, or closes a GitHub Issue through GitHub's Issues API, with a fine-grained token a person created for this repository only.
+- **A Logic App** ([`infra/logicapp.json`](infra/logicapp.json)), called by the action group, handles one run at a time with its own managed identity. It reads the run from Azure Load Testing (Load Test Reader), stops unless the run belongs to this test, and waits for the verdict. It waits until Application Insights has the run's last requests, then runs [`infra/report.kql`](infra/report.kql) on the API's telemetry (Log Analytics Reader) for the report and its verdict. Then it opens or comments on this test's GitHub Issue through GitHub's Issues API, with a fine-grained token a person created for this repository only. It closes the Issue only when a run that started after the Issue opened passes, and the report finds no injected delay.
 - **The Azure Copilot Observability Agent**, in Application Insights › Logs, answers questions about the API's telemetry in plain language and runs the KQL itself.
 - **GitHub** holds the code, the pull requests that change the test, and the Issues. No workflow, Copilot agent, or skill is involved.
 - **People** decide what a failure means, check what the AI says against the evidence, and decide whether a release ships.
@@ -253,13 +253,13 @@ Scroll down for the client-side and server-side metrics of the same window.
 
 *About 2 minutes after the verdict.*
 
-Open the Logic App's **Run history** and select the newest run. Azure Load Testing's notification rule called the action group, which called the Logic App. The Logic App waited until the run had its verdict, built the report from the run and the API's telemetry, found no open `load-test` Issue, and opened one.
+Open the Logic App's **Run history** and select the newest run. Azure Load Testing's notification rule called the action group, which called the Logic App. The Logic App waited until the run had its verdict and Application Insights had the run's last requests. It built the report from the run and the API's telemetry, found no open Issue for this test, and opened one.
 
 ![The Logic App's run: TBD](images/06-logic-app-run.png)
 
 ![The Issue the Logic App opened: TBD](images/06-issue-opened.png)
 
-**Point out:** the report proves the cause. Its verdict says 148 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (148 against 182 list requests) because Application Insights samples the API's telemetry by default. The Issue names the run and the resource group, never a host name or an id.
+**Point out:** the report proves the cause. Its verdict says 148 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (148 against 182 list requests) because under load Application Insights keeps only a sample of the API's requests. The Issue names the run and the resource group, never a host name or an id.
 
 ### 7. AI explains, people verify
 
@@ -297,11 +297,11 @@ az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id re
 
 ![slowdown.py off: API revision 0000018, without the slowdown, takes all traffic, the previous revision is deactivated, and GET /api/requests takes 296 ms](images/08-slowdown-off.png)
 
-The run passes. A few minutes later the Logic App comments on the Issue with the passing report and closes it.
+The run passes, and the report finds no injected delay. A few minutes later the Logic App comments on the Issue with the passing report and closes it.
 
 ![The Issue, closed by the Logic App: TBD](images/08-issue-closed.png)
 
-**Point out:** nobody had to remember to follow up. The Issue opened on the failure and closed itself on the next pass.
+**Point out:** nobody had to remember to follow up. The Issue opened on the failure and closed itself on the next accepted run. A run that passes while the slowdown is still on, or a replay of an older run, leaves it open.
 
 ### Optional: run it every weekday
 
@@ -342,7 +342,7 @@ Expect `PASS` from the check, `Cleanup: deleted ... requests owned by u-ben`, an
 - **A real journey, signed in, with no secret.** The engines borrow two managed identities. The API applies the same roles and department checks as for people, and the denial checks prove it under load.
 - **Pass/fail, not a chart.** The criteria are code, reviewed in pull requests. A slowdown of 1.5 seconds on one endpoint fails the run within minutes.
 - **AI suggests, people verify.** The run's AI summary and the Observability Agent read the same telemetry, and each offered plausible leads that the evidence on screen contradicts. A hypothesis checked against the telemetry, the criteria, and the report settle it.
-- **Follow-up without anyone remembering.** The Issue opens on the first failure, collects later failures as comments, and closes itself on the next pass.
+- **Follow-up without anyone remembering.** The Issue opens on the first failure, collects later failures as comments, and closes itself on the next accepted run.
 - **Least access.** The Logic App's identity can only read test runs and telemetry. Its GitHub token reaches one repository and only its Issues. The Issues name runs and the resource group, never hosts or ids.
 
 ## Reset and clean up
@@ -382,8 +382,9 @@ az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/delete
 - **Every request fails with 401 in a run.** The API does not accept the identities yet. Run `azd deploy api`, which applies `LOAD_TEST_CLIENT_IDS` to the API's authentication settings.
 - **`Cleanup refused (HTTP 403)` in the engine log** (the run's **View logs**). The API is missing `Demo__LoadTestRequesterIds`. Run `azd deploy api`.
 - **A run stays in `PROVISIONING` far longer than the usual 3 minutes.** Azure Load Testing is waiting for engine capacity in the region; one of our runs waited 25 minutes and then ran normally. Wait, or stop the run and start it again.
-- **No Issue appears after a failed run.** Open the Logic App's **Run history**. No run at all: the notification rule is missing; run `python sync_test.py setup`, then check **Settings › Notifications** on the Load Testing resource. A run that ends at *No GitHub token configured*: set the token. A run that fails at a GitHub step with 401: the token expired or was revoked; create a new one.
-- **The report says `No server-side telemetry for this window yet`.** Application Insights received the API's telemetry late. Open the Logic App's run and select **Resubmit** a few minutes later.
+- **No Issue appears after a failed run.** Open the Logic App's **Run history**. No run at all: the notification rule is missing; run `python sync_test.py setup`, then check **Settings › Notifications** on the Load Testing resource. A run that ends at *No GitHub token configured*: set the token. A run that fails at a GitHub step with 401: the token expired or was revoked; create a new one. A run that fails at *Stop when the run belongs to another test* or *Stop when the notification names no run*: the call didn't come from this test's notification rule.
+- **The report says *Telemetry not available*.** Application Insights hadn't received the run's requests after about 8 minutes. Open the Logic App's run and select **Resubmit** a few minutes later.
+- **The Issue stays open after a passing run.** Read the Logic App's comment on the Issue. *Passed with the slowdown on*: the fault was still active, so run `python slowdown.py off` and run the test again. *Telemetry not available*: resubmit later, as above. No comment at all: the run started before the Issue was opened, for example a resubmitted older run, which never closes it.
 - **`az load notification-rule` or `az load trigger` is not found.** Update the extension: `az extension add --name load --upgrade`.
 - **The weekday schedule shows as disabled.** Three scheduled runs in a row failed, usually because the database was stopped. Start the database, then enable the schedule again.
 - **The run's dashboard shows only a spinner.** The portal draws the dashboard after the page loads, which took up to a minute in our sessions. Wait, or select **Refresh** on the run.
