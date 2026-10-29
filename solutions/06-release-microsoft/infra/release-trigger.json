@@ -1,0 +1,82 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "releaseJobId": { "type": "String" }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": { "schema": { "type": "array" } }
+    }
+  },
+  "actions": {
+    "Is_subscription_validation": {
+      "type": "If",
+      "runAfter": {},
+      "expression": {
+        "and": [
+          { "equals": [ "@first(triggerBody())?['eventType']", "Microsoft.EventGrid.SubscriptionValidationEvent" ] }
+        ]
+      },
+      "actions": {
+        "Prove_ownership": {
+          "type": "Response",
+          "kind": "Http",
+          "inputs": {
+            "statusCode": 200,
+            "body": { "validationResponse": "@first(triggerBody())?['data']?['validationCode']" }
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Acknowledge": {
+            "type": "Response",
+            "kind": "Http",
+            "inputs": { "statusCode": 202 }
+          },
+          "For_each_pushed_build": {
+            "type": "Foreach",
+            "foreach": "@triggerBody()",
+            "runAfter": { "Acknowledge": [ "Succeeded" ] },
+            "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+            "actions": {
+              "Read_release_job": {
+                "type": "Http",
+                "inputs": {
+                  "method": "GET",
+                  "uri": "@{concat('https://management.azure.com', parameters('releaseJobId'), '?api-version=2025-07-01')}",
+                  "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
+                }
+              },
+              "Release_this_build": {
+                "type": "Compose",
+                "runAfter": { "Read_release_job": [ "Succeeded" ] },
+                "inputs": {
+                  "name": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['name']",
+                  "image": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['image']",
+                  "args": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['args']",
+                  "resources": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['resources']",
+                  "env": "@union(first(body('Read_release_job')?['properties']?['template']?['containers'])?['env'], createArray(json(concat('{\"name\":\"IMAGE\",\"value\":\"', items('For_each_pushed_build')?['data']?['request']?['host'], '/', items('For_each_pushed_build')?['data']?['target']?['repository'], '@', items('For_each_pushed_build')?['data']?['target']?['digest'], '\"}')), json(concat('{\"name\":\"COMMIT\",\"value\":\"', coalesce(items('For_each_pushed_build')?['data']?['target']?['tag'], ''), '\"}'))))"
+                }
+              },
+              "Start_release_job": {
+                "type": "Http",
+                "runAfter": { "Release_this_build": [ "Succeeded" ] },
+                "inputs": {
+                  "method": "POST",
+                  "uri": "@{concat('https://management.azure.com', parameters('releaseJobId'), '/start?api-version=2025-07-01')}",
+                  "body": { "containers": [ "@outputs('Release_this_build')" ] },
+                  "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputs": {}
+}
