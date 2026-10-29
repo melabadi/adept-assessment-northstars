@@ -1,165 +1,193 @@
 # Plan · Requirements analyst in Microsoft Foundry
 
-Turning workshop notes into a backlog is slow, and it is easy to lose track of where a requirement came from or to quietly settle a disagreement nobody decided. In this solution a Microsoft Foundry agent reads the stakeholder transcript through file search and returns the requirements brief and backlog as schema-checked JSON, with a source for every line. The same deterministic checks and the same human review as the GitHub solution decide what reaches GitHub Issues.
+Turning workshop notes into a backlog is slow, and it is easy to lose track of where a requirement came from or to quietly settle a disagreement nobody decided. In this solution the AI and its orchestration run in Azure. A Logic App asks a Microsoft Foundry agent to read the stakeholder transcript and draft a requirements brief and backlog, with a source for every line. A Foundry evaluation then checks the brief, and the Logic App puts it in a GitHub Issue for a person to review. When the person approves, the Logic App publishes the epic and its tasks as GitHub Issues. GitHub holds only the code and the Issues.
 
-![The epic this demo publishes after a person approves the brief: a GitHub Issue opened by github-actions from the Foundry brief, with Given/When/Then acceptance criteria, open questions that cite transcript paragraphs such as T12 and T21, and the labels phase:plan, track:microsoft, and type:epic](images/08-epic.png)
+![The finished run of the Logic App that turns the workshop notes into a backlog: Initialize variables, Draft the brief, Evaluate the brief, Open the review issue, Wait for a person, and Act on the decision all succeeded](images/11-run-complete.png)
 
 ## Where it fits
 
-**Phase 1 of 7: Plan and specify.** The GitHub counterpart is [01-plan-github](../01-plan-github/). Both start from the same transcript and pass through the same review gate, so you can compare them on equal terms.
+**Phase 1 of 7: Plan and specify.** The GitHub counterpart is [01-plan-github](../01-plan-github/). Both start from the same transcript and planted problems, and a person approves before anything reaches the backlog. Here everything between the transcript and the backlog runs in Azure; there it runs in GitHub Copilot and GitHub Actions.
 
 | | Today | With this solution |
 | --- | --- | --- |
 | Drafting | A product owner rewrites notes into tickets over several days. | A Foundry agent drafts the brief, an epic, and four tasks in under a minute. |
-| Consistency | Each analyst structures requirements differently. | One versioned agent definition, a strict output schema, and the same validator every time. |
-| Traceability | Reviewers cannot tell where a requirement came from. | Every line cites a transcript paragraph or policy. Citations that do not exist fail the check. |
+| Consistency | Each analyst structures requirements differently. | One versioned agent definition and a strict output schema, every time. |
+| Traceability | Reviewers can't tell where a requirement came from. | Every line cites a transcript paragraph or policy, and an evaluator rejects citations that don't exist. |
+| Quality checks | Someone skims the tickets. | A Foundry evaluation scores every brief with the same seven checks; four of them must pass before a person sees it. |
 | Disagreements | Whoever writes the ticket settles them silently. | Unresolved conflicts and open questions are listed for a person to decide. |
-| Access | Shared keys or personal accounts in scripts. | Microsoft Entra ID locally, GitHub OIDC in Actions. No key or password is stored anywhere. |
+| Orchestration | Scripts on someone's laptop or in CI. | A Logic App in Azure runs every step and keeps the run history. |
+| Access | Shared keys or personal accounts in scripts. | Azure uses managed identities, without keys. GitHub access is one token limited to this repository's Issues. |
 
 ## How it works
 
 ```mermaid
 flowchart LR
+  P([Presenter]) -->|Run| L
   subgraph Azure["Azure: rg-ai-sdlc-plan"]
-    VS[(Vector store<br/>transcript + policies)]
-    A[Foundry agent<br/>requirements-analyst]
-    A -- file search --> VS
+    L[Logic App<br/>logic-plan-backlog]
+    subgraph Foundry["Microsoft Foundry project: plan"]
+      A[Agent<br/>requirements-analyst] -- file search --> VS[(Vector store<br/>transcript + policies)]
+      E[Evaluation<br/>plan-brief-checks<br/>7 code-based evaluators]
+    end
+    T[(Application Insights<br/>agent traces)]
+    L -->|1. Responses API,<br/>background mode| A
+    L -->|2. score the brief| E
+    A -. traces .-> T
   end
-  S[requirements_analyst.py<br/>your terminal or GitHub Actions] -->|Responses API| A
-  A -->|JSON brief| S
-  S --> V{Validator}
-  V -->|problems: one repair turn| A
-  V -->|VALID| B[Branch with brief/<br/>+ prefilled pull request link]
-  B --> PR[Pull request<br/>opened by a person]
-  PR --> C[Check validates the brief<br/>with scripts from the base branch]
-  C --> H{Person reviews<br/>brief.md}
-  H -->|applies brief-approved| P[Check runs again:<br/>validate, then publish]
-  P --> I[GitHub Issues<br/>epic + 4 sub-issues]
+  L -->|3. gates pass:<br/>review Issue| R[GitHub Issue<br/>brief for review]
+  H([Person]) -->|applies brief-approved| R
+  L -->|4. polls every 30 s,<br/>then publishes| I[GitHub Issues<br/>epic + 4 tasks]
 ```
 
-- **Microsoft Foundry** hosts the `requirements-analyst` prompt agent. [`agent.yaml`](agent.yaml) defines it: instructions, model, temperature, file search, and the JSON schema its answer must match. The transcript and policies live in a Foundry vector store.
-- **[`requirements_analyst.py`](requirements_analyst.py)** publishes a new agent version only when the definition or the inputs change, calls the agent, and checks the answer with the same validator the GitHub solution uses. If the validator finds problems, it sends them back to the agent once for a fix. It writes `brief/backlog.json`, `brief/brief.md`, and `brief/run.json`, a record of the live call (response id, agent version, file-search calls, tokens).
-- **GitHub Actions** runs the same script with OIDC ([`plan-microsoft-analyst.yml`](.github/workflows/plan-microsoft-analyst.yml)), pushes the brief to a branch, and links to a prefilled pull request. Workflows in this repository cannot create pull requests, and a pull request a person opens starts its checks right away. [`plan-microsoft-brief.yml`](.github/workflows/plan-microsoft-brief.yml) validates the brief on that pull request and publishes it after approval. The Foundry endpoint is an environment secret, so the public run log shows `***` instead of your resource's host name.
-- **A person** opens the pull request, reviews the brief, owns the unresolved decisions, and applies the `brief-approved` label.
+- **Microsoft Foundry** hosts the `requirements-analyst` prompt agent. [`agent.yaml`](agent.yaml) defines it: instructions, model settings, file search over a vector store with the transcript and policies, and the request the workflow sends it. The agent must answer with JSON that matches [`backlog.schema.json`](backlog.schema.json). Foundry also hosts seven code-based evaluators from [`evaluators/`](evaluators/) and the evaluation `plan-brief-checks` that runs them. Agent traces go to Application Insights, where the agent's **Traces** tab shows them.
+- **The Logic App** `logic-plan-backlog` ([`infra/workflow.json`](infra/workflow.json)) runs every step, in five phases:
+  1. **Draft the brief:** it calls the agent in background mode, then polls until the brief is ready.
+  2. **Evaluate the brief:** it scores the brief with the Foundry evaluation. The four gates must pass: structure, real citations, testable criteria, and the injected instruction ignored. Otherwise the run fails and nothing reaches GitHub. The other three checks are reported to the reviewer.
+  3. **Open the review issue:** it puts the brief and the scores in a GitHub Issue.
+  4. **Wait for a person:** it checks the Issue every 30 seconds, for up to 2 hours.
+  5. **Act on the decision:** when a person applies `brief-approved`, it creates the epic and four task Issues, links the tasks as sub-issues with their dependencies, comments the links on the review Issue, and closes it. If the person closes the Issue instead, or nobody decides within 2 hours, it publishes nothing and ends as cancelled.
+- **GitHub** holds the code, the review Issue, and the published backlog. No GitHub Actions workflow and no Copilot step is involved: the presenter starts the run in Azure, and the run checks the Issue for the label.
+- **A person** reviews the brief, owns the unresolved decisions, and applies the `brief-approved` label.
+
+Azure services sign in to each other with managed identities: the Logic App to Foundry, and Foundry to Application Insights. Reaching GitHub needs a credential. It's a fine-grained token limited to this repository's Issues, passed to the Logic App as a `securestring` workflow parameter: reading the workflow never returns it, and every action that uses it hides its inputs and outputs in the run history.
+
+**Model and call mode.** The agent runs on `gpt-4.1` in background mode: the Logic App's call returns at once, and the workflow polls until the brief is ready, about 20 to 30 seconds later. A single synchronous call would have to finish within the 120-second limit of a Consumption Logic App; background mode removes that limit. Three runs in a row passed all four gates. `gpt-4.1` retires on 2027-04-14. To move to a reasoning model such as `gpt-5.4`, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), replace `temperature` with `reasoning_effort: low` in `agent.yaml`, and run `azd provision`.
+
+**Preview pieces.** Foundry Agent Service, agent tracing, and Logic Apps are generally available. Custom evaluators and cloud evaluations are in preview. The evaluator catalog asks for the opt-in header `Foundry-Features: Evaluations=V1Preview`, which [`setup_foundry.py`](setup_foundry.py) sends. The preview grading sandbox sometimes errors on one check ("An error occurred during grading"), and the run then takes about 4 minutes instead of 1.5. As a preview workaround, the workflow runs the evaluation again, up to three attempts, when a gate errored. It never retries a gate that failed.
 
 ## What's in this folder
 
 ```text
 01-plan-microsoft/
 ├── README.md
-├── agent.yaml                          the Foundry agent definition (versioned with the code)
-├── requirements_analyst.py             publishes the agent, runs it, validates, writes brief/
-├── configure_github.py                 azd hooks: connect the solution to GitHub Actions
-├── requirements.txt                    Python packages
-├── azure.yaml                          azd project
-├── images/                             screenshots for this README, captured with tools/screenshot.mjs
+├── agent.yaml                  the Foundry agent: instructions, model settings, file search, and the request the workflow sends
+├── backlog.schema.json         the JSON schema the agent's answer must match
+├── evaluators/                 seven code-based Foundry evaluators, each one grade() function
+│   ├── structure.py            gate: ids, counts, task dependencies, and decisions that don't settle open conflicts
+│   ├── citations.py            gate: every cited paragraph or policy exists in inputs/
+│   ├── testable_criteria.py    gate: every acceptance criterion reads Given / When / Then
+│   ├── injection_ignored.py    gate: the instruction pasted into T18 has no effect
+│   ├── planted_conflicts.py    reported: both planted conflicts, with the right status
+│   ├── planted_unknowns.py     reported: the four planted unknowns are asked
+│   └── requirements_covered.py reported: the ten key requirement paragraphs are cited
+├── setup_foundry.py            azd hooks: sets the GitHub repository; publishes the agent, evaluators, and evaluation
+├── requirements.txt            Python packages for setup_foundry.py
+├── azure.yaml                  azd project
+├── images/                     screenshots for this README, captured with tools/screenshot.mjs
 ├── infra/
-│   ├── main.bicep                      resource group rg-<environment name>
-│   ├── resources.bicep                 Foundry account, project, model, GitHub Actions identity, role assignments
+│   ├── main.bicep              resource group rg-<environment name>
+│   ├── resources.bicep         Foundry account, project, model, tracing, the Logic App, role assignments
+│   ├── workflow.json           the Logic App's workflow definition
 │   └── main.parameters.json
-├── inputs/
-│   ├── stakeholder-transcript.md       synthetic workshop notes, paragraphs [T01]–[T24]
-│   └── routing-policies.md             the routing policies the workshop refers to
-└── .github/
-    ├── agents/plan-microsoft.agent.md  Copilot agent that operates and improves the Foundry agent
-    ├── skills/
-    │   ├── foundry-requirements-agent/ how to run, debug, and improve the Foundry agent
-    │   ├── requirements-traceability/  backlog schema, validator, brief renderer (shared with 01-plan-github)
-    │   ├── backlog-publish/            idempotent publisher to GitHub Issues (shared)
-    │   └── brief-compare/              scores a brief against the planted issues (presenter only, shared)
-    └── workflows/
-        ├── plan-microsoft-analyst.yml  run the agent from GitHub and push its brief for review
-        └── plan-microsoft-brief.yml    validate, then publish on brief-approved
+└── inputs/
+    ├── stakeholder-transcript.md   synthetic workshop notes, paragraphs [T01]–[T24]
+    └── routing-policies.md         the routing policies the workshop refers to
 ```
-
-A run writes `brief/`: locally in your checkout, and in GitHub Actions on a review branch. Never merge a brief pull request into `main`; keeping the brief out of `main` keeps the demo repeatable. `--out out/<name>` writes elsewhere, and git ignores `out/`.
 
 ## Prerequisites
 
 - An Azure subscription where you can create a resource group and role assignments, for example as Owner.
 - Quota for `gpt-4.1` (Global Standard, 50,000 tokens per minute) in the region you choose. The examples use `eastus2`.
-- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), and the [GitHub CLI](https://cli.github.com/) signed in as a repository admin. The hooks create a GitHub environment and its secrets.
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), and the [GitHub CLI](https://cli.github.com/), signed in.
 - Python 3.12 or later, and PowerShell 7 for the commands below.
-- A browser signed in to the [Foundry portal](https://ai.azure.com) with the same account, for step 3.
+- Permission to create a fine-grained personal access token for the repository.
+- A browser signed in to the [Azure portal](https://portal.azure.com) and the [Foundry portal](https://ai.azure.com) with the same account.
 
 ## Set up
 
-Run once, from this folder:
+1. **Deploy** (1 to 2 minutes), from this folder:
 
-```powershell
-cd solutions/01-plan-microsoft
-pip install -r requirements.txt
-az login
-azd auth login
-azd env new ai-sdlc-plan --location eastus2
-azd up
-```
+   ```powershell
+   cd solutions/01-plan-microsoft
+   pip install -r requirements.txt
+   az login
+   azd auth login
+   azd env new ai-sdlc-plan --location eastus2
+   azd up
+   ```
 
-`azd up` takes 1 to 2 minutes and ends with `SUCCESS`. Just before that, its hook prints `GitHub environment 'plan-microsoft' in <owner>/<repo>: 4 secrets and 1 variable set.` It creates:
+   `azd up` ends with `SUCCESS`. It creates resource group `rg-ai-sdlc-plan` with:
+   - a Foundry account and project `plan`, a `gpt-4.1` deployment, and the **Foundry User** role for you;
+   - Application Insights `appi-plan` and Log Analytics `log-plan`, connected to the project for agent tracing, with read access for you;
+   - the Logic App `logic-plan-backlog`, whose managed identity has the Foundry User role.
 
-- Resource group `rg-ai-sdlc-plan` with a Foundry account and project, a `gpt-4.1` deployment, and a managed identity for GitHub Actions. That identity trusts only the `plan-microsoft` GitHub environment of this repository.
-- The **Foundry User** role (formerly Azure AI User) on the Foundry account, for you and for that identity.
-- GitHub environment `plan-microsoft` with secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, and `FOUNDRY_PROJECT_ENDPOINT`, and the variable `FOUNDRY_MODEL_DEPLOYMENT`. None of them is a password: OIDC needs none. They are secrets because they identify your tenant and your Foundry resource: GitHub masks secrets in workflow logs, which anyone can read in a public repository, but prints variables in clear text.
+   Its last hook publishes to Foundry and prints, for example:
 
-Check the GitHub side: `gh secret list --env plan-microsoft` lists the four secrets, and `gh variable list --env plan-microsoft` lists only `FOUNDRY_MODEL_DEPLOYMENT`.
+   ```text
+   agent requirements-analyst v1: new version (gpt-4.1)
+   evaluator plan_structure v1: new version
+   ...
+   evaluation plan-brief-checks: created
+   ```
 
-Set up before the endpoint became a secret? Run `azd hooks run postprovision` in this folder once. It stores the endpoint as a secret and deletes the old `FOUNDRY_PROJECT_ENDPOINT` variable.
+   Run `python setup_foundry.py publish` again after you change `agent.yaml`, `inputs/`, or an evaluator: it publishes only what changed.
 
-Also create the review label once, if the GitHub solution has not already: `gh label create brief-approved --color 0e8a16`.
+2. **Create the GitHub token.** On GitHub: **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**.
+   - **Token name:** `ai-sdlc-plan-microsoft`. **Expiration:** 30 days.
+   - **Repository access:** **Only select repositories**, then this repository.
+   - **Repository permissions:** **Issues: Read and write**. GitHub adds Metadata: Read-only on its own.
+   - Only if you want the optional comparison with 01-plan-github's Copilot brief: also **Contents: Read-only**, so the workflow can read that brief from its pull request.
+
+   With these permissions the token can create, label, comment on, and close Issues, and link sub-issues and dependencies, in this repository only.
+
+3. **Give the token to the Logic App**, from this folder:
+
+   ```powershell
+   azd env set GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token') -e ai-sdlc-plan
+   azd provision
+   ```
+
+   `azd provision` passes the token to the Logic App as a `securestring` parameter. It also stays in your local azd environment file, `.azure/ai-sdlc-plan/.env`, which git ignores. [Reset and clean up](#reset-and-clean-up) revokes it.
+
+4. **Labels.** If 01-plan-github hasn't created it already: `gh label create brief-approved --color 0e8a16`. The workflow creates `type:brief`, `type:epic`, and `type:task` the first time it uses them.
 
 ## Before each session
 
-Allow 10 minutes before the audience arrives.
-
-1. **Confirm the starting state** (30 seconds). From the repository root:
+1. **Confirm the starting state** (about a minute), from this folder:
 
    ```powershell
+   cd solutions/01-plan-microsoft
+   python setup_foundry.py publish
    gh issue list --label track:microsoft --state open
-   gh pr list --state open --search "Plan: Foundry requirements brief in:title"
-   git ls-remote --heads origin "plan/foundry-brief-*"
-   Test-Path solutions/01-plan-microsoft/brief
+   $wf = "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/rg-ai-sdlc-plan/providers/Microsoft.Logic/workflows/logic-plan-backlog"
+   az rest --method get --url "$wf/runs?api-version=2016-06-01" --query "value[?properties.status=='Running'].name" -o tsv
+   $token = azd env get-value GITHUB_TOKEN -e ai-sdlc-plan
+   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
+   $r = Invoke-WebRequest "https://api.github.com/repos/$repo/issues?per_page=1" -Headers @{ Authorization = "Bearer $token" }
+   "GitHub token: HTTP $($r.StatusCode), expires $($r.Headers['github-authentication-token-expiration'])"
    ```
 
-   The first three print nothing, and the last prints `False`. No published Foundry Issue is open, no brief pull request or branch is left, and no local brief is lying around. If anything shows up, run [Reset and clean up](#reset-and-clean-up) first.
+   ![The starting-state check in PowerShell 7: setup_foundry.py reports the vector store, agent requirements-analyst v10 on gpt-4.1, the seven evaluators, and the evaluation plan-brief-checks as reused; no open Issue and no running run are listed; the GitHub token answers HTTP 200 with its expiry date](images/00-starting-state.png)
 
-   ![The starting-state check in PowerShell 7: the three list commands print nothing and Test-Path prints False](images/00-starting-state.png)
+   You should see:
+   - every Foundry line ending in `reused`: the agent, the seven evaluators, and the evaluation match this folder;
+   - no open Issue labeled `track:microsoft`, and no run still waiting for a decision. Otherwise run [Reset and clean up](#reset-and-clean-up) first;
+   - `GitHub token: HTTP 200` and an expiry date after your session. An error or an early date means a new token: [Set up](#set-up), steps 2 and 3.
 
-2. **Warm up Azure** (about 1 minute). This checks your sign-in, your Foundry User role, and the model deployment. It writes to `out/`, which git ignores, and leaves `brief/` alone:
+   `{subscriptionId}` stays as written: `az rest` fills in your current subscription.
 
-   ```powershell
-   python solutions/01-plan-microsoft/requirements_analyst.py --out solutions/01-plan-microsoft/out/warmup
-   ```
+2. **Open in advance**, in the browser you present from, signed in with the account that deployed the solution:
+   - the Azure portal on the Logic App `logic-plan-backlog`: **Overview**, with **Essentials** collapsed (it shows your subscription and the workflow's URL), and **Development Tools** → **Logic app designer**. The designer takes up to a minute to load the first time;
+   - the [Foundry portal](https://ai.azure.com) on project `plan`: **Agents** → `requirements-analyst`, and **Evaluations** → `plan-brief-checks`;
+   - GitHub on this repository's Issues, filtered with `is:open label:track:microsoft` (empty until step 8);
+   - [`inputs/stakeholder-transcript.md`](inputs/stakeholder-transcript.md) on GitHub.
 
-   It ends with `VALID`. If `agent.yaml` or `inputs/` changed since the last run, this run publishes the new agent version, and the live run in the demo then says `reused`. If it fails, see [Troubleshooting](#troubleshooting).
+3. **Start a backup run 10 minutes early** (optional). Start one run as in step 4 and leave its review Issue open. If the live run is slow, for example when the evaluation runs again, continue the demo on the backup's review Issue. Reset closes both afterwards.
 
-3. **Open in advance:**
-   - A PowerShell 7 terminal at the repository root, signed in with `az login` and `gh auth login`, with `requirements.txt` installed.
-   - The transcript on GitHub, `solutions/01-plan-microsoft/inputs/stakeholder-transcript.md`, scrolled to T04.
-   - The agent in the [Foundry portal](https://ai.azure.com): the `plan` project, then **Build** → **Agents** → `requirements-analyst`. The portal can take 30 seconds to load the first time, and it may ask you to pick your account.
-   - **Actions** → **Plan · Microsoft · run the Foundry requirements analyst**.
-   - **Issues** filtered with `label:track:microsoft`, for the demo's step 8.
-   - `solutions/01-plan-microsoft/agent.yaml` in your editor.
+4. **Timings** measured on live runs:
 
-4. **Start early, only for the demo's step 7:** a Copilot brief from [01-plan-github](../01-plan-github/). Any of its brief pull requests works, open or closed. In this repository, #11 holds one. For a fresh one, start 01-plan-github's cloud-agent option about 10 minutes before the session.
-
-Timings, from a live run:
-
-| Step | Takes |
-| --- | --- |
-| 1. Show the input | 1 minute |
-| 2. Run the agent from your terminal | about 1 minute (the script: 50 to 70 seconds) |
-| 3. Show the agent in Foundry | 1 to 2 minutes |
-| 4. Read the brief | 2 minutes |
-| 5. Run it from GitHub Actions | about 1 minute (the run: under a minute) |
-| 6. Open the review pull request | 1 minute (the check: about 20 seconds) |
-| 7. Optional: compare with Copilot | 1 to 2 minutes |
-| 8. Approve and publish | 1 to 2 minutes (label to comment: about 70 seconds) |
-| 9. Show it is safe to repeat | about 1 minute |
-| **Total** | **about 15 minutes, 13 without step 7** |
+   | Step | Time |
+   | --- | --- |
+   | Starting-state check (`publish` takes about 30 seconds) | about 1 minute |
+   | **Draft the brief**: the agent's answer | 20 to 25 seconds |
+   | **Evaluate the brief** | about 1½ minutes, or 4 to 6 when a preview grading error makes it run again |
+   | From **Run** to the review Issue | 2 to 7 minutes |
+   | From the label to the published backlog | under a minute: the Logic App checks every 30 seconds |
+   | Whole demo | about 15 minutes, 20 with the optional steps |
 
 ## Run the demo
 
-Run the commands from the repository root in PowerShell 7.
+About 15 minutes, plus up to 5 more when the evaluation runs again. Steps 12 and 13 are optional.
 
 1. **Show the input** (1 minute). Open [`inputs/stakeholder-transcript.md`](inputs/stakeholder-transcript.md). It hides the problems real notes have:
    - **T04 vs T05**: advisory or automatic routing? **T19** records the decision.
@@ -173,134 +201,134 @@ Run the commands from the repository root in PowerShell 7.
 
    **Point out:** the notes contradict each other, and T18 is written to an AI assistant. A good brief keeps the disagreements visible and ignores the instruction.
 
-2. **Run the agent from your terminal** (about 1 minute).
+2. **Show the agent in Foundry** (1 to 2 minutes). In the [Foundry portal](https://ai.azure.com), open the `plan` project, then **Build** → **Agents** → `requirements-analyst`. Open the **Version** list at the top.
 
-   ```powershell
-   python solutions/01-plan-microsoft/requirements_analyst.py
-   ```
-
-   ![The analyst run in PowerShell 7: agent requirements-analyst v10 and its vector store are reused, the first response is VALID with 4 tasks, 4 open questions, and one file_search call, and the script writes backlog.json, brief.md, and run.json under brief/](images/02-local-run.png)
-
-   The first line names the agent version and the vector store. Each says `reused`, or `new version` and `uploaded` after a change to `agent.yaml` or `inputs/`. The `attempt` line is the validator's verdict on the agent's answer. Problems would be listed there and sent back to the agent for one repair turn. The last line lists the files written under `brief/`.
-
-   **Point out:** `VALID` comes from the deterministic validator, not from the model, and a new agent version appears only when its definition in `agent.yaml` changes.
-
-3. **Show the agent in Foundry** (1 to 2 minutes). In the [Foundry portal](https://ai.azure.com), open the `plan` project, then **Build** → **Agents** → `requirements-analyst`. Open the **Version** list at the top.
-
-   ![The requirements-analyst agent in the Foundry portal: the Version list shows versions 1 to 10 with version 10 selected, next to the model gpt-4.1, the instructions from agent.yaml, and a File search tool bound to the plan-inputs vector store](images/03-foundry-agent.png)
+   ![The requirements-analyst agent in the Foundry portal: the Version list shows versions 1 to 10 with version 10 selected, next to the model gpt-4.1, the instructions from agent.yaml, and a File search tool bound to the plan-inputs vector store](images/02-foundry-agent.png)
 
    **Point out:** this is a managed agent with a history. Its instructions are the ones in `agent.yaml`, file search reads the transcript and policies from a vector store, and each change to the definition added a version.
 
-4. **Read the brief** (2 minutes). Open `solutions/01-plan-microsoft/brief/brief.md`; in VS Code, **Ctrl+Shift+V** renders it as below. The header names the agent version that wrote it, and every statement ends with its sources, for example `(T06, T07, POL-ROUTE-001, POL-ROUTE-004)`. Scroll to **Decisions**, **Conflicts**, and **Open questions**, then search for T18: nothing cites it. `brief/run.json` records the live call: response id, agent version, model, file-search calls, and tokens.
+3. **Show the workflow** (1 minute). In the Azure portal, open the Logic App `logic-plan-backlog`, then **Development Tools** → **Logic app designer**. Select the arrow on **Draft the brief** to show its four steps, then collapse it again.
 
-   ![The brief's Decisions, Conflicts, and Open questions: D1 cites T19; conflict C1 on automatic routing is resolved by T19; conflict C2, Finance versus IT for expensive computing equipment, cites T06, T07, POL-ROUTE-001, and POL-ROUTE-004 and is marked unresolved, needs a decision; four open questions cite T12, T21, T22, and T15](images/04-brief.png)
+   ![The Logic App designer for logic-plan-backlog: the manual trigger, Initialize variables, then the phases Draft the brief (4 actions), Evaluate the brief (6 actions), and Open the review issue (3 actions), a Do-until loop named Wait for a person (4 actions), and the switch Act on the decision](images/03-workflow.png)
 
-   Models are not deterministic, so wording and coverage vary between runs. In one of the runs behind these screenshots, the agent described the Finance vs IT conflict as a clash between the two policies and cited T07 but not T06. Step 7 shows how to catch that.
+   **Point out:** the whole path from the notes to the backlog is one workflow in Azure, in five phases. It calls Foundry with its own managed identity, without a key, and only the last three phases talk to GitHub.
 
-   **Point out:** the agent did not settle the Finance vs IT question. It left it for a person, with the paragraphs to read.
+4. **Start a run** (under a minute). Go to **Overview** and select **Run** → **Run**. The **Run history** tab shows the new run as **Running**.
 
-5. **Run it from GitHub Actions** (about 1 minute). The same script runs in GitHub Actions, signed in to Azure through OIDC:
+   ![The Logic App's Overview with Essentials collapsed: the Run button in the command bar, and in Run history the new run at the top with the status Running](images/04-start-run.png)
 
-   ```powershell
-   gh workflow run plan-microsoft-analyst.yml
-   Start-Sleep 5
-   gh run watch (gh run list --workflow plan-microsoft-analyst.yml --limit 1 --json databaseId --jq '.[0].databaseId')
-   ```
+   **Point out:** the run starts in Azure. No GitHub Actions workflow and no Copilot step is involved; Logic Apps keeps the history of every run.
 
-   The run takes under a minute. Open it in the browser: **Actions** → **Plan · Microsoft · run the Foundry requirements analyst** → the newest run. Its summary shows the agent version, the response id, the script's output, and the branch it pushed, `plan/foundry-brief-<run id>`.
+5. **Watch the agent draft the brief** (about 30 seconds). Select the run in **Run history**. **Draft the brief** turns green after about 20 seconds; select its arrow to show **Ask the agent**, **Wait for the brief**, **Brief is ready**, and **Read the brief**.
 
-   ![The workflow run's job summary: Foundry requirements brief by agent requirements-analyst v10 with its response id, the analyst output (agent and vector store reused, VALID on the first attempt with 4 tasks and 4 open questions, and the three files written), and the Open the review pull request link for branch plan/foundry-brief-40712566196](images/05-run-summary.png)
+   ![The run in the Logic App: Initialize variables and Draft the brief have succeeded, and Evaluate the brief is running](images/05-run-draft.png)
 
-   **Point out:** the run used the same agent version as your terminal, v10, and ends with a link to a review pull request. No key or password exists for this: the workflow signs in through OIDC, and its log, not shown here, prints the Foundry endpoint as `***`.
+   **Point out:** the Logic App called the agent in background mode. The call returned at once, and **Wait for the brief** polled until the answer was ready. The Logic App signs in to Foundry with its managed identity: no key is stored anywhere.
 
-6. **Open the review pull request** (1 minute). In the run summary, select **Open the review pull request**. GitHub opens a pull request form with the title and description filled in. Select **Create pull request**.
+6. **Show the trace** (1 minute). In Foundry, on the agent, open **Traces**, then select the newest trace ID.
 
-   ![The prefilled pull request form: the title Plan: Foundry requirements brief, and a description with the agent version, the response id, a link to the workflow run, and the validator result VALID - 4 tasks, 4 open questions, 1/2 conflicts unresolved](images/06-prefilled-pr.png)
+   ![The trace of this run in Foundry: invoke_agent requirements-analyst:10 contains a file_search tool call and one gpt-4.1 chat call, about 15 seconds and 6,300 tokens in all, with the agent's instructions in the input panel](images/06-trace.png)
 
-   The **Plan · Microsoft · review and publish the brief** check starts at once. Its **Validate the brief** job takes about 20 seconds, and **Publish to GitHub Issues** stays skipped until approval. Select the **Validate the brief** check on the pull request, then **Summary** in the run's left pane:
+   **Point out:** the agent searched the transcript and the policies, then wrote the brief in one model call. The **Traces** list shows each run's duration, tokens, and estimated cost: about 2.5 cents.
 
-   ![The Validate the brief job summary: Plan brief validation, solutions/01-plan-microsoft/brief/backlog.json: VALID - 4 tasks, 4 open questions, 1/2 conflicts unresolved](images/06-check-summary.png)
+7. **Show the evaluation** (1 to 2 minutes; the run takes about 1½ minutes, or 4 to 6 when it runs again). In Foundry, open **Evaluations** → **Evaluator catalog** to show the seven custom evaluators, then the **Evaluations** tab → `plan-brief-checks` and the newest run.
 
-   **Point out:** the check validates the brief again with the scripts from the base branch, so a pull request cannot change the rules it is judged by.
+   ![The Foundry evaluator catalog with the seven custom code-based evaluators, marked Preview: Testable criteria, Injected instruction ignored, Citations, Key requirements covered, Planted unknowns, Planted conflicts, and Structure, each with its version](images/07-evaluators.png)
 
-7. **Optional: compare with Copilot** (1 to 2 minutes). Score the Foundry briefs and a Copilot brief from [01-plan-github](../01-plan-github/) against the issues planted in the transcript. `<foundry-pr>` is the pull request from step 6. `<copilot-pr>` is any 01-plan-github brief pull request, open or closed; #11 in this repository.
+   ![The evaluation run in Foundry: structure, citations, testable criteria, and the injected instruction pass, next to the scores of the three reported checks](images/07-evaluation.png)
 
-   ```powershell
-   git fetch origin pull/<foundry-pr>/head
-   git show FETCH_HEAD:solutions/01-plan-microsoft/brief/backlog.json > $env:TEMP/01-plan-microsoft-pr.json
-   git fetch origin pull/<copilot-pr>/head
-   git show FETCH_HEAD:solutions/01-plan-github/brief/backlog.json > $env:TEMP/01-plan-github.json
-   python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-microsoft/brief/backlog.json $env:TEMP/01-plan-microsoft-pr.json $env:TEMP/01-plan-github.json
-   ```
+   **Point out:** the checks are Python code, so the same brief always gets the same score. The four gates decide whether a person sees the brief at all; the three reported checks tell the reviewer where to look.
 
-   The columns are your terminal run from step 2, the GitHub Actions run from step 5, and Copilot's brief. Each planted issue is ✅ found, ⚠️ found with the wrong status, or ❌ missed. In this capture the terminal run is marked ❌ for the Finance vs IT conflict: its brief cited T07 and the two policies but not T06, as step 4 describes.
+8. **Read the review Issue** (3 minutes). On GitHub, open the new Issue labeled `type:brief`.
 
-   ![The comparison of three briefs: both Foundry runs and the Copilot brief find the resolved auto-routing conflict and all four unknowns, and ignore T18; the terminal run is marked missed for the Finance versus IT conflict, while the Actions run and Copilot find it; Copilot's brief has 13 requirements to Foundry's 5](images/07-compare.png)
+   ![The review Issue the Logic App opened: the evaluation's scores, then the brief's goals and requirements with their sources, the unresolved Finance-versus-IT conflict, and the open questions](images/08-review-issue.png)
 
-   **Point out:** two runs of the same agent version differ. The validator checks that a brief is well-formed and cites real sources; whether it is complete is for the reviewer, helped by this score. Judge a change to `agent.yaml` on several runs, as the [foundry-requirements-agent](.github/skills/foundry-requirements-agent/SKILL.md) skill describes.
+   **Point out:** the brief hands the open conflict and the unknowns to a person instead of guessing, and every line names the paragraph or policy it comes from.
 
-8. **Approve and publish** (1 to 2 minutes). On the Foundry pull request, apply the `brief-approved` label: **Labels** → `brief-approved`, or `gh pr edit <number> --add-label brief-approved`. The check runs again, publishes the epic and four task Issues labelled `track:microsoft`, and comments on the pull request with the links. From label to comment takes about 70 seconds.
+9. **Approve** (under a minute). Apply the `brief-approved` label to the review Issue, or run `gh issue edit <number> --add-label brief-approved`. Within 30 seconds the Logic App sees the label, publishes the backlog, comments the links, and closes the review Issue.
 
-   ![The workflow's comment on the pull request: Backlog published after review, track microsoft: 5 updated, with EPIC-TRIAGE as #21 and TASK-1 to TASK-4 as #22 to #25](images/08-published.png)
+   ![The review Issue after approval: the brief-approved label, the Logic App's comment linking the epic and the four task Issues, and the Issue closed](images/09-published.png)
 
-   The first time in a repository, every line says `created`. After a reset, the publisher reopens and updates the same Issues, so the lines say `updated`, as here. If the new brief's tasks depend on each other differently from the last one's, the summary line also reports `stale dependencies removed: <n>`. Open the epic: its top part is the screenshot at the top of this page. Below the open questions, it also lists the unresolved conflict and quotes the source paragraphs. Its four tasks are sub-issues, and those that depend on another task are marked blocked:
+   **Point out:** nothing reached the backlog until a person applied the label. GitHub never calls into Azure: the Logic App reads the Issue.
 
-   ![The epic's Sub-issues panel, 0 of 4 done: Implement Assistant Recommendation Engine (#22) comes first, and Reviewer Confirmation and Override UI (#23), Audit Logging for Recommendations and Lookups (#24), and Bilingual Support and Assistant Availability Handling (#25) are each marked blocked by a dependency](images/08-sub-issues.png)
+10. **Show the backlog** (1 minute). Open the epic from the comment.
 
-   **Point out:** nothing reached the backlog until a person applied the label. The epic's open questions still carry the paragraphs they came from, and the four tasks are linked to it as sub-issues.
+    ![The epic Issue: a summary, acceptance criteria, the open questions and the unresolved conflict with their sources, and the four task sub-issues](images/10-epic.png)
 
-9. **Show it is safe to repeat** (about 1 minute). Apply the label again:
+    **Point out:** the tasks are sub-issues of the epic with "blocked by" dependencies, and each Issue quotes the paragraphs it came from.
 
-   ```powershell
-   gh pr edit <number> --remove-label brief-approved
-   gh pr edit <number> --add-label brief-approved
-   ```
+11. **Show the finished run** (1 minute). Back in the Logic App, select the run again.
 
-   ![The comment after applying the label again: track microsoft: 5 unchanged, with every line from #21 to #25 marked unchanged](images/09-unchanged.png)
+    ![The finished run in the Logic App: Initialize variables, Draft the brief, Evaluate the brief, Open the review issue, Wait for a person, and Act on the decision all succeeded](images/11-run-complete.png)
 
-   **Point out:** the publisher is idempotent. With the brief unchanged, applying the label again changes nothing: all five lines say `unchanged`, and no Issue is duplicated.
+    **Point out:** the run history keeps every step's inputs and outputs, except for the GitHub calls, whose inputs carry the token and are hidden.
+
+12. **Optional: ask Copilot in Azure about the agent's tokens** (2 minutes). Open the Application Insights resource `appi-plan`, select **Copilot** in the portal's top bar, and ask:
+
+    ```text
+    Write a KQL query for the logs of this Application Insights resource: from the dependencies table in the last 24 hours, keep spans where customDimensions['gen_ai.agent.name'] is 'requirements-analyst', and sum customDimensions['gen_ai.usage.input_tokens'] and customDimensions['gen_ai.usage.output_tokens'].
+    ```
+
+    ![The Copilot in Azure pane: Copilot answers with a KQL query on the dependencies table that keeps the requirements-analyst agent's spans from the last 24 hours and sums their gen_ai.usage input and output tokens, then explains what the query does](images/12-copilot-kql.png)
+
+    Copy the query, open **Monitoring** → **Logs**, paste it, and select **Run**. It returns the input and output tokens the agent used in the last 24 hours.
+
+    **Point out:** Copilot in Azure writes the query, and a person runs it and checks the result. Its answer varies from run to run, and a vaguer question can get an Azure Resource Graph query about the resource instead.
+
+13. **Optional: score a Copilot brief next to the Foundry brief** (2 minutes; the token needs **Contents: Read-only**). On the Logic App's **Overview**, select **Run** → **Run with payload**, and send `{"compareWithPullRequest": 129}`: a 01-plan-github pull request whose head holds Copilot's brief. One evaluation run scores both briefs, and the review Issue shows them side by side.
+
+    ![The review Issue of a comparison run: the scores of the Foundry brief and of Copilot's brief side by side, check by check](images/13-compare.png)
+
+    **Point out:** the same seven checks score both tracks' briefs, so the comparison needs no Copilot step on this side.
 
 ## What to observe
 
-- **A managed agent, versioned like code.** The definition lives in `agent.yaml`. A change creates a new agent version in Foundry, and `run.json` ties each brief to the exact version and response that produced it.
-- **Grounded output.** The agent answers from the transcript through file search, in a strict JSON schema, and every line carries a citation.
-- **The validator decides, not the model.** The agent's answer passes the same deterministic checks as Copilot's. When it fails, the findings go back to the agent once, and a failing brief never reaches a pull request. The validator checks form and sources; the reviewer and the comparison in step 7 check completeness.
-- **No keys or passwords, and nothing about your tenant in the public log.** Your terminal uses your Microsoft Entra ID sign-in. GitHub Actions uses OIDC with an identity that only this repository's `plan-microsoft` environment can use, and the Foundry endpoint is an environment secret that the log shows as `***`.
-- **People stay in charge.** Nothing reaches the backlog until someone applies the label, and the publishing code comes from the base branch, not from the pull request.
+- **AI helps the people who plan.** The agent drafts in under a minute what a product owner writes in days. The person keeps the decisions: the open conflict and the open questions reach them instead of being guessed.
+- **The evaluation decides, not the model.** Seven code-based evaluators score every brief the same way, and the four gates stop a brief that cites something that doesn't exist, has untestable criteria, or follows the instruction pasted into T18. The reported checks show what a reviewer should look at.
+- **Everything between the notes and the backlog runs in Azure.** The Logic App's run history shows every step, Foundry keeps every agent version, trace, and evaluation run, and GitHub only receives Issues.
+- **People stay in charge.** Nothing reaches the backlog until a person applies the label, and closing the Issue, or not deciding within 2 hours, publishes nothing.
+- **Least privilege.** Azure services use managed identities without keys. The one GitHub credential is a token that can only touch this repository's Issues, and the run history never shows it.
 
 ## Reset and clean up
 
-After each demo:
+After each demo, from the repository root:
 
 ```powershell
-python .github/skills/backlog-publish/publish_backlog.py --track microsoft --close   # close the published Issues
-gh pr close <number> --delete-branch                                                 # close the brief pull request, delete its branch
-Remove-Item -Recurse solutions/01-plan-microsoft/brief                               # drop the local run's output
+$wf = "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/rg-ai-sdlc-plan/providers/Microsoft.Logic/workflows/logic-plan-backlog"
+az rest --method get --url "$wf/runs?api-version=2016-06-01" --query "value[?properties.status=='Running'].name" -o tsv | ForEach-Object { az rest --method post --url "$wf/runs/$_/cancel?api-version=2016-06-01" }
+gh issue list --label track:microsoft --state open --json number --jq '.[].number' | ForEach-Object { gh issue close $_ --reason "not planned" }
 ```
 
-The first command prints `closed 5 issue(s) for assisted-triage-brief/microsoft`. A workflow run whose pull request nobody opened leaves its branch behind; delete it with `git push origin --delete plan/foundry-brief-<run id>`. The warm-up output in `out/` can stay; git ignores it. Then run the starting-state check from [Before each session](#before-each-session).
+The second line cancels any run that is still waiting for a decision. The last line closes the open review Issues and the published backlog. Agent versions, traces, and evaluation runs stay in Foundry as history.
 
 When you no longer need the solution:
 
 ```powershell
 cd solutions/01-plan-microsoft
 azd down --purge
-gh api -X DELETE 'repos/{owner}/{repo}/environments/plan-microsoft'
 ```
 
-`--purge` also removes the soft-deleted Foundry account, so the name can be reused.
+`--purge` also removes the soft-deleted Foundry account, so the name can be reused. Then revoke the token: on GitHub, **Settings** → **Developer settings** → **Fine-grained tokens** → `ai-sdlc-plan-microsoft` → **Delete**. Remove it from your local azd environment as well: `azd env set GITHUB_TOKEN '' -e ai-sdlc-plan`.
+
+Set up before this version, when the solution ran in GitHub Actions? The GitHub environment `plan-microsoft` is no longer used. Delete it with `gh api -X DELETE 'repos/{owner}/{repo}/environments/plan-microsoft'`.
 
 ## Use it in your own repository
 
-1. Copy this folder, and copy its `.github/` contents into your repository's `.github/` folder.
-2. Replace `inputs/` with your own notes and policies. Keep paragraph ids such as `[T01]` and policy ids such as `POL-ROUTE-001`, because the validator checks citations against them.
-3. Adjust the agent's `instructions` and `prompt` in `agent.yaml`, and the backlog shape in the `requirements-traceability` skill.
-4. Run `azd up` from the folder. The hooks connect whichever repository `gh repo view` reports, and store the sign-in values and the Foundry endpoint as secrets of its `plan-microsoft` environment. Set `azd env set GITHUB_REPOSITORY owner/name` first to choose another repository.
+1. Copy this folder.
+2. Replace `inputs/` with your own notes and policies. Keep paragraph ids such as `[T01]` and policy ids such as `POL-ROUTE-001`: the citations evaluator checks them, and the published Issues quote them.
+3. Adjust the agent's `instructions` and `prompt` in `agent.yaml`, and the backlog shape in `backlog.schema.json`.
+4. Keep the four gate evaluators. Replace `planted_conflicts.py`, `planted_unknowns.py`, and `requirements_covered.py`, which check this synthetic transcript's planted problems, with checks for what matters in your notes. Each evaluator is one `grade(sample, item)` function that returns a score from 0 to 1, and it can't call anything named `compile()`.
+5. Run `azd up` from the folder, then create the token and set it as in [Set up](#set-up). The prepare hook takes the repository from `gh repo view`; run `azd env set GITHUB_REPOSITORY owner/name` first to choose another one.
 
 ## Troubleshooting
 
-- **`AzureCLICredential: exit status 1` during `azd up` or `azd env refresh`.** azd could not get a token from the Azure CLI. Run `az account get-access-token` to check your sign-in, then run the azd command again. It can also be transient while other `az` commands run at the same time; a second try then succeeds.
-- **`FOUNDRY_PROJECT_ENDPOINT is not set` in a new clone or worktree.** The script reads the azd environment, which lives in the `.azure/` folder where you ran `azd up`, and git ignores it. Recreate it from the deployment, from the repository root:
+- **The run fails at `Create_the_review_issue` with `Unauthorized`.** The Logic App has no valid GitHub token: it isn't set, it expired, or it was revoked. Create a new one as in [Set up](#set-up), then run `azd env set GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token') -e ai-sdlc-plan` and `azd provision`.
+- **The run fails with `BriefFailedEvaluation`.** A gate didn't pass, and the run's error names it. Nothing was sent to GitHub. Open the evaluation run in Foundry to see the scores, improve the `instructions` in `agent.yaml`, run `python setup_foundry.py publish`, and start a new run. Don't loosen an evaluator to make a brief pass.
+- **An evaluation check shows "An error occurred during grading".** The preview grading sandbox sometimes errors on one check, and that run takes about 4 minutes. The workflow runs the evaluation again, up to three attempts, when a gate errored. If every attempt errors on a gate, the run fails; start a new one.
+- **`This operation requires the following opt-in preview feature(s): Evaluations=V1Preview`.** You called the evaluator catalog without the preview header. `setup_foundry.py` sends it; send `Foundry-Features: Evaluations=V1Preview` from your own code too.
+- **`Invalid grader source: use of builtin 'compile()' is not allowed in Python graders`.** An evaluator calls something named `compile()`, `re.compile` included. Use `re.search` and `re.match` with a pattern string instead.
+- **`AzureCLICredential: exit status 1` during `azd up` or `azd env refresh`.** azd couldn't get a token from the Azure CLI. Run `az account get-access-token` to check your sign-in, then run the azd command again. It can also be transient while other `az` commands run at the same time.
+- **`FOUNDRY_PROJECT_ENDPOINT is not set` in a new clone or worktree.** `setup_foundry.py` reads the azd environment, which lives in the `.azure/` folder where you ran `azd up`, and git ignores it. Recreate it from the deployment:
 
   ```powershell
   cd solutions/01-plan-microsoft
@@ -308,7 +336,6 @@ gh api -X DELETE 'repos/{owner}/{repo}/environments/plan-microsoft'
   azd env refresh -e ai-sdlc-plan
   ```
 
-  `azd env refresh` ends with `SUCCESS: Environment refresh completed`.
-- **`PermissionDenied` when the script runs right after `azd up`.** New role assignments can take a few minutes to apply. Wait, then run it again.
+  `azd env refresh` ends with `SUCCESS: Environment refresh completed`. Set `GITHUB_TOKEN` again: it was in the old `.env` only.
+- **`PermissionDenied` when something runs right after `azd up`.** New role assignments can take a few minutes to apply. Wait, then try again.
 - **`DeploymentNotFound` or `The project does not exist` right after re-creating the solution.** After `azd down --purge`, re-creating it under the same environment name reuses the same Foundry names, and the project endpoint can keep answering for the deleted account for more than an hour. Create it under a new environment name instead, for example `azd env new ai-sdlc-plan2 --location eastus2`, then `azd up`.
-- **`INVALID` after the repair turn.** The script exits with code 1 and no pull request is opened. Read the problems it lists, improve the `instructions` in `agent.yaml`, and run it again. Never edit the validator or the generated JSON.

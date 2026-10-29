@@ -1,6 +1,5 @@
-# Python packages for this solution's scripts and skills (Python 3.12+): pip install -r requirements.txt
+# Python packages for this solution's setup script (Python 3.12+): pip install -r requirements.txt
 azure-ai-projects==2.9.0
 azure-identity==1.26.0
-jsonschema==4.26.0
 openai==3.35.1
 pyyaml==6.0.3

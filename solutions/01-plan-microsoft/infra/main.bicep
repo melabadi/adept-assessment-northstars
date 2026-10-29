@@ -10,17 +10,18 @@ param environmentName string
 @description('Region for the resource group and Microsoft Foundry. The model below must be available there, for example eastus2.')
 param location string
 
-@description('Object id of the person running azd. Receives the Foundry User role so the scripts can run the agent.')
+@description('Object id of the person running azd. Receives the Foundry User role and read access to the agent traces.')
 param principalId string
 
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@description('GitHub repository (owner/name) whose workflows run the agent through OIDC. Set by the preprovision hook.')
+@description('GitHub repository (owner/name) where the Logic App creates the review Issue and the backlog. Set by the preprovision hook.')
 param githubRepository string = ''
 
-@description('OIDC subject prefix for repositories that use immutable subjects. Set by the preprovision hook.')
-param githubOidcSubjectPrefix string = ''
+@secure()
+@description('Fine-grained GitHub token for this repository only, with Issues read and write. Empty until you set GITHUB_TOKEN (README, Set up).')
+param githubToken string = ''
 
 @description('Chat model for the requirements analyst agent. agent.yaml sets temperature, so pick a non-reasoning model or switch agent.yaml to reasoning_effort.')
 param modelName string = 'gpt-4.1'
@@ -49,8 +50,7 @@ module resources 'resources.bicep' = {
     principalId: principalId
     principalType: principalType
     githubRepository: githubRepository
-    githubOidcSubjectPrefix: githubOidcSubjectPrefix
-    githubEnvironment: 'plan-microsoft'
+    githubToken: githubToken
     modelName: modelName
     modelVersion: modelVersion
     modelCapacity: modelCapacity
@@ -65,5 +65,5 @@ output FOUNDRY_ACCOUNT_NAME string = resources.outputs.foundryAccountName
 output FOUNDRY_PROJECT_NAME string = resources.outputs.foundryProjectName
 output FOUNDRY_PROJECT_ENDPOINT string = resources.outputs.foundryProjectEndpoint
 output FOUNDRY_MODEL_DEPLOYMENT string = resources.outputs.foundryModelDeployment
-output AUTOMATION_CLIENT_ID string = resources.outputs.automationClientId
-output GITHUB_ENVIRONMENT string = 'plan-microsoft'
+output LOGIC_APP_NAME string = resources.outputs.logicAppName
+output APPLICATIONINSIGHTS_NAME string = resources.outputs.appInsightsName
