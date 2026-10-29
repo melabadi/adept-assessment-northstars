@@ -3,9 +3,9 @@
 Fourteen working demos show how to add AI to each phase of the software development lifecycle (SDLC). Every phase has two offerings, both applied to the same app, [RequestHub](app/README.md):
 
 - **GitHub**: GitHub Copilot (custom agents, skills, the cloud agent, code review) with GitHub Enterprise (Actions, Issues, environments, rulesets, code security).
-- **Microsoft**: Microsoft Foundry agents with Azure services (AI Search, Load Testing, Defender for Cloud, Azure Policy, Container Apps, Azure SRE Agent).
+- **Microsoft**: AI that runs in Azure. Microsoft Foundry agents and evaluations, Copilot in Azure, and Azure services (AI Search, Load Testing, Defender for Cloud, Azure Policy, Container Apps, Azure SRE Agent), orchestrated in Azure. GitHub only holds the code, pull requests, and Issues.
 
-Each solution is self-contained. Pick one, open its README, and run it.
+Each solution is self-contained, and its README is the demo script: every step has the command or click, a screenshot from a live run, how long it takes, and what to point out. Pick one, open its README, and run it. To plan a session with several demos (formats, what to start early, costs), see [PRESENTING.md](PRESENTING.md).
 
 ## The fourteen solutions
 
@@ -26,7 +26,7 @@ Everything a demo needs lives in its folder. The only shared piece is the app.
 ```text
 solutions/03-develop-microsoft/
 ├── README.md          what it shows, setup, the demo script, what to observe, how to adopt it
-├── .github/           Copilot custom agent, skills, workflows, and issue templates
+├── .github/           GitHub solutions: Copilot custom agent, skills, workflows, and issue templates. Microsoft solutions: only thin workflow triggers and issue templates
 ├── azure.yaml         (Microsoft solutions) azd project for the solution's own resource group
 ├── infra/             (Microsoft solutions) Bicep for that resource group
 ├── requirements.txt   Python packages for the solution's scripts

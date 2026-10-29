@@ -62,6 +62,13 @@ ISSUE_LABEL = "load-test"
 TERMINAL = {"DONE", "FAILED", "CANCELLED"}
 FAULT_TAG = "requesthub.fault.queue_delay_ms"
 GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+# The locustfile's CLEANUP modes, as the report describes them.
+CLEANUP_TEXT = {
+    "before": "earlier load-test requests deleted before the run",
+    "after": "load-test requests deleted after the run",
+    "both": "load-test requests deleted before and after the run",
+    "none": "no load-test requests deleted",
+}
 
 
 class AzError(RuntimeError):
@@ -361,6 +368,8 @@ def build_report(run: dict, server: list[dict]) -> tuple[str, dict]:
         lines.append("No server-side telemetry for this window yet. Run `python load_test.py report --run-id <test run id>` "
                      "again in a few minutes.")
 
+    cleanup_mode = str(env.get("CLEANUP", "before")).lower()
+    cleanup_text = CLEANUP_TEXT.get(cleanup_mode, f"cleanup mode `{cleanup_mode}`")
     lines += [
         "",
         "### What was tested",
@@ -368,8 +377,8 @@ def build_report(run: dict, server: list[dict]) -> tuple[str, dict]:
         f"- **Load:** {env.get('LOCUST_USERS')} virtual users (half requesters, half approvers), spawned at "
         f"{env.get('LOCUST_SPAWN_RATE')}/s, for {env.get('LOCUST_RUN_TIME')} s, one journey per user every "
         f"{env.get('PACING_SECONDS')} s; approvers decide {env.get('DECIDE_PERCENT')}% of new requests.",
-        f"- **Dataset:** the 24 seeded requests plus {env.get('DATASET_REQUESTS', '0')} extra, after cleanup "
-        f"`{env.get('CLEANUP')}` of earlier load-test requests; departments {env.get('DEPARTMENTS')}.",
+        f"- **Dataset:** the 24 seeded requests plus {env.get('DATASET_REQUESTS', '0')} extra; {cleanup_text}; "
+        f"departments {env.get('DEPARTMENTS')}.",
         f"- **Target:** {compute_shape()}.",
         f"- **Engines:** {(run.get('loadTestConfiguration') or {}).get('engineInstances', 1)} Azure Load Testing engine(s) "
         f"in {engine_region()}; window {start} to {end}.",
