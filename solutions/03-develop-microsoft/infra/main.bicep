@@ -21,7 +21,8 @@ param principalId string
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@description('GitHub repository (owner/name) whose pull requests are reviewed.')
+@minLength(3)
+@description('GitHub repository (owner/name) whose pull requests are reviewed. Set it with `azd env set GITHUB_REPOSITORY`.')
 param githubRepository string
 
 @secure()

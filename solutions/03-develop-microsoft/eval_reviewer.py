@@ -26,7 +26,7 @@ Usage
   python eval_reviewer.py --cases 36 99      # only these pull requests
   python eval_reviewer.py --reuse            # score the results of the last dry runs again, without new runs
   python eval_reviewer.py --local            # skip the Foundry evaluation
-  python eval_reviewer.py --parallel 5       # dry runs at a time (default 3; each uses two sandbox sessions)
+  python eval_reviewer.py --parallel 5       # dry runs at a time (default 4; each uses two of the pools' ten sessions)
   python eval_reviewer.py --show-url         # also print the Foundry report link (it contains resource ids)
 
 Exit codes: 0 every check passed for every pull request, 1 at least one check failed, 2 configuration or service error.
@@ -228,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cases", type=int, nargs="+", metavar="PR", help="Evaluate only these pull requests")
     parser.add_argument("--reuse", action="store_true", help="Score out/eval/results.jsonl again instead of running the reviewer")
     parser.add_argument("--local", action="store_true", help="Score locally only; skip the Foundry evaluation")
-    parser.add_argument("--parallel", type=int, default=3, help="Dry runs at a time (default 3)")
+    parser.add_argument("--parallel", type=int, default=4, help="Dry runs at a time (default 4)")
     parser.add_argument("--show-url", action="store_true", help="Print the Foundry report link (it contains resource ids)")
     args = parser.parse_args(argv)
     utf8_stdout()
