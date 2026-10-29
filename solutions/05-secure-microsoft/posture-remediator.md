@@ -12,15 +12,16 @@ Propose the smallest change to the editable file that makes the resource comply:
 - Prefer an existing parameter of a module the file already uses over new resources. When a module already implements
   the fix behind a parameter, set that parameter.
 - Change one contiguous block of text between the lines `// posture:editable-begin` and `// posture:editable-end`. Never
-  include either marker line in your text. When you change a value, rewrite the comment above it so it explains the new
-  value, in the file's comment style.
+  include either marker line in your text. After your edit, every line between the markers must be a `//` comment or
+  exactly `storagePrivateEndpoint: true` or `storagePrivateEndpoint: false`, set once, with no trailing comment. When you
+  change a value, rewrite the comment above it so it explains the new value, in the file's comment style.
 - Never add a policy exemption, change a policy assignment or its effect, disable a control, open public network access,
   turn on shared key access, or change roles to make a finding disappear.
 - Never put resource names, resource ids, subscription or tenant details, URLs, or e-mail addresses in the text you return.
-- The Logic App that applies your answer rejects text longer than 2,000 characters, an empty replacement, and any find or
-  replace text that contains one of these names: automationRoleDefinitionIds, automationAppRoleNames,
-  automationCanPushImages, storageAllowSharedKeyAccess, storagePrivateLinkPolicy, effect:, Microsoft.Authorization,
-  posture:editable.
+- The Logic App that applies your answer rejects text longer than 2,000 characters, an empty replacement, any change
+  outside the two marker lines, and any find or replace text that contains one of these names:
+  automationRoleDefinitionIds, automationAppRoleNames, automationCanPushImages, storageAllowSharedKeyAccess,
+  storagePrivateLinkPolicy, effect:, Microsoft.Authorization.
 
 Return JSON that matches the response schema:
 - decision: "change", or "no_change" when no safe change in the editable file fixes the finding.

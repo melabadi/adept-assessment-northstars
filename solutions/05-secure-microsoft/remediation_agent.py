@@ -37,11 +37,13 @@ EDITABLE = "solutions/05-secure-microsoft/infra/resources.bicep"
 READ_ONLY = ["app/infra/requesthub.bicep"]
 REASONING_EFFORT = "low"
 # The checks posture-intake applies to a proposal before it opens a pull request (infra/logic/intake.json, Edit_problems).
-# Logic Apps' indexOf ignores case, so the region, uniqueness, and protected-name checks do too.
+# Logic Apps' indexOf ignores case, so the region and uniqueness checks do too. The guard is the result: everything
+# outside the editable region stays byte-identical, and between the markers the edited file holds only // comments and
+# one ALLOWED_LINES line. The protected names are a second check on the agent's texts.
 REGION = ("// posture:editable-begin", "// posture:editable-end")
+ALLOWED_LINES = ("storageprivateendpoint: true", "storageprivateendpoint: false")
 PROTECTED = ("automationRoleDefinitionIds", "automationAppRoleNames", "automationCanPushImages",
-             "storageAllowSharedKeyAccess", "storagePrivateLinkPolicy", "effect:", "Microsoft.Authorization",
-             "posture:editable")
+             "storageAllowSharedKeyAccess", "storagePrivateLinkPolicy", "effect:", "Microsoft.Authorization")
 MAX_TEXT = 2000
 # The Defender for Cloud recommendation and the built-in policy the agent is asked about (see infra/automation.bicep).
 ASSESSMENT = "cdc78c07-02b0-4af0-1cb2-cb7c672a8b0a"
@@ -134,12 +136,26 @@ def live_finding(resource_group: str, account: str) -> tuple[dict, str]:
     return finding, storage["id"]
 
 
+def region(text: str) -> dict[str, int]:
+    """Where the editable region is: its begin marker, the start of the line after it, and the end marker."""
+    lower = text.lower()
+    begin = lower.find(REGION[0].lower())
+    anchor = max(begin, 0)
+    return {"begin": begin, "beginLast": lower.rfind(REGION[0].lower()),
+            "start": anchor + lower[anchor:].find("\n") + 1,
+            "end": lower.find(REGION[1].lower()), "endLast": lower.rfind(REGION[1].lower())}
+
+
 def edit_problems(content: str, proposal: dict) -> list[str]:
     """Why posture-intake would refuse to apply this proposal to `content`; an empty list means it would apply it."""
     find, replace = proposal.get("find") or "", proposal.get("replace") or ""
     lower, needle = content.lower(), find.lower()
     position = lower.find(needle) if find else -1
-    begin, end = lower.find(REGION[0].lower()), lower.find(REGION[1].lower())
+    before = region(content)
+    result = content.replace(find, replace) if find else content
+    after = region(result)
+    code = [line.strip() for line in result[after["start"]:max(after["end"], 0)].split("\n")
+            if line.strip() and not line.strip().startswith("//")]
     problems = []
     if proposal.get("path") != EDITABLE:
         problems.append("it targets a file other than the solution's own Bicep file")
@@ -151,11 +167,21 @@ def edit_problems(content: str, proposal: dict) -> list[str]:
         problems.append("it changes nothing")
     if len(find) > MAX_TEXT or len(replace) > MAX_TEXT:
         problems.append(f"its search or replacement text is longer than {MAX_TEXT:,} characters")
-    if not (begin >= 0 and end > begin and position > begin and position + len(find) <= end):
-        problems.append("it changes text outside the lines marked posture:editable")
+    if not (before["begin"] >= 0 and before["start"] > before["begin"] and before["end"] > before["start"]
+            and content[:before["start"]] == result[:after["start"]]
+            and content[max(before["end"], 0):] == result[max(after["end"], 0):]):
+        problems.append("it changes text outside the lines between the posture:editable markers")
+    if not (after["begin"] >= 0 and after["begin"] == after["beginLast"] and after["start"] > after["begin"]
+            and after["end"] > after["start"] and after["end"] == after["endLast"]):
+        problems.append("the result does not keep exactly one pair of posture:editable markers")
+    if any(line.lower() not in ALLOWED_LINES for line in code):
+        problems.append("between the markers, the result has a line that is neither a // comment nor "
+                        "storagePrivateEndpoint: true or false")
+    if len(code) != 1:
+        problems.append("between the markers, the result must set storagePrivateEndpoint exactly once")
     if any(name.lower() in f"{find}\n{replace}".lower() for name in PROTECTED):
-        problems.append("its text names a protected setting (roles, app roles, registry push, shared key access, the "
-                        "policy assignment or its effect, or the editable markers)")
+        problems.append("its text names a protected setting (roles, app roles, registry push, shared key access, or the "
+                        "policy assignment or its effect)")
     return problems
 
 
