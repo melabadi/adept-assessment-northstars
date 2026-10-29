@@ -138,8 +138,8 @@ Run `python tools/redact.py init` again after you deploy a solution, so its new 
 node tools/screenshot.mjs page "https://github.com/<owner>/<repo>/pull/12" solutions/04-test-github/images/05-proof-check.png `
   --selector ".merge-status-list" --width 1200
 # Command output, rendered as a terminal window.
-python solutions/07-operate-microsoft/incident.py verify *> out.txt
-node tools/screenshot.mjs terminal solutions/07-operate-microsoft/images/07-verify.png --input out.txt --title "PowerShell 7"
+gh pr checks 12 *> out.txt
+node tools/screenshot.mjs terminal solutions/04-test-github/images/05-checks.png --input out.txt --title "PowerShell 7"
 ```
 
 `node tools/screenshot.mjs` without arguments lists every option. Steps (`--wait`, `--click`, `--select`, `--type`, `--press`, `--frame`) run in the order you give them, so you can open a pane, type a question, press Enter, and wait for the answer, for example to capture Azure Copilot. Then `--selector`, `--clip`, or `--full` chooses what to capture; `--remove` and `--pick-account` help with clutter and sign-in.
