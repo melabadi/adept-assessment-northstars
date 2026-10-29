@@ -12,7 +12,8 @@ Rules
   authorization-in-workflow  Authorization stays in RequestWorkflow: no role or department checks added in other API
                              code, and no endpoint loses RequireAuthorization or gains AllowAnonymous.
   contract-additive          app/contracts/openapi.json changes only additively (STD-API-001).
-  tests-with-changes         A change to app code comes with a test change, and no test case is removed or skipped.
+  tests-with-changes         A change to app code (beyond comments) comes with a test change, and no test case is removed or
+                             skipped.
   synthetic-data             Added lines contain no secrets, no e-mail addresses outside the synthetic domains, and no
                              GUID that names a tenant, subscription, principal, or client. Public built-in ids, such as
                              Azure role and policy definitions, are fine.
@@ -165,6 +166,12 @@ def approval_rules(source: str) -> list[str]:
 
 def test_cases(path: str, text: str) -> int:
     return len((CS_TEST if path.endswith(".cs") else TS_TEST).findall(text))
+
+
+def behavior(source: str) -> str:
+    """Code without comments and blank lines: an edit that changes only comments changes no behavior."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return "\n".join(line.strip() for line in source.splitlines() if line.strip() and not line.strip().startswith("//"))
 
 
 def short(text: str, limit: int = 120) -> str:
@@ -330,7 +337,8 @@ def tests_with_changes(change: Change) -> dict:
         added_skips = len(SKIPPED.findall(after)) - len(SKIPPED.findall(before))
         if added_skips > 0:
             evidence.append(f"{path}: {added_skips} Skip/.skip/.only marker(s) added")
-    code = [p for p in changed if CODE_FILE.match(p) and not TEST_FILE.search(p) and not p.startswith(MIGRATIONS)]
+    code = [p for p in changed if CODE_FILE.match(p) and not TEST_FILE.search(p) and not p.startswith(MIGRATIONS)
+            and behavior(change.before(p)) != behavior(change.after(p))]
     tests = [p for _, p in change.files if TEST_FILE.search(p)]
     if code and not tests:
         evidence.append(f"app code changed without a test change: {', '.join(code[:5])}" + (" …" if len(code) > 5 else ""))

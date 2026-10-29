@@ -113,6 +113,9 @@ class RuleCheckerTests(unittest.TestCase):
     def test_code_without_a_test_change_fails(self):
         self.assertIn("tests-with-changes", failing({"app/web/src/pages/Page.tsx": "export const Page = () => 1;\n"}))
 
+    def test_a_comment_only_edit_needs_no_test(self):
+        self.assertEqual(failing({"app/web/src/pages/Page.tsx": "// The landing page.\nexport const Page = () => null;\n"}), set())
+
     def test_a_removed_test_case_fails(self):
         self.assertIn("tests-with-changes", failing({
             "app/tests/RequestHub.Tests/WorkflowTests.cs": TEST_SOURCE.replace("    [Fact] public void Two() { }\n", "")}))
