@@ -259,7 +259,7 @@ Open the Logic App's **Run history** and select the newest run. Azure Load Testi
 
 ![The Issue the Logic App opened: TBD](images/06-issue-opened.png)
 
-**Point out:** the report proves the cause. Its verdict says 148 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The Issue names the run and the resource group, never a host name or an id.
+**Point out:** the report proves the cause. Its verdict says 148 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (148 against 182 list requests) because Application Insights samples the API's telemetry by default. The Issue names the run and the resource group, never a host name or an id.
 
 ### 7. AI explains, people verify
 
@@ -281,7 +281,7 @@ Neither AI names the cause. Now the presenter asks the agent to check a hypothes
 
 - The summary's *failed HTTP requests* are the journey's own checks that a request from another department gets 403. The journey expects those, so the client shows 0 percent errors. Its *5 VUs peak* counts the users per request (the run had 10), RequestHub runs on Container Apps rather than App Service, and a second replica wouldn't remove a fixed 1.5 second wait.
 - The agent explained its slowest request, which was the first call to the new revision in step 4, and blamed a burst of load. Its own table shows an earlier passing run at 19:10, with the same load, at a 27 ms 95th percentile.
-- The agent confirmed the cause because the presenter supplied the hypothesis. Select **Reasoned for** to see the KQL it ran. Its 155 requests cover 30 minutes, including the four timing calls from step 4; the report's 148 cover only the run.
+- The agent confirmed the cause because the presenter supplied the hypothesis. Select **Reasoned for** to see the KQL it ran. Its 155 requests cover 30 minutes, including the four timing calls from step 4; the report's 148 count only the run's own window.
 
 AI finds leads quickly; people check them, and the criteria and the report decide.
 
