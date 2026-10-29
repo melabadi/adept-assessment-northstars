@@ -23,8 +23,10 @@ def cell(text) -> str:
 
 
 def quiet(text) -> str:
-    """Wrap @mentions in backticks: GitHub renders them as code and notifies nobody."""
-    return re.sub(r"(?<![\w`])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))", r"`@\1`", str(text))
+    """Wrap @mentions in backticks: GitHub renders them as code and notifies nobody. GitHub also mentions after an
+    underscore or a non-ASCII letter (_@name_, é@name), so only an ASCII letter or digit in front (an e-mail address)
+    leaves the text alone."""
+    return re.sub(r"(?<![A-Za-z0-9`])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))", r"`@\1`", str(text))
 
 
 def checks_line(run: dict) -> str:

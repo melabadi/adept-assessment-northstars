@@ -28,7 +28,7 @@ EVAL_NAME = "Architecture advisor · labelled cases"
 CHECKS_SOURCE = Path(checks.__file__).read_text(encoding="utf-8")
 EVALUATORS = {
     "citations": ("Citations are real", "Every cited standard exists in the index, has the cited version, and its "
-                  "excerpt is quoted word for word."),
+                  "excerpt is quoted word for word without leaving out a negation."),
     "access": ("Scope respected", "Nothing outside the operating profile's scope was retrieved or cited, including the "
                "standards the case forbids."),
     "grounding": ("Grounded", "An answer cites at least one standard, and every standard the case expects."),

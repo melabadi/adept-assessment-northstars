@@ -19,6 +19,7 @@ import ast
 import base64
 import hashlib
 import hmac
+import io
 import json
 import sys
 import time
@@ -196,6 +197,36 @@ class GateTests(unittest.TestCase):
         self.assertFalse(checks.excerpt_found("Keep it", source))
         self.assertFalse(checks.excerpt_found("decision is recorded", source))
 
+    def test_a_quote_may_shorten_a_standard_but_never_skip_a_negation(self):
+        sec1, sec2, ops1 = (BY_ID[s]["content"] for s in ("STD-SEC-001", "STD-SEC-002", "STD-OPS-001"))
+        self.assertFalse(checks.excerpt_found(  # between two parts: the standard says "must not be stored"
+            "API keys, connection-string secrets, and shared keys ... be stored in configuration or code", sec1))
+        self.assertFalse(checks.excerpt_found(  # before the first part, in its clause: "Do not persist"
+            "persist raw prompts or completions that contain free text entered by users", sec2))
+        self.assertFalse(checks.excerpt_found(  # "Avoid" turns a requirement around too
+            "gateways, queues, or clusters unless an existing platform team operates them", ops1))
+        self.assertFalse(checks.excerpt_found(  # a contraction is a negation
+            "store API keys in configuration files on any server", "Don't store API keys in configuration files on any server."))
+        self.assertTrue(checks.excerpt_found(  # the whole sentence keeps its negation
+            "API keys, connection-string secrets, and shared keys must not be stored in configuration or code.", sec1))
+        self.assertTrue(checks.excerpt_found(  # the clause after a semicolon starts afresh
+            "persist only structured results and identifiers", sec2))
+        self.assertTrue(checks.excerpt_found(  # a repeated phrase is placed where it skips no negation
+            "Review the plan with the team ... and then publish the decision record",
+            "Review the plan with the team, not alone. Review the plan with the team and then publish the decision record."))
+
+    def test_the_gate_rejects_a_quote_that_leaves_out_a_negation(self):
+        for standard, excerpt, requirement in (
+                ("STD-SEC-001", "API keys, connection-string secrets, and shared keys ... be stored in configuration or code",
+                 "Store API keys and shared keys in configuration."),
+                ("STD-SEC-002", "persist raw prompts or completions that contain free text entered by users",
+                 "Persist the raw prompts so they can be audited.")):
+            data = answer(constraints=[{"standardId": standard, "version": EVERY[standard]["version"],
+                                        "requirement": requirement, "excerpt": excerpt}])
+            problems = gate(data, retrieved=[standard])
+            self.assertEqual(len(problems), 1, problems)
+            self.assertTrue(problems[0].startswith(f"excerpt: the quote attributed to {standard} leaves out a negation"))
+
     def test_citation_markers_are_removed_from_every_text(self):
         raw = {"summary": "Stay in the API.【5:0†source】", "unknowns": ["Scaling needs【5:1†source】"], "answerable": True}
         clean = checks.strip_markers(raw)
@@ -292,6 +323,10 @@ class EvaluatorTests(unittest.TestCase):
         invented = answer()
         invented["constraints"][0]["excerpt"] = "Microservices are always preferred."
         self.assertEqual(self.grade("citations", self.item("E01", invented, ("STD-ARCH-001",))), 0.0)
+        turned_around = answer(constraints=[{"standardId": "STD-SEC-001", "version": "2.0", "requirement": "Store keys in config.",
+                                             "excerpt": "API keys, connection-string secrets, and shared keys ... be stored "
+                                                        "in configuration or code"}])
+        self.assertEqual(self.grade("citations", self.item("E01", turned_around, ("STD-SEC-001",))), 0.0)
         not_abstained = self.item("E08", answer(), ("STD-ARCH-001",))
         self.assertEqual(self.grade("abstention", not_abstained), 0.0)
 
@@ -347,6 +382,9 @@ class ReportTests(unittest.TestCase):
         self.assertIn("`@octocat`", text)
         self.assertIn("`@team-a`", text)
         self.assertNotIn(" @octocat", text.replace("`@octocat`", ""))
+        # GitHub also mentions after an underscore or a non-ASCII letter; an e-mail address mentions nobody.
+        self.assertEqual(report.quiet("_@octocat_ é@octocat"), "_`@octocat`_ é`@octocat`")
+        self.assertEqual(report.quiet("user@example.com"), "user@example.com")
 
     def test_a_failed_github_step_still_answers_the_issue(self):
         self.assertIn("could not be completed", report.incomplete_markdown("08584"))
@@ -714,25 +752,66 @@ class SecretHandlingTests(unittest.TestCase):
 
 
 class EvaluateScriptTests(unittest.TestCase):
-    def test_an_evaluator_that_could_not_grade_is_not_a_pass(self):
-        """Foundry's run totals count such an item as passed; evaluate.py reports it instead."""
+    """evaluate.py decides PASS from each item's own results, never from Foundry's run totals."""
+    ALL = dict.fromkeys(checks.CHECK_KINDS, True)
+
+    @classmethod
+    def setUpClass(cls):
         sys.path.insert(0, str(HERE))
         import evaluate
+        cls.evaluate = evaluate
 
-        def output(case_id, **results):
-            item = mock.MagicMock()
-            item.model_dump.return_value = {"datasource_item": {"id": case_id}, "results": [
-                {"name": f"advisor_{kind}", "passed": passed is True,
-                 "sample": {"error": {"message": "An error occurred during grading"}} if passed is None else {}}
-                for kind, passed in results.items()]}
-            return item
+    @staticmethod
+    def output(case_id, agent_failed=False, **results):
+        """One output item; a result of None is an evaluator that errored."""
+        item = mock.MagicMock()
+        item.model_dump.return_value = {
+            "datasource_item": {"id": case_id},
+            "sample": {"error": {"code": "agent_error"} if agent_failed else None},
+            "results": [{"name": f"advisor_{kind}", "passed": passed is True,
+                         "sample": {"error": {"message": "An error occurred during grading"}} if passed is None else {}}
+                        for kind, passed in results.items()]}
+        return item
 
+    @staticmethod
+    def started_run(*outputs, cases):
         openai = mock.MagicMock()
-        openai.evals.runs.output_items.list.return_value = [
-            output("E02", citations=None, access=True), output("E04", citations=True, access=False),
-            output("E06", citations=True, access=True)]
-        self.assertEqual(evaluate.case_results(openai, {"runId": "r", "evalId": "e"}),
+        openai.evals.runs.output_items.list.return_value = list(outputs)
+        return openai, {"runId": "r", "evalId": "e", "agent": "architecture-advisor-small-team v2", "cases": cases}
+
+    def test_an_evaluator_that_could_not_grade_is_not_a_pass(self):
+        openai, run = self.started_run(self.output("E02", **dict(self.ALL, citations=None)),
+                               self.output("E04", **dict(self.ALL, access=False)), self.output("E06", **self.ALL),
+                               cases=["E02", "E04", "E06"])
+        self.assertEqual(self.evaluate.case_results(openai, run),
                          [("E02", [], ["citations"]), ("E04", ["access"], []), ("E06", [], [])])
+
+    def test_an_answer_without_every_result_is_not_a_pass(self):
+        openai, run = self.started_run(self.output("E03", agent_failed=True),  # the agent call failed: no results
+                               self.output("E05", citations=True),  # 1 of 5 results
+                               cases=["E03", "E05", "E09"])  # and no item at all for E09
+        rows = {case_id: (failed, errors) for case_id, failed, errors in self.evaluate.case_results(openai, run)}
+        self.assertEqual(rows["E03"], ([], [self.evaluate.NO_ANSWER, *checks.CHECK_KINDS]))
+        self.assertEqual(rows["E05"], ([], ["access", "grounding", "abstention", "conflicts"]))
+        self.assertEqual(rows["E09"], ([], [self.evaluate.NO_ITEM, *checks.CHECK_KINDS]))
+
+    def test_only_a_fully_graded_run_can_exit_0(self):
+        graded = [self.output(case_id, **self.ALL) for case_id in ("E01", "E02")]
+        openai, run = self.started_run(*graded, cases=["E01", "E02"])
+        completed = {"status": "completed", "errored": 0}
+
+        def exit_code(runs, state):
+            with mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()):
+                return self.evaluate.summarize(openai, runs, {"r": state}, time.monotonic())
+
+        self.assertEqual(exit_code([run], completed), 0)
+        self.assertEqual(exit_code([run], dict(completed, errored=1)), 2)  # Foundry counts an item in error
+        self.assertEqual(exit_code([run], dict(completed, status="failed")), 2)
+        self.assertEqual(exit_code([dict(run, cases=["E01"])], completed), 2)  # more results than cases
+        openai.evals.runs.output_items.list.return_value = [graded[0], self.output("E02", agent_failed=True)]
+        self.assertEqual(exit_code([run], completed), 2)
+        openai.evals.runs.output_items.list.return_value = [graded[0], self.output("E02", **dict(self.ALL, access=False))]
+        self.assertEqual(exit_code([run], completed), 1)
 
 
 if __name__ == "__main__":

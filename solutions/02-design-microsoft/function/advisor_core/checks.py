@@ -18,11 +18,16 @@ STANDARD_ID = r"STD-[A-Z]+-\d{3}"
 SEARCH_MARKER = r"\s*【[^】]*】"
 CHECK_KINDS = ("citations", "access", "grounding", "abstention", "conflicts")
 MIN_EXCERPT_WORDS = 6
+# Words that turn a requirement around. A quote may shorten a standard, but no gap it skips may hold one of these.
+NEGATIONS = {"not", "no", "never", "nor", "neither", "none", "without", "unless", "except", "cannot", "avoid"}
+SENTENCE_BREAK = r"(?<=[.!?])\s+|\n+"
+CLAUSE_BREAK = r"(?<=[.!?;])\s+|\n+"
 
 
 def words(text: str) -> list:
-    """Lowercase words only, so an excerpt matches the standard regardless of punctuation, quotes, or line breaks."""
-    return re.findall(r"[a-z0-9%]+", str(text).lower())
+    """Lowercase words only, so an excerpt matches the standard regardless of punctuation, quotes, or line breaks.
+    A contraction reads as its negation ("don't" is "do not"), so the negation check sees it."""
+    return re.findall(r"[a-z0-9%]+", re.sub(r"n['’]t\b", " not", str(text).lower()))
 
 
 def bare_version(text: str) -> str:
@@ -38,25 +43,45 @@ def _position(haystack: list, needle: list, start: int) -> int:
     return -1
 
 
-def excerpt_found(excerpt: str, source: str) -> bool:
-    """True when the excerpt is the standard's own words. Split on an ellipsis, every part must appear in the source
-    as whole words, in the source's order, and be either at least MIN_EXCERPT_WORDS words long or a whole sentence
-    of the standard, so a stray word or a stitched fragment ("personal data ... be sent") never passes."""
+def _starts(source: str, pattern: str) -> list:
+    """The word index at which each piece of the source starts, when the source is split with pattern."""
+    starts, offset = [], 0
+    for piece in re.split(pattern, str(source)):
+        starts.append(offset)
+        offset += len(words(piece))
+    return starts
+
+
+def excerpt_found(excerpt: str, source: str, check_negations: bool = True) -> bool:
+    """True when the excerpt is the standard's own words and keeps the standard's meaning:
+      - split on an ellipsis, every part appears in the source as whole words, in the source's order;
+      - every part is at least MIN_EXCERPT_WORDS words long or a whole sentence of the standard, so a stray word or a
+        stitched fragment ("personal data ... be sent") never passes;
+      - no gap the quote skips holds a negation (NEGATIONS): neither between two parts, nor between the start of the
+        first part's clause and that part. "API keys ... be stored in configuration" skips "must not", and "persist
+        raw prompts" leaves out the "Do not" in front of it: both fail. A clause after a semicolon starts afresh.
+    check_negations=False skips the last rule, only to explain a rejection."""
     text = words(source)
-    sentences = [words(s) for s in re.split(r"(?<=[.!?])\s+|\n+", str(source))]
-    parts = [words(part) for part in re.split(r"\.\.\.|…", str(excerpt))]
-    parts = [part for part in parts if part]
-    if not parts:
+    sentences = [words(s) for s in re.split(SENTENCE_BREAK, str(source))]
+    parts = [part for part in (words(p) for p in re.split(r"\.\.\.|…", str(excerpt))) if part]
+    if not parts or any(len(part) < MIN_EXCERPT_WORDS and part not in sentences for part in parts):
         return False
-    position = 0
-    for part in parts:
-        if len(part) < MIN_EXCERPT_WORDS and part not in sentences:
-            return False
-        found = _position(text, part, position)
-        if found < 0:
-            return False
-        position = found + len(part)
-    return True
+    clauses = _starts(source, CLAUSE_BREAK)
+
+    def place(index: int, start: int) -> bool:
+        """Whether parts[index:] fit at or after word `start`. Every occurrence is tried, so a phrase the standard
+        repeats can't hide a placement that skips no negation."""
+        if index == len(parts):
+            return True
+        found = _position(text, parts[index], start)
+        while found >= 0:
+            gap = text[(start if index else max(s for s in clauses if s <= found)):found]
+            if not (check_negations and NEGATIONS.intersection(gap)) and place(index + 1, found + len(parts[index])):
+                return True
+            found = _position(text, parts[index], found + 1)
+        return False
+
+    return place(0, 0)
 
 
 def strip_markers(node):
@@ -168,9 +193,11 @@ def check(answer: dict, question: str, retrieved: list[str], standards: dict, pe
         cited_version, indexed = bare_version(constraint.get("version", "")), standards[standard]["version"]
         if cited_version != bare_version(indexed):
             problems.append(f"version: {standard} cited as v{cited_version}, the index has v{indexed}")
-        if not excerpt_found(constraint.get("excerpt", ""), standards[standard]["text"]):
-            problems.append(f"excerpt: the quote attributed to {standard} is not in the standard: "
-                            f"\"{str(constraint.get('excerpt', ''))[:80]}\"")
+        excerpt, source = constraint.get("excerpt", ""), standards[standard]["text"]
+        if not excerpt_found(excerpt, source):
+            why = ("leaves out a negation the standard has" if excerpt_found(excerpt, source, check_negations=False)
+                   else "is not in the standard")
+            problems.append(f"excerpt: the quote attributed to {standard} {why}: \"{str(excerpt)[:80]}\"")
     for option in answer.get("options", []):
         for standard in sorted(set(re.findall(STANDARD_ID, " ".join(option.get("standards", []))))):
             verify(standard, f"option '{str(option.get('name', ''))[:40]}'")
