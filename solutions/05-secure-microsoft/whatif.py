@@ -11,14 +11,18 @@ Two ways to run it
 
 What it does
   1. Checks the Bicep before compiling it. A pull request's Bicep is untrusted input: Bicep's load functions
-     (loadTextContent and the like), readEnvironmentVariable, externalInput, and module or import paths can read files on
-     the machine that compiles them, including the process environment. So the preview refuses a template that calls one
-     of those functions, references a registry module, or references a path outside solutions/05-secure-microsoft/infra/
-     and app/infra/. It checks every file the template reaches through module and import statements.
+     (loadTextContent and the like), readEnvironmentVariable, externalInput, extension statements, and module or import
+     paths can read files on the machine that compiles them, including the process environment. So the preview refuses
+     a template that names one of those functions anywhere (comments included), has a provider statement or an extension
+     statement other than an alias the default branch's app/infra/bicepconfig.json declares, references a registry
+     module or a path outside solutions/05-secure-microsoft/infra/ and app/infra/, or contains a carriage return outside
+     a line ending (Bicep ends a line, and a // comment, there). It checks every file the template reaches through module
+     and import statements. It restores only the extensions that trusted bicepconfig.json declares, then compiles with
+     --no-restore, so nothing the pull request names is fetched from a registry.
   2. Resolves the azd parameters file (infra/main.parameters.json) the way azd does: ${NAME} and ${NAME=default} come from
      environment variables first, then from the azd environment (`azd env get-values`). For a pull request, the
-     parameters file and bicepconfig.json come from the default branch, never from the pull request, and only the azd
-     names the template needs are substituted.
+     parameters file and bicepconfig.json come from the default branch, never from the pull request (any
+     bicepconfig.json in it is ignored), and only the azd names the template needs are substituted.
   3. Runs an Azure Resource Manager what-if of infra/resources.bicep against the resource group. Nothing is deployed.
      --validation-level ProviderNoRbac lets an identity that can read the resources and run deployment operations
      (Reader plus Policy Enrollments Contributor) preview a change it has no right to deploy.
@@ -30,8 +34,10 @@ What it does
 
 For a pull request it posts a sanitized summary as a comment (which resources would be created, modified, or left in
 place, and PASS or FAIL) and sets the commit status posture/what-if. It never posts raw what-if output, property values,
-or compiler messages. GUIDs and the random token in resource names (the 13 letters and digits in `st<token>`) appear as
-`…` everywhere. The GitHub token never reaches the processes that compile or preview the template.
+or compiler messages, and file and resource names from the pull request appear only in code spans they cannot end. GUIDs
+and the random token in resource names (the 13 letters and digits in `st<token>`) appear as `…` everywhere. The GitHub
+token never reaches the processes that compile or preview the template: it is dropped from their environment and erased
+from this process's initial environment block, which /proc/<pid>/environ would otherwise show them.
 
 Exit codes: 0 only expected changes (or none), 1 unexpected changes or a refused template, 2 configuration or Azure error.
 """
@@ -76,12 +82,31 @@ NOT_PREVIEWABLE = ("Deploy", "Unsupported")
 GUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
 NAME_TOKEN = re.compile(r"(?<![a-z0-9])[a-z0-9]{13}(?![a-z0-9])")
 # Functions that read files or the environment while the template compiles, and statements that pull in other files.
+# The exact names are refused anywhere, comments included and with or without a parenthesis after them (a comment can sit
+# between a function and its parenthesis); the broad pattern catches any load...( call in the code.
+COMPILE_TIME_READERS = re.compile(r"\b(loadTextContent|loadFileAsBase64|loadJsonContent|loadYamlContent|"
+                                  r"loadDirectoryFileInfo|readEnvironmentVariable|externalInput)\b", re.I)
 READS_AT_COMPILE_TIME = re.compile(r"\b(load[A-Za-z0-9_]*|readEnvironmentVariable|externalInput)\s*\(", re.I)
+# extension and provider statements load code from a registry. Only `extension <alias>` is allowed, for an alias the
+# default branch's app/infra/bicepconfig.json declares; quoted references, provider statements, and other aliases are not.
+EXTENSIONS = re.compile(r"^[ \t]*(extension|provider)\b([^\n]*)", re.I | re.M)
+TRUSTED_EXTENSION = re.compile(r"[ \t]+([A-Za-z_]\w*)(?:[ \t]+as[ \t]+[A-Za-z_]\w*)?[ \t]*\r?")
 REFERENCES = (
     re.compile(r"\bmodule\s+[A-Za-z_]\w*\s+'([^']*)'"),
     re.compile(r"\bfrom\s+'([^']*)'"),
     re.compile(r"\b(?:import|extension|using|extends)\s+'([^']*)'"),
 )
+
+
+def code(text: str, table: bool = False) -> str:
+    """Untrusted text (file and resource names from a pull request) as a Markdown code span that nothing in it can end:
+    the fence is longer than any run of backticks inside, line breaks become spaces, and in a table, pipes are escaped."""
+    text = re.sub(r"[\x00-\x1f\x7f\u2028\u2029]", " ", str(text))
+    if table:
+        text = text.replace("|", "\\|")
+    fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
 
 
 class Masker:
@@ -120,6 +145,25 @@ def child_environment() -> dict[str, str]:
     env = dict(os.environ)
     env.pop(TOKEN_VARIABLE, None)
     return env
+
+
+def erase_from_initial_environment(name: str) -> bool:
+    """Overwrite a variable's value in this process's initial environment block. os.environ.pop only stops children from
+    inheriting it: /proc/<pid>/environ keeps showing the block the process started with, and any child process, such as
+    a compiler reading a file the template names, can read it. Linux only; returns whether a value was erased."""
+    if not sys.platform.startswith("linux"):
+        return False
+    import ctypes  # noqa: PLC0415
+
+    environ = ctypes.POINTER(ctypes.c_void_p).in_dll(ctypes.CDLL(None), "environ")
+    prefix, erased, i = name.encode() + b"=", False, 0
+    while environ[i]:
+        entry = ctypes.string_at(environ[i])
+        if entry.startswith(prefix) and len(entry) > len(prefix):
+            ctypes.memset(environ[i] + len(prefix), 0, len(entry) - len(prefix))
+            erased = True
+        i += 1
+    return erased
 
 
 def az(*args: str) -> str:
@@ -167,8 +211,9 @@ def without_comments(text: str) -> str:
             in_string = True
             i += 1
         elif text.startswith("//", i):
-            end = text.find("\n", i)
-            end = n if end < 0 else end
+            # Bicep ends a line, and so a // comment, at \n or \r (Lexer.IsNewLine).
+            ends = [e for e in (text.find("\n", i), text.find("\r", i)) if e >= 0]
+            end = min(ends) if ends else n
             out[i:end] = " " * (end - i)
             i = end
         elif text.startswith("/*", i):
@@ -196,6 +241,7 @@ def check_templates(root: Path, entry: Path) -> list[str]:
     from the entry template; every file it reaches must stay inside the solution's infra/ or app/infra/."""
     root = root.resolve()
     allowed = [(root / SOLUTION_INFRA).resolve(), (root / APP_INFRA).resolve()]
+    aliases = set(trusted_extensions(root))
     problems: list[str] = []
     seen: set[Path] = set()
     queue = [entry.resolve()]
@@ -205,19 +251,33 @@ def check_templates(root: Path, entry: Path) -> list[str]:
             continue
         seen.add(path)
         shown = path.relative_to(root).as_posix()
-        text = path.read_text(encoding="utf-8", errors="replace")
+        # Exactly what the compiler reads: text mode would turn a bare \r into \n and hide what Bicep sees.
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        if re.search(r"\r(?!\n)", text):
+            problems.append(f"{code(shown)}: contains a carriage return outside a line ending, which Bicep reads as a "
+                            "line break")
+            continue
         if path.suffix.lower() == ".json":
             if re.search(r"templateLink|relativePath", text, re.I):
-                problems.append(f"{shown}: a JSON template that links another template")
+                problems.append(f"{code(shown)}: a JSON template that links another template")
             continue
-        # Load functions are refused even in comments (fail closed); references are read from the code only.
-        for match in READS_AT_COMPILE_TIME.finditer(text):
-            problems.append(f"{shown}:{line_of(text, match.start())}: calls {match[1]}(), which reads files or the "
+        # Functions that read at compile time are refused even in comments (fail closed); references are read from the
+        # code only.
+        code_only = without_comments(text)
+        found = {(m.start(), m[1]) for m in COMPILE_TIME_READERS.finditer(text)}
+        found |= {(m.start(), m[1]) for m in READS_AT_COMPILE_TIME.finditer(code_only)}
+        for start, name in sorted(found):
+            problems.append(f"{code(f'{shown}:{line_of(text, start)}')}: uses {name}, which reads files or the "
                             "environment while the template compiles")
-        code = without_comments(text)
+        for match in EXTENSIONS.finditer(code_only):
+            trusted = TRUSTED_EXTENSION.fullmatch(match[2]) if match[1] == "extension" else None
+            if not trusted or trusted[1] not in aliases:
+                problems.append(f"{code(f'{shown}:{line_of(code_only, match.start())}')}: an {match[1]} statement other "
+                                f"than `extension <alias>` for an alias in {APP_INFRA}/bicepconfig.json; it could load "
+                                "code from a registry")
         for pattern in REFERENCES:
-            for match in pattern.finditer(code):
-                reference, where = match[1], f"{shown}:{line_of(code, match.start())}"
+            for match in pattern.finditer(code_only):
+                reference, where = match[1], code(f"{shown}:{line_of(code_only, match.start())}")
                 if not reference or ":" in reference or "\\" in reference:
                     problems.append(f"{where}: references a registry module or an absolute path; only relative paths in "
                                     "this repository are previewed")
@@ -231,6 +291,28 @@ def check_templates(root: Path, entry: Path) -> list[str]:
                     continue
                 queue.append(target)
     return problems
+
+
+def trusted_extensions(root: Path) -> dict[str, str]:
+    """Extension aliases in app/infra/bicepconfig.json: the default branch's copy for a pull request, never its own."""
+    try:
+        config = json.loads((root / APP_INFRA / "bicepconfig.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {k: v for k, v in (config.get("extensions") or {}).items() if re.fullmatch(r"[A-Za-z_]\w*", k)}
+
+
+def restore_trusted_extensions(root: Path) -> None:
+    """Restore the extensions the trusted bicepconfig.json declares, from a stub written here, so the template itself is
+    compiled with --no-restore: nothing a pull request names is ever fetched from a registry."""
+    aliases = trusted_extensions(root)
+    if not aliases:
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        shutil.copyfile(root / APP_INFRA / "bicepconfig.json", folder / "bicepconfig.json")
+        (folder / "restore.bicep").write_text("".join(f"extension {alias}\n" for alias in aliases), encoding="utf-8")
+        az("bicep", "restore", "--file", str(folder / "restore.bicep"))
 
 
 # ---------- Parameters ----------
@@ -378,7 +460,7 @@ def left_in_place(head: dict[str, dict], base: dict[str, dict] | None) -> list[s
     delete, so they stay until someone removes them."""
     if base is None:
         return []
-    return sorted(f"`{resource_type(c['id'])}` `{c['id'].rstrip('/').split('/')[-1]}`" for key, c in base.items()
+    return sorted(f"{code(resource_type(c['id']))} {code(c['id'].rstrip('/').split('/')[-1])}" for key, c in base.items()
                   if c["kind"] in ("NoChange", "Modify") and head.get(key, {}).get("kind") == "Ignore")
 
 
@@ -395,10 +477,13 @@ def describe(path: str, change: tuple[str, str, str]) -> str:
 
 
 def preview(template: Path, parameters_file: Path, resource_group: str, expect: list[str], baseline_deployment: str,
-            project: Path | None, only: set[str] | None = None) -> dict:
-    """Compile, preview, and classify. Raises CompileError when the template does not compile."""
+            project: Path | None, only: set[str] | None = None, root: Path | None = None) -> dict:
+    """Compile, preview, and classify. Raises CompileError when the template does not compile. `root` is the repository
+    (or pull request sandbox) whose app/infra/bicepconfig.json names the extensions to restore before compiling."""
+    if root is not None:
+        restore_trusted_extensions(root)
     try:
-        compiled = json.loads(az("bicep", "build", "--file", str(template), "--stdout"))
+        compiled = json.loads(az("bicep", "build", "--file", str(template), "--stdout", "--no-restore"))
     except (ConfigError, json.JSONDecodeError) as exc:
         raise CompileError(str(exc)) from None
     parameters = resolve_parameters(parameters_file, set(compiled.get("parameters", {})), project, only)
@@ -434,7 +519,7 @@ def summary(outcome: dict, expect: list[str], resource_group: str, intro: str, d
         lines += ["| Change | Resource type | Resource | |", "| --- | --- | --- | --- |"]
         for c in outcome["changes"]:
             properties = f" ({len(c['leaves'])} propert{'y' if len(c['leaves']) == 1 else 'ies'})" if c["kind"] == "Modify" else ""
-            lines.append(f"| {c['kind']}{properties} | `{c['type']}` | `{c['name']}` | "
+            lines.append(f"| {c['kind']}{properties} | {code(c['type'], table=True)} | {code(c['name'], table=True)} | "
                          f"{'✅ expected' if c['expected'] else '⚠️ unexpected'} |")
             if details:
                 lines += [f"  - {describe(p, v)}" for p, v in sorted(c["leaves"].items())]
@@ -450,7 +535,7 @@ def summary(outcome: dict, expect: list[str], resource_group: str, intro: str, d
                      "this change, so they are not counted." if outcome["baseline"] else "Only properties the template "
                      "sets are counted."))
     if outcome["previewless"]:
-        lines.append(f"- Not previewable by what-if: {', '.join(outcome['previewless'])}.")
+        lines.append(f"- Not previewable by what-if: {', '.join(code(t) for t in outcome['previewless'])}.")
     lines += ["", f"**PASS**: every change is an expected resource type ({', '.join(expect) or 'none expected'})."
               if not outcome["unexpected"] else f"**FAIL**: {len(outcome['unexpected'])} unexpected change(s); expected "
               f"only {', '.join(expect) or 'no changes'}."]
@@ -493,6 +578,9 @@ def fetch_templates(github: GitHub, sha: str, sandbox: Path) -> None:
         path = item["path"]
         if item["type"] != "blob" or item.get("mode") not in ("100644", "100755") or path in TRUSTED_FROM_MAIN:
             continue
+        # Bicep reads the bicepconfig.json nearest the template (registry aliases, experimental features): only main's.
+        if PurePosixPath(path).name.lower() == "bicepconfig.json":
+            continue
         if not path.startswith((f"{SOLUTION_INFRA}/", f"{APP_INFRA}/")) or not path.lower().endswith((".bicep", ".json")):
             continue
         parts = PurePosixPath(path).parts
@@ -525,8 +613,14 @@ def sign_in() -> None:
 
 
 def preview_pull_request(number: int, expect: list[str], baseline_deployment: str) -> int:
-    # Read the token once and drop it from the environment, so no child process inherits it.
-    token = os.environ.pop(TOKEN_VARIABLE, "")
+    # Read the token once, erase it from the process's initial environment block, and drop it from the environment, so
+    # no child process can inherit or read it.
+    token = os.environ.get(TOKEN_VARIABLE, "")
+    erased = erase_from_initial_environment(TOKEN_VARIABLE)
+    os.environ.pop(TOKEN_VARIABLE, None)
+    if sys.platform.startswith("linux") and token and not erased:
+        print("error: the GitHub token could not be erased from the process environment; refusing to compile", file=sys.stderr)
+        return 2
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     resource_group = os.environ.get("AZURE_RESOURCE_GROUP", "")
     if not token or token == "not-set" or not repository or not resource_group:
@@ -563,7 +657,7 @@ def report_pull_request(github: GitHub, number: int, sha: str, status, expect: l
         uncovered = [p.removeprefix("solutions/05-secure-microsoft/") for p in changed if p != ENTRY]
         intro = (f"`{ENTRY}` at `{sha[:7]}`, compared with what is deployed now. Previewed in Azure by the `posture-whatif` "
                  "Container Apps job; nothing was deployed."
-                 + (f" Other changed files this preview does not cover: {', '.join(f'`{p}`' for p in uncovered)}."
+                 + (f" Other changed files this preview does not cover: {', '.join(code(p) for p in uncovered)}."
                     if uncovered else ""))
         with tempfile.TemporaryDirectory() as tmp:
             sandbox = Path(tmp)
@@ -584,7 +678,7 @@ def report_pull_request(github: GitHub, number: int, sha: str, status, expect: l
                 return 1
             sign_in()
             outcome = preview(entry, sandbox.joinpath(*PurePosixPath(PARAMETERS).parts), resource_group, expect,
-                              baseline_deployment, None, only=PR_PARAMETER_NAMES)
+                              baseline_deployment, None, only=PR_PARAMETER_NAMES, root=sandbox)
     except CompileError as exc:
         print(f"compile error (kept out of the pull request): {mask(str(exc))}", file=sys.stderr)
         post_comment(github, number, f"### Azure what-if preview · `{resource_group}`\n\n**FAIL**: the pull request's Bicep "
@@ -631,7 +725,7 @@ def preview_checkout(args: argparse.Namespace, expect: list[str]) -> int:
         if not resource_group:
             raise ConfigError("no resource group: pass --resource-group, export AZURE_RESOURCE_GROUP, or run `azd provision` first")
         outcome = preview(template, args.parameters or template.parent / "main.parameters.json", resource_group, expect,
-                          args.baseline_deployment, project)
+                          args.baseline_deployment, project, root=root)
     except CompileError as exc:
         print(f"error: the template did not compile: {mask(str(exc))}", file=sys.stderr)
         return 2
