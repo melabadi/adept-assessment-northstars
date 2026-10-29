@@ -5,9 +5,9 @@ which logs matter. Once the fire is out, someone writes the incident record from
 Monitor alert on RequestHub's notification backlog goes straight to **Azure SRE Agent**. Within minutes the agent
 measures the backlog, correlates it with the worker's telemetry and a recent configuration change, rules out other
 causes, and proposes one scoped, reversible mitigation. A person approves it, and it runs with that person's
-permissions because the agent itself can only read. The agent then verifies the recovery and files the incident record
-as a GitHub Issue, after a person has read it. Everything that does the work runs in Azure: the alert, the agent, its
-configuration, and its guardrails. GitHub holds the code and the Issue.
+permissions because the agent itself has no right to change the app. The agent then verifies the recovery and files
+the incident record as a GitHub Issue, after a person has read it. Everything that does the work runs in Azure: the
+alert, the agent, its configuration, and its guardrails. GitHub holds the code and the Issue.
 
 ![Azure SRE Agent's report on the incident: impact, UTC timeline, confirmed facts, hypotheses with confidence, the probable root cause, and the smallest reversible mitigation, followed by the card that holds the exact command for approval](images/00-hero.png)
 
@@ -54,17 +54,22 @@ sequenceDiagram
   worker's revisions on one page.
 - **Azure SRE Agent** manages this resource group only, and receives its Azure Monitor alerts. A response plan sends
   the backlog alert to the custom agent `notification-backlog-responder` in **Review** mode. The agent's identities
-  have Reader, Monitoring Reader, and Log Analytics Reader on the resource group, nothing more. Its tool policy lets
-  it read freely, asks a person before any Azure CLI write and before any GitHub Issue, and denies deletes, changes to
+  have Reader, Monitoring Reader, and Log Analytics Reader on the resource group. Because Azure Monitor is its incident
+  platform, the platform also gives one of them **Monitoring Contributor on the subscription**, which it needs to
+  acknowledge and close alerts
+  ([Learn](https://learn.microsoft.com/azure/sre-agent/diagnose-azure-observability)); that role covers alerts, alert
+  rules, action groups, and diagnostic settings, not the app. Its tool policy lets it read freely, asks a person
+  before any Azure CLI write and before any GitHub Issue, and denies every `az monitor` write, deletes, changes to
   identities, roles, networking, Key Vault, and PostgreSQL, pull requests, and workflow runs. A Stop hook makes it
   show timestamps, facts versus hypotheses, and a rollback before it finishes.
 - **The guard hook** ([`hooks/no-identifiers.py`](sre-agent/hooks/no-identifiers.py)) runs before every call to a
   GitHub Issue tool, ahead of the tool policy. It reads every key and string of the call, as written and with hidden
-  characters, HTML, and URL escapes undone, and blocks the call if it finds a GUID or trace id, an Azure host name or
-  resource id, an e-mail address, or a resource name with its random suffix. Otherwise it asks for a person itself, so
-  every Issue waits for **Allow once** whatever the tool policy or run mode says. It is deterministic (regular
-  expressions, no model), never allows a call on its own, blocks pull request and workflow tools, and fails closed:
-  unreadable input is blocked, and if the script fails, nothing is posted.
+  characters, HTML, Markdown markers, and URL escapes undone, and blocks the call if it finds a GUID or trace id, an
+  Azure host name or resource id, an e-mail address, or a resource name with its random suffix. Otherwise it asks for
+  a person itself, so every Issue waits for **Allow once** whatever the tool policy or run mode says. It is
+  deterministic (regular expressions, no model), never allows a call on its own, blocks pull request and workflow
+  tools, and fails closed: unreadable or oversized input is blocked, and if the script fails, nothing is posted. No
+  pattern catches every disguise, which is why a person still reads each Issue.
 - **GitHub** stores the Issue. The agent reaches it through its GitHub connection, which a person sets up once with a
   fine-grained token that can only read and write Issues in this repository. The agent cannot read code, open pull
   requests, or run workflows.
@@ -156,7 +161,9 @@ record. `azd up` creates resource group `rg-ai-sdlc-operate` and fills it as fol
   seconds) and the workbook *RequestHub notification worker*.
 - **Azure SRE Agent** `sre-ai-sdlc-operate`: Reader-level access to this resource group, Review mode, Azure Monitor as
   its incident platform, connectors to the app's Application Insights and Log Analytics, and its own Application
-  Insights for its activity. You get the **SRE Agent Administrator** role.
+  Insights for its activity. You get the **SRE Agent Administrator** role. The platform itself adds one role that
+  isn't in the Bicep: Monitoring Contributor on the subscription for the agent's identity, to acknowledge and close
+  alerts. The tool policy denies `az monitor` writes, and [Reset and clean up](#reset-and-clean-up) removes the role.
 - **The agent's configuration**, applied by the `postprovision` hook: the runbook, three skills, the custom agent with
   its Stop hook, the guard hook, the tool policy, and the response plan. The default quickstart plan is removed so the
   alert is not investigated twice.
@@ -277,11 +284,13 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
 
    ![sre-agent/agent.yaml: the GitHub section with the Issue tool patterns, the pull request and workflow patterns it denies, and the guard hook that fails closed; then the tool policy that allows reads, asks before Azure CLI writes, and denies deletes and role, identity, PostgreSQL, network, Key Vault, and Microsoft Entra commands](images/01-agent-yaml.png)
 
-   In the Azure portal, the resource group's **Access control (IAM)** shows that the agent's identities only have
-   reader roles.
+   In the Azure portal, the resource group's **Access control (IAM)** shows the agent's identities with reader roles.
+   The subscription's **Access control (IAM)** shows one more: Monitoring Contributor, which the platform added so the
+   agent can acknowledge and close alerts. The tool policy denies every `az monitor` write, so the agent can't use it
+   for anything else.
 
-   **Point out:** the agent can read everything it needs and change nothing on its own. Every write, to Azure or to
-   GitHub, waits for a person, and the riskiest commands are denied outright.
+   **Point out:** the agent can read everything it needs and has no right to change the app. Every write, to Azure or
+   to GitHub, waits for a person, and the riskiest commands are denied outright.
 
 2. **Start the incident** (1 to 2 minutes):
 
@@ -337,9 +346,9 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
 
    ![The end of the report and the approval card: the exact az containerapp update command that removes the two fault settings, with Allow once and Cancel](images/05-approval.png)
 
-   Select **Allow once**. The agent's identity can only read, so its own attempt fails with an authorization error, by
-   design, and a second card asks to run the command with your credentials (on-behalf-of). Select **Grant
-   permissions**.
+   Select **Allow once**. The agent's identities have no right to change the worker, so its own attempt fails with an
+   authorization error, by design, and a second card asks to run the command with your credentials (on-behalf-of).
+   Select **Grant permissions**.
 
    ![The approval marked Approved, then Authorization required: the agent's managed identity received an authorization error, and Grant permissions re-runs the command with your credentials](images/05-authorize.png)
 
@@ -349,7 +358,7 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    the buttons are **Approve**, **Deny**, and **Authorize**.
 
    **Point out:** a person makes two decisions: approving this exact command, and lending it their permissions. The
-   agent never holds write access.
+   agent holds no right to change the app.
 
 6. **Watch it recover** (6 minutes). Within about a minute and a half of the change the backlog drains. In the thread,
    the agent checks fresh telemetry from the new revision before it calls anything recovered.
@@ -386,9 +395,10 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
 - **Correlation, not guesswork.** The agent tied four kinds of evidence together: the backlog metric, the worker's own
   report (`workerDelayFaultActive=True`), delivery spans (10 seconds each instead of under a millisecond), and the
   revision that added the setting. It named what it could not prove, such as how much the burst of requests added.
-- **Least privilege that holds.** The agent could not change the worker even after approval: its identity only reads.
-  The change ran as the approving administrator, scoped to two settings on one container app. Its GitHub token can
-  only touch Issues in one repository.
+- **Least privilege that holds.** The agent could not change the worker even after approval: its identities read the
+  resource group, and their one write role, Monitoring Contributor for alert handling, doesn't cover the app. The
+  change ran as the approving administrator, scoped to two settings on one container app. Its GitHub token can only
+  touch Issues in one repository.
 - **Careful when something fails.** In one run the first approved command failed because it did not name its
   subscription and the approver's default subscription was another one. The agent did not retry blindly: it read the
   fault settings again and asked for approval once more. The command now always names its subscription.
@@ -399,8 +409,9 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
 - **An honest weak spot.** The worker publishes its backlog only between batches, so a slow worker delays its own
   alert by a few minutes. It is a good follow-up: measure the queue independently of the worker.
 - **Agent configuration is code.** A change that set the response plan to Autonomous, allowed writes without approval,
-  let the guard hook fail open, let a clean Issue through without a person, or stopped it from blocking an identifier,
-  hidden or not, fails `python configure_sre_agent.py --check` before it reaches the agent.
+  allowed `az monitor` writes, let the guard hook fail open, let a clean Issue through without a person, or stopped it
+  from blocking an identifier in any of the forms it tests fails `python configure_sre_agent.py --check` before it
+  reaches the agent.
 
 ## Reset and clean up
 
@@ -420,16 +431,19 @@ then in the SRE Agent portal select the repository under **Build + setup**, **Co
 **Delete**. Then run from this folder:
 
 ```powershell
+$sre = (az identity list -g rg-ai-sdlc-operate -o json | ConvertFrom-Json | Where-Object name -like 'id-sre-*').principalId
+az role assignment delete --assignee $sre --role "Monitoring Contributor" --scope "/subscriptions/$(azd env get-value AZURE_SUBSCRIPTION_ID)"
 $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
 azd down --purge
 az ad app delete --id $app
 az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
 ```
 
-`azd down` deletes the resource group, including the agent, which stops its charges. RequestHub's sign-in app
-registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it and
-`az rest` empties it from the recycle bin. Without that last step, a new `azd up` with the same environment name can't
-create the app registration again for 30 days.
+The first two lines remove the Monitoring Contributor role the platform gave the agent's identity on the
+subscription; `azd down` leaves it, because it isn't in the resource group. `azd down` deletes the resource group,
+including the agent, which stops its charges. RequestHub's sign-in app registration is a Microsoft Entra object, which
+no resource group contains, so `az ad app delete` removes it and `az rest` empties it from the recycle bin. Without
+that last step, a new `azd up` with the same environment name can't create the app registration again for 30 days.
 
 ## Use it in your own repository
 
@@ -438,7 +452,9 @@ create the app registration again for 30 days.
    any custom metric your app sends through OpenTelemetry, works the same way. Adapt the readiness rows in
    [`infra/workbook.json`](infra/workbook.json).
 3. Grant the agent read access to your resource group only, as [`infra/sre-agent.bicep`](infra/sre-agent.bicep) does,
-   and keep the response plan in Review mode until you trust its proposals.
+   and keep the response plan in Review mode until you trust its proposals. With Azure Monitor as the incident
+   platform, the agent also gets Monitoring Contributor on the subscription; keep `az monitor` writes denied in its
+   tool policy.
 4. Rewrite [`sre-agent/`](sre-agent/) for your service: the scope and the only changes it may propose
    (`instructions.md`), your KQL (`skills/`), your runbook (`knowledge/`), your incident record template
    (`skills/file-incident-record.md`), and the alert's severity and title (`agent.yaml`). Name the subscription in
@@ -454,8 +470,9 @@ create the app registration again for 30 days.
 - **The workbook shows the database `Stopped`, or `incident.py start` cannot read the backlog.** A governance
   automation in some subscriptions stops PostgreSQL servers overnight. Start it with the command in
   [Before each session](#before-each-session), wait about 3 minutes, then a minute more for the API to reconnect.
-- **The agent says it got an authorization error after you approved.** That is the design: its identity can only
-  read. Select **Grant permissions** on the next card to run the command with your permissions, or run it yourself.
+- **The agent says it got an authorization error after you approved.** That is the design: its identities have no
+  right to change the worker. Select **Grant permissions** on the next card to run the command with your permissions,
+  or run it yourself.
 - **Grant permissions does not respond.** Reload the thread and select it again. If nothing happens, select **Cancel**
   on that card and run the command from the agent's report yourself; the workbook's worker fault row turns **None**.
 - **After Grant permissions, the run fails with "containerapp does not exist".** The command did not name its

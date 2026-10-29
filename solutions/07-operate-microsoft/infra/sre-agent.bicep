@@ -1,8 +1,12 @@
 // Azure SRE Agent for this solution. It watches this resource group only, receives Azure Monitor alerts from it, and
-// can read (not change) its resources and telemetry. Write actions need an SRE Agent Administrator's approval and run
-// with that person's own Azure permissions (on-behalf-of). ARM deploys the agent and its telemetry connectors; the
-// postprovision hook (configure_sre_agent.py) then applies the custom agent, skills, runbook, response plan, tool
-// policy, and hooks through the agent's own API, because ARM accepts no other agent sub-resources in every tenant.
+// can read its resources and telemetry. This template grants only reader roles on the resource group. When Azure
+// Monitor is the incident platform, the platform also gives the agent's user-assigned identity Monitoring Contributor
+// on the subscription, to acknowledge and close alerts; that role covers alerts, alert rules, action groups, and
+// diagnostic settings, not the app, so the tool policy denies every az monitor write. Other write actions need an SRE
+// Agent Administrator's approval and run with that person's own Azure permissions (on-behalf-of). ARM deploys the agent
+// and its telemetry connectors; the postprovision hook (configure_sre_agent.py) then applies the custom agent, skills,
+// runbook, response plan, tool policy, and hooks through the agent's own API, because ARM accepts no other agent
+// sub-resources in every tenant.
 @description('Name of the SRE Agent. Unique in the subscription: letters, digits, and hyphens, 2 to 32 characters.')
 @minLength(2)
 @maxLength(32)
@@ -38,7 +42,8 @@ var roles = {
   logAnalyticsReader: '73c42c96-874c-492b-b04d-ab87d138a893'
   sreAgentAdministrator: 'e79298df-d852-4c6d-84f9-5d13249d1e55'
 }
-// Read-only access to this resource group: resources, metrics, alerts, and logs. Nothing that can change them.
+// Read-only access to this resource group: resources, metrics, alerts, and logs. Nothing that can change them. (The
+// platform adds Monitoring Contributor on the subscription for alert handling; see the header.)
 var readRoles = [roles.reader, roles.monitoringReader, roles.logAnalyticsReader]
 
 resource workloadAppInsights 'Microsoft.Insights/components@2020-02-02' existing = {

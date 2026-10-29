@@ -68,6 +68,7 @@ PLACEHOLDERS = (
     "BACKLOG_ALERT_THRESHOLD_SECONDS",
     "GITHUB_REPOSITORY",
     "RESOURCE_SUFFIXES",
+    "GITHUB_DENIED_TOOLS",
 )
 PLACEHOLDER = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
@@ -170,12 +171,12 @@ def run_guard(script: str, stdin: str) -> tuple[str, str]:
     return "error", f"unexpected output: {out[:200]}"
 
 
-def guard_problems(script: str) -> list[str]:
+def guard_problems(script: str, deny_patterns: list[str]) -> list[str]:
     """Tests the guard hook. A clean incident record must wait for a person (ask). Every kind of identifier, hidden or
-    not, every pull request or workflow tool, and every malformed call must be blocked. Nothing may come back as allow
-    or as no objection, and nothing may fail open."""
+    not, every denied tool, and every malformed or oversized call must be blocked. Nothing may come back as allow or
+    as no objection, nothing may fail open, and long input must be decided quickly."""
     suffix = "q1w2e3r4t5y6u"
-    script = script.replace("{{RESOURCE_SUFFIXES}}", suffix)
+    script = script.replace("{{RESOURCE_SUFFIXES}}", suffix).replace("{{GITHUB_DENIED_TOOLS}}", glob_regex(deny_patterns))
     clean = {
         "owner": "contoso", "repo": "requesthub", "labels": ["ai-sdlc", "phase:operate"],
         "title": "Incident record: notification backlog, 2026-10-29",
@@ -204,6 +205,12 @@ def guard_problems(script: str) -> list[str]:
         "a name with an HTML entity": "worker ca-worker-z9y8&#120;7w6v5u4t",
         "a host name with a zero-width space": "https://ca-api.example.centralus.azure\u200bcontainerapps.io",
         "an e-mail address with a URL escape": "approved by someone%40example.com",
+        "a name split by an empty HTML tag": "worker ca-worker-z9y8x7<b></b>w6v5u4t",
+        "a name split by Markdown bold": "worker ca-worker-z9y8x7**w6v5u4t",
+        "a name split by Markdown code": "worker ca-worker-z9y8x7`w6v5u4t",
+        "a name split by Markdown strikethrough": "worker ca-worker-z9y8x7~~w6v5u4t",
+        "a name split by an underscore": "worker ca-worker-z9y8x7_w6v5u4t",
+        "a GUID split by Markdown bold": "thread 12345678**-1234-1234-1234-123456789abc",
     }
     cases: list[tuple[str, str, str]] = [  # (what, stdin, expected verdict)
         ("a clean incident record", call(clean), "ask"),
@@ -212,6 +219,8 @@ def guard_problems(script: str) -> list[str]:
     for kind, leak in leaks.items():
         cases.append((f"{kind} in the body", call({**clean, "body": clean["body"] + " " + leak}), "block"))
         cases.append((f"{kind} in the title, sent as a JSON string", call(json.dumps({**clean, "title": leak})), "block"))
+    cases += [(f"the denied tool {p.replace('*', 'Issue')}", call(clean, p.replace("*", "Issue")), "block")
+              for p in deny_patterns]
     cases += [
         ("a GUID as a key", call({**clean, "fields": {"12345678-1234-1234-1234-123456789abc": "x"}}), "block"),
         ("a pull request tool", call(clean, "LinkGitHubPullRequestToIssue"), "block"),
@@ -221,6 +230,7 @@ def guard_problems(script: str) -> list[str]:
         ("a call whose tool_input is a number", call(42), "block"),
         ("input that is not JSON", "not json", "block"),
         ("empty input", "", "block"),
+        ("text longer than 65,536 characters", call({**clean, "body": "a" * 70_000}), "block"),
     ]
     problems = []
     for what, stdin, expected in cases:
@@ -228,6 +238,15 @@ def guard_problems(script: str) -> list[str]:
         if verdict != expected:
             problems.append(f"guard hook must {'ask a person for' if expected == 'ask' else 'block'} {what}, got "
                             f"{verdict}" + (f" ({detail})" if detail else ""))
+    # The agent gives a hook 30 seconds; a slow scan would time out and block every Issue. 60,000 characters with
+    # long unbroken runs must be decided in a few seconds.
+    for what, body in (("60,000 unbroken letters", "a" * 60_000), ("60,000 characters of a.b.", "a." * 30_000),
+                       ("60,000 characters of a-b-", "a-" * 30_000), ("60,000 characters of <!--", "<!--" * 15_000)):
+        started = time.monotonic()
+        verdict, detail = run_guard(script, call({**clean, "body": body}))
+        elapsed = time.monotonic() - started
+        if elapsed > 5 or verdict not in ("ask", "block"):
+            problems.append(f"guard hook must decide {what} in under 5 seconds, took {elapsed:.1f} s ({verdict})")
     return problems
 
 
@@ -267,6 +286,9 @@ def check(config: Config) -> list[str]:
     problems += [f"custom agent tool {t} is denied by the tool policy" for t in agent.get("tools", []) if t in deny]
     if not any("delete" in rule for rule in deny):
         problems.append("tool policy must deny delete commands")
+    if "RunAzCliWriteCommands(az monitor *)" not in deny:
+        problems.append("tool policy must deny az monitor writes: the platform gives the agent's identity Monitoring "
+                        "Contributor on the whole subscription, so an approved az monitor command would run with it")
 
     github = config.github
     issue_tools, github_deny, guard = github.get("issueTools") or [], github.get("deny") or [], github.get("guardHook") or {}
@@ -284,12 +306,14 @@ def check(config: Config) -> list[str]:
         problems.append("the guard hook must use failMode block: if it cannot run, nothing reaches GitHub")
     if not NAME.match(str(guard.get("name", ""))):
         problems.append("the guard hook needs a name of lowercase letters, digits, and hyphens")
+    problems += [f"github pattern '{p}' may use only letters, digits, '_', '-', and '*'"
+                 for p in issue_tools + github_deny if not re.fullmatch(r"[A-Za-z0-9_*-]+", p)]
     if issue_tools:
         matcher = re.compile(f"^({glob_regex(issue_tools)})$")
         problems += [f"the guard hook's matcher must match {t}" for t in GITHUB_ISSUE_SAMPLES if not matcher.match(t)]
         # The approved Azure CLI command carries a GUID and suffixed names; the guard must never see it.
         problems += [f"the guard hook's matcher must not match {t}" for t in sorted(used | WRITE_TOOLS) if matcher.match(t)]
-    problems += guard_problems(config.guard_script)
+    problems += guard_problems(config.guard_script, github_deny)
     return problems
 
 
@@ -450,7 +474,8 @@ def apply(config: Config, dry_run: bool) -> int:
     agent, plan, github = config.agent, config.plan, config.github
     issue_patterns, deny_patterns = list(github["issueTools"]), list(github.get("deny", []))
     if dry_run:
-        extra = {"GITHUB_REPOSITORY": github_repository(), "RESOURCE_SUFFIXES": "<read from the agent when applied>"}
+        extra = {"GITHUB_REPOSITORY": github_repository(), "RESOURCE_SUFFIXES": "<read from the agent when applied>",
+                 "GITHUB_DENIED_TOOLS": glob_regex(deny_patterns)}
         bodies = build(config, extra, ["<GitHub Issue tools from the agent's tool catalog>"],
                        ["<GitHub pull request and workflow tools from the agent's tool catalog>"])
         bodies["knowledge"] = list(bodies["knowledge"])
@@ -463,7 +488,8 @@ def apply(config: Config, dry_run: bool) -> int:
     print(f"SRE Agent {setting('SRE_AGENT_NAME')} in {setting('AZURE_RESOURCE_GROUP')}")
     resource = agent_resource(client, agent_id)
     endpoint = resource["properties"]["agentEndpoint"].rstrip("/")
-    extra = {"GITHUB_REPOSITORY": github_repository(), "RESOURCE_SUFFIXES": resource_suffixes(resource)}
+    extra = {"GITHUB_REPOSITORY": github_repository(), "RESOURCE_SUFFIXES": resource_suffixes(resource),
+             "GITHUB_DENIED_TOOLS": glob_regex(deny_patterns)}
     failures: list[str] = []
 
     def put(kind: str, name: str, body: dict, attempts: int = 3) -> None:

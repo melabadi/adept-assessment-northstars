@@ -86,6 +86,7 @@ toolPolicy:
     - RunAzCliWriteCommands
   deny:
     - RunAzCliWriteCommands(az * delete *)
+    - RunAzCliWriteCommands(az monitor *)   # the platform gives the agent Monitoring Contributor on the subscription
     - RunAzCliWriteCommands(az role *)
     - RunAzCliWriteCommands(az identity *)
     - RunAzCliWriteCommands(az postgres *)
