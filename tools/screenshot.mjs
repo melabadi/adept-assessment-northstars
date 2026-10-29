@@ -163,16 +163,31 @@ const redactionFile = process.env.SCREENSHOT_REDACTIONS
 if (!existsSync(redactionFile)) fail(2, `No redaction list at ${redactionFile}. Create it with: python tools/redact.py init`);
 const GENERIC_NAMES = new Set(['contoso', 'fabrikam', 'default directory', 'microsoft', 'demo subscription', 'you', 'admin',
   'administrator', 'mod administrator', 'global administrator', 'user', 'demo']);
+// Azure region names and regional endpoint labels ("eastus2-0", "prod-27") identify nothing. Same list as redact.py.
+const AZURE_REGIONS = new Set(`asia asiapacific australia australiacentral australiacentral2 australiaeast australiasoutheast
+  austria austriaeast belgium belgiumcentral brazil brazilsouth brazilsoutheast canada canadacentral canadaeast centralindia
+  centralus centraluseuap centralusstage chile chilecentral denmark denmarkeast eastasia eastasiastage eastus eastus2
+  eastus2euap eastus2stage eastusstage eastusstg europe finland france francecentral francesouth germany germanynorth
+  germanywestcentral global india indiasouthcentral indonesia indonesiacentral israel israelcentral italy italynorth japan
+  japaneast japanwest jioindiacentral jioindiawest korea koreacentral koreasouth malaysia malaysiawest mexico mexicocentral
+  newzealand newzealandnorth northcentralus northcentralusstage northeurope norway norwayeast norwaywest poland
+  polandcentral qatar qatarcentral saudiarabia singapore southafrica southafricanorth southafricawest southcentralus
+  southcentralusstage southcentralusstg southeastasia southeastasiastage southindia spain spaincentral sweden swedencentral
+  switzerland switzerlandnorth switzerlandwest taiwan uae uaecentral uaenorth uk uksouth ukwest unitedstates
+  unitedstateseuap westcentralus westeurope westindia westus westus2 westus2stage westus3 westusstage`.split(/\s+/).filter(Boolean));
 const meaningful = (v) => {
   const s = String(v ?? '').trim().toLowerCase();
-  return s.length >= 4 && !GENERIC_NAMES.has(s) && !/^[0-]+$/.test(s) && !/^(.)\1{7}-/.test(s);
+  const regional = /^prod-\d+$/.test(s) || AZURE_REGIONS.has(s.replace(/-\d+$/, ''));
+  return s.length >= 4 && !GENERIC_NAMES.has(s) && !regional && !/^[0-]+$/.test(s) && !/^(.)\1{7}-/.test(s);
 };
 const items = JSON.parse(readFileSync(redactionFile, 'utf8')).items.filter((i) => meaningful(i.value));
 const maskGuids = !options['keep-guids'];
 
 // Pure text masking, shared by Node (terminal mode) and the browser. Must stay self-contained: it is serialized.
-function makeFix(items, maskGuids) {
+function makeFix(items, maskGuids, regions = []) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regionSet = new Set(regions);
+  const regional = (s) => /^prod-\d+$/.test(s) || regionSet.has(s.replace(/-\d+$/, ''));
   // Pages truncate long names ("ME-contoso-youralias…"), so identifying values also match by their prefixes.
   const PREFIX_KINDS = new Set(['windows-user', 'tenant-prefix', 'tenant-domain', 'subscription-name', 'account', 'git-email', 'git-name', 'host-label', 'name-token', 'user-name']);
   const expanded = [...items];
@@ -180,8 +195,9 @@ function makeFix(items, maskGuids) {
     if (PREFIX_KINDS.has(i.kind)) {
       for (let n = i.value.length - 1; n >= Math.max(6, Math.ceil(i.value.length / 2)); n--) {
         const prefix = i.value.slice(0, n);
-        // A letters-only start of a host name ("centralus") is a common word, not an identifier.
+        // A letters-only start of a host name ("centralus") is a common word, not an identifier; nor is a region.
         if (/^(host-label|name-token)$/.test(i.kind) && !/\d/.test(prefix)) continue;
+        if (regional(prefix.toLowerCase())) continue;
         expanded.push({ kind: i.kind, value: prefix, replacement: i.replacement });
       }
     } else if (/^[0-9a-f]{8}-/i.test(i.value) && /subscription|tenant/.test(i.kind)) {
@@ -297,8 +313,8 @@ function installScrubber({ fix, findKinds }) {
   full();
   return true;
 }
-const scrubberSource = `(${installScrubber})((${makeFix})(${JSON.stringify(items)}, ${maskGuids}))`;
-const { fix: fixText } = makeFix(items, maskGuids);
+const scrubberSource = `(${installScrubber})((${makeFix})(${JSON.stringify(items)}, ${maskGuids}, ${JSON.stringify([...AZURE_REGIONS])}))`;
+const { fix: fixText } = makeFix(items, maskGuids, [...AZURE_REGIONS]);
 
 // Page furniture that never belongs in public docs, removed on every page of these hosts.
 const HOST_CSS = {
