@@ -142,7 +142,7 @@ python solutions/07-operate-microsoft/incident.py verify *> out.txt
 node tools/screenshot.mjs terminal solutions/07-operate-microsoft/images/07-verify.png --input out.txt --title "PowerShell 7"
 ```
 
-`node tools/screenshot.mjs` without arguments lists every option (`--wait`, `--click`, `--select`, `--selector`, `--clip`, `--full`, `--remove`, `--pick-account`).
+`node tools/screenshot.mjs` without arguments lists every option. Steps (`--wait`, `--click`, `--select`, `--type`, `--press`, `--frame`) run in the order you give them, so you can open a pane, type a question, press Enter, and wait for the answer, for example to capture Azure Copilot. Then `--selector`, `--clip`, or `--full` chooses what to capture; `--remove` and `--pick-account` help with clutter and sign-in.
 
 In the Azure portal, crop below the top bar (`--clip` or `--selector`): it shows your account and directory, and a crop keeps them out even if masking misses one. Prefer deeper pages to the portals' Home and Overview pages, which show endpoints and subscription details.
 

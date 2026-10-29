@@ -17,12 +17,21 @@
  *           from this machine on port 9333. Sign in to GitHub and Azure there once.
  *
  * Page options:
- *   --wait <selector>        wait until this element is visible (repeatable). Selectors are CSS, or text=<words> for
- *                            the innermost element showing those words.
- *   --select <sel>=<value>   choose this option in a list, or set this field (repeatable; runs before --wait). Example:
+ *   Steps run in the order you give them, after the page loads:
+ *   --wait <selector>        wait until this element is visible. Selectors are CSS, or text=<words> for the innermost
+ *                            element showing those words.
+ *   --click <selector>       click this element
+ *   --select <sel>=<value>   choose this option in a list, or set this field, the way a person would. Example:
  *                            --select "#persona-select=u-ben" to view RequestHub as a reviewer
- *   --click <selector>       click this element before capturing (repeatable, in order)
- *   --frame <url part>       apply --wait, --click, and --selector inside the first frame whose URL contains this
+ *   --type <sel>=<text>      click this field and type the text (chat boxes, editors, search fields). The first "="
+ *                            outside brackets and quotes ends the selector, so the text may contain "=".
+ *   --press <key>            press a key: Enter, Tab, Escape, Space, ArrowUp, or ArrowDown
+ *   --frame <url part>       run steps and --selector inside the first frame whose URL contains this, waiting up to a
+ *                            minute for it. Given once, it applies to every step. Given several times, each applies to
+ *                            the steps after it, and --frame top returns to the page. Example, a chat pane in a frame:
+ *                            --click "text=Copilot" --frame <pane url part> --type "textarea=Why did it fail?"
+ *                            --press Enter --wait "text=<words of the answer>" --selector <answer>
+ *   Capture:
  *   --selector <selector>    capture only this element, with --padding pixels around it (default 8)
  *   --clip <x,y,w,h>         capture this rectangle of the viewport, in CSS pixels
  *   --full                   capture the whole scrollable page
@@ -104,7 +113,10 @@ if (mode === 'browser') {
 if (!['page', 'terminal'].includes(mode)) fail(2, 'Usage: node tools/screenshot.mjs browser | page <url> <out.png> [options] | terminal <out.png> --input <file> [options]. See the header of this file.');
 const positional = [];
 const options = {};
-const repeatable = new Set(['wait', 'click', 'hide', 'remove', 'select']);
+const repeatable = new Set(['hide', 'remove']);
+// Steps run in the order given on the command line; --frame changes where the steps after it look.
+const stepKeys = new Set(['select', 'type', 'wait', 'click', 'press', 'frame']);
+const steps = [];
 for (let i = 0; i < rest.length; i++) {
   const arg = rest[i];
   if (!arg.startsWith('--')) { positional.push(arg); continue; }
@@ -112,7 +124,36 @@ for (let i = 0; i < rest.length; i++) {
   if (['full', 'keep-guids', 'pick-account'].includes(key)) { options[key] = true; continue; }
   const value = rest[++i];
   if (value === undefined) fail(2, `Missing value for ${arg}`);
-  if (repeatable.has(key)) (options[key] ??= []).push(value); else options[key] = value;
+  if (stepKeys.has(key)) steps.push({ key, value });
+  else if (repeatable.has(key)) (options[key] ??= []).push(value);
+  else options[key] = value;
+}
+// "<selector>=<value>": the first "=" outside brackets, parentheses, and quotes ends the selector, so attribute
+// selectors keep their "=" and the value may contain "=". A leading "text=" belongs to the selector.
+const splitSpec = (spec) => {
+  let depth = 0;
+  let quote = '';
+  for (let i = spec.startsWith('text=') ? 5 : 0; i < spec.length; i++) {
+    const c = spec[i];
+    if (quote) { if (c === quote) quote = ''; continue; }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === '[' || c === '(') depth++;
+    else if (c === ']' || c === ')') depth--;
+    else if (c === '=' && depth === 0 && i > 0) return [spec.slice(0, i), spec.slice(i + 1)];
+  }
+  return null;
+};
+const KEYS = {
+  Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' },
+  Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 },
+  Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+  Space: { key: ' ', code: 'Space', windowsVirtualKeyCode: 32, text: ' ' },
+  ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 },
+  ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 },
+};
+for (const step of steps) {
+  if ((step.key === 'select' || step.key === 'type') && !splitSpec(step.value)) fail(2, `--${step.key} needs <selector>=<text>: ${step.value}`);
+  if (step.key === 'press' && !KEYS[step.value]) fail(2, `--press supports ${Object.keys(KEYS).join(', ')}; got ${step.value}`);
 }
 
 const redactionFile = process.env.SCREENSHOT_REDACTIONS
@@ -564,32 +605,53 @@ async function capturePage(url, out) {
     await signInSteps(tab);
     debug('sign-in steps done');
 
-    // Where --wait, --click, and --selector apply: the page, or the first frame whose URL contains --frame. Frames such
-    // as the Azure portal's React blades attach late, so look for up to a minute.
+    // Where steps and --selector apply: the page, or the first frame whose URL contains the --frame value. Frames such
+    // as the Azure portal's React blades attach late, so look for up to a minute. With a single --frame, every step
+    // and --selector use it; with several, each one applies to the steps after it, and "--frame top" is the page.
+    const frameSteps = steps.filter((s) => s.key === 'frame');
+    let currentFrame = frameSteps.length === 1 ? frameSteps[0].value : null;
     const scope = async () => {
-      if (!options.frame) return { evaluate: (e) => tab.evalTop(e), frame: null };
+      if (!currentFrame || currentFrame === 'top') return { evaluate: (e) => tab.evalTop(e), frame: null };
       const until = Date.now() + 60_000;
       for (;;) {
-        const frame = (await tab.frames()).find((f) => f.url.includes(options.frame));
+        const frame = (await tab.frames()).find((f) => f.url.includes(currentFrame));
         const ctx = frame && tab.contextFor(frame);
         if (ctx) return { evaluate: (e) => tab.evalIn(ctx, e), frame };
-        if (Date.now() > until) refuse(2, `No frame whose URL contains "${options.frame}"`);
+        if (Date.now() > until) refuse(2, `No frame whose URL contains "${currentFrame}"`);
         await sleep(1000);
       }
     };
     const ensureHelpers = async (s) => s.evaluate(`${FIND_SOURCE}; true`);
-    // --select "<css>=<value>": choose an option (or set a field) the way a person would, so frameworks such as
-    // React see the change. Runs before --wait, so the waits see the result.
-    for (const spec of options.select ?? []) {
-      const at = spec.lastIndexOf('=');
-      if (at < 1) refuse(2, `--select needs <selector>=<value>: ${spec}`);
-      const sel = JSON.stringify(spec.slice(0, at));
-      const value = JSON.stringify(spec.slice(at + 1));
+    // Offset of the scoped frame in the page, for element boxes measured inside it.
+    const frameOffset = async (s) => {
+      if (!s.frame) return { x: 0, y: 0 };
+      const owner = await cdp.send('DOM.getFrameOwner', { frameId: s.frame.id }, tab.sessionId).catch(() => null);
+      if (!owner) return { x: 0, y: 0 };
+      const { model } = await cdp.send('DOM.getBoxModel', { backendNodeId: owner.backendNodeId }, tab.sessionId);
+      return { x: model.content[0], y: model.content[1] };
+    };
+    // Retries a step until the element is there, for up to a minute.
+    const untilFound = async (what, attempt) => {
       const until = Date.now() + 60_000;
+      let lastError = '';
       for (;;) {
         const s = await scope();
         await ensureHelpers(s);
-        const result = await s.evaluate(`(() => {
+        const result = await attempt(s).catch((e) => { lastError = e.message; debug(`${what}: ${e.message}`); return 'missing'; });
+        if (result === 'ok') return;
+        if (result !== 'missing' || Date.now() > until) refuse(2, `${what}: ${result}${result === 'missing' && lastError ? ` (${lastError})` : ''}`);
+        await sleep(400);
+      }
+    };
+    for (const step of steps) {
+      if (step.key === 'frame') {
+        if (frameSteps.length > 1) currentFrame = step.value;
+      } else if (step.key === 'select') {
+        // Choose an option (or set a field) the way a person would, so frameworks such as React see the change.
+        const [selector, text] = splitSpec(step.value);
+        const sel = JSON.stringify(selector);
+        const value = JSON.stringify(text);
+        await untilFound(`--select ${step.value}`, (s) => s.evaluate(`(() => {
           const el = __find(${sel});
           if (!el) return 'missing';
           const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -597,33 +659,51 @@ async function capturePage(url, out) {
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
           return el.value === ${value} ? 'ok' : 'no such option';
-        })()`).catch(() => 'missing');
-        if (result === 'ok') break;
-        if (result !== 'missing' || Date.now() > until) refuse(2, `--select ${spec}: ${result}`);
-        await sleep(400);
-      }
-      await sleep(500);
-      await settle(tab, { loadTimeout: 5_000 });
-    }
-    for (const sel of options.wait ?? []) {
-      const until = Date.now() + 120_000;
-      for (;;) {
+        })()`));
+        await sleep(500);
+        await settle(tab, { loadTimeout: 5_000 });
+      } else if (step.key === 'type') {
+        // A real mouse click focuses the field, even inside a cross-origin frame, then the text arrives as typed input.
+        const [selector, text] = splitSpec(step.value);
+        const sel = JSON.stringify(selector);
+        await untilFound(`--type ${selector}`, async (s) => {
+          const box = await s.evaluate(`(() => { const el = __find(${sel}); if (!el) return null; el.scrollIntoView({ block: 'center' }); return __box(${sel}); })()`);
+          if (!box) return 'missing';
+          const off = await frameOffset(s);
+          const at = { x: box.x + off.x + Math.min(box.width / 2, 40), y: box.y + off.y + box.height / 2, button: 'left', clickCount: 1 };
+          await tab.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at });
+          await tab.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at });
+          await sleep(300);
+          await tab.send('Input.insertText', { text });
+          await sleep(300);
+          const typed = await s.evaluate(`(() => { const el = __find(${sel}); const v = el && ('value' in el ? el.value : el.textContent); return typeof v === 'string' && v.includes(${JSON.stringify(text)}); })()`);
+          return typed ? 'ok' : 'the field did not take the text (is it focusable and visible?)';
+        });
+      } else if (step.key === 'press') {
+        const k = KEYS[step.value];
+        await tab.send('Input.dispatchKeyEvent', { type: k.text ? 'keyDown' : 'rawKeyDown', ...k });
+        await tab.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+        await sleep(500);
+        await settle(tab, { loadTimeout: 5_000 });
+      } else if (step.key === 'wait') {
+        const until = Date.now() + 120_000;
+        for (;;) {
+          const s = await scope();
+          await ensureHelpers(s);
+          if (await s.evaluate(`__box(${JSON.stringify(step.value)})`).catch(() => null)) break;
+          if (Date.now() > until) refuse(2, `Timed out waiting for ${step.value}`);
+          await sleep(400);
+        }
+      } else if (step.key === 'click') {
         const s = await scope();
         await ensureHelpers(s);
-        if (await s.evaluate(`__box(${JSON.stringify(sel)})`).catch(() => null)) break;
-        if (Date.now() > until) refuse(2, `Timed out waiting for ${sel}`);
-        await sleep(400);
+        const found = await s.evaluate(`(() => { const el = __find(${JSON.stringify(step.value)}); if (!el) return false; el.scrollIntoView({ block: 'center' }); el.click(); return true; })()`);
+        if (!found) refuse(2, `Nothing to click: ${step.value}`);
+        await sleep(500);
+        await settle(tab, { loadTimeout: 5_000 });
       }
     }
-    for (const sel of options.click ?? []) {
-      const s = await scope();
-      await ensureHelpers(s);
-      const found = await s.evaluate(`(() => { const el = __find(${JSON.stringify(sel)}); if (!el) return false; el.scrollIntoView({ block: 'center' }); el.click(); return true; })()`);
-      if (!found) refuse(2, `Nothing to click: ${sel}`);
-      await sleep(500);
-      await settle(tab, { loadTimeout: 5_000 });
-    }
-    debug('waits and clicks done');
+    debug('steps done');
     await sleep(Number(options.delay ?? 1500));
     for (const sel of options.hide ?? []) await tab.evalAll(`document.querySelectorAll(${JSON.stringify(sel)}).forEach((e) => { e.style.visibility = 'hidden'; })`);
     for (const sel of options.remove ?? []) await tab.evalAll(`document.querySelectorAll(${JSON.stringify(sel)}).forEach((e) => { e.style.setProperty('display', 'none', 'important'); })`);
@@ -668,16 +748,8 @@ async function capturePage(url, out) {
       const vp = m.cssVisualViewport ?? m.visualViewport;
       const params = { format: 'png', fromSurface: true, captureBeyondViewport: false };
       if (clip) params.clip = { x: clip.x + vp.pageX, y: clip.y + vp.pageY, width: clip.width, height: clip.height, scale: 1 };
-      const { data } = await tab.send('Page.captureScreenshot', params, 90_000);
+      const { data } = await tab.send('Page.captureScreenshot', params, 180_000);
       writeFileSync(out, Buffer.from(data, 'base64'));
-    };
-    // Offset of the scoped frame in the page, for element boxes measured inside it.
-    const frameOffset = async (s) => {
-      if (!s.frame) return { x: 0, y: 0 };
-      const owner = await cdp.send('DOM.getFrameOwner', { frameId: s.frame.id }, tab.sessionId).catch(() => null);
-      if (!owner) return { x: 0, y: 0 };
-      const { model } = await cdp.send('DOM.getBoxModel', { backendNodeId: owner.backendNodeId }, tab.sessionId);
-      return { x: model.content[0], y: model.content[1] };
     };
     if (options.selector) {
       const pad = Number(options.padding ?? 8);
