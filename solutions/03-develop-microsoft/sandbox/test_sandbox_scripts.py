@@ -5,6 +5,7 @@ Run from the repository root:  python -m unittest discover -s solutions/03-devel
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import sys
@@ -258,6 +259,34 @@ class ReviewFormatterTests(unittest.TestCase):
     def test_a_missing_build_result_is_reported(self):
         self.sandbox = '{"state":"not-finished"}'
         self.assertIn("The build didn't finish in time", self.review(agent_response(ANSWER))["markdown"])
+
+    def test_the_command_line_reads_the_three_files_the_logic_app_uploads(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            (folder / "judge.json").write_text(json.dumps(self.judge), encoding="utf-8")
+            (folder / "review-input.json").write_text(json.dumps({
+                "pr": {"number": 7, "head": "b" * 40}, "run": "08584RUN", "checker_ref": "main",
+                "agent_name": "requesthub-pr-reviewer", "sandbox": self.sandbox, "agent_status": "Succeeded"}), encoding="utf-8")
+            (folder / "agent.json").write_text(json.dumps(agent_response(ANSWER)), encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = format_review.main(["--judge", str(folder / "judge.json"), "--input", str(folder / "review-input.json"),
+                                           "--agent", str(folder / "agent.json")])
+            result = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(result["agent"]["summary"], ANSWER["summary"])
+        self.assertIn("Commit `bbbbbbb`", result["markdown"])
+
+    def test_without_verdicts_no_review_is_written(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            (folder / "judge.json").write_text('{"error": "cannot read the source trees"}', encoding="utf-8")
+            (folder / "review-input.json").write_text("{}", encoding="utf-8")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = format_review.main(["--judge", str(folder / "judge.json"), "--input", str(folder / "review-input.json")])
+        self.assertEqual(code, 2)
+        self.assertNotIn("markdown", json.loads(out.getvalue()))
 
 
 if __name__ == "__main__":

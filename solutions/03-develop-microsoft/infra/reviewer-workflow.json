@@ -89,32 +89,51 @@
           "inputs": "@body('Get_the_merge_base')?['merge_base_commit']?['sha']",
           "runAfter": { "Get_the_merge_base": ["Succeeded"] }
         },
-        "Get_the_base_archive": {
-          "type": "Http",
-          "inputs": {
-            "method": "GET",
-            "uri": "https://api.github.com/repos/@{parameters('repository')}/tarball/@{outputs('Merge_base')}",
-            "headers": {
-              "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
-              "User-Agent": "azure-pr-reviewer",
-              "X-GitHub-Api-Version": "2022-11-28"
+        "Download_the_code": {
+          "type": "Scope",
+          "description": "GitHub answers an archive request with a redirect (302 Found) to a short-lived download link, and a Logic App doesn't follow redirects. So each archive takes two calls: the first reports Found, the second downloads from its Location. Inputs and outputs are secured: the link carries a token, and the archives hold the repository's code.",
+          "actions": {
+            "Base_archive_link": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "https://api.github.com/repos/@{parameters('repository')}/tarball/@{outputs('Merge_base')}",
+                "headers": {
+                  "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
+                  "User-Agent": "azure-pr-reviewer",
+                  "X-GitHub-Api-Version": "2022-11-28"
+                }
+              },
+              "runtimeConfiguration": { "secureData": {"properties": ["inputs", "outputs"]} },
+              "runAfter": {}
+            },
+            "Head_archive_link": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "https://api.github.com/repos/@{parameters('repository')}/tarball/@{body('Get_the_pull_request')?['head']?['sha']}",
+                "headers": {
+                  "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
+                  "User-Agent": "azure-pr-reviewer",
+                  "X-GitHub-Api-Version": "2022-11-28"
+                }
+              },
+              "runtimeConfiguration": { "secureData": {"properties": ["inputs", "outputs"]} },
+              "runAfter": {}
+            },
+            "Get_the_base_archive": {
+              "type": "Http",
+              "inputs": { "method": "GET", "uri": "@{outputs('Base_archive_link')?['headers']?['Location']}" },
+              "runtimeConfiguration": { "secureData": {"properties": ["inputs", "outputs"]} },
+              "runAfter": { "Base_archive_link": ["Failed"] }
+            },
+            "Get_the_head_archive": {
+              "type": "Http",
+              "inputs": { "method": "GET", "uri": "@{outputs('Head_archive_link')?['headers']?['Location']}" },
+              "runtimeConfiguration": { "secureData": {"properties": ["inputs", "outputs"]} },
+              "runAfter": { "Head_archive_link": ["Failed"] }
             }
           },
-          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
-          "runAfter": { "Merge_base": ["Succeeded"] }
-        },
-        "Get_the_head_archive": {
-          "type": "Http",
-          "inputs": {
-            "method": "GET",
-            "uri": "https://api.github.com/repos/@{parameters('repository')}/tarball/@{body('Get_the_pull_request')?['head']?['sha']}",
-            "headers": {
-              "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
-              "User-Agent": "azure-pr-reviewer",
-              "X-GitHub-Api-Version": "2022-11-28"
-            }
-          },
-          "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
           "runAfter": { "Merge_base": ["Succeeded"] }
         },
         "Get_the_rule_checker": {
@@ -124,7 +143,7 @@
             "method": "GET",
             "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('scriptsPath')}/review_rules.py?ref=@{encodeUriComponent(parameters('checkerRef'))}",
             "headers": {
-              "Accept": "application/vnd.github.raw+json",
+              "Accept": "application/vnd.github.raw",
               "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
               "User-Agent": "azure-pr-reviewer",
               "X-GitHub-Api-Version": "2022-11-28"
@@ -140,7 +159,7 @@
             "method": "GET",
             "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('scriptsPath')}/format_review.py?ref=@{encodeUriComponent(parameters('checkerRef'))}",
             "headers": {
-              "Accept": "application/vnd.github.raw+json",
+              "Accept": "application/vnd.github.raw",
               "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
               "User-Agent": "azure-pr-reviewer",
               "X-GitHub-Api-Version": "2022-11-28"
@@ -156,7 +175,7 @@
             "method": "GET",
             "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('scriptsPath')}/run_change.sh?ref=@{encodeUriComponent(parameters('checkerRef'))}",
             "headers": {
-              "Accept": "application/vnd.github.raw+json",
+              "Accept": "application/vnd.github.raw",
               "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
               "User-Agent": "azure-pr-reviewer",
               "X-GitHub-Api-Version": "2022-11-28"
@@ -217,7 +236,7 @@
             },
             "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
           },
-          "runAfter": { "Get_the_base_archive": ["Succeeded"], "Judge_upload_the_formatter": ["Succeeded"] }
+          "runAfter": { "Download_the_code": ["Succeeded"], "Judge_upload_the_formatter": ["Succeeded"] }
         },
         "Judge_upload_the_head": {
           "type": "Http",
@@ -235,7 +254,7 @@
             },
             "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
           },
-          "runAfter": { "Get_the_head_archive": ["Succeeded"], "Judge_upload_the_base": ["Succeeded"] }
+          "runAfter": { "Judge_upload_the_base": ["Succeeded"] }
         },
         "Judge_check_the_team_rules": {
           "type": "Http",
@@ -376,12 +395,37 @@
             "headers": { "Content-Type": "application/json" },
             "body": {
               "agent_reference": { "type": "agent_reference", "name": "@{parameters('agentName')}" },
-              "input": "@{string(outputs('Agent_input'))}"
+              "input": "@{string(outputs('Agent_input'))}",
+              "background": true
             },
-            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" },
-            "retryPolicy": { "type": "none" }
+            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
           },
-          "runAfter": { "Agent_input": ["Succeeded"] }
+          "runAfter": { "Agent_input": ["Succeeded"] },
+          "description": "Starts the agent in background mode, so a long review can't hit the HTTP timeout; the next step polls for the answer."
+        },
+        "Wait_for_the_agent": {
+          "type": "Until",
+          "expression": "@not(contains(createArray('queued', 'in_progress'), coalesce(body('Agent_status')?['status'], 'queued')))",
+          "limit": { "count": 120, "timeout": "PT10M" },
+          "actions": {
+            "Agent_pause": { "type": "Wait", "inputs": {"interval": {"count": 5, "unit": "Second"}}, "runAfter": {} },
+            "Agent_status": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "@{parameters('projectEndpoint')}/openai/v1/responses/@{body('Ask_the_reviewer_agent')?['id']}",
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+              },
+              "runAfter": { "Agent_pause": ["Succeeded"] }
+            }
+          },
+          "runAfter": { "Ask_the_reviewer_agent": ["Succeeded"] }
+        },
+        "Agent_result": {
+          "type": "Compose",
+          "description": "The agent's answer, or the error that stopped it. The review goes on either way.",
+          "inputs": "@coalesce(actions('Agent_status')?['outputs']?['body'], actions('Ask_the_reviewer_agent')?['outputs']?['body'], json('{}'))",
+          "runAfter": { "Wait_for_the_agent": ["Succeeded", "Failed", "TimedOut", "Skipped"] }
         },
         "Review_input": {
           "type": "Compose",
@@ -397,10 +441,9 @@
             "checker_ref": "@parameters('checkerRef')",
             "agent_name": "@parameters('agentName')",
             "sandbox": "@outputs('Sandbox_results')",
-            "agent_status": "@actions('Ask_the_reviewer_agent')?['status']",
-            "agent": "@actions('Ask_the_reviewer_agent')?['outputs']?['body']"
+            "agent_status": "@if(equals(actions('Ask_the_reviewer_agent')?['status'], 'Succeeded'), actions('Wait_for_the_agent')?['status'], actions('Ask_the_reviewer_agent')?['status'])"
           },
-          "runAfter": { "Ask_the_reviewer_agent": ["Succeeded", "Failed", "TimedOut"] }
+          "runAfter": { "Agent_result": ["Succeeded"] }
         },
         "Judge_upload_the_review_input": {
           "type": "Http",
@@ -423,6 +466,27 @@
           },
           "runAfter": { "Review_input": ["Succeeded"] }
         },
+        "Judge_upload_the_agent_answer": {
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('judgePool')}/files?api-version=2025-10-02-preview&identifier=judge-@{workflow()?['run']?['name']}",
+            "body": {
+              "$content-type": "multipart/form-data",
+              "$multipart": [
+                {
+                  "headers": {
+                    "Content-Disposition": "form-data; name=\"file\"; filename=\"agent.json\"",
+                    "Content-Type": "application/json"
+                  },
+                  "body": "@outputs('Agent_result')"
+                }
+              ]
+            },
+            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
+          },
+          "runAfter": { "Judge_upload_the_review_input": ["Succeeded"] }
+        },
         "Judge_write_the_review": {
           "type": "Http",
           "description": "Back in the judge's session: the rule verdicts come from the checker's own judge.json, word for word.",
@@ -431,12 +495,12 @@
             "uri": "@{parameters('judgePool')}/executions?api-version=2025-10-02-preview&identifier=judge-@{workflow()?['run']?['name']}",
             "headers": { "Content-Type": "application/json" },
             "body": {
-              "shellCommand": "cd /mnt/data && python3 format_review.py --judge judge.json --input review-input.json",
+              "shellCommand": "cd /mnt/data && python3 format_review.py --judge judge.json --input review-input.json --agent agent.json",
               "timeoutInSeconds": 60
             },
             "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
           },
-          "runAfter": { "Judge_upload_the_review_input": ["Succeeded"] }
+          "runAfter": { "Judge_upload_the_agent_answer": ["Succeeded"] }
         },
         "Review": {
           "type": "Compose",

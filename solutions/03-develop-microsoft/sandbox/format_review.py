@@ -2,7 +2,7 @@
 """Write the Azure pull request reviewer's review comment (Develop phase, Microsoft track).
 
 The reviewer's Logic App runs this script last, in the judge's sandbox session: the session where the team's rules were
-checked and where the pull request's code never ran. It reads two files:
+checked and where the pull request's code never ran. It reads three files:
 
   judge.json          what review_rules.py wrote there, before any of the pull request's code ran anywhere
   review-input.json   what the Logic App uploads at the end:
@@ -10,9 +10,9 @@ checked and where the pull request's code never ran. It reads two files:
                         run           the Logic App run id, for the footer
                         sandbox       run_change.sh's summary (text). The pull request's own code ran there, so it is
                                       evidence, not a verdict.
-                        agent         the Microsoft Foundry Responses API result of the reviewer agent, or an error
-                        agent_status  the Logic App status of that call
+                        agent_status  the Logic App status of the agent call
                         checker_ref   where the checker came from (main)
+  agent.json          the Microsoft Foundry Responses API result of the reviewer agent, or the error that stopped it
 
 It prints one JSON object: {"markdown": the review body, "agent": the agent's answer or null, "agent_error": text or
 null, "tool_calls": how many sandbox commands the agent ran}.
@@ -26,8 +26,8 @@ host names are replaced, so not even a manipulated agent can post tenant details
 error codes; the details stay in the Logic App's run history.
 
 Usage
-  python3 format_review.py --judge judge.json --input review-input.json
-  python3 format_review.py --judge judge.json --input review-input.json --markdown   # print only the review body
+  python3 format_review.py --judge judge.json --input review-input.json --agent agent.json
+  python3 format_review.py --judge judge.json --input review-input.json --agent agent.json --markdown   # only the body
 
 Exit codes: 0 written, 2 unreadable judge.json (the review can't be written without the checker's verdicts).
 Standard library only (Python 3.10+).
@@ -235,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--judge", type=Path, required=True, help="judge.json, written by review_rules.py")
     parser.add_argument("--input", type=Path, required=True, help="review-input.json, uploaded by the Logic App")
+    parser.add_argument("--agent", type=Path, help="agent.json: the agent's Responses API result, uploaded by the Logic App")
     parser.add_argument("--markdown", action="store_true", help="Print only the review body")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -245,13 +246,20 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(json.dumps({"error": f"cannot read the checker's verdicts: {type(exc).__name__}"}))
         return 2
-    try:
-        request = json.loads(args.input.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        request = {}
-    result = compose(judge, request if isinstance(request, dict) else {})
+    request = read_json(args.input)
+    request = request if isinstance(request, dict) else {}
+    if args.agent:
+        request["agent"] = read_json(args.agent)
+    result = compose(judge, request)
     print(result["markdown"] if args.markdown else json.dumps(result, ensure_ascii=False))
     return 0
+
+
+def read_json(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 if __name__ == "__main__":
