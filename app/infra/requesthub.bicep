@@ -24,7 +24,7 @@ param githubRepository string = ''
 @description('Subject prefix of the repository\'s OIDC tokens when it uses immutable subjects: gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix')
 param githubOidcSubjectPrefix string = ''
 
-@description('GitHub environment whose jobs may use the automation identity, for example release-microsoft.')
+@description('GitHub environment whose jobs may use the automation identity, for example develop-microsoft.')
 param githubEnvironment string = ''
 
 @description('Extra Azure roles (role definition GUIDs) for the automation identity on this resource group, for example Contributor for release workflows.')
