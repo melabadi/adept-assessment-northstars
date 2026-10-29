@@ -44,12 +44,14 @@ reads it back, attaches a file and downloads it again (Blob storage, which the r
 approve its own request (the API must refuse with decision.self_approval), and reads the request's audit history.
 
 One release step at a time, first come first served: a release waits for the steps that started before it; the other
-commands refuse to start while an earlier one runs. A release or drill whose gate fails removes its own candidate
-itself, even while another step waits for its turn.
+commands refuse to start while an earlier one runs. Any execution of a release job that has not succeeded, failed, or
+stopped counts as running, unless it started longer ago than its job's time limit plus 15 minutes. A release or drill
+whose gate fails removes its own candidate itself, even while another step waits for its turn.
 
-Promote moves traffic only to a candidate the gate passed. When the gate passes, it records its verdict on the app (the
-tag requesthub-release-gate: the revision, its image digest, and the time); promote checks that the verdict names the
-candidate and its image, and is less than 24 hours old. Deploying, aborting, or promoting clears the verdict.
+Promote moves traffic only to a candidate the gate passed with the standard bake. When the gate passes, it records its
+verdict on the app (the tag requesthub-release-gate: the revision, its image digest, the time, and the bake seconds);
+promote checks that the verdict names the candidate and its image, baked at least 60 seconds, and is less than 24 hours
+old. Deploying, aborting, or promoting replaces the verdict with a cleared one.
 
 Settings come from environment variables (infra/jobs.bicep sets them on the jobs), or from this solution's azd
 environment after `azd up`: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, API_APP_NAME, API_IDENTIFIER_URI, and
@@ -98,12 +100,15 @@ RECORD_SCHEMA = "requesthub-release/2"
 RECORD_PREFIX = "RELEASE-RECORD "
 FAULT_MINUTES = 30  # every fault expires; after this the injected readiness failure switches itself off
 RUNNING = {"Running", "RunningAtMaxScale"}
-EXECUTING = {"Running", "Processing"}
+FINISHED = {"Succeeded", "Failed", "Stopped"}  # a job execution in any other state may still be running
+STALE_MARGIN = timedelta(minutes=15)  # past its job's time limit plus this, an execution cannot be running any more
 COMMIT = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}")
-GATE_TAG = "requesthub-release-gate"  # the gate's verdict on the app: <revision>|<image digest>|<time>
+GATE_TAG = "requesthub-release-gate"  # the gate's verdict on the app: <revision>|<image digest>|<time>|<bake seconds>
 GATE_VALID_HOURS = 24
+STANDARD_BAKE = 60  # seconds: promote trusts only a gate that baked at least this long, the jobs' default
+CLEARED = "cleared"  # the verdict's revision field once deploy, abort, or promote has cleared it
 JOB_EXECUTION = os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME", "")
 IN_JOB = bool(JOB_EXECUTION or os.environ.get("RELEASE_STEP"))
 
@@ -402,18 +407,24 @@ def digest_of(image: str) -> str:
     return image.rpartition("@")[2] if "@" in image else ""
 
 
-def gate_value(revision: str, image: str, at: datetime) -> str:
-    """The gate's verdict on a candidate: which revision passed, with which image, and when."""
-    return f"{revision}|{digest_of(image)}|{iso(at)}"
+def gate_value(revision: str, image: str, at: datetime, bake: int) -> str:
+    """The gate's verdict on a candidate: which revision passed, with which image, when, and how long it baked."""
+    return f"{revision}|{digest_of(image)}|{iso(at)}|{bake}"
+
+
+def cleared_gate(at: datetime) -> str:
+    """The value that replaces a verdict once it is used up or out of date. It overwrites the tag rather than removing
+    it, so a stale verdict cannot survive even if Azure merged tags instead of replacing them."""
+    return f"{CLEARED}|-|{iso(at)}|0"
 
 
 def gate_problem(tags: dict, revision: str, image: str, now: datetime) -> str | None:
-    """Why promote must not trust a candidate, or None when the gate passed this revision with this exact image less
-    than GATE_VALID_HOURS ago."""
+    """Why promote must not trust a candidate, or None when the gate passed this revision with this exact image, baked
+    at least STANDARD_BAKE seconds, less than GATE_VALID_HOURS ago."""
     parts = str(as_dict(tags).get(GATE_TAG) or "").split("|")
-    if len(parts) != 3 or not all(parts):
+    if len(parts) != 4 or not all(parts) or parts[0] == CLEARED:
         return "the gate has not passed it"
-    passed_revision, passed_digest, passed_at = parts
+    passed_revision, passed_digest, passed_at, bake = parts
     if passed_revision != revision:
         return f"the gate's last verdict is for {printable(passed_revision)[:24]}, not this candidate"
     if not digest_of(image) or passed_digest != digest_of(image):
@@ -423,14 +434,15 @@ def gate_problem(tags: dict, revision: str, image: str, now: datetime) -> str | 
         return "the gate's verdict has no valid time"
     if now - when > timedelta(hours=GATE_VALID_HOURS):
         return f"the gate passed it more than {GATE_VALID_HOURS} hours ago"
+    if not re.fullmatch(r"[0-9]{1,6}", bake) or int(bake) < STANDARD_BAKE:
+        return f"its gate baked for {printable(bake)[:8]} s, less than the standard {STANDARD_BAKE} s"
     return None
 
 
-def tags_with_gate(tags: dict, value: str | None) -> dict:
-    """The app's tags with the gate's verdict set, or removed when value is None. A PATCH that includes tags replaces
-    all of them, so every other tag (azd's included) is sent again."""
-    kept = {k: v for k, v in as_dict(tags).items() if k != GATE_TAG}
-    return {**kept, GATE_TAG: value} if value else kept
+def tags_with_gate(tags: dict, value: str) -> dict:
+    """The app's tags with the gate's tag set to value. A PATCH that includes tags replaces all of them, so every other
+    tag (azd's included) is sent again."""
+    return {**{k: v for k, v in as_dict(tags).items() if k != GATE_TAG}, GATE_TAG: value}
 
 
 @dataclass
@@ -508,24 +520,39 @@ def connect() -> ContainerApp:
     return ContainerApp(subscription_id(), setting("AZURE_RESOURCE_GROUP"), setting("API_APP_NAME"))
 
 
+def still_running(props: dict, time_limit_seconds, now: datetime) -> bool:
+    """Whether a release job's execution may still be running: any status but Succeeded, Failed, or Stopped counts
+    (Running, Processing, Degraded, Unknown, or one Azure adds later), unless the execution started longer ago than its
+    job's time limit plus STALE_MARGIN. The platform stops a replica at its time limit, so such an execution can no
+    longer change anything, whatever its status says."""
+    if str(as_dict(props).get("status") or "") in FINISHED:
+        return False
+    start = parse_time(as_dict(props).get("startTime"))
+    limit = time_limit_seconds if isinstance(time_limit_seconds, int) and time_limit_seconds > 0 else 1800
+    return not start or now - start <= timedelta(seconds=limit) + STALE_MARGIN
+
+
 def running_steps(app: ContainerApp) -> list[dict]:
-    """Every running execution of the release jobs (the jobs tagged requesthub-release=<step>), with its start time."""
+    """Every execution of the release jobs (the jobs tagged requesthub-release=<step>) that may still be running, with
+    its start time."""
     jobs = arm_list(f"{app.group_url}/providers/Microsoft.App/jobs")
     if IN_JOB and not any(as_dict(job.get("tags")).get("requesthub-release") for job in jobs):
         # A job always sees itself; seeing none means its identity cannot read jobs. Fail closed rather than run
         # a second release step at the same time as another.
         raise ReleaseError("This job's identity cannot see the release jobs. Grant it Container Apps Jobs Reader on "
                            "the resource group (infra/main.bicep does).")
+    now = utc_now()
     running = []
     for job in jobs:
         step = as_dict(job.get("tags")).get("requesthub-release")
         if not step:
             continue
+        time_limit = as_dict(as_dict(job.get("properties")).get("configuration")).get("replicaTimeout")
         for execution in arm_list(f"{ARM}{job['id']}/executions"):
             props = as_dict(execution.get("properties"))
-            if props.get("status") in EXECUTING:
-                running.append({"step": step, "name": str(execution.get("name", "")), "status": props["status"],
-                                "start": parse_time(props.get("startTime"))})
+            if still_running(props, time_limit, now):
+                running.append({"step": step, "name": str(execution.get("name", "")),
+                                "status": str(props.get("status") or "unknown"), "start": parse_time(props.get("startTime"))})
     return running
 
 
@@ -540,13 +567,15 @@ def own_execution(running: list[dict]) -> str | None:
 
 def ahead_of(running: list[dict], me: str | None) -> list[dict]:
     """The running steps that go before this one: first come, first served by start time, ties broken by name, the
-    same order every execution computes. A step without a start time yet started after this one. In a terminal, or
-    when this execution is not listed, every other running step goes first."""
+    same order every execution computes. Without both start times there is no order to trust, so the other step goes
+    first: another step whose start time is not listed yet counts as ahead, and when this step's own start time is
+    unknown (a terminal, or an execution not listed yet), every other running step does. Two steps that both lack a
+    start time therefore both wait (or refuse) until Azure lists the times, which it does as an execution starts."""
     mine = next((r for r in running if r["name"] == me), None) if me else None
     others = [r for r in running if r["name"] != me]
     if not mine or not mine["start"]:
         return others
-    return [r for r in others if r["start"] and (r["start"], r["name"]) < (mine["start"], mine["name"])]
+    return [r for r in others if not r["start"] or (r["start"], r["name"]) < (mine["start"], mine["name"])]
 
 
 def busy_executions(app: ContainerApp) -> list[str]:
@@ -945,11 +974,14 @@ def _note_users(record: Record) -> None:
 
 
 def set_gate_verdict(app: ContainerApp, value: str | None) -> bool:
-    """Record the gate's verdict on the app, or clear it (value None), keeping every other tag: a PATCH that includes
-    tags replaces them all, and creates no revision. Returns False when there was nothing to clear."""
+    """Record the gate's verdict on the app, or clear it (value None) by overwriting it with a cleared one, keeping
+    every other tag: a PATCH that includes tags replaces them all, and creates no revision. Returns False when there was
+    nothing to clear."""
     tags = as_dict(app.get().get("tags"))
-    if value is None and GATE_TAG not in tags:
-        return False
+    if value is None:
+        if not str(tags.get(GATE_TAG) or "") or str(tags[GATE_TAG]).startswith(f"{CLEARED}|"):
+            return False
+        value = cleared_gate(utc_now())
     app.patch({"tags": tags_with_gate(tags, value)})
     return True
 
@@ -1115,8 +1147,10 @@ def cmd_gate(args, result: dict | None = None) -> int:
         if current.labels.get("candidate") != candidate or image_of(current.revisions.get(candidate, {})) != image:
             ok, failed, outcome = False, "verdict", "The candidate changed during the gate, so no verdict was recorded."
         else:
-            set_gate_verdict(app, gate_value(state.short(candidate), image, utc_now()))
-            record.note(f"Verdict recorded on the app (tag {GATE_TAG}): promote checks it")
+            set_gate_verdict(app, gate_value(state.short(candidate), image, utc_now(), args.bake))
+            record.note(f"Verdict recorded on the app (tag {GATE_TAG}, bake {args.bake} s): promote checks it"
+                        + ("" if args.bake >= STANDARD_BAKE else
+                           f". The bake is shorter than the standard {STANDARD_BAKE} s, so promote will refuse it"))
     if result is not None:
         result["failed"] = failed
     return record.finish(ok, outcome)
@@ -1507,7 +1541,9 @@ def main() -> int:
         p.add_argument("--ready-timeout", type=int, default=300, help="seconds the candidate gets to become ready (default 300)")
         p.add_argument("--not-ready-grace", type=int, default=60,
                        help="seconds a started container may stay not ready before the gate fails (default 60)")
-        p.add_argument("--bake", type=int, default=60, help="seconds to keep calling the candidate after the smoke test (default 60)")
+        p.add_argument("--bake", type=int, default=STANDARD_BAKE,
+                       help=f"seconds to keep calling the candidate after the smoke test (default {STANDARD_BAKE}; "
+                            f"promote accepts only a gate that baked at least {STANDARD_BAKE} s)")
 
     p = commands.add_parser("status", help="show revisions, labels, traffic, health, URLs, and running release steps")
     p.add_argument("--limit", type=int, default=8, help="number of revisions to list, active ones first (default 8)")

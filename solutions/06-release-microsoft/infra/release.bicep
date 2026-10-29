@@ -1,5 +1,5 @@
 // The release's orchestration in Azure, next to RequestHub's platform (app/infra/requesthub.bicep):
-//   Event Grid      fires when a build of requesthub-api is pushed to the registry (any tag except main)
+//   Event Grid      fires when a build of the API's repository is pushed to the registry (any tag except main)
 //   Logic App       answers Event Grid's validation handshake, then starts the release job with the pushed digest
 //   Workbook        the release records the jobs write to Log Analytics, and who started each step
 // The jobs themselves are deployed with their image by `azd deploy release` (jobs.bicep).
@@ -15,6 +15,8 @@ param apiAppName string
 var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, environmentName))
 var releaseJobName = 'caj-release-${resourceToken}'
 var acrPull = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+// The API's image repository: the Event Grid filter and the Logic App's check both use it.
+var repository = 'requesthub-api'
 
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: registryName
@@ -32,8 +34,9 @@ resource automationAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 }
 
 // Its managed identity gets Container Apps Jobs Operator on the release job only (jobs.bicep), so it can start that
-// job and nothing else. It starts the job only for a push of requesthub-api to this registry, named by digest; the
-// event's fields are checked against these parameters, and passed to the job as plain values, never as JSON text.
+// job and nothing else. It starts the job only for a push of the API's repository to this registry, named by digest;
+// the event's fields are checked against these parameters, and passed to the job as plain values, never as JSON text.
+// An event that fails a check starts nothing, and the run ends Failed with the check's name, in its run history.
 resource trigger 'Microsoft.Logic/workflows@2019-05-01' = {
   name: 'logic-release-${resourceToken}'
   location: location
@@ -46,6 +49,7 @@ resource trigger 'Microsoft.Logic/workflows@2019-05-01' = {
       releaseJobId: { value: resourceId('Microsoft.App/jobs', releaseJobName) }
       registryId: { value: registry.id }
       registryHost: { value: registry.properties.loginServer }
+      repository: { value: repository }
     }
   }
 }
@@ -75,8 +79,8 @@ resource releaseOnPush 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2022
     }
     filter: {
       includedEventTypes: ['Microsoft.ContainerRegistry.ImagePushed']
-      subjectBeginsWith: 'requesthub-api:'
-      // Each build is pushed as requesthub-api:<commit> and requesthub-api:main; one release per build.
+      subjectBeginsWith: '${repository}:'
+      // Each build is pushed as <repository>:<commit> and <repository>:main; one release per build.
       advancedFilters: [
         { operatorType: 'StringNotIn', key: 'data.target.tag', values: ['main'] }
       ]

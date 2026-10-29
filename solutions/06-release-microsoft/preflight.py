@@ -10,7 +10,8 @@ when any check fails. It changes nothing.
   Database    the PostgreSQL server is Ready: a tenant policy can stop it on a schedule, and then every revision fails
               readiness, so a gate would fail for the wrong reason
   Production  the production URL's readiness endpoint answers 200
-  Jobs        the five release jobs exist, run as the release identity, and none is running now
+  Jobs        the five release jobs exist, run as the release identity, and none is running now, by the same rule the
+              release's own lock uses (release.py, still_running)
   Identity    the release identity holds what a release needs and no more: Container Apps Contributor and Container
               Apps Jobs Reader on the resource group, and AcrPull on the registry
   Trigger     the Logic App is enabled and may start the release job, and Event Grid delivers pushed builds to it
@@ -33,6 +34,7 @@ import sys
 import urllib.error
 import urllib.request
 
+import release
 from azd_env import SOLUTION, azd_values, utf8_stdout
 
 STEPS = ["release", "promote", "abort", "rollback", "drill"]
@@ -156,11 +158,14 @@ def check_jobs(s: dict) -> dict:
                "all run as the release identity" if identities == {expected} else "they do not all run as the release identity",
                "Run `azd deploy release` in this folder.")
         running = []
+        now = release.utc_now()
         for step in found:
             executions = az("containerapp", "job", "execution", "list", "--name", jobs[step]["name"], "--resource-group", s["rg"]) or []
-            running += [step for e in executions if (e.get("properties") or {}).get("status") in ("Running", "Processing")]
+            time_limit = ((jobs[step].get("properties") or {}).get("configuration") or {}).get("replicaTimeout")
+            running += [f"{step} ({str((e.get('properties') or {}).get('status') or 'unknown').lower()})"
+                        for e in executions if release.still_running(e.get("properties") or {}, time_limit, now)]
         report("WARN" if running else "PASS", "Jobs", f"running now: {', '.join(running)}" if running else "none running now",
-               "Wait for it to finish before you start the demo.")
+               "Wait for it to finish before you start the demo: release steps run one at a time.")
     return jobs
 
 

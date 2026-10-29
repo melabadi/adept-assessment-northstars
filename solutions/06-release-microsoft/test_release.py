@@ -2,10 +2,12 @@
 
 They cover what a reviewer must be able to trust without a live run:
   - only builds of requesthub-api from the API's own registry are released, whatever an event or a person names;
+  - the Logic App passes event values to the job as values, starts it only when every check passed, and fails its run
+    when it rejects an event;
   - nothing untrusted can print a line that looks like a release record;
-  - promote needs the gate's verdict for exactly this candidate and image;
+  - promote needs the gate's verdict for exactly this candidate and image, with the standard bake;
   - a release that fails removes its own candidate, even while another step waits for its turn;
-  - steps take turns first come, first served;
+  - steps take turns first come, first served, and any execution that has not finished counts as running;
   - a build without a known commit is never released;
   - rollback goes only to the revision that served users just before: never a drill revision or the candidate.
 
@@ -53,10 +55,12 @@ class FakeApp:
     group_url = "https://management.azure.com/subscriptions/s/resourceGroups/rg"
     url = group_url + "/providers/Microsoft.App/containerApps/ca-api"
 
-    def __init__(self, revisions: dict[str, dict], traffic: list[dict], tags: dict | None = None):
+    def __init__(self, revisions: dict[str, dict], traffic: list[dict], tags: dict | None = None, *,
+                 merge_tags: bool = False):
         self._revisions = {name: copy.deepcopy(r) for name, r in revisions.items()}
         self.traffic = traffic
         self.tags = dict(tags or {})
+        self.merge_tags = merge_tags
         self.patches: list[dict] = []
         self.deactivated: list[str] = []
         self.activated: list[str] = []
@@ -76,7 +80,9 @@ class FakeApp:
     def patch(self, body: dict) -> float:
         self.patches.append(copy.deepcopy(body))
         if "tags" in body:
-            self.tags = dict(body["tags"])  # a PATCH that includes tags replaces them all, as Azure does
+            # Azure replaces all tags on a PATCH that includes them (verified live); merge_tags plays an API that
+            # merged them instead, which the verdict must survive too.
+            self.tags = {**self.tags, **body["tags"]} if self.merge_tags else dict(body["tags"])
         traffic = body.get("properties", {}).get("configuration", {}).get("ingress", {}).get("traffic")
         if traffic is not None:
             self.traffic = traffic
@@ -189,15 +195,17 @@ class PrintableRecords(Quiet):
 
 
 class GateVerdict(unittest.TestCase):
-    """Finding 1: promote trusts only a verdict for this revision, with this image, from the last 24 hours."""
+    """Finding 1, and the re-review: promote trusts only a verdict for this revision, with this image, from a gate that
+    baked at least the standard time, in the last 24 hours."""
 
     image = f"{REGISTRY}/requesthub-api@{DIGEST}"
 
-    def verdict(self, revision="r2", image=None, at=NOW - timedelta(minutes=10)) -> dict:
-        return {release.GATE_TAG: release.gate_value(revision, image or self.image, at), "azd-service-name": "api"}
+    def verdict(self, revision="r2", image=None, at=NOW - timedelta(minutes=10), bake=release.STANDARD_BAKE) -> dict:
+        return {release.GATE_TAG: release.gate_value(revision, image or self.image, at, bake), "azd-service-name": "api"}
 
     def test_a_fresh_verdict_for_the_candidate_passes(self):
         self.assertIsNone(release.gate_problem(self.verdict(), "r2", self.image, NOW))
+        self.assertIsNone(release.gate_problem(self.verdict(bake=600), "r2", self.image, NOW))
 
     def test_anything_else_is_refused(self):
         cases = {
@@ -206,17 +214,29 @@ class GateVerdict(unittest.TestCase):
             "another image": self.verdict(image=f"{REGISTRY}/requesthub-api@{OTHER_DIGEST}"),
             "too old": self.verdict(at=NOW - timedelta(hours=release.GATE_VALID_HOURS, minutes=1)),
             "from the future": self.verdict(at=NOW + timedelta(hours=1)),
+            "a short bake": self.verdict(bake=0),
+            "a bake just under the standard": self.verdict(bake=release.STANDARD_BAKE - 1),
+            "a negative bake": self.verdict(bake=-60),
+            "the format before the bake was recorded": {release.GATE_TAG: f"r2|{DIGEST}|{release.iso(NOW)}"},
             "malformed": {release.GATE_TAG: "r2|" + DIGEST},
-            "not a time": {release.GATE_TAG: f"r2|{DIGEST}|yesterday"},
+            "not a time": {release.GATE_TAG: f"r2|{DIGEST}|yesterday|60"},
+            "not a number": {release.GATE_TAG: f"r2|{DIGEST}|{release.iso(NOW)}|６０"},
+            "cleared": {release.GATE_TAG: release.cleared_gate(NOW)},
         }
         for case, tags in cases.items():
             self.assertIsNotNone(release.gate_problem(tags, "r2", self.image, NOW), case)
         self.assertIsNotNone(release.gate_problem(self.verdict(), "r2", f"{REGISTRY}/requesthub-api:main", NOW),
                              "an image not pinned by digest")
+        self.assertIn("bake", release.gate_problem(self.verdict(bake=0), "r2", self.image, NOW))
+        self.assertEqual(release.gate_problem({release.GATE_TAG: release.cleared_gate(NOW)}, "r2", self.image, NOW),
+                         "the gate has not passed it")
 
     def test_tags_keep_every_other_tag(self):
         tags = {"azd-env-name": "env", "azd-service-name": "api", release.GATE_TAG: "old"}
-        self.assertEqual(release.tags_with_gate(tags, None), {"azd-env-name": "env", "azd-service-name": "api"})
+        cleared = release.tags_with_gate(tags, release.cleared_gate(NOW))
+        self.assertEqual({k: v for k, v in cleared.items() if k != release.GATE_TAG},
+                         {"azd-env-name": "env", "azd-service-name": "api"})
+        self.assertTrue(cleared[release.GATE_TAG].startswith(f"{release.CLEARED}|"))
         self.assertEqual(release.tags_with_gate(tags, "new")[release.GATE_TAG], "new")
         self.assertEqual(release.tags_with_gate(tags, "new")["azd-service-name"], "api")
 
@@ -224,15 +244,18 @@ class GateVerdict(unittest.TestCase):
 class Promote(Quiet):
     """Finding 1, end to end: promote moves traffic only with the gate's verdict, and consumes it."""
 
-    def app(self, tags: dict) -> FakeApp:
+    def app(self, tags: dict, *, merge_tags: bool = False) -> FakeApp:
         return FakeApp({"ca-api--r1": revision(OTHER_DIGEST, OTHER_SHA), "ca-api--r2": revision()},
                        [{"revisionName": "ca-api--r1", "weight": 100, "label": "stable"},
-                        {"revisionName": "ca-api--r2", "weight": 0, "label": "candidate"}], tags)
+                        {"revisionName": "ca-api--r2", "weight": 0, "label": "candidate"}], tags, merge_tags=merge_tags)
 
     def promote(self, app: FakeApp) -> int:
         with mock.patch.object(release, "connect", return_value=app), \
                 mock.patch.object(release, "busy_executions", return_value=[]):
             return release.cmd_promote(argparse.Namespace())
+
+    def verdict(self, digest: str = DIGEST, bake: int = release.STANDARD_BAKE) -> str:
+        return release.gate_value("r2", f"{REGISTRY}/requesthub-api@{digest}", release.utc_now(), bake)
 
     def test_refuses_without_a_verdict(self):
         app = self.app({"azd-service-name": "api"})
@@ -240,20 +263,47 @@ class Promote(Quiet):
         self.assertEqual(app.traffic_patches(), [])
 
     def test_refuses_a_verdict_for_another_image(self):
-        tags = {release.GATE_TAG: release.gate_value("r2", f"{REGISTRY}/requesthub-api@{OTHER_DIGEST}", release.utc_now())}
-        app = self.app(tags)
+        app = self.app({release.GATE_TAG: self.verdict(digest=OTHER_DIGEST)})
+        self.assertEqual(self.promote(app), 1)
+        self.assertEqual(app.traffic_patches(), [])
+
+    def test_refuses_a_gate_with_a_short_bake(self):
+        app = self.app({release.GATE_TAG: self.verdict(bake=0)})
         self.assertEqual(self.promote(app), 1)
         self.assertEqual(app.traffic_patches(), [])
 
     def test_promotes_with_a_verdict_and_consumes_it(self):
-        tags = {"azd-service-name": "api",
-                release.GATE_TAG: release.gate_value("r2", f"{REGISTRY}/requesthub-api@{DIGEST}", release.utc_now())}
-        app = self.app(tags)
-        self.assertEqual(self.promote(app), 0)
-        stable = next(t for t in app.traffic if t["label"] == "stable")
-        self.assertEqual((stable["revisionName"], stable["weight"]), ("ca-api--r2", 100))
-        self.assertNotIn(release.GATE_TAG, app.tags)
-        self.assertEqual(app.tags.get("azd-service-name"), "api")
+        for merge_tags in (False, True):
+            app = self.app({"azd-service-name": "api", release.GATE_TAG: self.verdict()}, merge_tags=merge_tags)
+            self.assertEqual(self.promote(app), 0)
+            stable = next(t for t in app.traffic if t["label"] == "stable")
+            self.assertEqual((stable["revisionName"], stable["weight"]), ("ca-api--r2", 100))
+            # Consumed whether Azure replaces tags or merges them: the verdict is overwritten, not just left out.
+            self.assertIsNotNone(release.gate_problem(app.tags, "r2", f"{REGISTRY}/requesthub-api@{DIGEST}",
+                                                      release.utc_now()), f"merge_tags={merge_tags}")
+            self.assertEqual(app.tags.get("azd-service-name"), "api")
+
+
+class GateRecordsItsBake(Quiet):
+    """The re-review: a gate run with a short bake (gate --bake 0 from a terminal) records a verdict promote refuses."""
+
+    def run_gate_with_bake(self, bake: int) -> FakeApp:
+        app = FakeApp({"ca-api--r1": revision(OTHER_DIGEST, OTHER_SHA), "ca-api--r2": revision()},
+                      [{"revisionName": "ca-api--r1", "weight": 100, "label": "stable"},
+                       {"revisionName": "ca-api--r2", "weight": 0, "label": "candidate"}], {"azd-service-name": "api"})
+        with mock.patch.object(release, "connect", return_value=app), \
+                mock.patch.object(release, "run_gate", return_value=(True, "passed", None)):
+            self.assertEqual(release.cmd_gate(argparse.Namespace(bake=bake)), 0)
+        return app
+
+    def test_the_verdict_records_the_bake_and_promote_needs_the_standard_one(self):
+        image = f"{REGISTRY}/requesthub-api@{DIGEST}"
+        short = self.run_gate_with_bake(0)
+        self.assertTrue(short.tags[release.GATE_TAG].endswith("|0"))
+        self.assertIn("bake", release.gate_problem(short.tags, "r2", image, release.utc_now()))
+        standard = self.run_gate_with_bake(release.STANDARD_BAKE)
+        self.assertIsNone(release.gate_problem(standard.tags, "r2", image, release.utc_now()))
+        self.assertEqual(standard.tags.get("azd-service-name"), "api")
 
 
 class OwnCandidateCleanup(Quiet):
@@ -343,9 +393,22 @@ class Turns(unittest.TestCase):
         self.assertEqual([r["name"] for r in release.ahead_of(running, "waiting-1")], ["gating"])
         self.assertNotIn("waiting-2", [r["name"] for r in release.ahead_of(running, "waiting-1")])
 
-    def test_a_step_without_a_start_time_yet_started_later(self):
+    def test_another_step_without_a_start_time_counts_as_ahead(self):
         running = [self.step("me", 0), self.step("new", None)]
-        self.assertEqual(release.ahead_of(running, "me"), [])
+        self.assertEqual([r["name"] for r in release.ahead_of(running, "me")], ["new"])
+
+    def test_a_start_time_listed_late_never_lets_both_steps_run(self):
+        # B started first, but its start time is not listed yet when A looks: A must wait for B.
+        self.assertEqual([r["name"] for r in release.ahead_of([self.step("a", 5), self.step("b", None)], "a")], ["b"])
+        # Once both are listed, B goes first and A keeps waiting: at no moment do both go ahead.
+        listed = [self.step("a", 5), self.step("b", 0)]
+        self.assertEqual([r["name"] for r in release.ahead_of(listed, "a")], ["b"])
+        self.assertEqual(release.ahead_of(listed, "b"), [])
+
+    def test_two_steps_without_start_times_both_wait(self):
+        running = [self.step("a", None), self.step("b", None)]
+        self.assertEqual([r["name"] for r in release.ahead_of(running, "a")], ["b"])
+        self.assertEqual([r["name"] for r in release.ahead_of(running, "b")], ["a"])
 
     def test_a_terminal_or_an_unlisted_execution_waits_for_everyone(self):
         running = [self.step("first", 0), self.step("second", 5)]
@@ -400,7 +463,7 @@ class Provenance(Quiet):
         code, deploy = self.release(self.stable_app(candidate=revision()), baked=SHA)
         self.assertEqual(code, 0)
         deploy.assert_called_once()  # the candidate has no verdict: release it again
-        gated = {release.GATE_TAG: release.gate_value("r2", image, release.utc_now())}
+        gated = {release.GATE_TAG: release.gate_value("r2", image, release.utc_now(), release.STANDARD_BAKE)}
         code, deploy = self.release(self.stable_app(tags=gated, candidate=revision()), baked=SHA)
         self.assertEqual(code, 0)
         deploy.assert_not_called()
@@ -445,6 +508,101 @@ class Rollback(Quiet):
         labels = {t["label"]: (t["revisionName"], t["weight"]) for t in app.traffic}
         self.assertEqual(labels, {"stable": ("ca-api--r1", 100), "previous": ("ca-api--r2", 0),
                                   "candidate": ("ca-api--r5", 0)})
+
+
+class RunningRule(unittest.TestCase):
+    """The re-review: any execution that has not finished counts as running, unless it started longer ago than its
+    job's time limit plus the margin. The preflight uses the same function."""
+
+    def props(self, status, minutes_ago=None) -> dict:
+        return {"status": status, "startTime": None if minutes_ago is None else release.iso(NOW - timedelta(minutes=minutes_ago))}
+
+    def test_only_succeeded_failed_and_stopped_are_finished(self):
+        for status in ("Running", "Processing", "Degraded", "Unknown", "", None, "SomethingNew"):
+            self.assertTrue(release.still_running(self.props(status, 1), 900, NOW), status)
+        for status in ("Succeeded", "Failed", "Stopped"):
+            self.assertFalse(release.still_running(self.props(status, 1), 900, NOW), status)
+
+    def test_an_execution_past_its_time_limit_and_the_margin_is_not_running(self):
+        margin = release.STALE_MARGIN.total_seconds() / 60
+        self.assertTrue(release.still_running(self.props("Running", 15 + margin - 1), 900, NOW))
+        self.assertFalse(release.still_running(self.props("Running", 15 + margin + 1), 900, NOW))
+        self.assertTrue(release.still_running(self.props("Degraded"), 900, NOW), "no start time: it cannot be aged")
+        self.assertTrue(release.still_running(self.props("Running", 30 + margin - 1), None, NOW), "unknown limit: 30 min")
+        self.assertFalse(release.still_running(self.props("Running", 30 + margin + 1), None, NOW))
+
+    def test_running_steps_lists_unfinished_executions_of_the_release_jobs_only(self):
+        jobs = [{"id": "/jobs/caj-release-x", "tags": {"requesthub-release": "release"},
+                 "properties": {"configuration": {"replicaTimeout": 1800}}},
+                {"id": "/jobs/another", "tags": {}, "properties": {"configuration": {"replicaTimeout": 1800}}}]
+        executions = {"/jobs/caj-release-x": [{"name": "running", "properties": self.props("Running", 1)},
+                                              {"name": "degraded", "properties": self.props("Degraded", 2)},
+                                              {"name": "succeeded", "properties": self.props("Succeeded", 3)},
+                                              {"name": "stale", "properties": self.props("Running", 600)}],
+                      "/jobs/another": [{"name": "not-a-release-step", "properties": self.props("Running", 1)}]}
+
+        def fake_list(url: str) -> list[dict]:
+            if url.endswith("/providers/Microsoft.App/jobs"):
+                return jobs
+            return executions[url.removeprefix(release.ARM).removesuffix("/executions")]
+        with mock.patch.object(release, "arm_list", side_effect=fake_list), \
+                mock.patch.object(release, "utc_now", return_value=NOW):
+            running = release.running_steps(FakeApp({}, []))
+        self.assertEqual([(r["name"], r["status"]) for r in running], [("running", "Running"), ("degraded", "Degraded")])
+
+
+class TriggerDefinition(unittest.TestCase):
+    """Finding 3 and the re-review, on the Logic App's definition (infra/release-trigger.json): what reaches the job,
+    and what a rejected event leaves behind."""
+
+    folder = Path(__file__).resolve().parent / "infra"
+
+    def setUp(self) -> None:
+        self.definition = json.loads((self.folder / "release-trigger.json").read_text(encoding="utf-8"))
+        self.text = json.dumps(self.definition)
+        self.actions: dict[str, tuple[dict, list[tuple[str, str]]]] = {}
+
+        def walk(actions: dict, ancestors: list[tuple[str, str]]) -> None:
+            for name, action in actions.items():
+                self.actions[name] = (action, ancestors)
+                walk(action.get("actions") or {}, ancestors + [(name, action["type"])])
+                walk((action.get("else") or {}).get("actions") or {}, ancestors + [(name, action["type"] + ":else")])
+        walk(self.definition["actions"], [])
+
+    def test_the_repository_is_set_in_one_place(self):
+        self.assertNotIn(release.REPOSITORY, self.text)
+        self.assertIn("repository", self.definition["parameters"])
+        bicep = (self.folder / "release.bicep").read_text(encoding="utf-8")
+        self.assertIn(f"var repository = '{release.REPOSITORY}'", bicep)
+        self.assertIn("subjectBeginsWith: '${repository}:'", bicep)
+        self.assertIn("repository: { value: repository }", bicep)
+
+    def test_event_values_reach_the_job_as_values_never_as_json_text(self):
+        self.assertNotIn("json(concat(", self.text)
+        env = self.actions["Release_this_build"][0]["inputs"]["env"]
+        self.assertIn("addProperty(", env)
+        self.assertIn("outputs('Pushed_build')?['repository'], '@', outputs('Pushed_build')?['digest']", env)
+
+    def test_the_job_starts_only_when_every_check_passed(self):
+        _, ancestors = self.actions["Start_release_job"]
+        condition, kind = ancestors[-1]
+        self.assertEqual(kind, "If")
+        self.assertIn("outputs('Check_pushed_build')", json.dumps(self.actions[condition][0]["expression"]))
+        check = self.actions["Check_pushed_build"][0]["inputs"]
+        for name in ("topic:", "eventType:", "host:", "repository:", "digest:"):
+            self.assertIn(name, check)
+        self.assertNotIn("startsWith(", check)  # not case-sensitive in Logic Apps, while replace() is
+
+    def test_a_rejected_event_fails_the_run_after_the_loop(self):
+        terminates = [(action, ancestors) for action, ancestors in self.actions.values() if action["type"] == "Terminate"]
+        self.assertEqual(len(terminates), 1)
+        action, ancestors = terminates[0]
+        self.assertEqual(action["inputs"]["runStatus"], "Failed")
+        self.assertFalse([kind for _, kind in ancestors if kind.startswith(("Foreach", "Until"))],
+                         "Logic Apps cannot run Terminate inside a loop")
+        note, note_ancestors = self.actions["Note_the_rejection"]
+        self.assertEqual(note["type"], "AppendToArrayVariable")
+        self.assertEqual(note_ancestors[-1], ("Is_a_push_of_the_API_to_this_registry", "If:else"))
 
 
 if __name__ == "__main__":
