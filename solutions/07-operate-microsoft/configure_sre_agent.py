@@ -12,9 +12,10 @@ from the files in sre-agent/, described by sre-agent/agent.yaml:
                  then the agent has no GitHub tool. Run this
                  script again after connecting it
   guard hook     hooks/no-identifiers.py, a global PreToolUse hook that blocks a GitHub Issue call whose text contains
-                 an identifier of this deployment (GUID, host name, resource id, suffixed name, e-mail address)
-  tool policy    global allow, ask, and deny rules: Azure writes and GitHub Issue writes ask first; pull requests and
-                 workflow runs are denied
+                 an identifier of this deployment (GUID, trace id, host name, resource id, suffixed name, e-mail
+                 address), and otherwise asks a person, so every Issue waits for Allow once
+  tool policy    global allow, ask, and deny rules: Azure writes and GitHub Issue tools ask first; pull request and
+                 workflow tools are denied, by pattern and by the exact names found in the agent's tool catalog
   response plan  which Azure Monitor alerts go to the custom agent, in Review mode. The default quickstart plan is
                  removed so an alert is not investigated twice.
 
@@ -129,26 +130,50 @@ def load() -> Config:
                   manifest["responsePlan"], manifest["toolPolicy"], github, read(github["guardHook"]["script"]))
 
 
+def matches(name: str, patterns: list[str]) -> bool:
+    """Tool name globs (* is the only wildcard), matched case-insensitively."""
+    return any(fnmatch.fnmatchcase(name.lower(), pattern.lower()) for pattern in patterns)
+
+
 def glob_regex(patterns: list[str]) -> str:
-    """A hook matcher (regex, anchored by the service as ^(...)$) for tool name globs where * is the only wildcard."""
-    return "|".join(".*".join(re.escape(part) for part in pattern.split("*")) for pattern in patterns)
+    """A hook matcher for tool name globs. The service anchors it as ^(...)$ and matches case-sensitively, so every
+    letter becomes a [xX] class: the matcher then works the same in any regex engine, without flags."""
+    def literal(text: str) -> str:
+        return "".join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else re.escape(c) for c in text)
+    return "|".join(".*".join(literal(part) for part in pattern.split("*")) for pattern in patterns)
 
 
-def run_guard(script: str, tool_input: object) -> dict | None:
-    """Runs the guard hook locally the way the agent does: the tool call as JSON on stdin. Returns its decision."""
-    event = {"hook_event_name": "PreToolUse", "tool_name": "CreateGitHubIssue", "tool_input": tool_input}
-    proc = subprocess.run([sys.executable, "-c", script], input=json.dumps(event), capture_output=True, text=True,
-                          timeout=30)
+def run_guard(script: str, stdin: str) -> tuple[str, str]:
+    """Runs the guard hook locally the way the agent does, with this text on stdin. Returns its verdict (ask, block,
+    allow, no objection, or error) and a detail, read the way the platform reads hook output."""
+    proc = subprocess.run([sys.executable, "-c", script], input=stdin, capture_output=True, text=True, timeout=30)
+    out = proc.stdout.strip()
+    if proc.returncode == 2:
+        return "block", proc.stderr.strip()[-200:]
     if proc.returncode != 0:
-        return {"decision": "error", "reason": proc.stderr.strip()[-300:]}
+        return "error", f"exit code {proc.returncode}: {proc.stderr.strip()[-200:]}"
+    if not out:
+        return "no objection", "no output"
     try:
-        return json.loads(proc.stdout) if proc.stdout.strip() else None
+        result = json.loads(out)
     except json.JSONDecodeError:
-        return {"decision": "error", "reason": f"not JSON: {proc.stdout.strip()[:200]}"}
+        return "error", f"not JSON: {out[:200]}"
+    decision = str(result.get("decision") or "").lower() if isinstance(result, dict) else ""
+    specific = (result.get("hookSpecificOutput") or {}) if isinstance(result, dict) else {}
+    permission = str(specific.get("permissionDecision") or "").lower()
+    if decision == "block" or permission == "deny":
+        return "block", str(result.get("reason") or specific.get("permissionDecisionReason") or "")[:200]
+    if decision in ("allow", "approve") or permission == "allow":
+        return "allow", out[:200]
+    if permission == "ask":
+        return "ask", ""
+    return "error", f"unexpected output: {out[:200]}"
 
 
 def guard_problems(script: str) -> list[str]:
-    """Tests the guard hook with a clean incident record and with each kind of identifier it must block."""
+    """Tests the guard hook. A clean incident record must wait for a person (ask). Every kind of identifier, hidden or
+    not, every pull request or workflow tool, and every malformed call must be blocked. Nothing may come back as allow
+    or as no objection, and nothing may fail open."""
     suffix = "q1w2e3r4t5y6u"
     script = script.replace("{{RESOURCE_SUFFIXES}}", suffix)
     clean = {
@@ -159,6 +184,10 @@ def guard_problems(script: str) -> list[str]:
                 "--remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc`, approved by an SRE Agent Administrator. "
                 "Evidence: the RequestHub notification backlog alert in portal.azure.com; requesthub-notification-backlog.",
     }
+
+    def call(tool_input: object, tool: str = "CreateGitHubIssue") -> str:
+        return json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input})
+
     leaks = {
         "a GUID": "thread 12345678-1234-1234-1234-123456789abc",
         "an id without hyphens": "operation_Id 0123456789abcdef0123456789abcdef",
@@ -168,17 +197,37 @@ def guard_problems(script: str) -> list[str]:
         "a tenant domain": "signed in to contoso.onmicrosoft.com",
         "this deployment's suffix": f"registry cr{suffix}",
         "a suffixed name": "worker ca-worker-z9y8x7w6v5u4t",
+        "a GUID split by a zero-width space": "thread 12345678-1234\u200b-1234-1234-123456789abc",
+        "a suffix split by a soft hyphen": f"registry cr{suffix[:6]}\u00ad{suffix[6:]}",
+        "a GUID in fullwidth digits": "thread \uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18-1234-1234-1234-123456789abc",
+        "a name split by an HTML comment": "worker ca-worker-z9y8x7<!-- -->w6v5u4t",
+        "a name with an HTML entity": "worker ca-worker-z9y8&#120;7w6v5u4t",
+        "a host name with a zero-width space": "https://ca-api.example.centralus.azure\u200bcontainerapps.io",
+        "an e-mail address with a URL escape": "approved by someone%40example.com",
     }
-    problems = []
-    decision = run_guard(script, clean)
-    if decision is not None:
-        problems.append(f"guard hook must let a clean incident record through to the tool policy, got {decision}")
+    cases: list[tuple[str, str, str]] = [  # (what, stdin, expected verdict)
+        ("a clean incident record", call(clean), "ask"),
+        ("a clean incident record sent as a JSON string", call(json.dumps(clean)), "ask"),
+    ]
     for kind, leak in leaks.items():
-        for tool_input in ({**clean, "body": clean["body"] + " " + leak}, json.dumps({**clean, "title": leak})):
-            decision = run_guard(script, tool_input)
-            if not decision or decision.get("decision") != "block":
-                problems.append(f"guard hook must block {kind}, got {decision}")
-                break
+        cases.append((f"{kind} in the body", call({**clean, "body": clean["body"] + " " + leak}), "block"))
+        cases.append((f"{kind} in the title, sent as a JSON string", call(json.dumps({**clean, "title": leak})), "block"))
+    cases += [
+        ("a GUID as a key", call({**clean, "fields": {"12345678-1234-1234-1234-123456789abc": "x"}}), "block"),
+        ("a pull request tool", call(clean, "LinkGitHubPullRequestToIssue"), "block"),
+        ("a workflow tool", call(clean, "TriggerWorkflowForIssue"), "block"),
+        ("a call without tool_input", json.dumps({"hook_event_name": "PreToolUse", "toolInput": clean}), "block"),
+        ("a call whose tool_input is null", call(None), "block"),
+        ("a call whose tool_input is a number", call(42), "block"),
+        ("input that is not JSON", "not json", "block"),
+        ("empty input", "", "block"),
+    ]
+    problems = []
+    for what, stdin, expected in cases:
+        verdict, detail = run_guard(script, stdin)
+        if verdict != expected:
+            problems.append(f"guard hook must {'ask a person for' if expected == 'ask' else 'block'} {what}, got "
+                            f"{verdict}" + (f" ({detail})" if detail else ""))
     return problems
 
 
@@ -208,7 +257,7 @@ def check(config: Config) -> list[str]:
     allow, ask, deny = (list(policy.get(k, [])) for k in ("allow", "ask", "deny"))
     for rule in allow:
         tool_glob = rule.split("(", 1)[0].strip()
-        widened = sorted(t for t in WRITE_TOOLS | set(GITHUB_ISSUE_SAMPLES) if fnmatch.fnmatchcase(t, tool_glob))
+        widened = sorted(t for t in WRITE_TOOLS | set(GITHUB_ISSUE_SAMPLES) if matches(t, [tool_glob]))
         if widened:
             problems.append(f"tool policy must not allow '{rule}': it lets {', '.join(widened)} run without approval")
     used = set(agent.get("tools", [])) | {t for s in config.skills for t in s.tools}
@@ -224,19 +273,20 @@ def check(config: Config) -> list[str]:
     if not issue_tools:
         problems.append("github.issueTools must name the GitHub Issue tools the custom agent may use")
     for sample in GITHUB_ISSUE_SAMPLES:
-        if not any(fnmatch.fnmatchcase(sample, p) for p in issue_tools):
+        if not matches(sample, issue_tools):
             problems.append(f"github.issueTools must cover Issue tools such as {sample}")
+        if matches(sample, github_deny):
+            problems.append(f"github.deny must not cover Issue tools such as {sample}")
     for sample in GITHUB_DENIED_SAMPLES:
-        if not any(fnmatch.fnmatchcase(sample, p) for p in github_deny):
+        if not matches(sample, github_deny):
             problems.append(f"github.deny must deny pull request and workflow tools such as {sample}")
-        if any(fnmatch.fnmatchcase(sample, p) for p in issue_tools):
-            problems.append(f"github.issueTools must not cover {sample}")
     if guard.get("failMode") != "block":
         problems.append("the guard hook must use failMode block: if it cannot run, nothing reaches GitHub")
     if not NAME.match(str(guard.get("name", ""))):
         problems.append("the guard hook needs a name of lowercase letters, digits, and hyphens")
-    matcher = re.compile(f"^({glob_regex(issue_tools)})$") if issue_tools else None
-    if matcher:
+    if issue_tools:
+        matcher = re.compile(f"^({glob_regex(issue_tools)})$")
+        problems += [f"the guard hook's matcher must match {t}" for t in GITHUB_ISSUE_SAMPLES if not matcher.match(t)]
         # The approved Azure CLI command carries a GUID and suffixed names; the guard must never see it.
         problems += [f"the guard hook's matcher must not match {t}" for t in sorted(used | WRITE_TOOLS) if matcher.match(t)]
     problems += guard_problems(config.guard_script)
@@ -334,8 +384,15 @@ def items(body: object) -> list[dict]:
     return body if isinstance(body, list) else []
 
 
-def build(config: Config, extra: dict[str, str], github_tools: list[str]) -> dict:
-    """The request bodies for everything this script applies, with placeholders filled in."""
+def unique(entries: list[str]) -> list[str]:
+    """Entries without repeats, ignoring case: the service keeps only one of two entries that differ only in case."""
+    seen: set[str] = set()
+    return [e for e in entries if not (e.lower() in seen or seen.add(e.lower()))]
+
+
+def build(config: Config, extra: dict[str, str], github_tools: list[str], github_denied: list[str]) -> dict:
+    """The request bodies for everything this script applies, with placeholders filled in. github_tools and
+    github_denied are the exact names of the GitHub tools in the agent's catalog that the patterns cover."""
     agent, plan, github = config.agent, config.plan, config.github
     guard, issue_patterns = github["guardHook"], list(github["issueTools"])
     ask, deny = list(config.policy.get("ask", [])), list(config.policy.get("deny", []))
@@ -361,9 +418,10 @@ def build(config: Config, extra: dict[str, str], github_tools: list[str]) -> dic
             },
         },
         "toolPolicy": {
-            "allow": list(config.policy.get("allow", [])),
-            "ask": ask + [p for p in issue_patterns if p not in ask],
-            "deny": deny + [p for p in github.get("deny", []) if p not in deny],
+            # Patterns cover tools the catalog adds later; exact names do not depend on how the service compares case.
+            "allow": unique(list(config.policy.get("allow", []))),
+            "ask": unique(ask + issue_patterns + github_tools),
+            "deny": unique(deny + list(github.get("deny", [])) + github_denied),
         },
         "guardHook": {
             "name": guard["name"], "type": "GlobalHook", "tags": [],
@@ -390,10 +448,11 @@ def build(config: Config, extra: dict[str, str], github_tools: list[str]) -> dic
 
 def apply(config: Config, dry_run: bool) -> int:
     agent, plan, github = config.agent, config.plan, config.github
-    issue_patterns = list(github["issueTools"])
+    issue_patterns, deny_patterns = list(github["issueTools"]), list(github.get("deny", []))
     if dry_run:
         extra = {"GITHUB_REPOSITORY": github_repository(), "RESOURCE_SUFFIXES": "<read from the agent when applied>"}
-        bodies = build(config, extra, ["<GitHub Issue tools from the agent's tool catalog>"])
+        bodies = build(config, extra, ["<GitHub Issue tools from the agent's tool catalog>"],
+                       ["<GitHub pull request and workflow tools from the agent's tool catalog>"])
         bodies["knowledge"] = list(bodies["knowledge"])
         print(json.dumps(bodies, indent=2))
         return 0
@@ -426,13 +485,15 @@ def apply(config: Config, dry_run: bool) -> int:
     for tool in sorted(named - catalog if catalog else set()):
         print(f"  FAILED  {tool} is not in the agent's tool catalog")
         failures.append(f"tool {tool}")
-    github_tools = sorted(t for t in catalog if any(fnmatch.fnmatchcase(t, p) for p in issue_patterns))
+    github_denied = sorted(t for t in catalog if matches(t, deny_patterns))
+    github_tools = sorted(t for t in catalog if matches(t, issue_patterns) and t not in github_denied)
     if github_tools:
         print(f"  ok      GitHub Issue tools: {', '.join(github_tools)}")
+        print(f"  ok      GitHub tools denied: {', '.join(github_denied) or 'none in the catalog'}")
     else:
         print(f"  note    GitHub is not connected: no tool matches {', '.join(issue_patterns)}. Until a person connects "
               "it (README, Connect GitHub) and runs this script again, the agent puts the incident record in its reply.")
-    bodies = build(config, extra, github_tools)
+    bodies = build(config, extra, github_tools, github_denied)
 
     print("Knowledge")
     for name, text in bodies["knowledge"].items():
@@ -507,10 +568,12 @@ def apply(config: Config, dry_run: bool) -> int:
         if ok and label.startswith("incidentFilters/"):
             ok = props.get("handlingAgent") == agent["name"] and props.get("agentMode") == plan["agentMode"]
         if ok and label == "tool policy":
-            # The service keeps one of two patterns that differ only in case (*Issue* and *issue*).
+            # Exact comparison: every entry sent, by name and case, must be in the service's policy.
             got = (body or {}).get("permissions") or {}
-            ok = all({p.lower() for p in permissions[k]} <= {p.lower() for p in got.get(k) or []}
-                     for k in ("allow", "ask", "deny"))
+            missing = [f"{k} {e}" for k in ("allow", "ask", "deny") for e in permissions[k] if e not in (got.get(k) or [])]
+            ok = not missing
+            if missing:
+                print(f"  missing from the tool policy: {', '.join(missing)}")
         print(f"  {'ok' if ok else 'FAILED'}  {label}")
         if not ok:
             failures.append(f"read back {label}")

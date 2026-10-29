@@ -39,20 +39,21 @@ skills:
 # and write Issues in this repository (README, "Connect GitHub"). The Issue tools exist only after that; until then
 # the custom agent has no GitHub tool and puts the incident record in its reply.
 github:
-  # Tool name patterns (* is a wildcard). Matching tools from the agent's tool catalog go to the custom agent and the
-  # file-incident-record skill; the patterns go into the tool policy's ask list, so each call waits for a person's
-  # Allow once, and into the guard hook's matcher. The hook's matcher is case-sensitive, so both spellings are listed;
-  # the tool policy keeps one of them.
-  issueTools: ["*Issue*", "*issue*"]
-  # Everything else the connector can do stays off: no pull requests, merges, or workflow runs.
-  deny: ["*PullRequest*", "*pull_request*", "*Workflow*", "*workflow*"]
+  # Tool name patterns (* is a wildcard), matched without regard to case. Matching tools from the agent's tool catalog
+  # go to the custom agent and the file-incident-record skill. The patterns and the exact names they match go into the
+  # tool policy's ask list, and the patterns into the guard hook's matcher.
+  issueTools: ["*Issue*"]
+  # Everything else the connection can do stays off: no pull requests, merges, or workflow runs. The patterns and the
+  # exact names they match go into the tool policy's deny list, and the guard hook blocks them too.
+  deny: ["*PullRequest*", "*pull_request*", "*Workflow*"]
   # A global PreToolUse hook that runs before every call to the Issue tools, ahead of the tool policy. It is
-  # deterministic (regular expressions) and blocks the call when the text contains an identifier of this deployment.
+  # deterministic (regular expressions): it blocks the call when the text contains an identifier of this deployment,
+  # and otherwise asks a person, so every Issue waits for Allow once.
   guardHook:
     name: no-identifiers-in-github
     description: >-
       Blocks a GitHub Issue call whose text contains a GUID or trace id, an Azure host name or resource id, an e-mail
-      address, or a resource name with its random suffix. Fails closed.
+      address, or a resource name with its random suffix; otherwise asks a person. Fails closed.
     script: hooks/no-identifiers.py
     timeout: 30
     failMode: block                # if the script cannot run, nothing is posted
@@ -70,8 +71,8 @@ responsePlan:
   maxAutomatedInvestigationAttempts: 3
   mergeEnabled: false              # every drill starts a fresh investigation thread
 
-# Global tool policy for every conversation on this agent. Deny wins, then allow, then ask. The github.issueTools
-# patterns are added to ask, and github.deny to deny.
+# Global tool policy for every conversation on this agent. Deny wins, then allow, then ask. The github section adds
+# its patterns and the exact tool names they match: Issue tools to ask, pull request and workflow tools to deny.
 toolPolicy:
   allow:
     - RunAzCliReadCommands

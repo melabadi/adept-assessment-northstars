@@ -59,10 +59,12 @@ sequenceDiagram
   identities, roles, networking, Key Vault, and PostgreSQL, pull requests, and workflow runs. A Stop hook makes it
   show timestamps, facts versus hypotheses, and a rollback before it finishes.
 - **The guard hook** ([`hooks/no-identifiers.py`](sre-agent/hooks/no-identifiers.py)) runs before every call to a
-  GitHub Issue tool, ahead of the tool policy. It reads the call's title, body, and labels, and blocks the call if it
-  finds a GUID or trace id, an Azure host name or resource id, an e-mail address, or a resource name with its random
-  suffix. It is deterministic (regular expressions, no model) and fails closed: if it cannot run, nothing is posted.
-  When it finds nothing, the tool policy still holds the call until a person selects **Allow once**.
+  GitHub Issue tool, ahead of the tool policy. It reads every key and string of the call, as written and with hidden
+  characters, HTML, and URL escapes undone, and blocks the call if it finds a GUID or trace id, an Azure host name or
+  resource id, an e-mail address, or a resource name with its random suffix. Otherwise it asks for a person itself, so
+  every Issue waits for **Allow once** whatever the tool policy or run mode says. It is deterministic (regular
+  expressions, no model), never allows a call on its own, blocks pull request and workflow tools, and fails closed:
+  unreadable input is blocked, and if the script fails, nothing is posted.
 - **GitHub** stores the Issue. The agent reaches it through its GitHub connection, which a person sets up once with a
   fine-grained token that can only read and write Issues in this repository. The agent cannot read code, open pull
   requests, or run workflows.
@@ -362,8 +364,8 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    **Point out:** recovery is measured, not assumed: the agent waits for post-change data and the resolved alert.
 
 7. **Review the incident record** (1 to 2 minutes). The agent writes the record with its `file-incident-record` skill
-   and calls its GitHub Issue tool to file it. The guard hook has already checked the text for identifiers, and the
-   platform holds the call for you: the card shows the repository, the title, the labels, and the whole body.
+   and calls its GitHub Issue tool to file it. The guard hook checks the text for identifiers and, finding none, hands
+   the call to you: the card shows the repository, the title, the labels, and the whole body.
 
    <!-- batch 2: ![The approval card for the GitHub Issue tool: the repository, the title Incident record: notification backlog, the labels ai-sdlc and phase:operate, and the body with the impact table, UTC timeline, root cause, mitigation with placeholders, and one follow-up](images/07-issue-approval.png) -->
 
@@ -397,8 +399,8 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
 - **An honest weak spot.** The worker publishes its backlog only between batches, so a slow worker delays its own
   alert by a few minutes. It is a good follow-up: measure the queue independently of the worker.
 - **Agent configuration is code.** A change that set the response plan to Autonomous, allowed writes without approval,
-  let the guard hook fail open, or stopped it from blocking an identifier fails `python configure_sre_agent.py --check`
-  before it reaches the agent.
+  let the guard hook fail open, let a clean Issue through without a person, or stopped it from blocking an identifier,
+  hidden or not, fails `python configure_sre_agent.py --check` before it reaches the agent.
 
 ## Reset and clean up
 
