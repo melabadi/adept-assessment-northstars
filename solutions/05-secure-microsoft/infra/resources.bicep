@@ -22,8 +22,11 @@ var tags = {
 var roles = {
   reader: 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
   // Policy Enrollments Contributor is the smallest built-in role with Microsoft.PolicyInsights/* (query compliance, start an
-  // evaluation) and Microsoft.Resources/deployments/* (what-if). It cannot change resources, policy assignments, or
-  // exemptions, so the posture automation can find, preview, and verify, but never deploy.
+  // evaluation) and Microsoft.Resources/deployments/* (what-if). Those also allow attestations, deployments (which still
+  // need write access to every resource they create or change), and remediation tasks, which run with the identity of a
+  // DeployIfNotExists or Modify policy assignment, inherited ones included, and can change the resources it covers. The
+  // identity itself has no write access to resources, policy assignments, or exemptions: it can find, preview, and verify
+  // a fix, and a person deploys it.
   policyEnrollmentsContributor: '285ce6d6-fa11-43bd-94ef-42a9b3740bfd'
 }
 
@@ -39,10 +42,12 @@ module app '../../../app/infra/requesthub.bicep' = {
     automationRoleDefinitionIds: [roles.reader, roles.policyEnrollmentsContributor]
     automationCanPushImages: false
     automationAppRoleNames: []
+    tags: tags
+    // posture:editable-begin. The posture-remediator agent may change only the lines between these two markers.
     // Without a private endpoint, RequestHub reaches Blob storage through the account's public endpoint. Where an Azure
     // Policy closes public endpoints, as in many organizations, RequestHub cannot reach the account at all.
     storagePrivateEndpoint: false
-    tags: tags
+    // posture:editable-end
   }
 }
 

@@ -8,8 +8,9 @@
   python remediation_agent.py try
       Sends the agent the input posture-intake sends: the live finding (Defender for Cloud and Azure Policy, read with the
       Azure CLI), this checkout's infra/resources.bicep as the editable file, and app/infra/requesthub.bicep as a read-only
-      module. It calls the REST endpoint the Logic App calls, checks the proposal the way the Logic App does (the one
-      allowed file, text that occurs exactly once), and prints it as a diff. Nothing is changed.
+      module. It calls the REST endpoint the Logic App calls, checks the proposal the way the Logic App does (one edit of
+      at most 2,000 characters to text that occurs exactly once, inside the lines marked posture:editable, naming no
+      protected setting), and prints it as a diff. Nothing is changed.
 
 Settings come from environment variables or this solution's azd environment: FOUNDRY_PROJECT_ENDPOINT,
 FOUNDRY_MODEL_DEPLOYMENT, REMEDIATION_AGENT_NAME, AZURE_RESOURCE_GROUP, and STORAGE_ACCOUNT_NAME.
@@ -35,6 +36,13 @@ INSTRUCTIONS = SOLUTION / "posture-remediator.md"
 EDITABLE = "solutions/05-secure-microsoft/infra/resources.bicep"
 READ_ONLY = ["app/infra/requesthub.bicep"]
 REASONING_EFFORT = "low"
+# The checks posture-intake applies to a proposal before it opens a pull request (infra/logic/intake.json, Edit_problems).
+# Logic Apps' indexOf ignores case, so the region, uniqueness, and protected-name checks do too.
+REGION = ("// posture:editable-begin", "// posture:editable-end")
+PROTECTED = ("automationRoleDefinitionIds", "automationAppRoleNames", "automationCanPushImages",
+             "storageAllowSharedKeyAccess", "storagePrivateLinkPolicy", "effect:", "Microsoft.Authorization",
+             "posture:editable")
+MAX_TEXT = 2000
 # The Defender for Cloud recommendation and the built-in policy the agent is asked about (see infra/automation.bicep).
 ASSESSMENT = "cdc78c07-02b0-4af0-1cb2-cb7c672a8b0a"
 POLICY_DEFINITION = "6edd7eda-6dd8-40f7-810d-67160c639cd9"
@@ -126,6 +134,31 @@ def live_finding(resource_group: str, account: str) -> tuple[dict, str]:
     return finding, storage["id"]
 
 
+def edit_problems(content: str, proposal: dict) -> list[str]:
+    """Why posture-intake would refuse to apply this proposal to `content`; an empty list means it would apply it."""
+    find, replace = proposal.get("find") or "", proposal.get("replace") or ""
+    lower, needle = content.lower(), find.lower()
+    position = lower.find(needle) if find else -1
+    begin, end = lower.find(REGION[0].lower()), lower.find(REGION[1].lower())
+    problems = []
+    if proposal.get("path") != EDITABLE:
+        problems.append("it targets a file other than the solution's own Bicep file")
+    if not find or find not in content or position != lower.rfind(needle):
+        problems.append("its search text does not occur exactly once in the file")
+    if not replace.strip():
+        problems.append("its replacement is empty")
+    if find == replace:
+        problems.append("it changes nothing")
+    if len(find) > MAX_TEXT or len(replace) > MAX_TEXT:
+        problems.append(f"its search or replacement text is longer than {MAX_TEXT:,} characters")
+    if not (begin >= 0 and end > begin and position > begin and position + len(find) <= end):
+        problems.append("it changes text outside the lines marked posture:editable")
+    if any(name.lower() in f"{find}\n{replace}".lower() for name in PROTECTED):
+        problems.append("its text names a protected setting (roles, app roles, registry push, shared key access, the "
+                        "policy assignment or its effect, or the editable markers)")
+    return problems
+
+
 def try_agent() -> int:
     from azure.identity import DefaultAzureCredential
 
@@ -158,16 +191,8 @@ def try_agent() -> int:
     print(f"agent {name} answered in {seconds:.0f} s ({usage.get('input_tokens', '?')} input and "
           f"{usage.get('output_tokens', '?')} output tokens): decision {proposal['decision']}")
 
-    problems = []
-    if proposal["decision"] != "change":
-        problems.append("the agent found no safe change")
-    if proposal["path"] != EDITABLE:
-        problems.append(f"it edits {proposal['path']}, not {EDITABLE}")
-    occurrences = editable.count(proposal["find"]) if proposal["find"] else 0
-    if occurrences != 1:
-        problems.append(f"its find text occurs {occurrences} times in the file, not once")
-    if proposal["find"] == proposal["replace"]:
-        problems.append("its replacement changes nothing")
+    problems = [] if proposal["decision"] == "change" else ["the agent found no safe change"]
+    problems += edit_problems(editable, proposal)
     print(f"\ntitle: {proposal['title']}\n\n{proposal['summary']}\n")
     print("expected changes:\n" + "\n".join(f"  - {c}" for c in proposal["expectedChanges"]))
     print(f"risks: {proposal['risks']}\n")

@@ -104,7 +104,7 @@
                   "type": "Query",
                   "inputs": {
                     "from": "@body('Find_issues')",
-                    "where": "@and(contains(coalesce(item()?['body'], ''), parameters('marker')), equals(item()?['pull_request'], null))"
+                    "where": "@and(contains(coalesce(item()?['body'], ''), concat('<!-- ', parameters('marker'), ' -->')), equals(item()?['pull_request'], null))"
                   },
                   "runAfter": { "Find_issues": ["Succeeded"] }
                 },
@@ -133,7 +133,7 @@
                     },
                     "Not_verified_yet": {
                       "type": "If",
-                      "expression": "@equals(length(body('Verifications')), 0)",
+                      "expression": "@or(equals(length(body('Verifications')), 0), equals(first(body('Issues_for_this_finding'))?['state'], 'open'))",
                       "runAfter": { "Verifications": ["Succeeded"] },
                       "actions": {
                         "Get_policy_states": {
@@ -192,7 +192,7 @@
                             "uri": "https://management.azure.com@{parameters('resourceGroupId')}/providers/Microsoft.PolicyInsights/policyStates/latest/queryResults?api-version=2019-10-01&$filter=@{encodeUriComponent(concat('resourceId eq ''', parameters('storageAccountId'), ''' and policyDefinitionName eq ''', parameters('policyDefinitionName'), ''''))}",
                             "authentication": "[variables('arm')]"
                           },
-                          "runAfter": { "Policy_is_stale": ["Succeeded", "Failed", "TimedOut"] }
+                          "runAfter": { "Policy_is_stale": ["Succeeded", "TimedOut"] }
                         },
                         "This_solutions_assignment": {
                           "type": "Query",
