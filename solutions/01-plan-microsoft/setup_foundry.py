@@ -9,6 +9,7 @@ change agent.yaml, the inputs, or an evaluator.
       PLAN_GITHUB_TOKEN isn't set yet.
 
   python setup_foundry.py publish    (azd postprovision hook)
+      0. Runs the evaluator tests in tests/ first. If one fails, nothing is published.
       1. Uploads inputs/ (the transcript and the policies) to a Foundry vector store. The store's name includes a
          hash of the files, so unchanged inputs are reused instead of uploaded again.
       2. Publishes the prompt agent defined in agent.yaml: model, instructions, file search over that vector store,
@@ -251,6 +252,19 @@ def prepare() -> int:
     return 0
 
 
+def tests_pass() -> bool:
+    """Runs tests/ before anything is published, so a broken grader never reaches Foundry."""
+    proc = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], capture_output=True, text=True, cwd=HERE)
+    if proc.returncode != 0:
+        print(proc.stderr.strip(), file=sys.stderr)
+        print("error: the evaluator tests failed, so nothing was published. Fix the evaluator, then run "
+              "`python setup_foundry.py publish` again.", file=sys.stderr)
+        return False
+    ran = re.search(r"Ran (\d+) tests?", proc.stderr)
+    print(f"evaluator tests: {ran.group(1) if ran else 'all'} passed")
+    return True
+
+
 def publish() -> int:
     import yaml
     from azure.ai.projects import AIProjectClient
@@ -258,6 +272,8 @@ def publish() -> int:
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    if not tests_pass():
+        return 2
     cache = azd_env()
     endpoint = setting("FOUNDRY_PROJECT_ENDPOINT", cache)
     model = setting("FOUNDRY_MODEL_DEPLOYMENT", cache)

@@ -72,7 +72,7 @@ Azure services sign in to each other with managed identities: the Logic App to F
 │   └── requirements_covered.py reported: the ten key requirement paragraphs are cited
 ├── setup_foundry.py            azd hooks: sets the GitHub repository and token name; publishes the agent, evaluators, and evaluation
 ├── requirements.txt            Python packages for setup_foundry.py
-├── tests/                      unit tests for the evaluators, with a brief the agent wrote as the fixture
+├── tests/                      unit tests for the evaluators, with a brief the agent wrote as the fixture; publish runs them first
 ├── azure.yaml                  azd project
 ├── images/                     screenshots for this README, captured with tools/screenshot.mjs
 ├── infra/
@@ -112,16 +112,18 @@ Azure services sign in to each other with managed identities: the Logic App to F
    - Application Insights `appi-plan` and Log Analytics `log-plan`, connected to the project for agent tracing, with read access for you;
    - the Logic App `logic-plan-backlog`, whose managed identity has the Foundry User role.
 
-   Its last hook publishes to Foundry and prints, for example:
+   Its last hook tests the evaluators, publishes to Foundry, and prints, for example:
 
    ```text
+   evaluator tests: 6 passed
+   vector store plan-inputs-9a000f952f98: uploaded
    agent requirements-analyst v1: new version (gpt-4.1)
    evaluator plan_structure v1: new version
    ...
    evaluation plan-brief-checks: created
    ```
 
-   Run `python setup_foundry.py publish` again after you change `agent.yaml`, `inputs/`, or an evaluator: it publishes only what changed.
+   Run `python setup_foundry.py publish` again after you change `agent.yaml`, `inputs/`, or an evaluator: it publishes only what changed. It runs the tests in `tests/` first and publishes nothing if one fails, so a broken grader never reaches Foundry.
 
 2. **Create the GitHub token.** On GitHub: **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**.
    - **Token name:** `ai-sdlc-plan-microsoft`. **Expiration:** 30 days.
@@ -160,10 +162,10 @@ Azure services sign in to each other with managed identities: the Logic App to F
    "GitHub token: HTTP $($r.StatusCode), expires $($r.Headers['github-authentication-token-expiration'])"
    ```
 
-   ![The starting-state check in PowerShell 7: setup_foundry.py reports the vector store, agent requirements-analyst v10 on gpt-4.1, the seven evaluators, and the evaluation plan-brief-checks as reused; no open Issue and no running run are listed; the GitHub token answers HTTP 200 with its expiry date](images/00-starting-state.png)
+   ![The starting-state check in PowerShell 7: the evaluator tests pass, and setup_foundry.py reports the vector store, agent requirements-analyst v10 on gpt-4.1, the seven evaluators, and the evaluation plan-brief-checks as reused; no open Issue and no running run are listed; the GitHub token answers HTTP 200 with its expiry date](images/00-starting-state.png)
 
    You should see:
-   - every Foundry line ending in `reused`: the agent, the seven evaluators, and the evaluation match this folder;
+   - `evaluator tests: 6 passed`, then every Foundry line ending in `reused`: the agent, the seven evaluators, and the evaluation match this folder;
    - no open Issue labeled `track:microsoft`, and no run still waiting for a decision. Otherwise run [Reset and clean up](#reset-and-clean-up) first;
    - `GitHub token: HTTP 200` and an expiry date after your session. An error or an early date means a new token: [Set up](#set-up), steps 2 and 3.
 
@@ -320,7 +322,7 @@ Set up before this version, when the solution ran in GitHub Actions? The GitHub 
 1. Copy this folder.
 2. Replace `inputs/` with your own notes and policies. Keep paragraph ids such as `[T01]` and policy ids such as `POL-ROUTE-001`: the citations evaluator checks them, and the published Issues quote them.
 3. Adjust the agent's `instructions` and `prompt` in `agent.yaml`, and the backlog shape in `backlog.schema.json`.
-4. Keep the four gate evaluators. Replace `planted_conflicts.py`, `planted_unknowns.py`, and `requirements_covered.py`, which check this synthetic transcript's planted problems, with checks for what matters in your notes. Each evaluator is one `grade(sample, item)` function that returns a score from 0 to 1, and it can't call anything named `compile()`. After a change, replace `tests/sample-brief.json` with a brief from your notes and run `python -m unittest discover -s tests -v` from the folder.
+4. Keep the four gate evaluators. Replace `planted_conflicts.py`, `planted_unknowns.py`, and `requirements_covered.py`, which check this synthetic transcript's planted problems, with checks for what matters in your notes. Each evaluator is one `grade(sample, item)` function that returns a score from 0 to 1, and it can't call anything named `compile()`. After a change, replace `tests/sample-brief.json` with a brief from your notes and adjust `tests/test_evaluators.py`: `python setup_foundry.py publish` runs those tests before it publishes anything.
 5. Run `azd up` from the folder, then create the token and set it as in [Set up](#set-up). The prepare hook takes the repository from `gh repo view`; run `azd env set GITHUB_REPOSITORY owner/name` first to choose another one.
 
 ## Troubleshooting
@@ -329,6 +331,7 @@ Set up before this version, when the solution ran in GitHub Actions? The GitHub 
 - **The run fails with `BriefFailedEvaluation`.** A gate didn't pass, or reported no result, and the run's error names it. Nothing was sent to GitHub. Open the evaluation run in Foundry to see the scores, improve the `instructions` in `agent.yaml`, run `python setup_foundry.py publish`, and start a new run. Don't loosen an evaluator to make a brief pass.
 - **The run fails with `PublishingFailed`.** GitHub refused a call while the backlog was being published. The comment on the review Issue lists the epic and the tasks already created; finish or close them by hand, then start a new run if needed. The review Issue stays open.
 - **An evaluation check shows "An error occurred during grading".** The preview grading sandbox sometimes errors on one check, and that run takes about 4 minutes. The workflow runs the evaluation again, up to three attempts, when a gate errored. If every attempt errors on a gate, the run fails; start a new one.
+- **`error: the evaluator tests failed, so nothing was published`.** A change to an evaluator broke a test in `tests/`, and the output above the error names it. Fix the evaluator, or the test if the rule changed on purpose, then run `python setup_foundry.py publish` again.
 - **`This operation requires the following opt-in preview feature(s): Evaluations=V1Preview`.** You called the evaluator catalog without the preview header. `setup_foundry.py` sends it; send `Foundry-Features: Evaluations=V1Preview` from your own code too.
 - **`Invalid grader source: use of builtin 'compile()' is not allowed in Python graders`.** An evaluator calls something named `compile()`, `re.compile` included. Use `re.search` and `re.match` with a pattern string instead.
 - **`AzureCLICredential: exit status 1` during `azd up` or `azd env refresh`.** azd couldn't get a token from the Azure CLI. Run `az account get-access-token` to check your sign-in, then run the azd command again. It can also be transient while other `az` commands run at the same time.
