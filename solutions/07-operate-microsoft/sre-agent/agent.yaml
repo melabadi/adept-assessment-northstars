@@ -50,6 +50,9 @@ github:
   # deterministic (regular expressions) and blocks the call when the text contains an identifier of this deployment.
   guardHook:
     name: no-identifiers-in-github
+    description: >-
+      Blocks a GitHub Issue call whose text contains a GUID or trace id, an Azure host name or resource id, an e-mail
+      address, or a resource name with its random suffix. Fails closed.
     script: hooks/no-identifiers.py
     timeout: 30
     failMode: block                # if the script cannot run, nothing is posted

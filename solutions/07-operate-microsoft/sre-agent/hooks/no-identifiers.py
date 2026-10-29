@@ -9,15 +9,13 @@ a random suffix. Otherwise it prints nothing, so the agent's tool policy decides
 to select Allow once.
 
 It is deterministic (regular expressions, no model) and uses only the Python standard library. configure_sre_agent.py
-fills in SUFFIXES below with the random suffixes of this deployment's resource names when it applies the hook, and runs
-the script against good and bad samples in `python configure_sre_agent.py --check`.
+fills in SUFFIXES at the end of this file with the random suffixes of this deployment's resource names when it applies
+the hook, and runs the script against good and bad samples in `python configure_sre_agent.py --check`.
 """
 import json
 import re
 import sys
 
-# The random suffixes in this deployment's resource names (comma-separated), filled in when the hook is applied.
-SUFFIXES = [s for s in "{{RESOURCE_SUFFIXES}}".split(",") if re.fullmatch(r"[a-z0-9]{6,}", s)]
 # Public, tenant-independent host names that may appear in an Issue.
 PUBLIC_HOSTS = {"portal.azure.com", "sre.azure.com", "management.azure.com", "learn.microsoft.com"}
 
@@ -88,6 +86,9 @@ def main() -> int:
     # No output: no objection. The tool policy decides, and GitHub writes wait for a person's Allow once.
     return 0
 
+
+# The random suffixes in this deployment's resource names (comma-separated), filled in when the hook is applied.
+SUFFIXES = [s for s in "{{RESOURCE_SUFFIXES}}".split(",") if re.fullmatch(r"[a-z0-9]{6,}", s)]
 
 if __name__ == "__main__":
     sys.exit(main())

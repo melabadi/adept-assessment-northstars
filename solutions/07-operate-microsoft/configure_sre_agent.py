@@ -367,7 +367,8 @@ def build(config: Config, extra: dict[str, str], github_tools: list[str]) -> dic
         },
         "guardHook": {
             "name": guard["name"], "type": "GlobalHook", "tags": [],
-            "properties": {"eventType": "PreToolUse", "enabled": True, "hook": {
+            "properties": {"eventType": "PreToolUse", "enabled": True, "description": guard.get("description", ""),
+                           "hook": {
                 "type": "command", "script": render(config.guard_script, extra), "matcher": glob_regex(issue_patterns),
                 "timeout": int(guard.get("timeout", 30)), "failMode": guard["failMode"]}},
         },

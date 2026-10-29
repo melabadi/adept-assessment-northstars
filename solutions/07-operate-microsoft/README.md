@@ -257,7 +257,7 @@ About 5 minutes, at least 15 minutes before you present.
 
 ## Run the demo
 
-Run the commands in this folder. The screenshots come from one live run of this drill.
+Run the commands in this folder. The screenshots of steps 2 to 7 come from one live run of this drill.
 
 1. **Show the starting state and the guardrails** (3 minutes). The workbook's **Ready for a drill** table is all
    **Ready** (see [Before each session](#before-each-session)). In the SRE Agent portal, open **Incidents**, then
@@ -265,10 +265,16 @@ Run the commands in this folder. The screenshots come from one live run of this 
 
    ![SRE Agent portal, Incidents, Triggers & response plans: requesthub-notification-backlog is On, handled by notification-backlog-responder, Sev2, autonomy level Review](images/01-response-plan.png)
 
-   Show the same configuration as code in [`sre-agent/agent.yaml`](sre-agent/agent.yaml): the GitHub Issue tools,
-   the guard hook, and the tool policy.
+   Then open **Build + setup**, **Hooks**, and select the edit button of `no-identifiers-in-github`. The guard is a
+   Python script that runs in Azure before every GitHub Issue call, and its fail mode is **Block**. Close it with
+   **Cancel**.
 
-   ![sre-agent/agent.yaml: the GitHub section with the Issue tool patterns, the pull request and workflow patterns it denies, and the guard hook that fails closed; the response plan in Review mode; and the tool policy that allows reads, asks before Azure CLI writes, and denies deletes and identity, role, PostgreSQL, network, Key Vault, and Microsoft Entra commands](images/01-agent-yaml.png)
+   ![The guard hook in the SRE Agent portal: Edit hook shows no-identifiers-in-github with event type Pre Tool Use, activation Always, hook type Command, tool matcher .*Issue.*|.*issue.*, timeout 30, fail mode Block, and the start of its Python script with the GUID, hex id, and host name patterns](images/01-guard-hook.png)
+
+   The same configuration is versioned in [`sre-agent/agent.yaml`](sre-agent/agent.yaml), and `azd provision`
+   applies it:
+
+   ![sre-agent/agent.yaml: the GitHub section with the Issue tool patterns, the pull request and workflow patterns it denies, and the guard hook that fails closed; then the tool policy that allows reads, asks before Azure CLI writes, and denies deletes and role, identity, PostgreSQL, network, Key Vault, and Microsoft Entra commands](images/01-agent-yaml.png)
 
    In the Azure portal, the resource group's **Access control (IAM)** shows that the agent's identities only have
    reader roles.
