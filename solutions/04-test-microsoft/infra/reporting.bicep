@@ -3,8 +3,8 @@
 // Azure Load Testing's notification rule (created by sync_test.py, because notification rules are data-plane objects)
 // sends each finished run of the test to this action group, which calls the Logic App, one run at a time. The Logic
 // App, with its own managed identity:
-//   - reads the run from Azure Load Testing (Load Test Reader), stops unless it is a run of this test, and waits for
-//     its verdict;
+//   - reads the run from Azure Load Testing (Load Test Reader), stops at once unless it is a run of this test that
+//     ended in the last 60 minutes (so replays and forged calls never post), and waits for its verdict;
 //   - waits (up to about 8 minutes) until Application Insights has the run's last requests, then runs report.kql on
 //     the workspace (Log Analytics Reader) to turn the run and the API's telemetry into a Markdown report and a
 //     verdict, including how many requests carried the rehearsal slowdown;

@@ -103,6 +103,102 @@
         ]
       }
     },
+    "Read_the_run": {
+      "type": "Http",
+      "description": "Reads the run once before waiting, so a call that names another test's run, a run that has not ended, or an old run stops at once and never holds the workflow's single run slot.",
+      "inputs": {
+        "method": "GET",
+        "uri": "@{parameters('loadTestingEndpoint')}/test-runs/@{encodeUriComponent(outputs('Test_run_id'))}",
+        "queries": {
+          "api-version": "2024-12-01-preview"
+        },
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://cnt-prod.loadtesting.azure.com"
+        }
+      },
+      "runAfter": {
+        "Stop_when_the_notification_names_no_run": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Stop_when_the_run_belongs_to_another_test": {
+      "type": "If",
+      "description": "Reports only runs of this Logic App's test. A run of another test, or an id that names no run, stops here.",
+      "expression": {
+        "and": [
+          {
+            "not": {
+              "equals": [
+                "@body('Read_the_run')?['testId']",
+                "@parameters('testId')"
+              ]
+            }
+          }
+        ]
+      },
+      "actions": {
+        "Not_this_test": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Failed",
+            "runError": {
+              "code": "NotThisTest",
+              "message": "The run does not belong to the test this Logic App reports."
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Read_the_run": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Stop_when_the_run_is_not_recent": {
+      "type": "If",
+      "description": "A notification arrives a few minutes after its run ends. A run that has not ended, or that ended more than 60 minutes ago, comes from a replay or a forged call: it never posts to GitHub.",
+      "expression": {
+        "or": [
+          {
+            "equals": [
+              "@empty(body('Read_the_run')?['endDateTime'])",
+              true
+            ]
+          },
+          {
+            "less": [
+              "@ticks(coalesce(body('Read_the_run')?['endDateTime'], utcNow()))",
+              "@ticks(addMinutes(utcNow(), -60))"
+            ]
+          }
+        ]
+      },
+      "actions": {
+        "Not_a_recent_run": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Failed",
+            "runError": {
+              "code": "NotARecentRun",
+              "message": "The run has not ended, or it ended more than 60 minutes ago. Only runs that just ended are reported."
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      },
+      "runAfter": {
+        "Stop_when_the_run_belongs_to_another_test": [
+          "Succeeded"
+        ]
+      }
+    },
     "Initialize_run": {
       "type": "InitializeVariable",
       "inputs": {
@@ -110,12 +206,12 @@
           {
             "name": "run",
             "type": "object",
-            "value": {}
+            "value": "@body('Read_the_run')"
           }
         ]
       },
       "runAfter": {
-        "Stop_when_the_notification_names_no_run": [
+        "Stop_when_the_run_is_not_recent": [
           "Succeeded"
         ]
       }
@@ -230,42 +326,6 @@
         ]
       }
     },
-    "Stop_when_the_run_belongs_to_another_test": {
-      "type": "If",
-      "description": "Reports only runs of this Logic App's test. A run of another test, or an id that names no run, stops here.",
-      "expression": {
-        "and": [
-          {
-            "not": {
-              "equals": [
-                "@outputs('Run')?['testId']",
-                "@parameters('testId')"
-              ]
-            }
-          }
-        ]
-      },
-      "actions": {
-        "Not_this_test": {
-          "type": "Terminate",
-          "inputs": {
-            "runStatus": "Failed",
-            "runError": {
-              "code": "NotThisTest",
-              "message": "The run does not belong to the test this Logic App reports."
-            }
-          }
-        }
-      },
-      "else": {
-        "actions": {}
-      },
-      "runAfter": {
-        "Run": [
-          "Succeeded"
-        ]
-      }
-    },
     "Stop_when_the_run_has_no_verdict": {
       "type": "If",
       "description": "Cancelled runs, and runs without pass/fail criteria results, are not reported.",
@@ -293,7 +353,7 @@
         "actions": {}
       },
       "runAfter": {
-        "Stop_when_the_run_belongs_to_another_test": [
+        "Run": [
           "Succeeded"
         ]
       }
