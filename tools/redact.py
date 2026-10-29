@@ -55,12 +55,29 @@ GENERIC_LABELS = {"management", "login", "microsoftonline", "graph", "portal", "
 ZERO_GUID = "00000000-0000-0000-0000-000000000000"
 GENERIC_NAMES = {"contoso", "fabrikam", "default directory", "microsoft", "demo subscription", "you", "admin",
                  "administrator", "mod administrator", "global administrator", "user", "demo"}
+# Azure region names (az account list-locations) and regional endpoint labels such as "eastus2-0" (Application Insights
+# ingestion) or "prod-27" (Logic Apps) appear in every tenant's host names; they identify nothing.
+AZURE_REGIONS = set("""
+asia asiapacific australia australiacentral australiacentral2 australiaeast australiasoutheast austria austriaeast belgium
+belgiumcentral brazil brazilsouth brazilsoutheast canada canadacentral canadaeast centralindia centralus centraluseuap
+centralusstage chile chilecentral denmark denmarkeast eastasia eastasiastage eastus eastus2 eastus2euap eastus2stage
+eastusstage eastusstg europe finland france francecentral francesouth germany germanynorth germanywestcentral global india
+indiasouthcentral indonesia indonesiacentral israel israelcentral italy italynorth japan japaneast japanwest
+jioindiacentral jioindiawest korea koreacentral koreasouth malaysia malaysiawest mexico mexicocentral newzealand
+newzealandnorth northcentralus northcentralusstage northeurope norway norwayeast norwaywest poland polandcentral qatar
+qatarcentral saudiarabia singapore southafrica southafricanorth southafricawest southcentralus southcentralusstage
+southcentralusstg southeastasia southeastasiastage southindia spain spaincentral sweden swedencentral switzerland
+switzerlandnorth switzerlandwest taiwan uae uaecentral uaenorth uk uksouth ukwest unitedstates unitedstateseuap
+westcentralus westeurope westindia westus westus2 westus2stage westus3 westusstage
+""".split())
 
 
 def meaningful(value: str) -> bool:
-    """False for values that identify nothing, such as the all-zeros GUID or a generic directory name."""
+    """False for values that identify nothing: the all-zeros GUID, a generic directory name, an Azure region."""
     v = value.strip().lower()
-    return len(v) >= 4 and v not in GENERIC_NAMES and not re.fullmatch(r"[0-]+", v) and not re.fullmatch(r"(.)\1{7}-.*", v)
+    regional = re.sub(r"-\d+$", "", v) in AZURE_REGIONS or re.fullmatch(r"prod-\d+", v)
+    return (len(v) >= 4 and v not in GENERIC_NAMES and not regional and not re.fullmatch(r"[0-]+", v)
+            and not re.fullmatch(r"(.)\1{7}-.*", v))
 
 
 def list_path() -> Path:
@@ -86,7 +103,7 @@ def load_items() -> list[dict]:
             # A letters-only start of a host name ("centralus") is a common word, not an identifier.
             expanded += [{"kind": i["kind"], "value": v[:n], "replacement": i["replacement"]}
                          for n in range(len(v) - 1, max(6, -(-len(v) // 2)) - 1, -1)
-                         if i["kind"] not in ("host-label", "name-token") or re.search(r"\d", v[:n])]
+                         if (i["kind"] not in ("host-label", "name-token") or re.search(r"\d", v[:n])) and meaningful(v[:n])]
         elif re.match(r"[0-9a-f]{8}-", v, re.I) and re.search("subscription|tenant", i["kind"]):
             expanded.append({"kind": i["kind"], "value": v[:8], "replacement": "00000000"})
     return expanded
