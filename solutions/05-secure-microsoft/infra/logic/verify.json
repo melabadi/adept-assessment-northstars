@@ -1,0 +1,297 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "posture-verify: every hour, or when a person selects Run trigger, checks whether the storage account has an approved private endpoint. If it has and the posture Issue is not verified yet, it starts an Azure Policy evaluation of the resource group when the latest result is stale, waits for it, and records the evidence from each source on the Issue, closing it when Azure Policy reports Compliant."
+  },
+  "parameters": {
+    "name": { "type": "string" },
+    "location": { "type": "string" },
+    "tags": { "type": "object" },
+    "identityId": { "type": "string" },
+    "githubRepository": { "type": "string" },
+    "githubToken": { "type": "securestring" },
+    "resourceGroupName": { "type": "string" },
+    "resourceGroupId": { "type": "string" },
+    "storageAccountId": { "type": "string" },
+    "assessmentKey": { "type": "string" },
+    "policyDefinitionName": { "type": "string" },
+    "policyAssignmentName": { "type": "string" },
+    "marker": { "type": "string" }
+  },
+  "variables": {
+    "github": {
+      "Authorization": "Bearer @{parameters('githubToken')}",
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "posture-verify"
+    },
+    "arm": {
+      "type": "ManagedServiceIdentity",
+      "identity": "[parameters('identityId')]",
+      "audience": "https://management.azure.com/"
+    },
+    "secure": { "secureData": { "properties": ["inputs"] } }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": { "[parameters('identityId')]": {} }
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "githubToken": { "type": "securestring" },
+            "repository": { "type": "string" },
+            "resourceGroupName": { "type": "string" },
+            "resourceGroupId": { "type": "string" },
+            "storageAccountId": { "type": "string" },
+            "assessmentKey": { "type": "string" },
+            "policyDefinitionName": { "type": "string" },
+            "policyAssignmentName": { "type": "string" },
+            "marker": { "type": "string" }
+          },
+          "triggers": {
+            "Every_hour": {
+              "type": "Recurrence",
+              "recurrence": { "frequency": "Hour", "interval": 1 },
+              "runtimeConfiguration": { "concurrency": { "runs": 1 } }
+            }
+          },
+          "actions": {
+            "Get_storage_account": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "https://management.azure.com@{parameters('storageAccountId')}?api-version=2023-05-01",
+                "authentication": "[variables('arm')]"
+              },
+              "runAfter": {}
+            },
+            "Approved_private_endpoints": {
+              "type": "Query",
+              "inputs": {
+                "from": "@coalesce(body('Get_storage_account')?['properties']?['privateEndpointConnections'], json('[]'))",
+                "where": "@equals(item()?['properties']?['privateLinkServiceConnectionState']?['status'], 'Approved')"
+              },
+              "runAfter": { "Get_storage_account": ["Succeeded"] }
+            },
+            "Is_fixed": {
+              "type": "If",
+              "expression": "@greater(length(body('Approved_private_endpoints')), 0)",
+              "runAfter": { "Approved_private_endpoints": ["Succeeded"] },
+              "actions": {
+                "Find_issues": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "https://api.github.com/repos/@{parameters('repository')}/issues?labels=posture&state=all&per_page=20",
+                    "headers": "[variables('github')]"
+                  },
+                  "runtimeConfiguration": "[variables('secure')]",
+                  "runAfter": {}
+                },
+                "Issues_for_this_finding": {
+                  "type": "Query",
+                  "inputs": {
+                    "from": "@body('Find_issues')",
+                    "where": "@and(contains(coalesce(item()?['body'], ''), parameters('marker')), equals(item()?['pull_request'], null))"
+                  },
+                  "runAfter": { "Find_issues": ["Succeeded"] }
+                },
+                "Has_issue": {
+                  "type": "If",
+                  "expression": "@greater(length(body('Issues_for_this_finding')), 0)",
+                  "runAfter": { "Issues_for_this_finding": ["Succeeded"] },
+                  "actions": {
+                    "Get_comments": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "GET",
+                        "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{first(body('Issues_for_this_finding'))?['number']}/comments?per_page=100",
+                        "headers": "[variables('github')]"
+                      },
+                      "runtimeConfiguration": "[variables('secure')]",
+                      "runAfter": {}
+                    },
+                    "Verifications": {
+                      "type": "Query",
+                      "inputs": {
+                        "from": "@body('Get_comments')",
+                        "where": "@contains(coalesce(item()?['body'], ''), 'posture:verified')"
+                      },
+                      "runAfter": { "Get_comments": ["Succeeded"] }
+                    },
+                    "Not_verified_yet": {
+                      "type": "If",
+                      "expression": "@equals(length(body('Verifications')), 0)",
+                      "runAfter": { "Verifications": ["Succeeded"] },
+                      "actions": {
+                        "Get_policy_states": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "POST",
+                            "uri": "https://management.azure.com@{parameters('resourceGroupId')}/providers/Microsoft.PolicyInsights/policyStates/latest/queryResults?api-version=2019-10-01&$filter=@{encodeUriComponent(concat('resourceId eq ''', parameters('storageAccountId'), ''' and policyAssignmentName eq ''', parameters('policyAssignmentName'), ''''))}",
+                            "authentication": "[variables('arm')]"
+                          },
+                          "runAfter": {}
+                        },
+                        "Policy_is_stale": {
+                          "type": "If",
+                          "expression": "@not(equals(first(body('Get_policy_states')?['value'])?['complianceState'], 'Compliant'))",
+                          "runAfter": { "Get_policy_states": ["Succeeded"] },
+                          "actions": {
+                            "Start_policy_evaluation": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "POST",
+                                "uri": "https://management.azure.com@{parameters('resourceGroupId')}/providers/Microsoft.PolicyInsights/policyStates/latest/triggerEvaluation?api-version=2019-10-01",
+                                "authentication": "[variables('arm')]"
+                              },
+                              "operationOptions": "DisableAsyncPattern",
+                              "runAfter": {}
+                            },
+                            "Until_evaluated": {
+                              "type": "Until",
+                              "expression": "@equals(outputs('Check_evaluation')?['statusCode'], 200)",
+                              "limit": { "count": 40, "timeout": "PT20M" },
+                              "actions": {
+                                "Wait_30_seconds": {
+                                  "type": "Wait",
+                                  "inputs": { "interval": { "count": 30, "unit": "Second" } },
+                                  "runAfter": {}
+                                },
+                                "Check_evaluation": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "GET",
+                                    "uri": "@{outputs('Start_policy_evaluation')?['headers']?['Location']}",
+                                    "authentication": "[variables('arm')]"
+                                  },
+                                  "operationOptions": "DisableAsyncPattern",
+                                  "runAfter": { "Wait_30_seconds": ["Succeeded"] }
+                                }
+                              },
+                              "runAfter": { "Start_policy_evaluation": ["Succeeded"] }
+                            }
+                          },
+                          "else": { "actions": {} }
+                        },
+                        "Get_policy_states_now": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "POST",
+                            "uri": "https://management.azure.com@{parameters('resourceGroupId')}/providers/Microsoft.PolicyInsights/policyStates/latest/queryResults?api-version=2019-10-01&$filter=@{encodeUriComponent(concat('resourceId eq ''', parameters('storageAccountId'), ''' and policyDefinitionName eq ''', parameters('policyDefinitionName'), ''''))}",
+                            "authentication": "[variables('arm')]"
+                          },
+                          "runAfter": { "Policy_is_stale": ["Succeeded"] }
+                        },
+                        "This_solutions_assignment": {
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@body('Get_policy_states_now')?['value']",
+                            "where": "@equals(item()?['policyAssignmentName'], parameters('policyAssignmentName'))"
+                          },
+                          "runAfter": { "Get_policy_states_now": ["Succeeded"] }
+                        },
+                        "Policy_rows": {
+                          "type": "Select",
+                          "inputs": {
+                            "from": "@body('Get_policy_states_now')?['value']",
+                            "select": "@concat('| Azure Policy · `', item()?['policyAssignmentName'], '` (', if(contains(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/resourcegroups/'), 'this resource group', 'inherited'), ') | ', item()?['complianceState'], if(equals(item()?['complianceState'], 'Compliant'), ' ✅', ' ❌'), ' | evaluated ', formatDateTime(item()?['timestamp'], 'yyyy-MM-dd HH:mm'), ' UTC |')"
+                          },
+                          "runAfter": { "Get_policy_states_now": ["Succeeded"] }
+                        },
+                        "Policy_reports_compliant": {
+                          "type": "If",
+                          "expression": "@equals(first(body('This_solutions_assignment'))?['complianceState'], 'Compliant')",
+                          "runAfter": { "This_solutions_assignment": ["Succeeded"], "Policy_rows": ["Succeeded"] },
+                          "actions": {
+                            "Get_defender_assessment": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "GET",
+                                "uri": "https://management.azure.com@{parameters('storageAccountId')}/providers/Microsoft.Security/assessments/@{parameters('assessmentKey')}?api-version=2021-06-01",
+                                "authentication": "[variables('arm')]"
+                              },
+                              "runAfter": {}
+                            },
+                            "Defender_state": {
+                              "type": "Compose",
+                              "inputs": "@coalesce(body('Get_defender_assessment')?['properties']?['status']?['code'], 'not assessed')",
+                              "runAfter": { "Get_defender_assessment": ["Succeeded", "Failed"] }
+                            },
+                            "Comment_evidence": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "POST",
+                                "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{first(body('Issues_for_this_finding'))?['number']}/comments",
+                                "headers": "[variables('github')]",
+                                "body": {
+                                  "body": "### Posture verification: `@{parameters('resourceGroupName')}`\n\n| Source | Result | Evidence |\n| --- | --- | --- |\n| Resource configuration | @{length(body('Approved_private_endpoints'))} approved private endpoint ✅ | public network access @{coalesce(body('Get_storage_account')?['properties']?['publicNetworkAccess'], 'Enabled')}; read from Azure Resource Manager at @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm')} UTC |\n@{join(body('Policy_rows'), decodeUriComponent('%0A'))}\n| Microsoft Defender for Cloud · Storage account should use a private link connection | @{outputs('Defender_state')} @{if(equals(outputs('Defender_state'), 'Healthy'), '✅', '⏳ not reassessed since the fix')} | @{if(equals(outputs('Defender_state'), 'not assessed'), 'no assessment yet', concat('status since ', formatDateTime(coalesce(body('Get_defender_assessment')?['properties']?['status']?['statusChangeDate'], utcNow()), 'yyyy-MM-dd HH:mm'), ' UTC'))} |\n\n**Verified**: the configuration is fixed and Azure Policy reports Compliant. @{if(equals(outputs('Defender_state'), 'Healthy'), 'Defender for Cloud confirms it.', 'Defender for Cloud reassesses on its own schedule, usually within a day; its workflow automation records the confirmation on this Issue.')}\n\nChecked in Azure by the Logic App `posture-verify` at @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm')} UTC.\n<!-- posture:verified -->"
+                                }
+                              },
+                              "runtimeConfiguration": "[variables('secure')]",
+                              "runAfter": { "Defender_state": ["Succeeded"] }
+                            },
+                            "Is_issue_open": {
+                              "type": "If",
+                              "expression": "@equals(first(body('Issues_for_this_finding'))?['state'], 'open')",
+                              "runAfter": { "Comment_evidence": ["Succeeded"] },
+                              "actions": {
+                                "Close_issue": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "PATCH",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{first(body('Issues_for_this_finding'))?['number']}",
+                                    "headers": "[variables('github')]",
+                                    "body": { "state": "closed", "state_reason": "completed" }
+                                  },
+                                  "runtimeConfiguration": "[variables('secure')]",
+                                  "runAfter": {}
+                                }
+                              },
+                              "else": { "actions": {} }
+                            }
+                          },
+                          "else": { "actions": {} }
+                        }
+                      },
+                      "else": { "actions": {} }
+                    }
+                  },
+                  "else": { "actions": {} }
+                }
+              },
+              "else": { "actions": {} }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "githubToken": { "value": "[parameters('githubToken')]" },
+          "repository": { "value": "[parameters('githubRepository')]" },
+          "resourceGroupName": { "value": "[parameters('resourceGroupName')]" },
+          "resourceGroupId": { "value": "[parameters('resourceGroupId')]" },
+          "storageAccountId": { "value": "[parameters('storageAccountId')]" },
+          "assessmentKey": { "value": "[parameters('assessmentKey')]" },
+          "policyDefinitionName": { "value": "[parameters('policyDefinitionName')]" },
+          "policyAssignmentName": { "value": "[parameters('policyAssignmentName')]" },
+          "marker": { "value": "[parameters('marker')]" }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "id": { "type": "string", "value": "[resourceId('Microsoft.Logic/workflows', parameters('name'))]" }
+  }
+}

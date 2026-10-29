@@ -1,7 +1,9 @@
 # Azure Developer CLI project for the Secure · Microsoft solution. Run `azd up` from this folder.
-# It provisions infra/ (RequestHub's hosting platform from app/infra plus a scoped Azure Policy assignment) and deploys the
-# shared app: the api and worker images are built in Azure Container Registry, and each `azd deploy` applies
-# app/infra/api.bicep or worker.bicep so image and configuration ship together. The hooks connect the solution to GitHub Actions.
+# It provisions infra/ (RequestHub's hosting platform from app/infra, a scoped Azure Policy assignment, and the posture
+# automation: Logic Apps, a Foundry project with the remediation agent's model, the what-if Container Apps job, and a
+# Defender for Cloud workflow automation) and deploys the shared app: the api and worker images are built in Azure
+# Container Registry, and each `azd deploy` applies app/infra/api.bicep or worker.bicep so image and configuration ship
+# together. The hooks publish the Foundry agent and connect the repository's pull requests to the what-if preview.
 name: ai-sdlc-secure-microsoft
 metadata:
   template: ai-sdlc-secure-microsoft@1.0.0
@@ -38,7 +40,14 @@ hooks:
   postprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py publish
+      run: python remediation_agent.py publish; if ($LASTEXITCODE -eq 0) { python configure_github.py publish }; exit $LASTEXITCODE
     posix:
       shell: sh
-      run: python3 configure_github.py publish
+      run: python3 remediation_agent.py publish && python3 configure_github.py publish
+  predown:
+    windows:
+      shell: pwsh
+      run: python configure_github.py remove
+    posix:
+      shell: sh
+      run: python3 configure_github.py remove

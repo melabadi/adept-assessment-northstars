@@ -1,0 +1,629 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "posture-intake: runs when a person selects Trigger logic app on the Defender for Cloud recommendation, or when workflow automation reports the recommendation Healthy. Unhealthy: files one GitHub Issue with each source's evidence, asks the Foundry agent posture-remediator for the smallest Bicep fix, checks it, opens it as a draft pull request, and starts the what-if preview. Healthy: records Defender's confirmation on the Issue."
+  },
+  "parameters": {
+    "name": { "type": "string" },
+    "location": { "type": "string" },
+    "tags": { "type": "object" },
+    "identityId": { "type": "string" },
+    "githubRepository": { "type": "string" },
+    "githubToken": { "type": "securestring" },
+    "connectionId": { "type": "string" },
+    "managedApiId": { "type": "string" },
+    "resourceGroupName": { "type": "string" },
+    "resourceGroupId": { "type": "string" },
+    "storageAccountId": { "type": "string" },
+    "assessmentKey": { "type": "string" },
+    "policyDefinitionName": { "type": "string" },
+    "foundryProjectEndpoint": { "type": "string" },
+    "agentName": { "type": "string" },
+    "editablePath": { "type": "string" },
+    "modulePath": { "type": "string" },
+    "previewWorkflowId": { "type": "string" },
+    "marker": { "type": "string" }
+  },
+  "variables": {
+    "github": {
+      "Authorization": "Bearer @{parameters('githubToken')}",
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "posture-intake"
+    },
+    "arm": {
+      "type": "ManagedServiceIdentity",
+      "identity": "[parameters('identityId')]",
+      "audience": "https://management.azure.com/"
+    },
+    "foundry": {
+      "type": "ManagedServiceIdentity",
+      "identity": "[parameters('identityId')]",
+      "audience": "https://ai.azure.com"
+    },
+    "secure": { "secureData": { "properties": ["inputs"] } }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": { "[parameters('identityId')]": {} }
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": { "type": "Object", "defaultValue": {} },
+            "githubToken": { "type": "securestring" },
+            "repository": { "type": "string" },
+            "resourceGroupName": { "type": "string" },
+            "resourceGroupId": { "type": "string" },
+            "storageAccountId": { "type": "string" },
+            "assessmentKey": { "type": "string" },
+            "policyDefinitionName": { "type": "string" },
+            "foundryProjectEndpoint": { "type": "string" },
+            "agentName": { "type": "string" },
+            "editablePath": { "type": "string" },
+            "modulePath": { "type": "string" },
+            "previewWorkflowId": { "type": "string" },
+            "marker": { "type": "string" }
+          },
+          "triggers": {
+            "Defender_recommendation": {
+              "type": "ApiConnectionWebhook",
+              "inputs": {
+                "host": { "connection": { "name": "@parameters('$connections')['ascassessment']['connectionId']" } },
+                "body": { "callback_url": "@{listCallbackUrl()}" },
+                "path": "/Microsoft.Security/Assessment/subscribe"
+              }
+            }
+          },
+          "actions": {
+            "Issue_number": {
+              "type": "InitializeVariable",
+              "inputs": { "variables": [ { "name": "issueNumber", "type": "integer", "value": 0 } ] },
+              "runAfter": {}
+            },
+            "Resource_id": {
+              "type": "Compose",
+              "inputs": "@coalesce(triggerBody()?['properties']?['resourceDetails']?['Id'], triggerBody()?['properties']?['resourceDetails']?['id'], '')",
+              "runAfter": { "Issue_number": ["Succeeded"] }
+            },
+            "Is_this_solutions_control": {
+              "type": "If",
+              "expression": "@and(equals(toLower(outputs('Resource_id')), toLower(parameters('storageAccountId'))), equals(toLower(coalesce(triggerBody()?['name'], '')), toLower(parameters('assessmentKey'))))",
+              "runAfter": { "Resource_id": ["Succeeded"] },
+              "actions": {
+                "Recommendation_status": {
+                  "type": "Switch",
+                  "expression": "@coalesce(triggerBody()?['properties']?['status']?['code'], '')",
+                  "runAfter": {},
+                  "cases": {
+                    "Unhealthy": {
+                      "case": "Unhealthy",
+                      "actions": {
+                        "Get_storage_account": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "GET",
+                            "uri": "https://management.azure.com@{parameters('storageAccountId')}?api-version=2023-05-01",
+                            "authentication": "[variables('arm')]"
+                          },
+                          "runAfter": {}
+                        },
+                        "Approved_private_endpoints": {
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@coalesce(body('Get_storage_account')?['properties']?['privateEndpointConnections'], json('[]'))",
+                            "where": "@equals(item()?['properties']?['privateLinkServiceConnectionState']?['status'], 'Approved')"
+                          },
+                          "runAfter": { "Get_storage_account": ["Succeeded"] }
+                        },
+                        "Get_policy_states": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "POST",
+                            "uri": "https://management.azure.com@{parameters('resourceGroupId')}/providers/Microsoft.PolicyInsights/policyStates/latest/queryResults?api-version=2019-10-01&$filter=@{encodeUriComponent(concat('resourceId eq ''', parameters('storageAccountId'), ''' and policyDefinitionName eq ''', parameters('policyDefinitionName'), ''''))}",
+                            "authentication": "[variables('arm')]"
+                          },
+                          "runAfter": {}
+                        },
+                        "Policy_rows": {
+                          "type": "Select",
+                          "inputs": {
+                            "from": "@body('Get_policy_states')?['value']",
+                            "select": "@concat('| Azure Policy · `', item()?['policyAssignmentName'], '` (', if(contains(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/resourcegroups/'), 'this resource group', 'inherited'), ') | ', item()?['complianceState'], if(equals(item()?['complianceState'], 'Compliant'), ' ✅', ' ❌'), ' | evaluated ', formatDateTime(item()?['timestamp'], 'yyyy-MM-dd HH:mm'), ' UTC |')"
+                          },
+                          "runAfter": { "Get_policy_states": ["Succeeded"] }
+                        },
+                        "Policy_summary": {
+                          "type": "Select",
+                          "inputs": {
+                            "from": "@body('Get_policy_states')?['value']",
+                            "select": {
+                              "assignment": "@item()?['policyAssignmentName']",
+                              "state": "@item()?['complianceState']"
+                            }
+                          },
+                          "runAfter": { "Get_policy_states": ["Succeeded"] }
+                        },
+                        "Find_open_issues": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "GET",
+                            "uri": "https://api.github.com/repos/@{parameters('repository')}/issues?labels=posture&state=open&per_page=50",
+                            "headers": "[variables('github')]"
+                          },
+                          "runtimeConfiguration": "[variables('secure')]",
+                          "runAfter": {}
+                        },
+                        "Open_issues_for_this_finding": {
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@body('Find_open_issues')",
+                            "where": "@and(contains(coalesce(item()?['body'], ''), parameters('marker')), equals(item()?['pull_request'], null))"
+                          },
+                          "runAfter": { "Find_open_issues": ["Succeeded"] }
+                        },
+                        "Has_open_issue": {
+                          "type": "If",
+                          "expression": "@greater(length(body('Open_issues_for_this_finding')), 0)",
+                          "runAfter": {
+                            "Open_issues_for_this_finding": ["Succeeded"],
+                            "Approved_private_endpoints": ["Succeeded"],
+                            "Policy_rows": ["Succeeded"],
+                            "Policy_summary": ["Succeeded"]
+                          },
+                          "actions": {
+                            "Use_open_issue": {
+                              "type": "SetVariable",
+                              "inputs": { "name": "issueNumber", "value": "@first(body('Open_issues_for_this_finding'))?['number']" },
+                              "runAfter": {}
+                            }
+                          },
+                          "else": {
+                            "actions": {
+                              "Issue_body": {
+                                "type": "Compose",
+                                "inputs": "**Storage accounts should use private link** · RequestHub's attachment storage account in resource group `@{parameters('resourceGroupName')}`\n\nRequestHub keeps every attachment in this account. It has no approved private endpoint, @{if(equals(coalesce(body('Get_storage_account')?['properties']?['publicNetworkAccess'], 'Enabled'), 'Disabled'), 'and its public endpoint is closed, so RequestHub cannot reach it: attachment uploads fail.', 'and its public endpoint is open, so the account is reachable from the internet and only authentication protects the attachments.')}\n\n| Source | Result | Evidence |\n| --- | --- | --- |\n| Resource configuration | @{if(greater(length(body('Approved_private_endpoints')), 0), concat(string(length(body('Approved_private_endpoints'))), ' approved private endpoint ✅'), 'no private endpoint ❌')} | public network access @{coalesce(body('Get_storage_account')?['properties']?['publicNetworkAccess'], 'Enabled')}; read from Azure Resource Manager at @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm')} UTC |\n@{join(body('Policy_rows'), decodeUriComponent('%0A'))}\n| Microsoft Defender for Cloud · @{triggerBody()?['properties']?['displayName']} | @{triggerBody()?['properties']?['status']?['code']} ❌ | @{coalesce(triggerBody()?['properties']?['metadata']?['severity'], '-')} severity, status since @{formatDateTime(coalesce(triggerBody()?['properties']?['status']?['statusChangeDate'], utcNow()), 'yyyy-MM-dd HH:mm')} UTC (Defender for Cloud > Recommendations) |\n\nAzure Policy and Defender for Cloud evaluate the same built-in policy definition, *Storage accounts should use private link*, on separate schedules, so their results can differ for a while. Neither proves on its own that the configuration changed: the resource configuration does.\n\n### Where to fix it\n\nIn this repository's Bicep for the solution, `solutions/05-secure-microsoft/infra/`, not in the portal, so the next deployment keeps the fix. The Foundry agent `posture-remediator` drafts the change as a pull request; a person reviews and merges it.\n\n### Done when\n\n- [ ] A pull request changes the Bicep, and its Azure what-if preview (commit status `posture/what-if`) shows only storage networking changes.\n- [ ] A person reviews and merges it, then applies it with `azd provision`.\n- [ ] The Azure Logic App `posture-verify` records the private endpoint in place and Azure Policy compliant on this Issue, and closes it. Defender for Cloud confirms on its own schedule.\n\nDo not add a policy exemption, change the assignment's effect, or open the public endpoint to make the finding disappear.\n\nFiled by the Azure Logic App `posture-intake` from the Defender for Cloud recommendation at @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm')} UTC.\n<!-- @{parameters('marker')} -->",
+                                "runAfter": {}
+                              },
+                              "Create_issue": {
+                                "type": "Http",
+                                "inputs": {
+                                  "method": "POST",
+                                  "uri": "https://api.github.com/repos/@{parameters('repository')}/issues",
+                                  "headers": "[variables('github')]",
+                                  "body": {
+                                    "title": "Posture: attachment storage in @{parameters('resourceGroupName')} has no private endpoint",
+                                    "body": "@{outputs('Issue_body')}",
+                                    "labels": ["posture"]
+                                  }
+                                },
+                                "runtimeConfiguration": "[variables('secure')]",
+                                "runAfter": { "Issue_body": ["Succeeded"] }
+                              },
+                              "Use_new_issue": {
+                                "type": "SetVariable",
+                                "inputs": { "name": "issueNumber", "value": "@body('Create_issue')?['number']" },
+                                "runAfter": { "Create_issue": ["Succeeded"] }
+                              }
+                            }
+                          }
+                        },
+                        "Find_open_pull_requests": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "GET",
+                            "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls?state=open&per_page=50",
+                            "headers": "[variables('github')]"
+                          },
+                          "runtimeConfiguration": "[variables('secure')]",
+                          "runAfter": { "Has_open_issue": ["Succeeded"] }
+                        },
+                        "Fixes_for_this_issue": {
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@body('Find_open_pull_requests')",
+                            "where": "@startsWith(coalesce(item()?['head']?['ref'], ''), concat('posture/issue-', string(variables('issueNumber')), '-'))"
+                          },
+                          "runAfter": { "Find_open_pull_requests": ["Succeeded"] }
+                        },
+                        "No_fix_yet": {
+                          "type": "If",
+                          "expression": "@equals(length(body('Fixes_for_this_issue')), 0)",
+                          "runAfter": { "Fixes_for_this_issue": ["Succeeded"] },
+                          "actions": {
+                            "Get_editable_file": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "GET",
+                                "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('editablePath')}?ref=main",
+                                "headers": "[variables('github')]"
+                              },
+                              "runtimeConfiguration": "[variables('secure')]",
+                              "runAfter": {}
+                            },
+                            "Get_module_file": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "GET",
+                                "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('modulePath')}?ref=main",
+                                "headers": "[variables('github')]"
+                              },
+                              "runtimeConfiguration": "[variables('secure')]",
+                              "runAfter": {}
+                            },
+                            "Editable_content": {
+                              "type": "Compose",
+                              "inputs": "@base64ToString(replace(body('Get_editable_file')?['content'], decodeUriComponent('%0A'), ''))",
+                              "runAfter": { "Get_editable_file": ["Succeeded"] }
+                            },
+                            "Module_content": {
+                              "type": "Compose",
+                              "inputs": "@base64ToString(replace(body('Get_module_file')?['content'], decodeUriComponent('%0A'), ''))",
+                              "runAfter": { "Get_module_file": ["Succeeded"] }
+                            },
+                            "Agent_input": {
+                              "type": "Compose",
+                              "inputs": {
+                                "finding": {
+                                  "recommendation": "@{triggerBody()?['properties']?['displayName']}",
+                                  "severity": "@{triggerBody()?['properties']?['metadata']?['severity']}",
+                                  "description": "@{triggerBody()?['properties']?['metadata']?['description']}",
+                                  "remediation": "@{triggerBody()?['properties']?['metadata']?['remediationDescription']}",
+                                  "resourceType": "Microsoft.Storage/storageAccounts",
+                                  "resourceGroup": "@{parameters('resourceGroupName')}",
+                                  "azurePolicy": "@body('Policy_summary')",
+                                  "liveConfiguration": {
+                                    "approvedPrivateEndpoints": "@length(body('Approved_private_endpoints'))",
+                                    "publicNetworkAccess": "@{body('Get_storage_account')?['properties']?['publicNetworkAccess']}"
+                                  }
+                                },
+                                "editableFile": { "path": "@{parameters('editablePath')}", "content": "@{outputs('Editable_content')}" },
+                                "readOnlyFiles": [ { "path": "@{parameters('modulePath')}", "content": "@{outputs('Module_content')}" } ]
+                              },
+                              "runAfter": {
+                                "Editable_content": ["Succeeded"],
+                                "Module_content": ["Succeeded"]
+                              }
+                            },
+                            "Ask_the_remediation_agent": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "POST",
+                                "uri": "@{parameters('foundryProjectEndpoint')}/openai/v1/responses",
+                                "authentication": "[variables('foundry')]",
+                                "body": {
+                                  "agent_reference": { "name": "@{parameters('agentName')}", "type": "agent_reference" },
+                                  "input": "@{string(outputs('Agent_input'))}"
+                                }
+                              },
+                              "limit": { "timeout": "PT2M" },
+                              "runAfter": { "Agent_input": ["Succeeded"] }
+                            },
+                            "Agent_messages": {
+                              "type": "Query",
+                              "inputs": {
+                                "from": "@body('Ask_the_remediation_agent')?['output']",
+                                "where": "@equals(item()?['type'], 'message')"
+                              },
+                              "runAfter": { "Ask_the_remediation_agent": ["Succeeded"] }
+                            },
+                            "Proposal": {
+                              "type": "Compose",
+                              "inputs": "@json(first(first(body('Agent_messages'))?['content'])?['text'])",
+                              "runAfter": { "Agent_messages": ["Succeeded"] }
+                            },
+                            "Find_text": {
+                              "type": "Compose",
+                              "inputs": "@if(empty(coalesce(outputs('Proposal')?['find'], '')), concat(guid(), '-no-text'), outputs('Proposal')?['find'])",
+                              "runAfter": { "Proposal": ["Succeeded"] }
+                            },
+                            "Proposal_applies_cleanly": {
+                              "type": "If",
+                              "expression": "@and(equals(outputs('Proposal')?['decision'], 'change'), equals(outputs('Proposal')?['path'], parameters('editablePath')), not(equals(replace(outputs('Editable_content'), outputs('Find_text'), ''), outputs('Editable_content'))), equals(indexOf(outputs('Editable_content'), outputs('Find_text')), lastIndexOf(outputs('Editable_content'), outputs('Find_text'))), not(equals(outputs('Find_text'), coalesce(outputs('Proposal')?['replace'], ''))))",
+                              "runAfter": { "Find_text": ["Succeeded"] },
+                              "actions": {
+                                "Fixed_content": {
+                                  "type": "Compose",
+                                  "inputs": "@replace(outputs('Editable_content'), outputs('Find_text'), coalesce(outputs('Proposal')?['replace'], ''))",
+                                  "runAfter": {}
+                                },
+                                "Branch_name": {
+                                  "type": "Compose",
+                                  "inputs": "posture/issue-@{variables('issueNumber')}-@{formatDateTime(utcNow(), 'MMddHHmm')}",
+                                  "runAfter": {}
+                                },
+                                "Get_main": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "GET",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/git/ref/heads/main",
+                                    "headers": "[variables('github')]"
+                                  },
+                                  "runtimeConfiguration": "[variables('secure')]",
+                                  "runAfter": {}
+                                },
+                                "Create_branch": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "POST",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/git/refs",
+                                    "headers": "[variables('github')]",
+                                    "body": {
+                                      "ref": "refs/heads/@{outputs('Branch_name')}",
+                                      "sha": "@{body('Get_main')?['object']?['sha']}"
+                                    }
+                                  },
+                                  "runtimeConfiguration": "[variables('secure')]",
+                                  "runAfter": { "Get_main": ["Succeeded"], "Branch_name": ["Succeeded"] }
+                                },
+                                "Commit_the_fix": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "PUT",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('editablePath')}",
+                                    "headers": "[variables('github')]",
+                                    "body": {
+                                      "message": "@{outputs('Proposal')?['title']} (#@{variables('issueNumber')})",
+                                      "content": "@{base64(outputs('Fixed_content'))}",
+                                      "sha": "@{body('Get_editable_file')?['sha']}",
+                                      "branch": "@{outputs('Branch_name')}"
+                                    }
+                                  },
+                                  "runtimeConfiguration": "[variables('secure')]",
+                                  "runAfter": { "Create_branch": ["Succeeded"], "Fixed_content": ["Succeeded"] }
+                                },
+                                "Expected_changes": {
+                                  "type": "Select",
+                                  "inputs": {
+                                    "from": "@coalesce(outputs('Proposal')?['expectedChanges'], json('[]'))",
+                                    "select": "@concat('- ', item())"
+                                  },
+                                  "runAfter": {}
+                                },
+                                "Open_pull_request": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "POST",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls",
+                                    "headers": "[variables('github')]",
+                                    "body": {
+                                      "title": "@{outputs('Proposal')?['title']}",
+                                      "head": "@{outputs('Branch_name')}",
+                                      "base": "main",
+                                      "draft": true,
+                                      "body": "@{outputs('Proposal')?['summary']}\n\nRemediates #@{variables('issueNumber')}. Merging does not close the Issue: the Logic App `posture-verify` closes it once the fix is deployed and Azure Policy reports it compliant.\n\n**Expected changes** (the Azure what-if preview checks them):\n\n@{join(body('Expected_changes'), decodeUriComponent('%0A'))}\n\n**Risks:** @{outputs('Proposal')?['risks']}\n\nDrafted in Azure by the Microsoft Foundry agent `@{parameters('agentName')}`, run by the Logic App `posture-intake` from the Defender for Cloud recommendation. The Azure what-if preview runs next (commit status `posture/what-if`). A person reviews and merges; nothing is deployed until someone runs `azd provision`.\n<!-- posture:fix -->"
+                                    }
+                                  },
+                                  "runtimeConfiguration": "[variables('secure')]",
+                                  "runAfter": { "Commit_the_fix": ["Succeeded"], "Expected_changes": ["Succeeded"] }
+                                },
+                                "Start_the_preview": {
+                                  "type": "Workflow",
+                                  "inputs": {
+                                    "host": {
+                                      "workflow": { "id": "[parameters('previewWorkflowId')]" },
+                                      "triggerName": "Pull_request_event"
+                                    },
+                                    "body": { "number": "@body('Open_pull_request')?['number']" }
+                                  },
+                                  "runAfter": { "Open_pull_request": ["Succeeded"] }
+                                },
+                                "Comment_draft_fix": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "POST",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{variables('issueNumber')}/comments",
+                                    "headers": "[variables('github')]",
+                                    "body": {
+                                      "body": "The Microsoft Foundry agent `@{parameters('agentName')}` drafted a fix: #@{body('Open_pull_request')?['number']}. The Azure what-if preview runs on it now; a person reviews and merges it."
+                                    }
+                                  },
+                                  "runtimeConfiguration": "[variables('secure')]",
+                                  "runAfter": { "Start_the_preview": ["Succeeded", "Failed"] }
+                                }
+                              },
+                              "else": {
+                                "actions": {
+                                  "Comment_rejected_proposal": {
+                                    "type": "Http",
+                                    "inputs": {
+                                      "method": "POST",
+                                      "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{variables('issueNumber')}/comments",
+                                      "headers": "[variables('github')]",
+                                      "body": {
+                                        "body": "@{if(equals(outputs('Proposal')?['decision'], 'no_change'), concat('The Microsoft Foundry agent `', parameters('agentName'), '` proposes no change: ', coalesce(outputs('Proposal')?['summary'], ''), ' If a fix is already merged, deploy it with `azd provision`; otherwise fix it by hand in a pull request.'), concat('The Microsoft Foundry agent `', parameters('agentName'), '` did not produce a change the Logic App could apply: its edit must replace text that occurs exactly once in the solution''s own Bicep file, and nothing else. Fix it by hand in a pull request.'))}"
+                                      }
+                                    },
+                                    "runtimeConfiguration": "[variables('secure')]",
+                                    "runAfter": {}
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "else": {
+                            "actions": {
+                              "Comment_existing_fix": {
+                                "type": "Http",
+                                "inputs": {
+                                  "method": "POST",
+                                  "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{variables('issueNumber')}/comments",
+                                  "headers": "[variables('github')]",
+                                  "body": {
+                                    "body": "Defender for Cloud reported this again. A draft fix is already open: #@{first(body('Fixes_for_this_issue'))?['number']}."
+                                  }
+                                },
+                                "runtimeConfiguration": "[variables('secure')]",
+                                "runAfter": {}
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "Healthy": {
+                      "case": "Healthy",
+                      "actions": {
+                        "Find_issues": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "GET",
+                            "uri": "https://api.github.com/repos/@{parameters('repository')}/issues?labels=posture&state=all&per_page=20",
+                            "headers": "[variables('github')]"
+                          },
+                          "runtimeConfiguration": "[variables('secure')]",
+                          "runAfter": {}
+                        },
+                        "Issues_for_this_finding": {
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@body('Find_issues')",
+                            "where": "@and(contains(coalesce(item()?['body'], ''), parameters('marker')), equals(item()?['pull_request'], null))"
+                          },
+                          "runAfter": { "Find_issues": ["Succeeded"] }
+                        },
+                        "Has_issue": {
+                          "type": "If",
+                          "expression": "@greater(length(body('Issues_for_this_finding')), 0)",
+                          "runAfter": { "Issues_for_this_finding": ["Succeeded"] },
+                          "actions": {
+                            "Get_comments": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "GET",
+                                "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{first(body('Issues_for_this_finding'))?['number']}/comments?per_page=100",
+                                "headers": "[variables('github')]"
+                              },
+                              "runtimeConfiguration": "[variables('secure')]",
+                              "runAfter": {}
+                            },
+                            "Confirmations": {
+                              "type": "Query",
+                              "inputs": {
+                                "from": "@body('Get_comments')",
+                                "where": "@contains(coalesce(item()?['body'], ''), 'posture:defender-confirmed')"
+                              },
+                              "runAfter": { "Get_comments": ["Succeeded"] }
+                            },
+                            "Not_confirmed_yet": {
+                              "type": "If",
+                              "expression": "@equals(length(body('Confirmations')), 0)",
+                              "runAfter": { "Confirmations": ["Succeeded"] },
+                              "actions": {
+                                "Comment_defender_confirms": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "POST",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{first(body('Issues_for_this_finding'))?['number']}/comments",
+                                    "headers": "[variables('github')]",
+                                    "body": {
+                                      "body": "Microsoft Defender for Cloud now reports the storage account **Healthy** for *@{triggerBody()?['properties']?['displayName']}* (status since @{formatDateTime(coalesce(triggerBody()?['properties']?['status']?['statusChangeDate'], utcNow()), 'yyyy-MM-dd HH:mm')} UTC). Recorded by Defender's workflow automation through the Azure Logic App `posture-intake`.\n<!-- posture:defender-confirmed -->"
+                                    }
+                                  },
+                                  "runtimeConfiguration": "[variables('secure')]",
+                                  "runAfter": {}
+                                }
+                              },
+                              "else": { "actions": {} }
+                            }
+                          },
+                          "else": { "actions": {} }
+                        }
+                      }
+                    }
+                  },
+                  "default": { "actions": {} }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Not_this_solutions_control": {
+                    "type": "Terminate",
+                    "inputs": {
+                      "runStatus": "Cancelled"
+                    },
+                    "runAfter": {}
+                  }
+                }
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "ascassessment": {
+                "connectionId": "[parameters('connectionId')]",
+                "connectionName": "ascassessment",
+                "id": "[parameters('managedApiId')]"
+              }
+            }
+          },
+          "githubToken": { "value": "[parameters('githubToken')]" },
+          "repository": { "value": "[parameters('githubRepository')]" },
+          "resourceGroupName": { "value": "[parameters('resourceGroupName')]" },
+          "resourceGroupId": { "value": "[parameters('resourceGroupId')]" },
+          "storageAccountId": { "value": "[parameters('storageAccountId')]" },
+          "assessmentKey": { "value": "[parameters('assessmentKey')]" },
+          "policyDefinitionName": { "value": "[parameters('policyDefinitionName')]" },
+          "foundryProjectEndpoint": { "value": "[parameters('foundryProjectEndpoint')]" },
+          "agentName": { "value": "[parameters('agentName')]" },
+          "editablePath": { "value": "[parameters('editablePath')]" },
+          "modulePath": { "value": "[parameters('modulePath')]" },
+          "previewWorkflowId": { "value": "[parameters('previewWorkflowId')]" },
+          "marker": { "value": "[parameters('marker')]" }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Security/automations",
+      "apiVersion": "2023-12-01-preview",
+      "name": "posture-defender-healthy",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "dependsOn": ["[resourceId('Microsoft.Logic/workflows', parameters('name'))]"],
+      "properties": {
+        "description": "When Defender for Cloud reports the RequestHub storage account Healthy for the private link recommendation, posture-intake records it on the GitHub Issue.",
+        "isEnabled": true,
+        "scopes": [
+          { "description": "This solution's resource group", "scopePath": "[parameters('resourceGroupId')]" }
+        ],
+        "sources": [
+          {
+            "eventSource": "Assessments",
+            "ruleSets": [
+              {
+                "rules": [
+                  { "propertyJPath": "name", "propertyType": "String", "expectedValue": "[parameters('assessmentKey')]", "operator": "Equals" },
+                  { "propertyJPath": "properties.status.code", "propertyType": "String", "expectedValue": "Healthy", "operator": "Equals" }
+                ]
+              }
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "actionType": "LogicApp",
+            "logicAppResourceId": "[resourceId('Microsoft.Logic/workflows', parameters('name'))]",
+            "uri": "[listCallbackURL(resourceId('Microsoft.Logic/workflows/triggers', parameters('name'), 'Defender_recommendation'), '2019-05-01').value]"
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "id": { "type": "string", "value": "[resourceId('Microsoft.Logic/workflows', parameters('name'))]" }
+  }
+}
