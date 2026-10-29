@@ -22,7 +22,8 @@ In Azure, this script runs as five Container Apps jobs that share one image (inf
              gate blocks the candidate.
 
 Each step prints its progress. In a job, it also prints one JSON line per step (RELEASE-RECORD {...}): Log Analytics
-keeps them, and the "RequestHub release records" workbook shows them.
+keeps them, and the "RequestHub release records" workbook shows them. Only builds of requesthub-api in this solution's
+registry are released, whoever names the image.
 
 Commands (every one of them also works from a terminal signed in with `az login`):
 
@@ -523,6 +524,16 @@ def tag_commit(reference: str) -> str:
     return tag if COMMIT.fullmatch(tag) else ""
 
 
+def require_own_build(reference: str) -> None:
+    """Only builds of the API in this solution's registry are released, whoever names the image: a person, or the push
+    trigger, whose event anyone holding the Logic App's URL could forge."""
+    host, _, path = reference.partition("/")
+    repository = re.split(r"[@:]", path, maxsplit=1)[0]
+    if host.lower() != setting("AZURE_CONTAINER_REGISTRY_ENDPOINT").lower() or repository != REPOSITORY:
+        raise ReleaseError(f"{(path or 'The image')[:72]} is not a build of {REPOSITORY} in this solution's registry: "
+                           "not released.")
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Records: progress for people, one JSON line per step for Log Analytics and the workbook
 # ---------------------------------------------------------------------------------------------------------------------
@@ -844,6 +855,8 @@ def deploy_candidate(app: ContainerApp, image_ref: str | None, commit: str | Non
             app.deactivate(leftover)
         state = State.load(app)
     stable_revision = state.revisions[stable]
+    if image_ref:
+        require_own_build(image_ref)
     image, baked = resolve_image(image_ref or image_of(stable_revision))
     commit = commit or baked or ("" if image_ref else commit_of(stable_revision))
     now = utc_now()
@@ -961,9 +974,10 @@ def cmd_release(args) -> int:
     app = connect()
     pushed = bool(os.environ.get("IMAGE")) and not args.image  # started by the push trigger for one pushed build
     record = Record("release", "Release a build: candidate, gate, and removal if it fails")
+    reference = args.image or os.environ.get("IMAGE") or f"{setting('AZURE_CONTAINER_REGISTRY_ENDPOINT')}/{REPOSITORY}:main"
+    require_own_build(reference)
     if not wait_for_turn(app, record, args.wait):
         return record.finish(False, f"Another release step was still running after {args.wait} s; nothing was released.")
-    reference = args.image or os.environ.get("IMAGE") or f"{setting('AZURE_CONTAINER_REGISTRY_ENDPOINT')}/{REPOSITORY}:main"
     image, baked = resolve_image(reference)
     pushed_commit = os.environ.get("COMMIT", "") if pushed else ""
     commit = args.commit or (pushed_commit if COMMIT.fullmatch(pushed_commit) else "") or tag_commit(reference) or baked
@@ -1224,8 +1238,9 @@ def main() -> int:
     p.set_defaults(func=cmd_status)
 
     p = commands.add_parser("release", help="deploy a build as a candidate, gate it, and remove it if the gate fails")
-    p.add_argument("--image", help="image to release, by tag or digest. Default: IMAGE (set by the push trigger), "
-                                   "else the newest build, requesthub-api:main")
+    p.add_argument("--image", help="image to release, by tag or digest: a build of requesthub-api in this solution's "
+                                   "registry. Default: IMAGE (set by the push trigger), else the newest build, "
+                                   "requesthub-api:main")
     p.add_argument("--commit", help="commit the image was built from. Default: COMMIT, the tag, or the image's BUILD_SHA")
     p.add_argument("--wait", type=int, default=900, help="seconds to wait for another release step to finish (default 900)")
     p.add_argument("--force", action="store_true", help="release a pushed build even if it would be skipped")
@@ -1237,8 +1252,8 @@ def main() -> int:
     p.set_defaults(func=cmd_drill)
 
     p = commands.add_parser("deploy", help="add a candidate revision with no traffic")
-    p.add_argument("--image", help="image to deploy, by tag or digest (pinned to its digest). "
-                                   "Default: the stable revision's image")
+    p.add_argument("--image", help="image to deploy, by tag or digest (pinned to its digest): a build of requesthub-api "
+                                   "in this solution's registry. Default: the stable revision's image")
     p.add_argument("--commit", help="commit the image was built from; the gate checks that /api/meta reports it. "
                                     "Default: the image's BUILD_SHA")
     p.add_argument("--fault", choices=["none", "fail-readiness"], default="none",
