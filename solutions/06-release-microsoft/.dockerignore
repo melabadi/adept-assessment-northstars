@@ -1,0 +1,5 @@
+# The release jobs' image needs only these two files. Everything else stays out of the build context, in particular
+# .azure/ (the azd environment) and out/.
+*
+!azd_env.py
+!release.py
