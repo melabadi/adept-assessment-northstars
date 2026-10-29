@@ -4,7 +4,9 @@ Subcommands:
   init     Build your local redaction list from what identifies your demo tenant: the subscription and tenant ids,
            your account and tenant domain, every GUID and host name in the demo resource groups, the unique tokens in
            resource names, the values in the solutions' azd environments, the RequestHub app registrations, your
-           Windows user name, and your git e-mail address. The list is written OUTSIDE the repository; never commit it.
+           Windows user name, and your git e-mail address. The ids Microsoft publishes for every tenant (built-in
+           policy definitions and initiatives, built-in roles, Defender for Cloud assessments) identify nothing and
+           are left off. The list is written OUTSIDE the repository; never commit it.
   check    Check images (read with Windows OCR) and every other file that is text, whatever its extension (.log,
            .css, .csproj, ...), for any value on the list, for e-mail addresses, for *.onmicrosoft.com domains, and for
            user profile paths. Binary files that are not images are listed as not checked. Exits 1 when something is
@@ -35,6 +37,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -118,15 +121,28 @@ def az(args: str):
     return json.loads(out.stdout or "null")
 
 
+def published_ids() -> set[str]:
+    """Ids Microsoft publishes, the same in every tenant: built-in policy definitions and initiatives, built-in roles,
+    and Defender for Cloud's built-in assessments. The demo's resources reference them (a policy assignment, a Logic
+    App that reads one assessment), but they identify nothing."""
+    queries = ['policy definition list --query "[?policyType==\'BuiltIn\' || policyType==\'Static\'].name"',
+               'policy set-definition list --query "[?policyType==\'BuiltIn\' || policyType==\'Static\'].name"',
+               'role definition list --query "[?roleType==\'BuiltInRole\'].name"',
+               'security assessment-metadata list --query "[?assessmentType==\'BuiltIn\'].name"']
+    with ThreadPoolExecutor(len(queries)) as pool:
+        lists = list(pool.map(az, queries))
+    return {str(name).lower() for names in lists for name in (names or []) if GUID.fullmatch(str(name))}
+
+
 def init(args) -> None:
     path = list_path()
     items: dict[str, dict] = {}
     if path.exists() and not args.reset:
         items = {i["value"].lower(): i for i in json.loads(path.read_text(encoding="utf-8"))["items"] if meaningful(i["value"])}
-    before = len(items)
+    published: set[str] = set()
 
     def add(kind: str, value, replacement: str) -> None:
-        if value and meaningful(str(value)):
+        if value and meaningful(str(value)) and str(value).lower() not in published:
             items.setdefault(str(value).lower(), {"kind": kind, "value": str(value), "replacement": replacement})
 
     def add_from_text(text: str, guid_kind: str) -> None:
@@ -147,6 +163,11 @@ def init(args) -> None:
     acct = az("account show")
     if not acct:
         sys.exit("Sign in with az login first.")
+    published.update(published_ids())
+    dropped = [k for k in items if k in published]
+    for k in dropped:
+        del items[k]
+    before = len(items)
     add("subscription-id", acct["id"], ZERO_GUID)
     add("tenant-id", acct["tenantId"], ZERO_GUID)
     add("subscription-name", acct.get("name"), "Demo subscription")
@@ -229,6 +250,8 @@ def init(args) -> None:
     for i in items.values():
         kinds[i["kind"]] = kinds.get(i["kind"], 0) + 1
     print(f"{path}: {len(items)} values ({len(items) - before} new): " + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items())))
+    if dropped:
+        print(f"Removed {len(dropped)} published built-in id(s) that an earlier init had listed.")
 
 
 OCR_SCRIPT = r"""
