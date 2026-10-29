@@ -205,7 +205,7 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
   1. GitHub: [`standards/STD-OPS-002.md`](standards/STD-OPS-002.md) in this repository.
   2. The [Foundry portal](https://ai.azure.com), project `design`: **Build** → **Knowledge**.
   3. The same project: **Build** → **Agents** → `architecture-advisor-small-team` (Playground).
-  4. GitHub: **Issues** → **New issue** → **Design: ask the Foundry architecture advisor**.
+  4. GitHub: the advisor's [issue form, with the demo question filled in](../../../../issues/new?template=02-design-microsoft-advisor.yml&question=Should%20the%20live%20AI%20triage%20provider%20run%20inside%20the%20existing%20RequestHub%20API%20behind%20ITriageProvider%2C%20or%20as%20a%20new%20separate%20service%3F). GitHub can't prefill the profile; you pick it in step 4.
   5. The [Azure portal](https://portal.azure.com): resource group `rg-ai-sdlc-design` → the Logic App whose name starts with `logic-advisor-` → **Runs history**.
   6. The Foundry project: **Build** → **Evaluations**.
 - [ ] **Start early.** About 5 minutes before step 8, start the evaluation from this folder, in the activated environment: `python evaluate.py --no-wait`. Its two runs take about 3 minutes.
@@ -243,7 +243,7 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    **Point out:** the agent is versioned. Version 2 is the one GitHub's questions reach, and every answer records it.
 
-4. **Ask from GitHub.** Open a new issue from the form **Design: ask the Foundry architecture advisor**. Pick **small-team**, ask *Should the live AI triage provider run inside the existing RequestHub API behind ITriageProvider, or as a new separate service?*, and submit.
+4. **Ask from GitHub.** In the issue form tab (**Issues** → **New issue** → **Design: ask the Foundry architecture advisor**), complete the title (*Architecture question: where should the live AI triage provider run?*) and pick **small-team**. The question is already there: *Should the live AI triage provider run inside the existing RequestHub API behind ITriageProvider, or as a new separate service?* Click **Create**.
 
    ![The issue form on GitHub: operating profile small-team and the question about where the live AI triage provider should run](images/04-issue-form.png)
 
