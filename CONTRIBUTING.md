@@ -9,13 +9,20 @@ This repository holds fourteen independent solutions built on one shared app. Th
 - **The API contract `requesthub.v1` only grows.** Additive changes only; regenerate [`app/contracts/openapi.json`](app/contracts/openapi.json) and say so in the pull request.
 - **Synthetic data only.** No real people, customers, secrets, tenant ids, or subscription ids in code, docs, or commit messages.
 - **Demos are live.** A demo passes only when it ran against the real service (Copilot, Foundry, Azure). Mocks, fixtures, and canned output are fine in tests, never as demo evidence.
+- **AI helps the people, not the product.** Every demo shows AI helping the people who plan, design, build, test, secure, release, and operate RequestHub. No demo is about an AI feature inside RequestHub.
+
+## Two tracks, two toolsets
+
+- **GitHub solutions** show GitHub Copilot and GitHub Enterprise: Copilot custom agents, skills, the cloud agent, code review, Copilot CLI, GitHub Actions, Issues, and environments.
+- **Microsoft solutions** show AI that runs in Azure: Microsoft Foundry agents, knowledge, and evaluations; Copilot in Azure; Azure Load Testing; Defender for Cloud and Azure Policy; Azure SRE Agent. Their orchestration lives in Azure too: Logic Apps, Azure Monitor alerts and action groups, Event Grid, Container Apps jobs, scheduled tests. From GitHub they use only the code, pull requests, Issues, and a thin GitHub Actions trigger where Azure has no native trigger. They ship no Copilot agents, skills, or instructions, and no step of a Microsoft demo depends on GitHub Copilot.
+- When an Azure service needs GitHub access (for example a Logic Apps GitHub connection or Azure SRE Agent's GitHub connector), a person authorizes it once, with the least access that works: this repository only, and only the permissions the demo uses.
 
 ## Anatomy of a solution
 
 ```text
 solutions/<NN>-<phase>-<github|microsoft>/
 ├── README.md                     follows the outline below
-├── .github/
+├── .github/                      GitHub solutions: agent, skills, workflows, issue templates. Microsoft solutions: only thin workflows and issue templates
 │   ├── agents/<phase>-<track>.agent.md
 │   ├── skills/<skill>/SKILL.md   plus the skill's scripts and reference files
 │   ├── instructions/<name>.instructions.md   optional path-specific Copilot instructions (for example for code review)

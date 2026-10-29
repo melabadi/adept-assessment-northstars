@@ -7,7 +7,7 @@ This repository is a hands-on demo of AI across the software development lifecyc
 | Path | What lives there |
 | --- | --- |
 | `app/` | RequestHub: ASP.NET Core 10 API (`src/RequestHub.Api`), domain + EF Core (`src/RequestHub.Core`), notification worker (`src/RequestHub.Worker`), React web UI (`web/`), integration tests (`tests/`), API contract (`contracts/`), and the Bicep modules that host it (`infra/`). |
-| `solutions/<NN>-<phase>-<github\|microsoft>/` | One solution per folder: README, its own `.github/` (agent, skills, workflows, issue templates), scripts and inputs, and for Microsoft solutions its own `azure.yaml` + `infra/` deployed into its own resource group. |
+| `solutions/<NN>-<phase>-<github\|microsoft>/` | One solution per folder: README, scripts and inputs. GitHub solutions ship their own `.github/` (Copilot agent, skills, workflows, issue templates). Microsoft solutions run their AI and orchestration in Azure, ship their own `azure.yaml` + `infra/` deployed into their own resource group, and use GitHub only for code, pull requests, Issues, and thin workflow triggers. |
 | `.github/agents/`, `.github/skills/`, `.github/workflows/`, `.github/ISSUE_TEMPLATE/` | Mirrors of the solutions' `.github/` files (GitHub only reads the root). Never edit a mirror: edit the solution's copy, then run `python tools/sync_solutions.py`. |
 | `tools/` | Repository tooling: `sync_solutions.py` (mirror check), `screenshot.mjs` and `redact.py` (screenshots with tenant details masked). |
 
