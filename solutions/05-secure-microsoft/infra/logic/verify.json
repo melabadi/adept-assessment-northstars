@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "description": "posture-verify: every hour, or when a person selects Run trigger, checks whether the storage account has an approved private endpoint. If it has and the posture Issue is not verified yet, it starts an Azure Policy evaluation of the resource group when the latest result is stale, waits for it, and records the evidence from each source on the Issue, closing it when Azure Policy reports Compliant."
+    "description": "posture-verify: every hour, or when a person selects Run trigger, checks whether the storage account has an approved private endpoint. If it has and the posture Issue is not verified yet, it starts an Azure Policy evaluation of the resource group when the latest result is not Compliant, and polls this solution's assignment for up to 20 minutes (the evaluation's own status URL is at subscription scope, where the identity has no access). When Azure Policy reports Compliant, it records the evidence from each source on the Issue and closes it; otherwise the next run tries again."
   },
   "parameters": {
     "name": { "type": "string" },
@@ -160,9 +160,9 @@
                               "operationOptions": "DisableAsyncPattern",
                               "runAfter": {}
                             },
-                            "Until_evaluated": {
+                            "Until_compliant": {
                               "type": "Until",
-                              "expression": "@equals(outputs('Check_evaluation')?['statusCode'], 200)",
+                              "expression": "@equals(first(body('Check_compliance')?['value'])?['complianceState'], 'Compliant')",
                               "limit": { "count": 40, "timeout": "PT20M" },
                               "actions": {
                                 "Wait_30_seconds": {
@@ -170,14 +170,13 @@
                                   "inputs": { "interval": { "count": 30, "unit": "Second" } },
                                   "runAfter": {}
                                 },
-                                "Check_evaluation": {
+                                "Check_compliance": {
                                   "type": "Http",
                                   "inputs": {
-                                    "method": "GET",
-                                    "uri": "@{outputs('Start_policy_evaluation')?['headers']?['Location']}",
+                                    "method": "POST",
+                                    "uri": "https://management.azure.com@{parameters('resourceGroupId')}/providers/Microsoft.PolicyInsights/policyStates/latest/queryResults?api-version=2019-10-01&$filter=@{encodeUriComponent(concat('resourceId eq ''', parameters('storageAccountId'), ''' and policyAssignmentName eq ''', parameters('policyAssignmentName'), ''''))}",
                                     "authentication": "[variables('arm')]"
                                   },
-                                  "operationOptions": "DisableAsyncPattern",
                                   "runAfter": { "Wait_30_seconds": ["Succeeded"] }
                                 }
                               },
@@ -193,7 +192,7 @@
                             "uri": "https://management.azure.com@{parameters('resourceGroupId')}/providers/Microsoft.PolicyInsights/policyStates/latest/queryResults?api-version=2019-10-01&$filter=@{encodeUriComponent(concat('resourceId eq ''', parameters('storageAccountId'), ''' and policyDefinitionName eq ''', parameters('policyDefinitionName'), ''''))}",
                             "authentication": "[variables('arm')]"
                           },
-                          "runAfter": { "Policy_is_stale": ["Succeeded"] }
+                          "runAfter": { "Policy_is_stale": ["Succeeded", "Failed", "TimedOut"] }
                         },
                         "This_solutions_assignment": {
                           "type": "Query",
