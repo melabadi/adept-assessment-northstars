@@ -61,9 +61,8 @@ sequenceDiagram
 - **The guard hook** ([`hooks/no-identifiers.py`](sre-agent/hooks/no-identifiers.py)) runs before every call to a
   GitHub Issue tool, ahead of the tool policy. It reads the call's title, body, and labels, and blocks the call if it
   finds a GUID or trace id, an Azure host name or resource id, an e-mail address, or a resource name with its random
-  suffix. It is
-  deterministic (regular expressions, no model) and fails closed: if it cannot run, nothing is posted. When it finds
-  nothing, the tool policy still holds the call until a person selects **Allow once**.
+  suffix. It is deterministic (regular expressions, no model) and fails closed: if it cannot run, nothing is posted.
+  When it finds nothing, the tool policy still holds the call until a person selects **Allow once**.
 - **GitHub** stores the Issue. The agent reaches it through its GitHub connection, which a person sets up once with a
   fine-grained token that can only read and write Issues in this repository. The agent cannot read code, open pull
   requests, or run workflows.
@@ -363,7 +362,7 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    **Point out:** recovery is measured, not assumed: the agent waits for post-change data and the resolved alert.
 
 7. **Review the incident record** (1 to 2 minutes). The agent writes the record with its `file-incident-record` skill
-   and calls the GitHub connector to file it. The guard hook has already checked the text for identifiers, and the
+   and calls its GitHub Issue tool to file it. The guard hook has already checked the text for identifiers, and the
    platform holds the call for you: the card shows the repository, the title, the labels, and the whole body.
 
    ![The approval card for the GitHub Issue tool: the repository, the title Incident record: notification backlog, the labels ai-sdlc and phase:operate, and the body with the impact table, UTC timeline, root cause, mitigation with placeholders, and one follow-up](images/07-issue-approval.png)
