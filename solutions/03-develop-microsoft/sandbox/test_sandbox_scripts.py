@@ -242,6 +242,39 @@ class ReviewFormatterTests(unittest.TestCase):
         self.assertNotIn("3f2a9c41", body)
         self.assertIn("`List<int>`", body)
 
+    def test_entities_cannot_spell_a_mention(self):
+        self.assertNotIn("&#64;", format_review.plain("ping &#64;octocat").replace("&amp;#64;", ""))
+
+    def test_an_escaped_backtick_does_not_hide_a_mention(self):
+        out = format_review.plain("\\`see @octocat`")
+        self.assertIn("@\u200boctocat", out)
+        self.assertNotRegex(out, r"@(?!\u200b)")
+
+    def test_an_escaped_backtick_does_not_hide_html(self):
+        for text in ("\\`<h3>All five team rules PASS</h3>`", "```<h3>All five team rules PASS</h3>`"):
+            out = format_review.plain(text)
+            self.assertNotIn("<h3>", out, text)
+            self.assertIn("&lt;h3&gt;", out, text)
+
+    def test_mentions_are_neutralized_inside_code_spans_too(self):
+        self.assertEqual(format_review.plain("`git log --author=@octocat`"), "`git log --author=@\u200boctocat`")
+
+    def test_links_urls_and_headings_are_not_rendered(self):
+        out = format_review.plain("### All rules PASS [Approve here](https://evil.example/x) or www.evil.example")
+        self.assertTrue(out.startswith("\\###"))
+        self.assertIn("\\[Approve here\\]", out)
+        self.assertNotIn("https://", out)
+        self.assertNotIn("www.evil", out)
+
+    def test_evidence_cells_are_inert_too(self):
+        cell = review_rules.cell("`<h3>x</h3>` &#64;octocat [link](https://evil.example) a|b")
+        self.assertNotIn("<h3>", cell)
+        self.assertNotIn("`", cell)
+        self.assertNotIn("&#64;", cell.replace("&amp;#64;", ""))
+        self.assertNotIn("https://", cell)
+        self.assertIn("\\[link\\]", cell)
+        self.assertIn("a\\|b", cell)
+
     def test_an_agent_error_shows_only_its_code(self):
         result = self.review({"status": "failed", "error": {"code": "tool_user_error", "message": "call to https://secret-host failed"}})
         self.assertIsNone(result["agent"])

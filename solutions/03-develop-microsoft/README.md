@@ -57,8 +57,10 @@ sequenceDiagram
 
 - **The judge runs before the defendant.** The rule checker comes from `main`, never from the pull request, and runs in its own session before any of the pull request's code runs anywhere. The Logic App doesn't start the build until it has the verdicts.
 - **Verdicts are posted word for word.** The review copies the checker's table from the file the checker wrote. The agent sees the verdicts and may explain them, but nothing it writes can change them, and its commentary comes after them under its own heading.
-- **The webhook is untrusted.** The Logic App takes only the pull request number from it, then reads the pull request, its head commit, and its labels from GitHub's API.
-- **The pull request is untrusted.** Its code, comments, test output, and description are data for the agent, never instructions. Text from the pull request or the model is posted inert (no HTML, no @mentions), and GUIDs and Azure host names are removed before anything is posted.
+- **The webhook is untrusted.** The Logic App takes only the pull request number from it, then reads the pull request, its head commit, and its labels from GitHub's API. The other message it accepts is a dry run, `{"dryRun": true, "pr": <number>}`, which is what `eval_reviewer.py` sends: it skips the open, draft, and label checks and never posts. Only the trigger URL's signature keeps others from sending one, so keep the URL secret.
+- **Only this repository's branches.** A pull request from a fork is never built or reviewed, not even in a dry run: otherwise its code would run in the sandbox, and reach the agent, on every push, without anyone approving it.
+- **The pull request is untrusted.** Its code, comments, test output, and description are data for the agent, never instructions. Text from the pull request or the model is posted inert: no HTML or HTML entities, no links, no @mentions, and a backtick can't hide any of them. GUIDs and Azure host names are removed before anything is posted.
+- **One review per commit.** The review is posted on the head commit it reviewed. If someone pushes while a review runs, the Logic App reads the pull request again before posting and skips it: the newer push has its own review on the way.
 - **No secret goes into a sandbox.** The GitHub token stays in the Logic App: a `securestring` parameter that Azure Resource Manager never returns, used only by actions with secure inputs. The sessions get only the archives and the scripts.
 - **Least privilege.** The token can read code and write pull request reviews in this one repository. The Logic App's identity can run sessions in the two pools and call the agent. The agent's identity can run sessions in the run pool only.
 
@@ -253,7 +255,7 @@ python eval_reviewer.py
 - **The same rules every time.** Five team rules, checked by a script from `main` with evidence for each verdict. A model can't talk its way past a FAIL.
 - **Evidence without pulling the branch.** The change was built and 81 tests ran in an isolated Azure session; the review says what passed and what was flaky.
 - **Attention where it matters.** The agent explains the failures and points at what no rule catches: a rewritten test, SQL built from user input.
-- **A person decides.** The reviewer only comments. It holds no approval right, and its token can't merge.
+- **A person decides.** The workflow posts every review as a comment (`COMMENT`), never as an approval or a change request, and its token can't merge (it can't write code). The token's Pull requests permission could approve a pull request, so the guard is the workflow itself: change it only through a reviewed pull request, like any other code.
 - **Measured, not anecdotal.** Ten labelled pull requests and five checks in Foundry's Evaluation view, run again after every change to the rules, the agent, or the model.
 
 ## Reset and clean up

@@ -43,7 +43,6 @@ from pathlib import Path
 RULE_IDS = ("approval-authority", "authorization-in-workflow", "contract-additive", "tests-with-changes", "synthetic-data")
 SEVERITY = {"concern": "❗ **Concern**", "warning": "⚠️ **Warning**", "info": "ℹ️ **Note**"}
 MAX_OBSERVATIONS = 8
-CODE_SPAN = re.compile(r"(`[^`\n]*`)")
 GUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 AZURE_HOST = re.compile(r"\b[\w.-]+\.(?:azure\.com|azure\.net|windows\.net|dynamicsessions\.io|azurecontainerapps\.io|"
                         r"azurewebsites\.net|azurecr\.io)\b", re.I)
@@ -58,16 +57,58 @@ def redact(text: str) -> str:
     return AZURE_HOST.sub("<host removed>", text)
 
 
+ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+URL_SCHEME = re.compile(r"(?i)\b(https?|ftp)://")
+WWW = re.compile(r"(?i)\bwww\.")
+
+
+def unmention(text: str) -> str:
+    """A zero-width space after every @, so nothing GitHub renders from this text notifies anyone."""
+    return text.replace("@", "@\u200b")
+
+
+def inert_text(text: str) -> str:
+    """Text outside code spans: no HTML or entities, no mentions, no links, no autolinked URLs."""
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = text.replace("[", "\\[").replace("]", "\\]")
+    text = WWW.sub("www\u200b.", URL_SCHEME.sub(lambda m: m.group(1) + ":/\u200b/", text))
+    return unmention(text)
+
+
 def plain(value: object, limit: int = 500) -> str:
-    """Untrusted text as inert Markdown on one line: no HTML, no @mentions. Code spans are kept as they are."""
+    """Untrusted text as inert Markdown on one line. Code spans are found the way GitHub (CommonMark) finds them: a run
+    of backticks opens a span only if a run of the same length closes it, and a backslash-escaped backtick is a literal
+    one. Inside a span nothing is interpreted, so only mentions are neutralized there; everything outside is escaped."""
     text = redact(" ".join(str(value or "").split()))
     if len(text) > limit:
         text = text[: limit - 1].rstrip() + "…"
-    parts = CODE_SPAN.split(text)
-    for i in range(0, len(parts), 2):  # even parts are outside code spans
-        parts[i] = parts[i].replace("<", "&lt;").replace(">", "&gt;")
-        parts[i] = re.sub(r"@(?=\w)", "@\u200b", parts[i])
-    return "".join(parts)
+    out: list[str] = []
+    outside: list[str] = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and i + 1 < len(text) and text[i + 1] in ASCII_PUNCTUATION:
+            # A backslash escape shows the next character literally: keep it escaped so it stays literal.
+            outside.append(c + text[i + 1] if text[i + 1] in "`\\" else text[i + 1])
+            i += 2
+            continue
+        if c == "`":
+            n = len(text) - i - len(text[i:].lstrip("`"))
+            close = next((m.start() for m in re.finditer(r"`+", text[i + n:]) if len(m.group(0)) == n), None)
+            out.append(inert_text("".join(outside)))
+            outside = []
+            if close is None:
+                out.append("\\`" * n)  # an unclosed run is literal text: escape it so it can't pair up later
+                i += n
+                continue
+            out.append("`" * n + unmention(text[i + n:i + n + close]) + "`" * n)
+            i += n + close + n
+            continue
+        outside.append(c)
+        i += 1
+    out.append(inert_text("".join(outside)))
+    result = "".join(out)
+    return "\\" + result if result.startswith("#") else result  # a line that starts with # would be a heading
 
 
 def code(value: object, limit: int = 160) -> str:
@@ -75,7 +116,7 @@ def code(value: object, limit: int = 160) -> str:
     text = redact(" ".join(str(value or "").split())).replace("`", "'")
     if len(text) > limit:
         text = text[: limit - 1].rstrip() + "…"
-    return f"`{text}`" if text else ""
+    return f"`{unmention(text)}`" if text else ""
 
 
 def duration(seconds: object) -> str:

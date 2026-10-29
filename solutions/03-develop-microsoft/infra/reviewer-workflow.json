@@ -61,8 +61,8 @@
         },
         "Is_it_ready_for_review": {
           "type": "If",
-          "description": "Open, not a draft, targets the default branch, and carries the review label. A dry run (evaluation) skips this check and never posts.",
-          "expression": "@or(equals(triggerBody()?['dryRun'], true), and(equals(body('Get_the_pull_request')?['state'], 'open'), equals(body('Get_the_pull_request')?['draft'], false), equals(body('Get_the_pull_request')?['base']?['ref'], body('Get_the_pull_request')?['base']?['repo']?['default_branch']), contains(body('Label_names'), parameters('reviewLabel'))))",
+          "description": "Only pull requests whose branch is in this repository: a fork's code would otherwise run in the sandbox, and feed the agent, on every push. A real review also needs the pull request open, not a draft, aimed at the default branch, and labelled. A dry run (evaluation) needs only the first check and never posts.",
+          "expression": "@and(equals(toLower(coalesce(body('Get_the_pull_request')?['head']?['repo']?['full_name'], '')), toLower(parameters('repository'))), or(equals(triggerBody()?['dryRun'], true), and(equals(body('Get_the_pull_request')?['state'], 'open'), equals(body('Get_the_pull_request')?['draft'], false), equals(body('Get_the_pull_request')?['base']?['ref'], body('Get_the_pull_request')?['base']?['repo']?['default_branch']), contains(body('Label_names'), parameters('reviewLabel')))))",
           "actions": {},
           "else": {
             "actions": { "Not_for_review": {"type": "Terminate", "inputs": {"runStatus": "Cancelled"}, "runAfter": {}} }
@@ -568,27 +568,60 @@
           "type": "If",
           "expression": "@not(equals(triggerBody()?['dryRun'], true))",
           "actions": {
-            "Post_the_review": {
+            "Read_the_pull_request_again": {
               "type": "Http",
-              "description": "A COMMENT review: it never approves and never requests changes.",
               "inputs": {
-                "method": "POST",
-                "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls/@{outputs('PR_number')}/reviews",
+                "method": "GET",
+                "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls/@{outputs('PR_number')}",
                 "headers": {
                   "Accept": "application/vnd.github+json",
                   "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
                   "User-Agent": "azure-pr-reviewer",
                   "X-GitHub-Api-Version": "2022-11-28"
-                },
-                "body": {
-                  "commit_id": "@{body('Get_the_pull_request')?['head']?['sha']}",
-                  "event": "COMMENT",
-                  "body": "@{outputs('Review')['markdown']}"
-                },
-                "retryPolicy": { "type": "none" }
+                }
               },
               "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
-              "runAfter": {}
+              "runAfter": {},
+              "description": "Reads the pull request again: if someone pushed while this review ran, a newer review is on its way."
+            },
+            "If_the_head_is_unchanged": {
+              "type": "If",
+              "description": "Posts only for the commit that is still the pull request's head, so an older review never lands after a newer one.",
+              "expression": "@equals(body('Read_the_pull_request_again')?['head']?['sha'], body('Get_the_pull_request')?['head']?['sha'])",
+              "actions": {
+                "Post_the_review": {
+                  "type": "Http",
+                  "description": "A COMMENT review: it never approves and never requests changes.",
+                  "inputs": {
+                    "method": "POST",
+                    "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls/@{outputs('PR_number')}/reviews",
+                    "headers": {
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": "@{if(empty(parameters('githubToken')), '', concat('Bearer ', parameters('githubToken')))}",
+                      "User-Agent": "azure-pr-reviewer",
+                      "X-GitHub-Api-Version": "2022-11-28"
+                    },
+                    "body": {
+                      "commit_id": "@{body('Get_the_pull_request')?['head']?['sha']}",
+                      "event": "COMMENT",
+                      "body": "@{outputs('Review')['markdown']}"
+                    },
+                    "retryPolicy": { "type": "none" }
+                  },
+                  "runtimeConfiguration": { "secureData": {"properties": ["inputs"]} },
+                  "runAfter": {}
+                }
+              },
+              "else": {
+                "actions": {
+                  "Superseded": {
+                    "type": "Compose",
+                    "inputs": "A newer commit was pushed while this review ran; its own review posts instead.",
+                    "runAfter": {}
+                  }
+                }
+              },
+              "runAfter": { "Read_the_pull_request_again": ["Succeeded"] }
             }
           },
           "else": { "actions": {} },

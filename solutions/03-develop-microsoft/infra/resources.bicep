@@ -52,8 +52,9 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 }
 
 // ---------- Sandbox: Azure Container Apps dynamic sessions ----------
-// The judge pool reads the pull request as data and never runs its code; it has no network access. Its sessions live
-// long enough to format the review at the end.
+// The judge pool reads the pull request as data and never runs its code; it has no network access. Its session waits,
+// idle, while the change is built and the agent works (up to about 42 minutes in the worst case), then writes the review,
+// so it gets the longest idle timeout sessions allow.
 resource judgePool 'Microsoft.App/sessionPools@2026-07-01' = {
   name: 'judgepool'
   location: aiLocation
@@ -62,7 +63,7 @@ resource judgePool 'Microsoft.App/sessionPools@2026-07-01' = {
     poolManagementType: 'Dynamic'
     containerType: shellSessions
     dynamicPoolConfiguration: {
-      lifecycleConfiguration: { lifecycleType: 'Timed', cooldownPeriodInSeconds: 1800 }
+      lifecycleConfiguration: { lifecycleType: 'Timed', cooldownPeriodInSeconds: 3600 }
     }
     scaleConfiguration: { maxConcurrentSessions: 10 }
     sessionNetworkConfiguration: { status: 'EgressDisabled' }
@@ -70,7 +71,8 @@ resource judgePool 'Microsoft.App/sessionPools@2026-07-01' = {
 }
 
 // The run pool builds and tests the pull request's code. It needs the network to install the .NET SDK, Node.js,
-// PostgreSQL, and packages. Nothing secret is ever placed in its sessions.
+// PostgreSQL, and packages. Nothing secret is ever placed in its sessions. A session stays up for 30 idle minutes, so
+// the agent can still read it after a slow first attempt.
 resource runPool 'Microsoft.App/sessionPools@2026-07-01' = {
   name: 'runpool'
   location: aiLocation
@@ -79,7 +81,7 @@ resource runPool 'Microsoft.App/sessionPools@2026-07-01' = {
     poolManagementType: 'Dynamic'
     containerType: shellSessions
     dynamicPoolConfiguration: {
-      lifecycleConfiguration: { lifecycleType: 'Timed', cooldownPeriodInSeconds: 900 }
+      lifecycleConfiguration: { lifecycleType: 'Timed', cooldownPeriodInSeconds: 1800 }
     }
     scaleConfiguration: { maxConcurrentSessions: 10 }
     sessionNetworkConfiguration: { status: 'EgressEnabled' }

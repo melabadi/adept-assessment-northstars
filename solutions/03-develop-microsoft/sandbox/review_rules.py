@@ -422,9 +422,13 @@ def markdown(result: dict) -> str:
 
 
 def cell(text: str) -> str:
-    """Evidence quotes the pull request, so it goes in the table inert: no column breaks, no HTML, no @mentions."""
-    text = text.replace("\\", "\\\\").replace("|", "\\|").replace("<", "&lt;").replace(">", "&gt;")
-    return re.sub(r"@(?=\w)", "@\u200b", text)
+    """Evidence quotes the pull request, so it goes in the table inert: no column breaks, code spans, HTML or entities,
+    links or autolinked URLs, and no @mentions."""
+    text = text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "'")
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("[", "\\[").replace("]", "\\]")
+    text = re.sub(r"(?i)\b(https?|ftp)://", lambda m: m.group(1) + ":/\u200b/", text)
+    text = re.sub(r"(?i)\bwww\.", "www\u200b.", text)
+    return text.replace("@", "@\u200b")
 
 
 def main(argv: list[str] | None = None) -> int:
