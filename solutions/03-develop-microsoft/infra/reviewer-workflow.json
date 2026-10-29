@@ -421,11 +421,54 @@
           },
           "runAfter": { "Ask_the_reviewer_agent": ["Succeeded"] }
         },
+        "If_the_agent_failed_try_again": {
+          "type": "If",
+          "description": "A model call can fail now and then, for example when a safety filter flags text from the pull request. One retry keeps the commentary; the rule results never depend on it.",
+          "expression": "@not(equals(actions('Agent_status')?['outputs']?['body']?['status'], 'completed'))",
+          "actions": {
+            "Ask_the_agent_again": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('projectEndpoint')}/openai/v1/responses",
+                "headers": { "Content-Type": "application/json" },
+                "body": {
+                  "agent_reference": { "type": "agent_reference", "name": "@{parameters('agentName')}" },
+                  "input": "@{string(outputs('Agent_input'))}",
+                  "background": true
+                },
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+              },
+              "runAfter": {},
+              "description": "Starts the agent again, once."
+            },
+            "Wait_for_the_agent_again": {
+              "type": "Until",
+              "expression": "@not(contains(createArray('queued', 'in_progress'), coalesce(body('Agent_status_again')?['status'], 'queued')))",
+              "limit": { "count": 120, "timeout": "PT10M" },
+              "actions": {
+                "Agent_pause_again": { "type": "Wait", "inputs": {"interval": {"count": 5, "unit": "Second"}}, "runAfter": {} },
+                "Agent_status_again": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "@{parameters('projectEndpoint')}/openai/v1/responses/@{body('Ask_the_agent_again')?['id']}",
+                    "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+                  },
+                  "runAfter": { "Agent_pause_again": ["Succeeded"] }
+                }
+              },
+              "runAfter": { "Ask_the_agent_again": ["Succeeded"] }
+            }
+          },
+          "else": { "actions": {} },
+          "runAfter": { "Wait_for_the_agent": ["Succeeded", "Failed", "TimedOut", "Skipped"] }
+        },
         "Agent_result": {
           "type": "Compose",
           "description": "The agent's answer, or the error that stopped it. The review goes on either way.",
-          "inputs": "@coalesce(actions('Agent_status')?['outputs']?['body'], actions('Ask_the_reviewer_agent')?['outputs']?['body'], json('{}'))",
-          "runAfter": { "Wait_for_the_agent": ["Succeeded", "Failed", "TimedOut", "Skipped"] }
+          "inputs": "@coalesce(actions('Agent_status_again')?['outputs']?['body'], actions('Ask_the_agent_again')?['outputs']?['body'], actions('Agent_status')?['outputs']?['body'], actions('Ask_the_reviewer_agent')?['outputs']?['body'], json('{}'))",
+          "runAfter": { "If_the_agent_failed_try_again": ["Succeeded", "Failed", "TimedOut", "Skipped"] }
         },
         "Review_input": {
           "type": "Compose",
@@ -441,7 +484,7 @@
             "checker_ref": "@parameters('checkerRef')",
             "agent_name": "@parameters('agentName')",
             "sandbox": "@outputs('Sandbox_results')",
-            "agent_status": "@if(equals(actions('Ask_the_reviewer_agent')?['status'], 'Succeeded'), actions('Wait_for_the_agent')?['status'], actions('Ask_the_reviewer_agent')?['status'])"
+            "agent_status": "@{coalesce(actions('Agent_status_again')?['outputs']?['body']?['status'], actions('Agent_status')?['outputs']?['body']?['status'], actions('Ask_the_reviewer_agent')?['status'])}"
           },
           "runAfter": { "Agent_result": ["Succeeded"] }
         },
