@@ -43,8 +43,13 @@ was made from), sign-in enforcement, then it submits a request (twice with the s
 reads it back, attaches a file and downloads it again (Blob storage, which the readiness probe does not check), tries to
 approve its own request (the API must refuse with decision.self_approval), and reads the request's audit history.
 
-One release step at a time: release waits for another release step to finish; the other commands refuse to start
-while one runs.
+One release step at a time, first come first served: a release waits for the steps that started before it; the other
+commands refuse to start while an earlier one runs. A release or drill whose gate fails removes its own candidate
+itself, even while another step waits for its turn.
+
+Promote moves traffic only to a candidate the gate passed. When the gate passes, it records its verdict on the app (the
+tag requesthub-release-gate: the revision, its image digest, and the time); promote checks that the verdict names the
+candidate and its image, and is less than 24 hours old. Deploying, aborting, or promoting clears the verdict.
 
 Settings come from environment variables (infra/jobs.bicep sets them on the jobs), or from this solution's azd
 environment after `azd up`: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, API_APP_NAME, API_IDENTIFIER_URI, and
@@ -74,6 +79,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -94,6 +100,10 @@ FAULT_MINUTES = 30  # every fault expires; after this the injected readiness fai
 RUNNING = {"Running", "RunningAtMaxScale"}
 EXECUTING = {"Running", "Processing"}
 COMMIT = re.compile(r"[0-9a-f]{40}")
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}")
+GATE_TAG = "requesthub-release-gate"  # the gate's verdict on the app: <revision>|<image digest>|<time>
+GATE_VALID_HOURS = 24
 JOB_EXECUTION = os.environ.get("CONTAINER_APP_JOB_EXECUTION_NAME", "")
 IN_JOB = bool(JOB_EXECUTION or os.environ.get("RELEASE_STEP"))
 
@@ -115,12 +125,30 @@ def iso(moment: datetime) -> str:
 
 
 def parse_time(value: str | None) -> datetime | None:
-    """ARM timestamps use up to 7 fractional digits; Python accepts 6."""
-    if not value:
+    """ARM timestamps use up to 7 fractional digits; Python accepts 6. None when there is no valid time."""
+    if not value or not isinstance(value, str):
         return None
-    value = re.sub(r"(\.\d{6})\d+", r"\1", value.replace("Z", "+00:00"))
-    moment = datetime.fromisoformat(value)
+    try:
+        moment = datetime.fromisoformat(re.sub(r"(\.\d{6})\d+", r"\1", value.replace("Z", "+00:00")))
+    except ValueError:
+        return None
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def printable(text) -> str:
+    """Text on one line, whatever it contains: control characters, such as a newline that would start a forged
+    RELEASE-RECORD line in the job's log, are shown as escapes."""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]", lambda m: f"\\u{ord(m.group()):04x}", str(text))
+
+
+def as_dict(value) -> dict:
+    """A JSON object from a response, or {} for anything else (a list, a string, or nothing)."""
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value) -> list:
+    """A JSON array from a response, or [] for anything else."""
+    return value if isinstance(value, list) else []
 
 
 def az(*args: str) -> str:
@@ -149,20 +177,24 @@ def access_token(*, resource: str | None = None, scope: str | None = None) -> st
         cached = _tokens.get(key)
         if cached and cached[1] - time.time() > 300:
             return cached[0]
-        if managed_identity():
-            query = {"api-version": "2019-08-01", "resource": resource or (scope or "").rsplit("/", 1)[0]}
-            if os.environ.get("AZURE_CLIENT_ID"):
-                query["client_id"] = os.environ["AZURE_CLIENT_ID"]
-            request = urllib.request.Request(f"{os.environ['IDENTITY_ENDPOINT']}?{urllib.parse.urlencode(query)}",
-                                             headers={"X-IDENTITY-HEADER": os.environ["IDENTITY_HEADER"]})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                data = json.load(response)
-            token, expires = data["access_token"], float(data.get("expires_on") or 0)
-        else:
-            args = ["account", "get-access-token", "--output", "json"]
-            args += ["--scope", scope] if scope else ["--resource", resource or ""]
-            data = json.loads(az(*args))
-            token, expires = data["accessToken"], float(data.get("expires_on") or 0)
+        try:
+            if managed_identity():
+                query = {"api-version": "2019-08-01", "resource": resource or (scope or "").rsplit("/", 1)[0]}
+                if os.environ.get("AZURE_CLIENT_ID"):
+                    query["client_id"] = os.environ["AZURE_CLIENT_ID"]
+                request = urllib.request.Request(f"{os.environ['IDENTITY_ENDPOINT']}?{urllib.parse.urlencode(query)}",
+                                                 headers={"X-IDENTITY-HEADER": os.environ["IDENTITY_HEADER"]})
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    data = json.load(response)
+                token, expires = data["access_token"], float(data.get("expires_on") or 0)
+            else:
+                args = ["account", "get-access-token", "--output", "json"]
+                args += ["--scope", scope] if scope else ["--resource", resource or ""]
+                data = json.loads(az(*args))
+                token, expires = data["accessToken"], float(data.get("expires_on") or 0)
+        except (OSError, KeyError, TypeError, ValueError) as error:  # urllib's errors are OSErrors
+            source = "the managed identity" if managed_identity() else "the Azure CLI"
+            raise ReleaseError(f"Could not get a token from {source}: {error}") from error
         _tokens[key] = (token, expires or time.time() + 1800)
         return token
 
@@ -254,6 +286,16 @@ def arm(method: str, url: str, body=None, *, ok=(200,)) -> Response:
     return response
 
 
+def arm_list(url: str) -> list[dict]:
+    """Every item of an ARM list, following nextLink across pages."""
+    items: list[dict] = []
+    while url:
+        page = as_dict(arm("GET", url).json())
+        items += [item for item in as_list(page.get("value")) if isinstance(item, dict)]
+        url = page.get("nextLink")
+    return items
+
+
 class ContainerApp:
     def __init__(self, subscription: str, resource_group: str, name: str):
         self.name = name
@@ -266,12 +308,7 @@ class ContainerApp:
         return arm("GET", self.url).json()
 
     def revisions(self) -> list[dict]:
-        items, url = [], f"{self.url}/revisions"
-        while url:
-            page = arm("GET", url).json()
-            items += page.get("value", [])
-            url = page.get("nextLink")
-        return items
+        return arm_list(f"{self.url}/revisions")
 
     def revision(self, name: str) -> dict:
         return arm("GET", f"{self.url}/revisions/{name}").json()
@@ -360,6 +397,42 @@ def short_image(image: str) -> str:
     return image.split("/", 1)[-1]
 
 
+def digest_of(image: str) -> str:
+    """The digest of an image pinned by digest (host/repository@sha256:...), else ''."""
+    return image.rpartition("@")[2] if "@" in image else ""
+
+
+def gate_value(revision: str, image: str, at: datetime) -> str:
+    """The gate's verdict on a candidate: which revision passed, with which image, and when."""
+    return f"{revision}|{digest_of(image)}|{iso(at)}"
+
+
+def gate_problem(tags: dict, revision: str, image: str, now: datetime) -> str | None:
+    """Why promote must not trust a candidate, or None when the gate passed this revision with this exact image less
+    than GATE_VALID_HOURS ago."""
+    parts = str(as_dict(tags).get(GATE_TAG) or "").split("|")
+    if len(parts) != 3 or not all(parts):
+        return "the gate has not passed it"
+    passed_revision, passed_digest, passed_at = parts
+    if passed_revision != revision:
+        return f"the gate's last verdict is for {printable(passed_revision)[:24]}, not this candidate"
+    if not digest_of(image) or passed_digest != digest_of(image):
+        return "its image is not the one the gate passed"
+    when = parse_time(passed_at)
+    if not when or when > now + timedelta(minutes=5):
+        return "the gate's verdict has no valid time"
+    if now - when > timedelta(hours=GATE_VALID_HOURS):
+        return f"the gate passed it more than {GATE_VALID_HOURS} hours ago"
+    return None
+
+
+def tags_with_gate(tags: dict, value: str | None) -> dict:
+    """The app's tags with the gate's verdict set, or removed when value is None. A PATCH that includes tags replaces
+    all of them, so every other tag (azd's included) is sent again."""
+    kept = {k: v for k, v in as_dict(tags).items() if k != GATE_TAG}
+    return {**kept, GATE_TAG: value} if value else kept
+
+
 @dataclass
 class State:
     """The app's revisions and traffic, normalized: labels map to revision names, weights per revision."""
@@ -435,26 +508,51 @@ def connect() -> ContainerApp:
     return ContainerApp(subscription_id(), setting("AZURE_RESOURCE_GROUP"), setting("API_APP_NAME"))
 
 
-def busy_executions(app: ContainerApp) -> list[str]:
-    """Release steps running now in other job executions. Jobs carry the tag requesthub-release=<step>."""
-    host = os.environ.get("HOSTNAME", "")
-    busy = []
-    jobs = arm("GET", f"{app.group_url}/providers/Microsoft.App/jobs").json().get("value", [])
-    if IN_JOB and not any((job.get("tags") or {}).get("requesthub-release") for job in jobs):
+def running_steps(app: ContainerApp) -> list[dict]:
+    """Every running execution of the release jobs (the jobs tagged requesthub-release=<step>), with its start time."""
+    jobs = arm_list(f"{app.group_url}/providers/Microsoft.App/jobs")
+    if IN_JOB and not any(as_dict(job.get("tags")).get("requesthub-release") for job in jobs):
         # A job always sees itself; seeing none means its identity cannot read jobs. Fail closed rather than run
         # a second release step at the same time as another.
         raise ReleaseError("This job's identity cannot see the release jobs. Grant it Container Apps Jobs Reader on "
                            "the resource group (infra/main.bicep does).")
+    running = []
     for job in jobs:
-        step = (job.get("tags") or {}).get("requesthub-release")
+        step = as_dict(job.get("tags")).get("requesthub-release")
         if not step:
             continue
-        for execution in arm("GET", f"{ARM}{job['id']}/executions").json().get("value", []):
-            name = execution.get("name", "")
-            status = execution.get("properties", {}).get("status")
-            if status in EXECUTING and name != JOB_EXECUTION and not (host and host.startswith(name)):
-                busy.append(f"{step} ({status.lower()})")
-    return busy
+        for execution in arm_list(f"{ARM}{job['id']}/executions"):
+            props = as_dict(execution.get("properties"))
+            if props.get("status") in EXECUTING:
+                running.append({"step": step, "name": str(execution.get("name", "")), "status": props["status"],
+                                "start": parse_time(props.get("startTime"))})
+    return running
+
+
+def own_execution(running: list[dict]) -> str | None:
+    """This job execution's name among the running ones, or None in a terminal."""
+    if not IN_JOB:
+        return None
+    host = os.environ.get("HOSTNAME", "")
+    return next((r["name"] for r in running
+                 if r["name"] and (r["name"] == JOB_EXECUTION or (host and host.startswith(r["name"])))), None)
+
+
+def ahead_of(running: list[dict], me: str | None) -> list[dict]:
+    """The running steps that go before this one: first come, first served by start time, ties broken by name, the
+    same order every execution computes. A step without a start time yet started after this one. In a terminal, or
+    when this execution is not listed, every other running step goes first."""
+    mine = next((r for r in running if r["name"] == me), None) if me else None
+    others = [r for r in running if r["name"] != me]
+    if not mine or not mine["start"]:
+        return others
+    return [r for r in others if r["start"] and (r["start"], r["name"]) < (mine["start"], mine["name"])]
+
+
+def busy_executions(app: ContainerApp) -> list[str]:
+    """Release steps that run now and started before this one."""
+    running = running_steps(app)
+    return [f"{r['step']} ({r['status'].lower()})" for r in ahead_of(running, own_execution(running))]
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -524,14 +622,47 @@ def tag_commit(reference: str) -> str:
     return tag if COMMIT.fullmatch(tag) else ""
 
 
-def require_own_build(reference: str) -> None:
-    """Only builds of the API in this solution's registry are released, whoever names the image: a person, or the push
-    trigger, whose event anyone holding the Logic App's URL could forge."""
-    host, _, path = reference.partition("/")
-    repository = re.split(r"[@:]", path, maxsplit=1)[0]
-    if host.lower() != setting("AZURE_CONTAINER_REGISTRY_ENDPOINT").lower() or repository != REPOSITORY:
-        raise ReleaseError(f"{(path or 'The image')[:72]} is not a build of {REPOSITORY} in this solution's registry: "
-                           "not released.")
+def image_problem(reference: str, registries: set[str]) -> str | None:
+    """Why the release must not deploy an image, or None for a build of requesthub-api, named by a valid tag or
+    digest, in a registry the API app itself pulls from. Whoever names the image is checked: a person, or the push
+    trigger, whose event anyone holding the Logic App's URL could forge. Messages quote the image as JSON, so
+    untrusted text stays on one line."""
+    host, _, path = str(reference).partition("/")
+    if "@" in path:
+        repository, _, ref = path.partition("@")
+        valid = DIGEST.fullmatch(ref)
+    else:
+        repository, _, ref = path.partition(":")
+        valid = TAG.fullmatch(ref)
+    if host.lower() not in registries or repository != REPOSITORY:
+        return f"{json.dumps(path[:72])} is not a build of {REPOSITORY} in the registry the API pulls from"
+    if not valid:
+        return f"{json.dumps(path[:72])} does not name a valid tag or digest"
+    return None
+
+
+def app_registries(app_data: dict) -> set[str]:
+    """The registries the API app pulls from, read from its own configuration: a source the push trigger cannot set."""
+    configuration = as_dict(as_dict(as_dict(app_data).get("properties")).get("configuration"))
+    return {str(r.get("server", "")).lower() for r in as_list(configuration.get("registries")) if isinstance(r, dict)}
+
+
+def require_own_build(reference: str, app_data: dict) -> None:
+    problem = image_problem(reference, app_registries(app_data))
+    if problem:
+        raise ReleaseError(f"{problem}: not released.")
+
+
+def release_commit(baked: str, claimed: str = "") -> tuple[str, str | None]:
+    """The commit a build is released as, or why it is not released. The commit baked into the image (BUILD_SHA) is
+    its provenance, and the gate checks that /api/meta reports it. A commit claimed elsewhere (--commit, the tag, or
+    the trigger's COMMIT) must agree with it."""
+    if not COMMIT.fullmatch(baked or ""):
+        return "", ("The image does not record the commit it was built from (BUILD_SHA), so the gate could not check "
+                    "what it runs: not released.")
+    if claimed and claimed != baked:
+        return "", f"The image reports build {baked[:12]}, not {printable(claimed)[:12]}: not released."
+    return baked, None
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -564,12 +695,12 @@ class Record:
         print(f"\n{title}", flush=True)
 
     def note(self, message: str) -> None:
-        print(f"  · {message}", flush=True)
+        print(f"  · {printable(message)}", flush=True)
         self.data["events"].append({"at": iso(utc_now()), "message": message})
 
     def checks(self, where: str, checks: list[Check]) -> bool:
         for check in checks:
-            print(f"    {'✓' if check.ok else '✗'} {check.name:<16} {check.detail}", flush=True)
+            print(f"    {'✓' if check.ok else '✗'} {check.name:<16} {printable(check.detail)}", flush=True)
             self.data["checks"].append({"where": where, "name": check.name, "ok": check.ok, "detail": check.detail,
                                         "ms": round(check.ms)})
         return all(c.ok for c in checks)
@@ -579,7 +710,7 @@ class Record:
         finished = utc_now()
         self.data.update(status=status or ("pass" if ok else "fail"), outcome=outcome, finishedAt=iso(finished),
                          seconds=round((finished - self.started).total_seconds(), 1))
-        print(f"{'✓' if ok else '✗'} {outcome}\n", flush=True)
+        print(f"{'✓' if ok else '✗'} {printable(outcome)}\n", flush=True)
         try:
             OUT.mkdir(parents=True, exist_ok=True)
             (OUT / f"{self.started:%Y%m%dT%H%M%S}-{self.command}.json").write_text(json.dumps(self.data, indent=2),
@@ -609,7 +740,7 @@ class ProductionProbe(threading.Thread):
     def run(self) -> None:
         while not self._stop_event.is_set():
             response = http("GET", f"{self.url}/api/meta", timeout=5)
-            build = (response.json() or {}).get("buildSha", "") if response.status == 200 else ""
+            build = str(as_dict(response.json()).get("buildSha") or "") if response.status == 200 else ""
             self.results.append((time.time(), response.status, build, response.ms))
             self._stop_event.wait(self.interval)
 
@@ -647,8 +778,8 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
         return checks
 
     r = http("GET", f"{base}/api/meta")
-    meta = r.json() or {}
-    build = meta.get("buildSha", "?")
+    meta = as_dict(r.json())
+    build = str(meta.get("buildSha") or "?")
     ok = r.status == 200 and meta.get("contractVersion") == CONTRACT and meta.get("authMode") == "EasyAuth"
     detail = f"build {build[:12]}, contract {meta.get('contractVersion')}, auth {meta.get('authMode')}"
     if expect_commit:
@@ -660,15 +791,17 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
     add("sign-in required", r.status in (401, 403, 302), f"/api/me without a token: {r.outcome}", r)
 
     r = http("GET", f"{base}/api/me", bearer=bearer)
-    me = r.json() or {}
-    roles = set(me.get("roles") or [])
+    me = as_dict(r.json())
+    roles = {role for role in as_list(me.get("roles")) if isinstance(role, str)}
     # Roles only: the caller's name and ids identify an account, and this detail ends up in release records.
     if not add("signed in", r.status == 200 and {"Requester", "Approver"} <= roles,
                f"HTTP {r.status}: roles {', '.join(sorted(roles)) or 'none'}", r):
         return checks
 
-    categories = http("GET", f"{base}/api/categories", bearer=bearer).json() or []
-    departments = [d["id"] for d in (http("GET", f"{base}/api/departments", bearer=bearer).json() or [])]
+    categories = [c for c in as_list(http("GET", f"{base}/api/categories", bearer=bearer).json())
+                  if isinstance(c, dict) and c.get("id")]
+    departments = [d["id"] for d in as_list(http("GET", f"{base}/api/departments", bearer=bearer).json())
+                   if isinstance(d, dict) and d.get("id")]
     if not categories or not departments:
         add("submit", False, "the API returned no categories or departments")
         return checks
@@ -682,17 +815,17 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
         "priority": "Normal",
     }
     first = http("POST", f"{base}/api/requests", bearer=bearer, body=request, headers={"Idempotency-Key": key})
-    created = first.json() or {}
+    created = as_dict(first.json())
     if not add("submit", first.status == 201 and bool(created.get("id")), f"HTTP {first.status}: {created.get('id') or first.text()}", first):
         return checks
     request_id = created["id"]
     retry = http("POST", f"{base}/api/requests", bearer=bearer, body=request, headers={"Idempotency-Key": key})
-    add("retry is safe", retry.status == 200 and (retry.json() or {}).get("id") == request_id,
-        f"same Idempotency-Key: HTTP {retry.status}, {(retry.json() or {}).get('id')}", retry)
+    add("retry is safe", retry.status == 200 and as_dict(retry.json()).get("id") == request_id,
+        f"same Idempotency-Key: HTTP {retry.status}, {as_dict(retry.json()).get('id')}", retry)
 
     r = http("GET", f"{base}/api/requests/{request_id}", bearer=bearer)
-    detail = r.json() or {}
-    permissions = detail.get("permissions") or {}
+    detail = as_dict(r.json())
+    permissions = as_dict(detail.get("permissions"))
     add("read", r.status == 200 and detail.get("title") == request["title"]
         and permissions.get("canDecide") is False and permissions.get("decideBlockedReason") == "self_approval",
         f"HTTP {r.status}: {detail.get('status')}, canDecide={permissions.get('canDecide')} "
@@ -705,8 +838,11 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
             f"Content-Type: text/plain\r\n\r\n").encode() + content + f"\r\n--{boundary}--\r\n".encode()
     upload = http("POST", f"{base}/api/requests/{request_id}/attachments", bearer=bearer, raw=form,
                   headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
-    attachment = upload.json() or {}
-    download = http("GET", f"{base}{attachment['downloadUrl']}", bearer=bearer) if upload.status == 201 and attachment.get("downloadUrl") else None
+    attachment = as_dict(upload.json())
+    link = attachment.get("downloadUrl")
+    # A path on the same host only: the token goes with the download, so a URL that names another host is refused.
+    on_host = isinstance(link, str) and link.startswith("/") and not link.startswith("//")
+    download = http("GET", f"{base}{link}", bearer=bearer) if upload.status == 201 and on_host else None
     same = download is not None and download.status == 200 and download.body == content
     if same:
         detail = f"upload {upload.outcome}, download {download.outcome}, {len(content)} bytes identical"
@@ -718,12 +854,12 @@ def smoke(base: str, bearer: str, *, label: str, expect_commit: str | None = Non
 
     r = http("POST", f"{base}/api/requests/{request_id}/decisions", bearer=bearer,
              body={"outcome": "Approved", "comment": "Release check: a requester must not approve their own request."})
-    problem = r.json() or {}
+    problem = as_dict(r.json())
     add("approval guard", r.status == 403 and problem.get("code") == "decision.self_approval",
         f"self-approval: HTTP {r.status} {problem.get('code', r.text(120))}", r)
 
     r = http("GET", f"{base}/api/requests/{request_id}/history", bearer=bearer)
-    actions = [e.get("action") for e in (r.json() or [])] if r.status == 200 else []
+    actions = [e.get("action") for e in as_list(r.json()) if isinstance(e, dict)] if r.status == 200 else []
     expected = ["request.created"] + (["attachment.added"] if same else [])
     add("history", r.status == 200 and all(a in actions for a in expected),
         f"HTTP {r.status}: {len(actions)} audit event(s): {', '.join(actions[:4])}", r)
@@ -760,7 +896,7 @@ def failure_evidence(app: ContainerApp, revision: str, limit: int = 6) -> list[s
             if re.search(r"Unhealthy|Exception|failed", message):
                 key = "App: " + re.sub(r" completed after [\d.]+ms", "", message)[:240]
                 found[key] = found.get(key, 0) + 1
-    except (ReleaseError, KeyError, StopIteration) as error:
+    except (ReleaseError, KeyError, StopIteration, TypeError) as error:
         return [f"log streams unavailable: {error}"]
     return [f"{text} (x{count})" if count > 1 else text for text, count in list(found.items())[:limit]]
 
@@ -808,6 +944,34 @@ def _note_users(record: Record) -> None:
                     f"({users['availability']}%)")
 
 
+def set_gate_verdict(app: ContainerApp, value: str | None) -> bool:
+    """Record the gate's verdict on the app, or clear it (value None), keeping every other tag: a PATCH that includes
+    tags replaces them all, and creates no revision. Returns False when there was nothing to clear."""
+    tags = as_dict(app.get().get("tags"))
+    if value is None and GATE_TAG not in tags:
+        return False
+    app.patch({"tags": tags_with_gate(tags, value)})
+    return True
+
+
+def clear_gate_verdict(app: ContainerApp, record: Record) -> None:
+    """Housekeeping only: a verdict names its revision and image, so a stale one never lets promote through."""
+    try:
+        if set_gate_verdict(app, None):
+            record.note("Cleared the gate's earlier verdict")
+    except ReleaseError as error:
+        record.note(f"Could not clear the gate's earlier verdict ({error}); promote still checks revision and image")
+
+
+def describe_error(error: BaseException) -> str:
+    """One line for the record: a ReleaseError's message, else the error's type, message, and where it happened."""
+    if isinstance(error, ReleaseError):
+        return str(error)
+    frames = traceback.extract_tb(error.__traceback__)[-3:]
+    where = " < ".join(f"{frame.name}:{frame.lineno}" for frame in reversed(frames))
+    return f"{type(error).__name__}: {error}" + (f" (at {where})" if where else "")
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------------------------------------------------
@@ -840,13 +1004,27 @@ def cmd_status(args) -> int:
     return 0
 
 
-def deploy_candidate(app: ContainerApp, image_ref: str | None, commit: str | None, fault: str, prefix: str) -> int:
+def deploy_candidate(app: ContainerApp, image_ref: str | None, commit: str | None, fault: str, prefix: str, *,
+                     created: dict | None = None) -> int:
     """Add a candidate revision with no traffic. Revision suffixes have no hyphens (r1029141500): Azure's system logs
-    cut a revision name at the first hyphen of its suffix, which would break log queries by revision."""
+    cut a revision name at the first hyphen of its suffix, which would break log queries by revision.
+
+    created["revision"] receives the candidate's name just before Azure creates it, so the caller can remove it
+    whatever happens next."""
     record = Record("deploy", "Deploy a candidate revision (no traffic)")
     state = State.load(app)
     stable = state.stable()
     previous = state.previous()
+    stable_revision = state.revisions[stable]
+    if image_ref:
+        require_own_build(image_ref, state.data)
+    image, baked = resolve_image(image_ref or image_of(stable_revision))
+    if image_ref:
+        commit, problem = release_commit(baked, commit or "")
+        if problem:
+            return record.finish(False, problem)
+    else:
+        commit = commit or baked or commit_of(stable_revision)
     leftover = state.labels.get("candidate")
     if leftover and leftover != stable:
         record.note(f"Replacing the waiting candidate {state.short(leftover)}, which was never promoted")
@@ -854,11 +1032,7 @@ def deploy_candidate(app: ContainerApp, image_ref: str | None, commit: str | Non
         if state.active(leftover):
             app.deactivate(leftover)
         state = State.load(app)
-    stable_revision = state.revisions[stable]
-    if image_ref:
-        require_own_build(image_ref)
-    image, baked = resolve_image(image_ref or image_of(stable_revision))
-    commit = commit or baked or ("" if image_ref else commit_of(stable_revision))
+    clear_gate_verdict(app, record)
     now = utc_now()
     suffix = f"{prefix}{now:%m%d%H%M%S}"
     candidate = f"{app.name}--{suffix}"
@@ -887,6 +1061,8 @@ def deploy_candidate(app: ContainerApp, image_ref: str | None, commit: str | Non
     # candidate its label with 0%, so the platform never routes a user to it.
     body = traffic_body(stable, previous, candidate)
     body["properties"]["template"] = template
+    if created is not None:
+        created["revision"] = candidate
     seconds = app.patch(body)
     state = State.load(app)
     record.data["trafficAfter"] = state.traffic_summary()
@@ -898,10 +1074,26 @@ def deploy_candidate(app: ContainerApp, image_ref: str | None, commit: str | Non
 
 
 def cmd_deploy(args) -> int:
-    return deploy_candidate(connect(), args.image, args.commit, args.fault, "t")
+    app = connect()
+    busy = busy_executions(app)
+    if busy:
+        return Record("deploy", "Deploy a candidate revision (no traffic)").finish(
+            False, f"A release step is running ({', '.join(busy)}). Try again when it finishes.")
+    return deploy_candidate(app, args.image, args.commit, args.fault, "t")
 
 
-def cmd_gate(args) -> int:
+def cmd_gate_alone(args) -> int:
+    """The gate from a terminal: like any step, it waits for nobody and refuses while an earlier step runs. Release
+    and drill call cmd_gate directly, because they already hold the turn."""
+    busy = busy_executions(connect())
+    if busy:
+        return Record("gate", "Gate: readiness, smoke test, and bake on the candidate's own URL").finish(
+            False, f"A release step is running ({', '.join(busy)}). Try again when it finishes.")
+    return cmd_gate(args)
+
+
+def cmd_gate(args, result: dict | None = None) -> int:
+    """result["failed"] receives the name of the check that failed, or None when the gate passed."""
     record = Record("gate", "Gate: readiness, smoke test, and bake on the candidate's own URL")
     app = connect()
     state = State.load(app)
@@ -913,14 +1105,26 @@ def cmd_gate(args) -> int:
     users = ProductionProbe(state.production_url)
     users.start()
     try:
-        ok, outcome = run_gate(app, state, candidate, bearer, record, args)
+        ok, outcome, failed = run_gate(app, state, candidate, bearer, record, args)
     finally:
         record.data["measurements"]["production"] = users.stop()
     _note_users(record)
+    if ok:
+        image = image_of(state.revisions[candidate])
+        current = State.load(app)
+        if current.labels.get("candidate") != candidate or image_of(current.revisions.get(candidate, {})) != image:
+            ok, failed, outcome = False, "verdict", "The candidate changed during the gate, so no verdict was recorded."
+        else:
+            set_gate_verdict(app, gate_value(state.short(candidate), image, utc_now()))
+            record.note(f"Verdict recorded on the app (tag {GATE_TAG}): promote checks it")
+    if result is not None:
+        result["failed"] = failed
     return record.finish(ok, outcome)
 
 
-def run_gate(app: ContainerApp, state: State, candidate: str, bearer: str, record: Record, args) -> tuple[bool, str]:
+def run_gate(app: ContainerApp, state: State, candidate: str, bearer: str, record: Record,
+             args) -> tuple[bool, str, str | None]:
+    """The gate's checks: (passed, outcome, the name of the check that failed)."""
     revision = state.revisions[candidate]
     name = state.short(candidate)
     url = state.label_url("candidate")
@@ -936,11 +1140,18 @@ def run_gate(app: ContainerApp, state: State, candidate: str, bearer: str, recor
         for line in record.data["evidence"]:
             record.note(f"Evidence · {line}")
         record.checks("candidate", [Check("ready", False, reason)])
-        return False, f"Candidate {name} failed the gate {verdict:.0f} s after it was created: {reason}. It never received traffic."
+        return (False, f"Candidate {name} failed the gate {verdict:.0f} s after it was created: {reason}. "
+                       "It never received traffic.", "ready")
     record.data["measurements"]["secondsToReady"] = verdict
+    expected = env_of(revision).get("RELEASE_COMMIT", "")
+    if not COMMIT.fullmatch(expected):
+        record.checks("candidate", [Check("build", False, "the candidate does not record the commit it was built from")])
+        return False, f"Candidate {name} does not record its commit, so its build cannot be checked.", "build"
     record.note(f"Ready {verdict:.0f} s after it was created. Smoke test on the candidate's own URL")
-    if not record.checks("candidate", smoke(url, bearer, label=name, expect_commit=env_of(revision).get("RELEASE_COMMIT"))):
-        return False, f"Candidate {name} failed the smoke test. It never received traffic."
+    checks = smoke(url, bearer, label=name, expect_commit=expected)
+    if not record.checks("candidate", checks):
+        failed = next(check.name for check in checks if not check.ok)
+        return False, f"Candidate {name} failed the smoke test ({failed}). It never received traffic.", failed
     if args.bake > 0:
         record.note(f"Bake: calling the candidate every 5 s for {args.bake} s")
         failures, calls, end = [], 0, time.time() + args.bake
@@ -953,8 +1164,8 @@ def run_gate(app: ContainerApp, state: State, candidate: str, bearer: str, recor
             time.sleep(5)
         detail = f"{calls - len(failures)}/{calls} calls OK over {args.bake} s" + (f"; {failures[0]}" if failures else "")
         if not record.checks("candidate", [Check("bake", not failures, detail)]):
-            return False, f"Candidate {name} failed during the bake period. It never received traffic."
-    return True, f"Candidate {name} passed the gate and still has 0% of traffic. It waits for a person's go or no-go."
+            return False, f"Candidate {name} failed during the bake period. It never received traffic.", "bake"
+    return True, f"Candidate {name} passed the gate and still has 0% of traffic. It waits for a person's go or no-go.", None
 
 
 def wait_for_turn(app: ContainerApp, record: Record, seconds: int) -> bool:
@@ -970,42 +1181,65 @@ def wait_for_turn(app: ContainerApp, record: Record, seconds: int) -> bool:
         time.sleep(15)
 
 
+def deploy_and_gate(app: ContainerApp, args, image: str | None, commit: str | None, fault: str, prefix: str, *,
+                    keep: bool, gate: dict | None = None) -> int:
+    """Deploy a candidate and gate it; 0 when the gate passed. This step holds the turn, so it removes the candidate
+    it created itself, without waiting for anyone: when the gate fails, when anything goes wrong once the candidate
+    exists, and always when keep is False (the drill). gate receives "failed" (see cmd_gate) and "cleaned"."""
+    created: dict = {}
+    gate = {} if gate is None else gate
+    try:
+        passed = (deploy_candidate(app, image, commit, fault, prefix, created=created) == 0
+                  and cmd_gate(args, result=gate) == 0)
+    except BaseException as error:
+        if Record.current:
+            Record.current.finish(False, f"Stopped: {describe_error(error)}")
+        if created.get("revision"):
+            try:
+                gate["cleaned"] = abort_candidate(app, only=created["revision"]) == 0
+            except Exception as cleanup:  # report it, and let the first error explain the failure
+                print(f"\nerror: removing the candidate failed too: {printable(describe_error(cleanup))}",
+                      file=sys.stderr, flush=True)
+        raise
+    if created.get("revision") and (not passed or not keep):
+        gate["cleaned"] = abort_candidate(app, only=created["revision"]) == 0
+    return 0 if passed else 1
+
+
 def cmd_release(args) -> int:
     app = connect()
     pushed = bool(os.environ.get("IMAGE")) and not args.image  # started by the push trigger for one pushed build
     record = Record("release", "Release a build: candidate, gate, and removal if it fails")
     reference = args.image or os.environ.get("IMAGE") or f"{setting('AZURE_CONTAINER_REGISTRY_ENDPOINT')}/{REPOSITORY}:main"
-    require_own_build(reference)
+    require_own_build(reference, app.get())
     if not wait_for_turn(app, record, args.wait):
         return record.finish(False, f"Another release step was still running after {args.wait} s; nothing was released.")
     image, baked = resolve_image(reference)
     pushed_commit = os.environ.get("COMMIT", "") if pushed else ""
-    commit = args.commit or (pushed_commit if COMMIT.fullmatch(pushed_commit) else "") or tag_commit(reference) or baked
+    claimed = args.commit or (pushed_commit if COMMIT.fullmatch(pushed_commit) else "") or tag_commit(reference)
+    commit, problem = release_commit(baked, claimed)
+    record.data.update(trigger="push" if pushed else "person", image=short_image(image), commit=commit or baked)
+    if problem:
+        return record.finish(False, problem)
     state = State.load(app)
     stable = state.stable()
     candidate = state.labels.get("candidate")
-    stable_commit = commit_of(state.revisions[stable])
-    record.data.update(trigger="push" if pushed else "person", image=short_image(image), commit=commit,
-                       stable=state.describe(stable))
-    record.note(f"Build {commit[:12] or '(no commit)'}: {short_image(image)[:72]}, "
+    record.data.update(stable=state.describe(stable))
+    record.note(f"Build {commit[:12]}: {short_image(image)[:72]}, "
                 + ("pushed to the registry" if pushed else "started by a person"))
-    if baked and commit and baked != commit:
-        return record.finish(False, f"The image reports build {baked[:12]}, not {commit[:12]}: not released.")
-    if pushed and not args.force and commit:
+    if pushed and not args.force:
         reason = None
-        if commit == stable_commit:
+        if commit == commit_of(state.revisions[stable]):
             reason = f"Build {commit[:7]} already serves users ({state.short(stable)}): nothing to release."
-        elif candidate and candidate != stable and commit == commit_of(state.revisions.get(candidate, {})):
-            reason = f"Build {commit[:7]} is already the candidate ({state.short(candidate)}): it waits for a person."
+        elif (candidate and candidate != stable and commit == commit_of(state.revisions.get(candidate, {}))
+              and not gate_problem(state.data.get("tags"), state.short(candidate), image_of(state.revisions[candidate]),
+                                   utc_now())):
+            reason = (f"Build {commit[:7]} is already the candidate ({state.short(candidate)}) and passed the gate: "
+                      "it waits for a person.")
         if reason:
             return record.finish(True, reason, status="skipped")
-    record.finish(True, f"Releasing build {commit[:7] or short_image(image)[:40]}.")
-    if deploy_candidate(app, image, commit, "none", "r") != 0:
-        return 1
-    if cmd_gate(args) == 0:
-        return 0
-    cmd_abort(args)
-    return 1
+    record.finish(True, f"Releasing build {commit[:7]}.")
+    return deploy_and_gate(app, args, image, commit, "none", "r", keep=True)
 
 
 def cmd_drill(args) -> int:
@@ -1015,16 +1249,21 @@ def cmd_drill(args) -> int:
     if busy:
         return record.finish(False, f"A release step is running ({', '.join(busy)}). Run the drill when it finishes.")
     record.finish(True, "Deploying the stable build again with a readiness probe that fails; the gate must catch it.")
-    if deploy_candidate(app, None, None, "fail-readiness", "d") != 0:
-        return 1
-    caught = cmd_gate(args) != 0
-    cleaned = cmd_abort(args) == 0
+    gate: dict = {}
+    passed = deploy_and_gate(app, args, None, None, "fail-readiness", "d", keep=False, gate=gate) == 0
+    cleaned = gate.get("cleaned", False)
     outcome = Record("drill-result", "Drill result")
-    if caught:
-        return outcome.finish(cleaned, "The gate blocked the bad candidate, which never received traffic, and it was "
-                                       "removed." if cleaned else "The gate blocked the bad candidate, but production "
-                                       "failed its check afterwards: investigate now.")
-    return outcome.finish(False, "The gate did not catch the injected fault. The candidate was removed; fix the gate.")
+    if passed:
+        return outcome.finish(False, "The gate did not catch the injected fault. " + (
+            "The candidate was removed; fix the gate." if cleaned else "Removing the candidate failed: run abort now."))
+    if "failed" not in gate:
+        return outcome.finish(False, "The drill could not deploy its candidate; see the deploy step.")
+    if gate["failed"] != "ready":
+        return outcome.finish(False, f"The gate failed on {gate['failed']}, not on readiness: the injected fault is "
+                                     "not what stopped the candidate. Investigate before trusting the gate.")
+    return outcome.finish(cleaned, "The gate blocked the bad candidate, which never received traffic, and it was "
+                                   "removed." if cleaned else "The gate blocked the bad candidate, but removing it or "
+                                   "the production check afterwards failed: investigate now.")
 
 
 def refuse_while_busy(app: ContainerApp, record: Record) -> int | None:
@@ -1050,6 +1289,10 @@ def cmd_promote(args) -> int:
     props = revision["properties"]
     if env_of(revision).get("Faults__FailReadiness") == "true":
         return record.finish(False, f"Refusing to promote {name}: it is a drill candidate with an injected fault.")
+    problem = gate_problem(state.data.get("tags"), name, image_of(revision), utc_now())
+    if problem:
+        record.data.update(candidate=state.describe(candidate))
+        return record.finish(False, f"Refusing to promote {name}: {problem}. Run the release job to gate it again.")
     if not (props.get("active") and props.get("healthState") == "Healthy" and props.get("runningState") in RUNNING):
         return record.finish(False, f"Refusing to promote {name}: it is {props.get('runningState')}, "
                                     f"health {props.get('healthState')}. Run the release job again.")
@@ -1077,6 +1320,7 @@ def cmd_promote(args) -> int:
     _note_users(record)
     if state.weights.get(candidate) != 100 or state.labels.get("stable") != candidate:
         return record.finish(False, "Traffic did not move as expected; run status.")
+    clear_gate_verdict(app, record)
     record.note(f"Verifying production ({name})")
     ok = record.checks("production", smoke(state.production_url, bearer, label=name,
                                            expect_commit=commit_of(revision) or None, expect_from=f"{name}'s commit"))
@@ -1085,28 +1329,33 @@ def cmd_promote(args) -> int:
                          else f"{name} serves users but failed the production check: roll back now.")
 
 
-def cmd_abort(args) -> int:
-    record = Record("abort", "Abort: remove the candidate, keep users on stable")
-    app = connect()
-    refused = refuse_while_busy(app, record)
-    if refused is not None:
-        return refused
+def remove_candidate(app: ContainerApp, record: Record, only: str | None = None) -> State:
+    """Take the candidate label away (and the gate's verdict with it), then deactivate the revision. There is no
+    lock check here: abort checks it first, and a release or drill that removes the candidate it created already holds
+    the turn. With only, act on that revision alone, never on a candidate another step put there."""
     state = State.load(app)
-    candidate = state.labels.get("candidate")
     stable = state.stable()
-    if candidate and candidate != stable:
-        record.data.update(candidate=state.describe(candidate), stable=state.describe(stable), trafficBefore=state.traffic_summary())
-        record.note(f"Removing the candidate label from {state.short(candidate)} (it had {state.weights.get(candidate, 0)}% of traffic)")
-        app.patch(traffic_body(stable, state.previous()))
-        if state.active(candidate):
-            record.note(f"Deactivating {state.short(candidate)}")
-            app.deactivate(candidate)
-        created = parse_time(state.revisions[candidate]["properties"].get("createdTime"))
-        if created:
-            record.data["measurements"]["secondsFromCandidateToRemoved"] = round((utc_now() - created).total_seconds(), 1)
-    else:
+    candidate = state.labels.get("candidate")
+    target = only or candidate
+    if not target or target == stable or not (target == candidate or state.active(target)):
         record.note("No candidate revision: nothing to remove")
-    state = State.load(app)
+        return state
+    record.data.update(candidate=state.describe(target), stable=state.describe(stable), trafficBefore=state.traffic_summary())
+    if target == candidate:
+        record.note(f"Removing the candidate label from {state.short(target)} (it had {state.weights.get(target, 0)}% of traffic)")
+        app.patch(traffic_body(stable, state.previous()))
+        clear_gate_verdict(app, record)
+    if state.active(target):
+        record.note(f"Deactivating {state.short(target)}")
+        app.deactivate(target)
+    created = parse_time(as_dict(state.revisions.get(target, {}).get("properties")).get("createdTime"))
+    if created:
+        record.data["measurements"]["secondsFromCandidateToRemoved"] = round((utc_now() - created).total_seconds(), 1)
+    return State.load(app)
+
+
+def finish_abort(app: ContainerApp, record: Record, state: State) -> int:
+    stable = state.stable()
     record.data["trafficAfter"] = state.traffic_summary()
     record.note(f"Verifying production ({state.short(stable)}, 100% of traffic)")
     ok = record.checks("production", smoke(state.production_url, api_token(), label=state.short(stable),
@@ -1116,7 +1365,26 @@ def cmd_abort(args) -> int:
                          else "Production failed the smoke test after the abort: investigate now.")
 
 
+def abort_candidate(app: ContainerApp, only: str | None = None) -> int:
+    """Abort's work without its lock check, for a release or drill removing the candidate it created."""
+    record = Record("abort", "Abort: remove the candidate, keep users on stable")
+    return finish_abort(app, record, remove_candidate(app, record, only))
+
+
+def cmd_abort(args) -> int:
+    record = Record("abort", "Abort: remove the candidate, keep users on stable")
+    app = connect()
+    refused = refuse_while_busy(app, record)
+    if refused is not None:
+        return refused
+    return finish_abort(app, record, remove_candidate(app, record))
+
+
 def cmd_rollback(args) -> int:
+    """One traffic change back to the revision labelled previous, the one that served users just before: promote and
+    rollback give that label only to the revision they take traffic away from. There is no other target, because a
+    revision that lost the candidate label (a failed gate, an abort, or a newer release) must never get traffic without
+    the gate and a person's go: release an older build instead, then promote it."""
     record = Record("rollback", "Roll back to the previous revision")
     app = connect()
     refused = refuse_while_busy(app, record)
@@ -1124,24 +1392,32 @@ def cmd_rollback(args) -> int:
         return refused
     state = State.load(app)
     stable = state.stable()
-    target = args.to and (args.to if args.to.startswith(f"{app.name}--") else f"{app.name}--{args.to}")
-    target = target or state.labels.get("previous")
+    candidate = state.labels.get("candidate")
+    target = state.labels.get("previous")
     if not target or target not in state.revisions or target == stable:
         return record.finish(False, "No previous revision to roll back to. Release an earlier build instead: "
                                     "release --image REGISTRY/requesthub-api:COMMIT, then promote.")
+    name = state.short(target)
+    if env_of(state.revisions[target]).get("Faults__FailReadiness") == "true":
+        return record.finish(False, f"Refusing to roll back to {name}: it is a drill revision with an injected fault.")
+    if target == candidate:
+        return record.finish(False, f"Refusing to roll back to {name}: it is the candidate. Promote it instead, which "
+                                    "checks the gate's verdict.")
     bearer = api_token()
     record.data.update(stable=state.describe(stable), rolledBackTo=state.describe(target), trafficBefore=state.traffic_summary())
     if not state.active(target):
-        record.note(f"{state.short(target)} is inactive: activating it and waiting until it is ready")
+        record.note(f"{name} is inactive: activating it and waiting until it is ready")
         app.activate(target)
         ready, reason = wait_until_ready(app, target, record, timeout=args.ready_timeout, grace=args.not_ready_grace)
         if not ready:
-            return record.finish(False, f"Cannot roll back: {state.short(target)} is not ready ({reason}). Users stay on {state.short(stable)}.")
+            app.deactivate(target)
+            return record.finish(False, f"Cannot roll back: {name} is not ready ({reason}). Users stay on {state.short(stable)}.")
+    waiting = candidate if candidate and candidate not in (target, stable) else None
     users = ProductionProbe(state.production_url, interval=0.25)
     users.start()
     try:
-        record.note(f"Traffic: {state.short(stable)} 100% → {state.short(target)} 100% (one atomic change)")
-        seconds = app.patch(traffic_body(target, stable))
+        record.note(f"Traffic: {state.short(stable)} 100% → {name} 100% (one atomic change)")
+        seconds = app.patch(traffic_body(target, stable, waiting))
         record.data["measurements"]["secondsToSwitch"] = round(seconds, 1)
         time.sleep(5)
     finally:
@@ -1206,7 +1482,7 @@ def cmd_watch(args) -> int:
     try:
         while end is None or time.time() < end:
             response = http("GET", f"{url}/api/meta", timeout=5)
-            build = (response.json() or {}).get("buildSha", "") if response.status == 200 else ""
+            build = str(as_dict(response.json()).get("buildSha") or "") if response.status == 200 else ""
             results.append((response.status, response.ms, build))
             if route["changed"]:
                 print(f"{utc_now():%H:%M:%S}  traffic → {route['text']}", flush=True)
@@ -1241,7 +1517,8 @@ def main() -> int:
     p.add_argument("--image", help="image to release, by tag or digest: a build of requesthub-api in this solution's "
                                    "registry. Default: IMAGE (set by the push trigger), else the newest build, "
                                    "requesthub-api:main")
-    p.add_argument("--commit", help="commit the image was built from. Default: COMMIT, the tag, or the image's BUILD_SHA")
+    p.add_argument("--commit", help="commit the image was built from; it must match the commit baked into the image "
+                                    "(BUILD_SHA), which is the default")
     p.add_argument("--wait", type=int, default=900, help="seconds to wait for another release step to finish (default 900)")
     p.add_argument("--force", action="store_true", help="release a pushed build even if it would be skipped")
     gate_options(p)
@@ -1254,15 +1531,15 @@ def main() -> int:
     p = commands.add_parser("deploy", help="add a candidate revision with no traffic")
     p.add_argument("--image", help="image to deploy, by tag or digest (pinned to its digest): a build of requesthub-api "
                                    "in this solution's registry. Default: the stable revision's image")
-    p.add_argument("--commit", help="commit the image was built from; the gate checks that /api/meta reports it. "
-                                    "Default: the image's BUILD_SHA")
+    p.add_argument("--commit", help="commit the image was built from; with --image it must match the commit baked "
+                                    "into the image (BUILD_SHA), which is the default. The gate checks /api/meta reports it")
     p.add_argument("--fault", choices=["none", "fail-readiness"], default="none",
                    help="fail-readiness makes the candidate's readiness probe fail (expires after 30 minutes)")
     p.set_defaults(func=cmd_deploy)
 
     p = commands.add_parser("gate", help="readiness, smoke test, and bake on the candidate's own URL")
     gate_options(p)
-    p.set_defaults(func=cmd_gate)
+    p.set_defaults(func=cmd_gate_alone)
 
     p = commands.add_parser("promote", help="check the candidate again, move 100%% of traffic to it, verify production")
     p.set_defaults(func=cmd_promote)
@@ -1271,8 +1548,7 @@ def main() -> int:
     p.set_defaults(func=cmd_abort)
 
     p = commands.add_parser("rollback", help="move 100%% of traffic back to the previous revision")
-    p.add_argument("--to", help="revision name or suffix to roll back to (default: the revision labelled previous)")
-    p.add_argument("--ready-timeout", type=int, default=300, help="seconds an inactive target gets to become ready (default 300)")
+    p.add_argument("--ready-timeout", type=int, default=300, help="seconds an inactive previous revision gets to become ready (default 300)")
     p.add_argument("--not-ready-grace", type=int, default=60, help="seconds a started container may stay not ready (default 60)")
     p.set_defaults(func=cmd_rollback)
 
@@ -1289,10 +1565,13 @@ def main() -> int:
     try:
         return args.func(args)
     except ReleaseError as error:
-        print(f"\nerror: {error}", file=sys.stderr)
-        if Record.current:
-            Record.current.finish(False, f"Stopped: {error}")
-        return 1
+        message = str(error)
+    except Exception as error:  # an unexpected failure still ends the step's record, so the workbook shows it
+        message = describe_error(error)
+    print(f"\nerror: {printable(message)}", file=sys.stderr, flush=True)
+    if Record.current:
+        Record.current.finish(False, f"Stopped: {message}")
+    return 1
 
 
 if __name__ == "__main__":

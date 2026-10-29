@@ -2,7 +2,9 @@
   "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "releaseJobId": { "type": "String" }
+    "releaseJobId": { "type": "String" },
+    "registryId": { "type": "String" },
+    "registryHost": { "type": "String" }
   },
   "triggers": {
     "manual": {
@@ -43,34 +45,73 @@
             "runAfter": { "Acknowledge": [ "Succeeded" ] },
             "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
             "actions": {
-              "Read_release_job": {
-                "type": "Http",
-                "inputs": {
-                  "method": "GET",
-                  "uri": "@{concat('https://management.azure.com', parameters('releaseJobId'), '?api-version=2025-07-01')}",
-                  "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
-                }
-              },
-              "Release_this_build": {
+              "Pushed_build": {
                 "type": "Compose",
-                "runAfter": { "Read_release_job": [ "Succeeded" ] },
                 "inputs": {
-                  "name": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['name']",
-                  "image": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['image']",
-                  "args": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['args']",
-                  "resources": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['resources']",
-                  "env": "@union(first(body('Read_release_job')?['properties']?['template']?['containers'])?['env'], createArray(json(concat('{\"name\":\"IMAGE\",\"value\":\"', items('For_each_pushed_build')?['data']?['request']?['host'], '/', items('For_each_pushed_build')?['data']?['target']?['repository'], '@', items('For_each_pushed_build')?['data']?['target']?['digest'], '\"}')), json(concat('{\"name\":\"COMMIT\",\"value\":\"', coalesce(items('For_each_pushed_build')?['data']?['target']?['tag'], ''), '\"}'))))"
+                  "topic": "@{coalesce(items('For_each_pushed_build')?['topic'], '')}",
+                  "eventType": "@{coalesce(items('For_each_pushed_build')?['eventType'], '')}",
+                  "host": "@{coalesce(items('For_each_pushed_build')?['data']?['request']?['host'], '')}",
+                  "repository": "@{coalesce(items('For_each_pushed_build')?['data']?['target']?['repository'], '')}",
+                  "digest": "@{coalesce(items('For_each_pushed_build')?['data']?['target']?['digest'], '')}",
+                  "tag": "@{coalesce(items('For_each_pushed_build')?['data']?['target']?['tag'], '')}"
                 }
               },
-              "Start_release_job": {
-                "type": "Http",
-                "runAfter": { "Release_this_build": [ "Succeeded" ] },
-                "inputs": {
-                  "method": "POST",
-                  "uri": "@{concat('https://management.azure.com', parameters('releaseJobId'), '/start?api-version=2025-07-01')}",
-                  "body": { "containers": [ "@outputs('Release_this_build')" ] },
-                  "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
-                }
+              "Is_a_push_of_the_API_to_this_registry": {
+                "type": "If",
+                "runAfter": { "Pushed_build": [ "Succeeded" ] },
+                "expression": {
+                  "and": [
+                    { "equals": [ "@toLower(outputs('Pushed_build')?['topic'])", "@toLower(parameters('registryId'))" ] },
+                    { "equals": [ "@outputs('Pushed_build')?['eventType']", "Microsoft.ContainerRegistry.ImagePushed" ] },
+                    { "equals": [ "@toLower(outputs('Pushed_build')?['host'])", "@toLower(parameters('registryHost'))" ] },
+                    { "equals": [ "@outputs('Pushed_build')?['repository']", "requesthub-api" ] },
+                    { "equals": [ "@length(outputs('Pushed_build')?['digest'])", 71 ] },
+                    { "equals": [ "@startsWith(outputs('Pushed_build')?['digest'], 'sha256:')", true ] }
+                  ]
+                },
+                "actions": {
+                  "Is_the_digest_hexadecimal": {
+                    "type": "If",
+                    "expression": {
+                      "and": [
+                        { "equals": [ "@empty(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(substring(outputs('Pushed_build')?['digest'], 7, 64), '0', ''), '1', ''), '2', ''), '3', ''), '4', ''), '5', ''), '6', ''), '7', ''), '8', ''), '9', ''), 'a', ''), 'b', ''), 'c', ''), 'd', ''), 'e', ''), 'f', ''))", true ] }
+                      ]
+                    },
+                    "actions": {
+                      "Read_release_job": {
+                        "type": "Http",
+                        "inputs": {
+                          "method": "GET",
+                          "uri": "@{concat('https://management.azure.com', parameters('releaseJobId'), '?api-version=2025-07-01')}",
+                          "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
+                        }
+                      },
+                      "Release_this_build": {
+                        "type": "Compose",
+                        "runAfter": { "Read_release_job": [ "Succeeded" ] },
+                        "inputs": {
+                          "name": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['name']",
+                          "image": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['image']",
+                          "args": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['args']",
+                          "resources": "@first(body('Read_release_job')?['properties']?['template']?['containers'])?['resources']",
+                          "env": "@union(first(body('Read_release_job')?['properties']?['template']?['containers'])?['env'], createArray(addProperty(addProperty(json('{}'), 'name', 'IMAGE'), 'value', concat(toLower(parameters('registryHost')), '/requesthub-api@', outputs('Pushed_build')?['digest'])), addProperty(addProperty(json('{}'), 'name', 'COMMIT'), 'value', outputs('Pushed_build')?['tag'])))"
+                        }
+                      },
+                      "Start_release_job": {
+                        "type": "Http",
+                        "runAfter": { "Release_this_build": [ "Succeeded" ] },
+                        "inputs": {
+                          "method": "POST",
+                          "uri": "@{concat('https://management.azure.com', parameters('releaseJobId'), '/start?api-version=2025-07-01')}",
+                          "body": { "containers": [ "@outputs('Release_this_build')" ] },
+                          "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
+                        }
+                      }
+                    },
+                    "else": { "actions": {} }
+                  }
+                },
+                "else": { "actions": {} }
               }
             }
           }

@@ -52,7 +52,7 @@ sequenceDiagram
 
 - **Azure Container Registry** builds each commit of `main` once, with an [ACR task](acr-build.yaml) that GitHub's webhook starts. A person creates the task once, with a fine-grained token limited to this repository.
 - **Event Grid and a Logic App** are the trigger: a push of `requesthub-api:<commit>` reaches the [Logic App](infra/release-trigger.json), which starts the release job with the image's digest. Its managed identity may start that job and nothing else.
-- **Container Apps jobs** run [`release.py`](release.py), one job per step, all from one image. They run as the release identity, a managed identity with three roles: Container Apps Contributor and Container Apps Jobs Reader on the resource group, and AcrPull on the registry. One step runs at a time: a step started while another runs refuses, and a release waits its turn.
+- **Container Apps jobs** run [`release.py`](release.py), one job per step, all from one image. They run as the release identity, a managed identity with three roles: Container Apps Contributor and Container Apps Jobs Reader on the resource group, and AcrPull on the registry. One step runs at a time, first come, first served: a release waits for the steps that started before it, and any other step refuses while an earlier one runs. A release whose gate fails removes its own candidate right away, even while another step waits. When the gate passes, it records its verdict on the app (a tag naming the revision and its image digest). Promote moves traffic only to the candidate and image that verdict names, and only within 24 hours.
 - **Azure Container Apps** runs the API in multiple-revision mode. Revisions get **labels** with their own URLs (`https://<app>---candidate.<domain>`), and traffic weights decide which revision users reach. The readiness probe (`/health/ready`) is the platform's verdict on each revision.
 - **Azure Monitor** keeps the evidence. Each step writes its release record to Log Analytics, and the [workbook](infra/release-records.workbook.json) shows the records, who started each step (from the Activity log), and every traffic change (from Azure Resource Graph).
 - **Azure Copilot** (formerly Copilot in Azure) answers the release manager's questions about a failing revision, in the portal, in plain language.
@@ -64,6 +64,7 @@ sequenceDiagram
 06-release-microsoft/
 ├── README.md
 ├── release.py                       the release steps: release, drill, deploy, gate, promote, abort, rollback, verify, status, watch
+├── test_release.py                  unit tests for the release's safety rules; they need no Azure access
 ├── preflight.py                     checks the setup and the starting state before each session
 ├── azd_env.py                       reads settings from this solution's azd environment
 ├── Dockerfile                       the release jobs' image: Python and release.py
@@ -137,7 +138,13 @@ The app is [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`
    az acr task update --registry $registry --name build-api --commit-trigger-enabled false
    ```
 
-   Before the token expires, give the task a new one with `az acr task update --registry $registry --name build-api --git-access-token <new token>`.
+   Before the token expires, give the task a new one, pasting it when asked:
+
+   ```powershell
+   $token = Read-Host -MaskInput 'New fine-grained token for this repository'
+   az acr task update --registry $registry --name build-api --git-access-token $token --output none
+   Remove-Variable token
+   ```
 
 **Without the build task**, build an export of `main` with `az acr build`. The push starts the release exactly the same way; the screenshots below come from a build made like this (1 min 51 s):
 
@@ -233,7 +240,7 @@ Commands run from this folder.
 
    ![A release job's page in the portal, with Run now in its toolbar; the job's name is masked](images/03-promote-run-now.png)
 
-   The promote job checks the candidate again on its own URL, moves 100% of traffic to it in one change (13 seconds in our run), and verifies production. The job took 62 seconds. Select **Refresh** in the portal:
+   The promote job checks that the gate passed this candidate and this image, checks the candidate again on its own URL, moves 100% of traffic to it in one change (13 seconds in our run), and verifies production. The job took 62 seconds. Select **Refresh** in the portal:
 
    ![The portal after promotion: the new revision is stable with 100% of traffic; the old one is previous with 0% and still running](images/03-portal-promoted.png)
 
@@ -287,7 +294,7 @@ Every step also runs from a terminal signed in with `az login`, for example `pyt
 - **Users never meet an untested build.** The candidate runs with 0% of traffic until a person promotes it. The `watch` terminal counted 2,877 of 2,877 successful calls during the release, the promotion, and the drill, and 122 of 122 during the rollback; the build changed only at the promotion and the rollback.
 - **The gate checks behavior, not just "it started".** Readiness comes from the platform and covers the database. The smoke test then submits a request, retries it safely, reads it back, attaches a file and downloads the same bytes (Blob storage, which readiness does not check), confirms the requester cannot approve it (`decision.self_approval`), and reads its audit history, on the candidate's own URL.
 - **Provenance you can verify.** One image per commit, released by digest. The release job reads the commit baked into the image, and the gate fails if `/api/meta` reports a different one.
-- **People decide, and Azure records it.** Promote, abort, rollback, and drill are started by a person, and the Activity log names them; releases are started by the trigger's managed identity. One step runs at a time: in our tests, a promote started during a release refused with "A release step is running".
+- **People decide, and Azure records it.** Promote, abort, rollback, and drill are started by a person, and the Activity log names them; releases are started by the trigger's managed identity. Promote acts only on the gate's verdict for that exact candidate and image. One step runs at a time: in our tests, a promote started during a release refused with "A release step is running".
 - **AI explains; it doesn't act.** Azure Copilot gave the release manager a plain-language explanation and next checks. Its answer was general, so the gate's recorded evidence is what pins the cause: keep both in the conversation.
 - **Recovery is a traffic change, not a redeploy.** Promotion and rollback each switched traffic in 13 seconds, with the same checks afterwards.
 - **Least privilege.** The Logic App can start the release job and nothing else. The release identity manages container apps, reads job executions, and pulls images; it can't push images or assign roles. The build task's token can read this repository's contents and manage its webhooks, nothing else.
@@ -322,10 +329,12 @@ In GitHub, delete the build task's token (**Settings** → **Developer settings*
 ## Use it in your own repository
 
 1. **Prepare the app.** Run it in multiple-revision mode with an HTTP readiness probe that checks its dependencies (as [`app/infra/api.bicep`](../../app/infra/api.bicep) does), and expose its build commit on an anonymous endpoint.
-2. **Copy** this folder's `release.py`, `preflight.py`, `azd_env.py`, `Dockerfile`, `.dockerignore`, `acr-build.yaml`, and `infra/` files except `main.bicep`, and compose `release.bicep` in your own Bicep as [`infra/main.bicep`](infra/main.bicep) does. Then change:
+2. **Copy** this folder's `release.py`, `test_release.py`, `preflight.py`, `azd_env.py`, `Dockerfile`, `.dockerignore`, `acr-build.yaml`, and `infra/` files except `main.bicep`, and compose `release.bicep` in your own Bicep as [`infra/main.bicep`](infra/main.bicep) does. Then change:
    - in `release.py`, `CONTAINER` and `REPOSITORY` to your container and image names, and the RequestHub calls in `smoke()` to your own critical journeys. Keep them idempotent, keep at least one check that proves a business rule, and add one for every dependency your readiness probe does not cover (here, Blob storage);
    - in `acr-build.yaml`, the image name, the Dockerfile, and the build context;
-   - in `release.bicep`, the Event Grid filter (`subjectBeginsWith`) to your image name.
+   - in `release.bicep`, the Event Grid filter (`subjectBeginsWith`) to your image name, and in `release-trigger.json`, the repository the Logic App accepts (`requesthub-api`).
+
+   After each change to `release.py`, run `python -m unittest -v` in the folder: the tests check the safety rules without Azure. Then run `azd deploy release`.
 3. **Grant the least access.** The jobs' identity needs Container Apps Contributor and Container Apps Jobs Reader on the app's resource group and AcrPull on the registry, plus whatever your smoke test signs in to. The Logic App's identity needs Container Apps Jobs Operator on the release job only; `jobs.bicep` grants it.
 4. **Create the build task** with a fine-grained token for your repository, as in *Set up*, and run the preflight.
 5. **Releases that change configuration.** `deploy` copies the stable revision's configuration and changes only the image, so a release changes one thing. If a release must also change settings, deploy the candidate from your Bicep with traffic pinned to the stable revision.
@@ -337,6 +346,7 @@ In GitHub, delete the build task's token (**Settings** → **Developer settings*
 - **The app times out, or every revision fails readiness and the gate fails before its smoke test.** The PostgreSQL server was stopped; a tenant policy can stop it on a schedule. The preflight's **Database** line shows it. Start it as in *Before each session* (3 to 5 minutes).
 - **The release job ends with "already serves users: nothing to release".** The pushed build is the one users have, for example a second build of the same commit. Nothing is wrong. To show a change, run the rollback job first, or run the release job yourself to release the newest build (`requesthub-api:main`).
 - **A step refuses with "A release step is running".** One step runs at a time. Wait for the running one to finish (a release takes about 2.5 minutes), then start the step again.
+- **Promote refuses: "the gate has not passed it", or the verdict is for another candidate or image, or older than 24 hours.** Promote moves traffic only to a candidate the gate passed, as recorded on the app. Run the release job again: it gates the build again.
 - **A step is missing from the workbook.** Log Analytics shows a release record about a minute after the step writes it, and the Activity log can take a few minutes more. Select the time range again, or **Refresh**.
 - **`az acr build` of a working copy fails with long paths.** It uploads `app/web/node_modules` too. Build an export of the commit with `git archive`, as in *Set up*.
 - **`az acr build` stops with `UnicodeEncodeError` when its output is redirected to a file.** The build itself continues in Azure. Add `--no-logs`, and follow the build with `az acr task list-runs --registry <registry> --top 1`.

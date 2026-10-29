@@ -32,7 +32,8 @@ resource automationAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 }
 
 // Its managed identity gets Container Apps Jobs Operator on the release job only (jobs.bicep), so it can start that
-// job and nothing else.
+// job and nothing else. It starts the job only for a push of requesthub-api to this registry, named by digest; the
+// event's fields are checked against these parameters, and passed to the job as plain values, never as JSON text.
 resource trigger 'Microsoft.Logic/workflows@2019-05-01' = {
   name: 'logic-release-${resourceToken}'
   location: location
@@ -43,6 +44,8 @@ resource trigger 'Microsoft.Logic/workflows@2019-05-01' = {
     definition: loadJsonContent('release-trigger.json')
     parameters: {
       releaseJobId: { value: resourceId('Microsoft.App/jobs', releaseJobName) }
+      registryId: { value: registry.id }
+      registryHost: { value: registry.properties.loginServer }
     }
   }
 }

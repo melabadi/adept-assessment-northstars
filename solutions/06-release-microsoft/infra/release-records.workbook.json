@@ -55,7 +55,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "ContainerAppConsoleLogs_CL\n| where Log_s has \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, indexof(Log_s, \"RELEASE-RECORD \") + 15))\n| extend Started = format_datetime(todatetime(r.startedAt), \"yyyy-MM-dd HH:mm:ss\"), Job = tostring(r.step), Step = tostring(r.command), Result = tostring(r.status), Seconds = todouble(r.seconds), Outcome = tostring(r.outcome), Execution = tostring(r.execution)\n| summarize arg_max(TimeGenerated, *) by Execution, Step, tostring(r.startedAt)\n| project Started, Job, Step, Result, Seconds, Outcome, Execution\n| order by Started desc",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerName_s == \"release\" and ContainerGroupName_s startswith \"caj-\" and Log_s startswith \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, 15))\n| extend Started = format_datetime(todatetime(r.startedAt), \"yyyy-MM-dd HH:mm:ss\"), Job = tostring(r.step), Step = tostring(r.command), Result = tostring(r.status), Seconds = todouble(r.seconds), Outcome = tostring(r.outcome), Execution = tostring(r.execution)\n| summarize arg_max(TimeGenerated, *) by Execution, Step, tostring(r.startedAt)\n| project Started, Job, Step, Result, Seconds, Outcome, Execution\n| order by Started desc",
         "size": 0,
         "title": "Release steps: select a row to see its checks",
         "timeContextFromParameter": "TimeRange",
@@ -130,7 +130,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let records = ContainerAppConsoleLogs_CL\n| where Log_s has \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, indexof(Log_s, \"RELEASE-RECORD \") + 15));\nlet selected = \"{Execution}\";\nlet pick = iff(isempty(selected) or selected == \"latest\", toscalar(records | top 1 by TimeGenerated desc | project tostring(r.execution)), selected);\nrecords\n| where tostring(r.execution) == pick\n| summarize arg_max(TimeGenerated, *) by tostring(r.command), tostring(r.startedAt)\n| mv-expand c = r.checks\n| where isnotempty(c)\n| project Started = format_datetime(todatetime(r.startedAt), \"yyyy-MM-dd HH:mm:ss\"), Step = tostring(r.command), Target = tostring(c['where']), Check = tostring(c.name), Result = iff(tobool(c.ok), \"pass\", \"FAIL\"), Detail = tostring(c.detail)\n| order by Started asc",
+        "query": "let records = ContainerAppConsoleLogs_CL\n| where ContainerName_s == \"release\" and ContainerGroupName_s startswith \"caj-\" and Log_s startswith \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, 15));\nlet selected = \"{Execution}\";\nlet pick = iff(isempty(selected) or selected == \"latest\", toscalar(records | top 1 by TimeGenerated desc | project tostring(r.execution)), selected);\nrecords\n| where tostring(r.execution) == pick\n| summarize arg_max(TimeGenerated, *) by tostring(r.command), tostring(r.startedAt)\n| mv-expand c = r.checks\n| where isnotempty(c)\n| project Started = format_datetime(todatetime(r.startedAt), \"yyyy-MM-dd HH:mm:ss\"), Step = tostring(r.command), Target = tostring(c['where']), Check = tostring(c.name), Result = iff(tobool(c.ok), \"pass\", \"FAIL\"), Detail = tostring(c.detail)\n| order by Started asc",
         "size": 0,
         "title": "Checks of the selected step's job execution (the latest when nothing is selected)",
         "timeContextFromParameter": "TimeRange",
@@ -176,7 +176,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let records = ContainerAppConsoleLogs_CL\n| where Log_s has \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, indexof(Log_s, \"RELEASE-RECORD \") + 15))\n| where array_length(r.evidence) > 0;\nlet selected = \"{Execution}\";\nlet pick = iff(isempty(selected) or selected == \"latest\", toscalar(records | top 1 by TimeGenerated desc | project tostring(r.execution)), selected);\nrecords\n| where tostring(r.execution) == pick\n| summarize arg_max(TimeGenerated, *) by tostring(r.startedAt)\n| mv-expand e = r.evidence\n| project Candidate = tostring(r.candidate.revision), Evidence = tostring(e)",
+        "query": "let records = ContainerAppConsoleLogs_CL\n| where ContainerName_s == \"release\" and ContainerGroupName_s startswith \"caj-\" and Log_s startswith \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, 15))\n| where array_length(r.evidence) > 0;\nlet selected = \"{Execution}\";\nlet pick = iff(isempty(selected) or selected == \"latest\", toscalar(records | top 1 by TimeGenerated desc | project tostring(r.execution)), selected);\nrecords\n| where tostring(r.execution) == pick\n| summarize arg_max(TimeGenerated, *) by tostring(r.startedAt)\n| mv-expand e = r.evidence\n| project Candidate = tostring(r.candidate.revision), Evidence = tostring(e)",
         "size": 1,
         "title": "Why the candidate failed: what the gate read from its live logs before removing it",
         "noDataMessage": "No failed gate in this time range, or for the selected step.",
