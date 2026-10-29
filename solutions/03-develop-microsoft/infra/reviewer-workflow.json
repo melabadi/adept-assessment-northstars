@@ -283,90 +283,97 @@
           "inputs": "@outputs('Judge_output')['rules']",
           "runAfter": { "Judge_output": ["Succeeded"] }
         },
-        "Run_upload_the_runner": {
-          "type": "Http",
-          "inputs": {
-            "method": "POST",
-            "uri": "@{parameters('runPool')}/files?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
-            "body": {
-              "$content-type": "multipart/form-data",
-              "$multipart": [
-                {
-                  "headers": { "Content-Disposition": "form-data; name=\"file\"; filename=\"run_change.sh\"" },
-                  "body": "@body('Get_the_sandbox_runner')"
-                }
-              ]
-            },
-            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
-          },
-          "runAfter": { "Rules": ["Succeeded"], "Get_the_sandbox_runner": ["Succeeded"] }
-        },
-        "Run_upload_the_head": {
-          "type": "Http",
-          "inputs": {
-            "method": "POST",
-            "uri": "@{parameters('runPool')}/files?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
-            "body": {
-              "$content-type": "multipart/form-data",
-              "$multipart": [
-                {
-                  "headers": { "Content-Disposition": "form-data; name=\"file\"; filename=\"head.tgz\"" },
-                  "body": "@body('Get_the_head_archive')"
-                }
-              ]
-            },
-            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
-          },
-          "runAfter": { "Run_upload_the_runner": ["Succeeded"] }
-        },
-        "Run_start_the_build": {
-          "type": "Http",
-          "description": "From here on, the pull request's own code runs, in its own session.",
-          "inputs": {
-            "method": "POST",
-            "uri": "@{parameters('runPool')}/executions?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
-            "headers": { "Content-Type": "application/json" },
-            "body": { "shellCommand": "bash /mnt/data/run_change.sh start", "timeoutInSeconds": 30 },
-            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
-          },
-          "runAfter": { "Run_upload_the_head": ["Succeeded"] }
-        },
-        "Run_wait_for_the_build": {
-          "type": "Until",
-          "expression": "@contains(string(coalesce(body('Run_build_status')?['result']?['stdout'], '')), '\"state\":\"done\"')",
-          "limit": { "count": 60, "timeout": "PT20M" },
+        "Build_and_test": {
+          "type": "Scope",
+          "description": "Only now does any of the pull request's code run, in its own session. If the build can't run, the review still posts the rule results.",
           "actions": {
-            "Pause": { "type": "Wait", "inputs": {"interval": {"count": 20, "unit": "Second"}}, "runAfter": {} },
-            "Run_build_status": {
+            "Run_upload_the_runner": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('runPool')}/files?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
+                "body": {
+                  "$content-type": "multipart/form-data",
+                  "$multipart": [
+                    {
+                      "headers": { "Content-Disposition": "form-data; name=\"file\"; filename=\"run_change.sh\"" },
+                      "body": "@body('Get_the_sandbox_runner')"
+                    }
+                  ]
+                },
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
+              },
+              "runAfter": {}
+            },
+            "Run_upload_the_head": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('runPool')}/files?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
+                "body": {
+                  "$content-type": "multipart/form-data",
+                  "$multipart": [
+                    {
+                      "headers": { "Content-Disposition": "form-data; name=\"file\"; filename=\"head.tgz\"" },
+                      "body": "@body('Get_the_head_archive')"
+                    }
+                  ]
+                },
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
+              },
+              "runAfter": { "Run_upload_the_runner": ["Succeeded"] }
+            },
+            "Run_start_the_build": {
+              "type": "Http",
+              "description": "From here on, the pull request's own code runs, in its own session.",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('runPool')}/executions?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
+                "headers": { "Content-Type": "application/json" },
+                "body": { "shellCommand": "bash /mnt/data/run_change.sh start", "timeoutInSeconds": 30 },
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
+              },
+              "runAfter": { "Run_upload_the_head": ["Succeeded"] }
+            },
+            "Run_wait_for_the_build": {
+              "type": "Until",
+              "expression": "@contains(string(coalesce(body('Run_build_status')?['result']?['stdout'], '')), '\"state\":\"done\"')",
+              "limit": { "count": 60, "timeout": "PT20M" },
+              "actions": {
+                "Pause": { "type": "Wait", "inputs": {"interval": {"count": 20, "unit": "Second"}}, "runAfter": {} },
+                "Run_build_status": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "POST",
+                    "uri": "@{parameters('runPool')}/executions?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
+                    "headers": { "Content-Type": "application/json" },
+                    "body": { "shellCommand": "bash /mnt/data/run_change.sh status", "timeoutInSeconds": 30 },
+                    "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
+                  },
+                  "runAfter": { "Pause": ["Succeeded"] }
+                }
+              },
+              "runAfter": { "Run_start_the_build": ["Succeeded"] }
+            },
+            "Run_get_the_results": {
               "type": "Http",
               "inputs": {
                 "method": "POST",
                 "uri": "@{parameters('runPool')}/executions?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
                 "headers": { "Content-Type": "application/json" },
-                "body": { "shellCommand": "bash /mnt/data/run_change.sh status", "timeoutInSeconds": 30 },
+                "body": { "shellCommand": "bash /mnt/data/run_change.sh summary", "timeoutInSeconds": 30 },
                 "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
               },
-              "runAfter": { "Pause": ["Succeeded"] }
+              "runAfter": { "Run_wait_for_the_build": ["Succeeded", "Failed", "TimedOut"] }
             }
           },
-          "runAfter": { "Run_start_the_build": ["Succeeded"] }
-        },
-        "Run_get_the_results": {
-          "type": "Http",
-          "inputs": {
-            "method": "POST",
-            "uri": "@{parameters('runPool')}/executions?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
-            "headers": { "Content-Type": "application/json" },
-            "body": { "shellCommand": "bash /mnt/data/run_change.sh summary", "timeoutInSeconds": 30 },
-            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
-          },
-          "runAfter": { "Run_wait_for_the_build": ["Succeeded", "Failed", "TimedOut"] }
+          "runAfter": { "Rules": ["Succeeded"], "Get_the_sandbox_runner": ["Succeeded"] }
         },
         "Sandbox_results": {
           "type": "Compose",
           "description": "Reported by the pull request's own code: evidence, not a verdict.",
-          "inputs": "@string(coalesce(body('Run_get_the_results')?['result']?['stdout'], ''))",
-          "runAfter": { "Run_get_the_results": ["Succeeded", "Failed"] }
+          "inputs": "@string(coalesce(actions('Run_get_the_results')?['outputs']?['body']?['result']?['stdout'], ''))",
+          "runAfter": { "Build_and_test": ["Succeeded", "Failed", "TimedOut"] }
         },
         "Agent_input": {
           "type": "Compose",
@@ -387,46 +394,11 @@
           },
           "runAfter": { "Sandbox_results": ["Succeeded"] }
         },
-        "Ask_the_reviewer_agent": {
-          "type": "Http",
-          "inputs": {
-            "method": "POST",
-            "uri": "@{parameters('projectEndpoint')}/openai/v1/responses",
-            "headers": { "Content-Type": "application/json" },
-            "body": {
-              "agent_reference": { "type": "agent_reference", "name": "@{parameters('agentName')}" },
-              "input": "@{string(outputs('Agent_input'))}",
-              "background": true
-            },
-            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
-          },
-          "runAfter": { "Agent_input": ["Succeeded"] },
-          "description": "Starts the agent in background mode, so a long review can't hit the HTTP timeout; the next step polls for the answer."
-        },
-        "Wait_for_the_agent": {
-          "type": "Until",
-          "expression": "@not(contains(createArray('queued', 'in_progress'), coalesce(body('Agent_status')?['status'], 'queued')))",
-          "limit": { "count": 120, "timeout": "PT10M" },
+        "Ask_the_agent": {
+          "type": "Scope",
+          "description": "Starts the agent in background mode and polls for its answer; asks once more if the answer doesn't complete.",
           "actions": {
-            "Agent_pause": { "type": "Wait", "inputs": {"interval": {"count": 5, "unit": "Second"}}, "runAfter": {} },
-            "Agent_status": {
-              "type": "Http",
-              "inputs": {
-                "method": "GET",
-                "uri": "@{parameters('projectEndpoint')}/openai/v1/responses/@{body('Ask_the_reviewer_agent')?['id']}",
-                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
-              },
-              "runAfter": { "Agent_pause": ["Succeeded"] }
-            }
-          },
-          "runAfter": { "Ask_the_reviewer_agent": ["Succeeded"] }
-        },
-        "If_the_agent_failed_try_again": {
-          "type": "If",
-          "description": "A model call can fail now and then, for example when a safety filter flags text from the pull request. One retry keeps the commentary; the rule results never depend on it.",
-          "expression": "@not(equals(actions('Agent_status')?['outputs']?['body']?['status'], 'completed'))",
-          "actions": {
-            "Ask_the_agent_again": {
+            "Ask_the_reviewer_agent": {
               "type": "Http",
               "inputs": {
                 "method": "POST",
@@ -440,35 +412,77 @@
                 "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
               },
               "runAfter": {},
-              "description": "Starts the agent again, once."
+              "description": "Starts the agent in background mode, so a long review can't hit the HTTP timeout; the next step polls for the answer."
             },
-            "Wait_for_the_agent_again": {
+            "Wait_for_the_agent": {
               "type": "Until",
-              "expression": "@not(contains(createArray('queued', 'in_progress'), coalesce(body('Agent_status_again')?['status'], 'queued')))",
+              "expression": "@not(contains(createArray('queued', 'in_progress'), coalesce(body('Agent_status')?['status'], 'queued')))",
               "limit": { "count": 120, "timeout": "PT10M" },
               "actions": {
-                "Agent_pause_again": { "type": "Wait", "inputs": {"interval": {"count": 5, "unit": "Second"}}, "runAfter": {} },
-                "Agent_status_again": {
+                "Agent_pause": { "type": "Wait", "inputs": {"interval": {"count": 5, "unit": "Second"}}, "runAfter": {} },
+                "Agent_status": {
                   "type": "Http",
                   "inputs": {
                     "method": "GET",
-                    "uri": "@{parameters('projectEndpoint')}/openai/v1/responses/@{body('Ask_the_agent_again')?['id']}",
+                    "uri": "@{parameters('projectEndpoint')}/openai/v1/responses/@{body('Ask_the_reviewer_agent')?['id']}",
                     "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
                   },
-                  "runAfter": { "Agent_pause_again": ["Succeeded"] }
+                  "runAfter": { "Agent_pause": ["Succeeded"] }
                 }
               },
-              "runAfter": { "Ask_the_agent_again": ["Succeeded"] }
+              "runAfter": { "Ask_the_reviewer_agent": ["Succeeded"] }
+            },
+            "If_the_agent_failed_try_again": {
+              "type": "If",
+              "description": "A model call can fail now and then, for example when a safety filter flags text from the pull request. One retry keeps the commentary; the rule results never depend on it.",
+              "expression": "@not(equals(actions('Agent_status')?['outputs']?['body']?['status'], 'completed'))",
+              "actions": {
+                "Ask_the_agent_again": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "POST",
+                    "uri": "@{parameters('projectEndpoint')}/openai/v1/responses",
+                    "headers": { "Content-Type": "application/json" },
+                    "body": {
+                      "agent_reference": { "type": "agent_reference", "name": "@{parameters('agentName')}" },
+                      "input": "@{string(outputs('Agent_input'))}",
+                      "background": true
+                    },
+                    "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+                  },
+                  "runAfter": {},
+                  "description": "Starts the agent again, once."
+                },
+                "Wait_for_the_agent_again": {
+                  "type": "Until",
+                  "expression": "@not(contains(createArray('queued', 'in_progress'), coalesce(body('Agent_status_again')?['status'], 'queued')))",
+                  "limit": { "count": 120, "timeout": "PT10M" },
+                  "actions": {
+                    "Agent_pause_again": { "type": "Wait", "inputs": {"interval": {"count": 5, "unit": "Second"}}, "runAfter": {} },
+                    "Agent_status_again": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "GET",
+                        "uri": "@{parameters('projectEndpoint')}/openai/v1/responses/@{body('Ask_the_agent_again')?['id']}",
+                        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+                      },
+                      "runAfter": { "Agent_pause_again": ["Succeeded"] }
+                    }
+                  },
+                  "runAfter": { "Ask_the_agent_again": ["Succeeded"] }
+                }
+              },
+              "else": { "actions": {} },
+              "runAfter": { "Wait_for_the_agent": ["Succeeded", "Failed", "TimedOut", "Skipped"] }
             }
           },
-          "else": { "actions": {} },
-          "runAfter": { "Wait_for_the_agent": ["Succeeded", "Failed", "TimedOut", "Skipped"] }
+          "runAfter": { "Agent_input": ["Succeeded"] }
         },
         "Agent_result": {
           "type": "Compose",
           "description": "The agent's answer, or the error that stopped it. The review goes on either way.",
           "inputs": "@coalesce(actions('Agent_status_again')?['outputs']?['body'], actions('Ask_the_agent_again')?['outputs']?['body'], actions('Agent_status')?['outputs']?['body'], actions('Ask_the_reviewer_agent')?['outputs']?['body'], json('{}'))",
-          "runAfter": { "If_the_agent_failed_try_again": ["Succeeded", "Failed", "TimedOut", "Skipped"] }
+          "runAfter": { "Ask_the_agent": ["Succeeded", "Failed", "TimedOut"] }
         },
         "Review_input": {
           "type": "Compose",
@@ -569,7 +583,7 @@
                 "body": {
                   "commit_id": "@{body('Get_the_pull_request')?['head']?['sha']}",
                   "event": "COMMENT",
-                  "body": "@{outputs('Review')?['markdown']}"
+                  "body": "@{outputs('Review')['markdown']}"
                 },
                 "retryPolicy": { "type": "none" }
               },
