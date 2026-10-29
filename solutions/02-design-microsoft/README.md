@@ -279,7 +279,7 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    The same result in the terminal, from `python evaluate.py`:
 
-   ![python evaluate.py: both agents completed, every evaluator 5 of 5 for each profile, every case passing, 10 of 10 in 170 seconds](images/09-evaluate.png)
+   ![python evaluate.py: both agents completed, every evaluator 5 of 5 for each profile, every case passing, 10 of 10 in 166 seconds](images/09-evaluate.png)
 
    **Point out:** the evaluators run the gate's own code (`checks.py`), so the cases measure exactly what protects GitHub, and the scope and abstention cases prove the advisor says "the standards don't say" rather than inventing a budget.
 
