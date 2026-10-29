@@ -76,5 +76,5 @@ Filed by Azure SRE Agent from its investigation of the alert. All data comes fro
    **Allow once**. If they cancel it, do not retry: put the title and body in your reply instead.
 3. Reply with the Issue number. File only this one Issue for the incident unless the team asks for another.
 
-If no GitHub tool is available (the GitHub connector is not connected), put the title, labels, and body in your reply,
-say the connector is not connected, and stop.
+If no GitHub tool is available (GitHub is not connected), put the title, labels, and body in your reply, say that
+GitHub is not connected, and stop.

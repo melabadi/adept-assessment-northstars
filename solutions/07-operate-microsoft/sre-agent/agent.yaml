@@ -35,9 +35,9 @@ skills:
     tools: []
     githubIssueTools: true         # gets the GitHub Issue tools below
 
-# GitHub, through the agent's GitHub connector. A person connects it once in the agent's portal, with a token that can
-# only read and write Issues in this repository (README, "Connect GitHub"). Its tools exist only after that; until
-# then the custom agent has no GitHub tool and puts the incident record in its reply.
+# GitHub. A person connects it once in the agent's portal (Build + setup, Code access), with a token that can only read
+# and write Issues in this repository (README, "Connect GitHub"). The Issue tools exist only after that; until then
+# the custom agent has no GitHub tool and puts the incident record in its reply.
 github:
   # Tool name patterns (* is a wildcard). Matching tools from the agent's tool catalog go to the custom agent and the
   # file-incident-record skill; the patterns go into the tool policy's ask list, so each call waits for a person's

@@ -7,8 +7,9 @@ from the files in sre-agent/, described by sre-agent/agent.yaml:
   knowledge      knowledge/*.md, uploaded to the agent's knowledge base
   skills         skills/*.md, procedures with name and description front matter
   custom agent   instructions.md, its tools and skills, and a Stop hook (hooks/evidence-checklist.md)
-  GitHub         the GitHub connector's Issue tools, for the custom agent and the file-incident-record skill. A person
-                 connects the connector once in the agent's portal; until then the agent has no GitHub tool. Run this
+  GitHub         the GitHub Issue tools, for the custom agent and the file-incident-record skill. A person connects
+                 GitHub once in the agent's portal (Build + setup, Code access, with a token limited to Issues); until
+                 then the agent has no GitHub tool. Run this
                  script again after connecting it
   guard hook     hooks/no-identifiers.py, a global PreToolUse hook that blocks a GitHub Issue call whose text contains
                  an identifier of this deployment (GUID, host name, resource id, suffixed name, e-mail address)
@@ -426,7 +427,7 @@ def apply(config: Config, dry_run: bool) -> int:
         failures.append(f"tool {tool}")
     github_tools = sorted(t for t in catalog if any(fnmatch.fnmatchcase(t, p) for p in issue_patterns))
     if github_tools:
-        print(f"  ok      GitHub Issue tools from the GitHub connector: {', '.join(github_tools)}")
+        print(f"  ok      GitHub Issue tools: {', '.join(github_tools)}")
     else:
         print(f"  note    GitHub is not connected: no tool matches {', '.join(issue_patterns)}. Until a person connects "
               "it (README, Connect GitHub) and runs this script again, the agent puts the incident record in its reply.")

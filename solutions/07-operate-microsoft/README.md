@@ -64,7 +64,7 @@ sequenceDiagram
   suffix. It is
   deterministic (regular expressions, no model) and fails closed: if it cannot run, nothing is posted. When it finds
   nothing, the tool policy still holds the call until a person selects **Allow once**.
-- **GitHub** stores the Issue. The agent reaches it through its GitHub connector, which a person connects once with a
+- **GitHub** stores the Issue. The agent reaches it through its GitHub connection, which a person sets up once with a
   fine-grained token that can only read and write Issues in this repository. The agent cannot read code, open pull
   requests, or run workflows.
 - **The presenter** starts the drill, decides whether to apply the proposal, approves it, and lends it their Azure
@@ -179,10 +179,16 @@ read and write Issues in this repository.
      itself. Nothing else.
 
    Select **Generate token** and copy it.
-2. In the [SRE Agent portal](https://sre.azure.com), open `sre-ai-sdlc-operate`, then **Builder**, **Connectors**,
-   **Add connector**, **GitHub OAuth connector**. Choose **PAT**, paste the token, and select **Connect**. The
-   connector shows **Connected**.
-3. Give the custom agent the connector's Issue tools:
+2. In the [SRE Agent portal](https://sre.azure.com), open `sre-ai-sdlc-operate`, then **Build + setup**, **Code
+   access**, the **GitHub** tab, and **Add repository**. In *Add repositories*, GitHub is selected:
+   - **Repository URL:** this repository's URL, `https://github.com/<owner>/<repo>`.
+   - **Connection method:** **Personal access token (PAT)**. Paste the token under **Provide PAT** and select
+     **Connect**. A *Connected* card appears.
+
+   Select **Next**, then **Add repository**. The repository is listed under **Code access**. Its row can show
+   **Failed**: Code access would index the repository's code, which this token cannot read. The agent's Issue tools
+   work anyway.
+3. Give the custom agent the Issue tools:
 
    ```powershell
    python configure_sre_agent.py
@@ -191,8 +197,11 @@ read and write Issues in this repository.
    The `Tools` section now lists the GitHub Issue tools it found, and the last line ends with
    `It files the incident record in <owner>/<repo> after a person allows it.`
 
-Issues the agent files show the token's owner as their author. The token expires after 30 days: create a new one the
-same way and update it under **Builder**, **Connectors**.
+Two choices keep the access small. **OAuth** in that dialog would apply to every repository your GitHub account can
+reach, and the **GitHub** card under **Build + setup**, **Connectors** is GitHub's MCP server, which exposes GitHub's
+whole tool catalog. A token for one repository and one permission is the least access that works. Issues the agent
+files show the token's owner as their author. The token expires after 30 days: create a new one the same way, then
+select the repository under **Code access** and connect again with the new token.
 
 ## Before each session
 
@@ -217,9 +226,10 @@ About 5 minutes, at least 15 minutes before you present.
    - **Backlog alert `Fired`.** Wait: Azure Monitor resolves it after three healthy one-minute evaluations, about 5
      minutes after the backlog drains.
    - **Azure SRE Agent not `Running`.** In the SRE Agent portal, **Settings**, **Basics**, select **Start**.
-2. **Check GitHub and your sign-in.** In the SRE Agent portal, **Builder**, **Connectors** shows the GitHub connector
-   as **Connected** (its token lasts 30 days). `az account show` must show the account that ran `azd up`: it is the SRE
-   Agent Administrator who approves the mitigation, and its token reads RequestHub's Admin API.
+2. **Check GitHub and your sign-in.** In the SRE Agent portal, **Build + setup**, **Code access**, **GitHub** lists
+   this repository. The token lasts 30 days; GitHub's **Fine-grained tokens** page shows when it expires.
+   `az account show` must show the account that ran `azd up`: it is the SRE Agent Administrator who approves the
+   mitigation, and its token reads RequestHub's Admin API.
 3. **Open in advance**, signed in, one tab each:
    - The SRE Agent portal (`azd env get-value SRE_AGENT_PORTAL_URL`), on **Incidents**. Dismiss its tour if one
      appears.
@@ -397,9 +407,10 @@ python incident.py reset
 row of the workbook's **Ready for a drill** table says **Ready**: the alert row does about 5 minutes after the backlog
 drains.
 
-When you no longer need the solution, first remove the agent's access to GitHub: in the SRE Agent portal, **Builder**,
-**Connectors**, delete the GitHub connector, then delete the token in GitHub (**Settings**, **Developer settings**,
-**Personal access tokens**, **Fine-grained tokens**). Then run from this folder:
+When you no longer need the solution, first remove the agent's access to GitHub: delete the token in GitHub
+(**Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained tokens**), which revokes it at once,
+then in the SRE Agent portal select the repository under **Build + setup**, **Code access**, **GitHub**, and select
+**Delete**. Then run from this folder:
 
 ```powershell
 $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
@@ -425,7 +436,7 @@ create the app registration again for 30 days.
    (`instructions.md`), your KQL (`skills/`), your runbook (`knowledge/`), your incident record template
    (`skills/file-incident-record.md`), and the alert's severity and title (`agent.yaml`). Name the subscription in
    every write command the agent may propose. Run `python configure_sre_agent.py --check`, then `azd provision`.
-5. Connect the GitHub connector to your repository with a token limited to Issues, as in
+5. Connect your repository under **Code access** with a token limited to Issues, as in
    [Connect GitHub](#connect-github).
 6. Replace the drill in `incident.py` with a fault that fits your service, for example an
    [Azure Chaos Studio](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-overview) experiment. Give every
@@ -449,9 +460,9 @@ create the app registration again for 30 days.
   still set. If it is, the agent submits the command again for approval; if it stops instead, reply
   *Approved, but the run failed and the fault is still set. Submit the command again.* You can also run the command
   from its report yourself.
-- **The agent puts the incident record in its reply instead of filing it.** The GitHub connector is not connected,
-  or its token expired, or `configure_sre_agent.py` ran before you connected it. Check **Builder**, **Connectors**,
-  then run `python configure_sre_agent.py` and look for the GitHub Issue tools in its `Tools` section.
+- **The agent puts the incident record in its reply instead of filing it.** GitHub is not connected, its token
+  expired, or `configure_sre_agent.py` ran before you connected it. Check **Build + setup**, **Code access**,
+  **GitHub**, then run `python configure_sre_agent.py` and look for the GitHub Issue tools in its `Tools` section.
 - **A RequestHub button fails with HTTP 403 and no body.** The API was deployed before the fix that lets the app's own
   origin send requests through Container Apps authentication (#134). Run `azd deploy api` from `main`.
 - **The alert takes several minutes to fire.** The worker reports its backlog after each batch of up to 20
