@@ -1,7 +1,12 @@
 // Azure SRE Agent for this solution. It watches this resource group only, receives Azure Monitor alerts from it, and
-// can read (not change) its resources and telemetry. Write actions need an SRE Agent Administrator's approval and run
-// with that person's own Azure permissions (on-behalf-of). configure_sre_agent.py adds the custom agent, skills,
-// runbook, response plan, and tool policy after this deploys.
+// can read its resources and telemetry. This template grants only reader roles on the resource group. When Azure
+// Monitor is the incident platform, the platform also gives the agent's user-assigned identity Monitoring Contributor
+// on the subscription, to acknowledge and close alerts; that role covers alerts, alert rules, action groups, and
+// diagnostic settings, not the app, so the tool policy denies every az monitor write. Other write actions need an SRE
+// Agent Administrator's approval and run with that person's own Azure permissions (on-behalf-of). ARM deploys the agent
+// and its telemetry connectors; the postprovision hook (configure_sre_agent.py) then applies the custom agent, skills,
+// runbook, response plan, tool policy, and hooks through the agent's own API, because ARM accepts no other agent
+// sub-resources in every tenant.
 @description('Name of the SRE Agent. Unique in the subscription: letters, digits, and hyphens, 2 to 32 characters.')
 @minLength(2)
 @maxLength(32)
@@ -28,9 +33,6 @@ param presenterPrincipalId string
 @allowed(['User', 'ServicePrincipal'])
 param presenterPrincipalType string = 'User'
 
-@description('Principal id of the GitHub Actions identity that applies the agent configuration from main. Empty skips its roles.')
-param automationPrincipalId string = ''
-
 param tags object = {}
 
 var token = toLower(uniqueString(resourceGroup().id, agentName))
@@ -39,14 +41,10 @@ var roles = {
   monitoringReader: '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
   logAnalyticsReader: '73c42c96-874c-492b-b04d-ab87d138a893'
   sreAgentAdministrator: 'e79298df-d852-4c6d-84f9-5d13249d1e55'
-  sreAgentAuthor: 'eb64ab4c-23eb-4f63-a9c2-27da365f04e7'
-  sreAgentStandardUser: '2d84a65a-63b2-4343-bbb6-31105d857bc1'
 }
-// Read-only access to this resource group: resources, metrics, alerts, and logs. Nothing that can change them.
+// Read-only access to this resource group: resources, metrics, alerts, and logs. Nothing that can change them. (The
+// platform adds Monitoring Contributor on the subscription for alert handling; see the header.)
 var readRoles = [roles.reader, roles.monitoringReader, roles.logAnalyticsReader]
-// Enough to update custom agents, skills, response plans, and knowledge. Neither role can approve the agent's actions
-// or change its global tool policy.
-var automationRoles = empty(automationPrincipalId) ? [] : [roles.sreAgentAuthor, roles.sreAgentStandardUser]
 
 resource workloadAppInsights 'Microsoft.Insights/components@2020-02-02' existing = {
   name: workloadAppInsightsName
@@ -143,16 +141,6 @@ resource presenterAdministrator 'Microsoft.Authorization/roleAssignments@2022-04
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.sreAgentAdministrator)
   }
 }
-
-resource automationAgentRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for roleId in automationRoles: {
-  scope: agent
-  name: guid(agent.id, automationPrincipalId, roleId)
-  properties: {
-    principalId: automationPrincipalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleId)
-  }
-}]
 
 // Connectors are only exposed in the preview API version.
 #disable-next-line BCP081

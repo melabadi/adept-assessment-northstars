@@ -44,13 +44,16 @@ Expect deliveries after the change to take milliseconds and `with_fault` to be 0
 
 ## 4. The alert resolved
 
-Azure Monitor resolves `{{BACKLOG_ALERT_NAME}}` after three healthy one-minute evaluations, usually a few minutes after
-the backlog drains. Read its state with the alert id from the incident:
+Azure Monitor resolves `{{BACKLOG_ALERT_NAME}}` after three healthy one-minute evaluations, usually 3 to 6 minutes
+after the backlog drains. Read its state with the alert id from the incident:
 
 ```bash
 az resource show --ids <alert-id-from-the-incident> \
   --query "{condition:properties.essentials.monitorCondition, state:properties.essentials.alertState, resolved:properties.essentials.monitorConditionResolvedDateTime}"
 ```
+
+Check it at most once a minute, for up to 10 minutes after the backlog drained. If it is still `Fired` then, report
+that and stop: the team can follow it in Azure Monitor.
 
 ## Report
 

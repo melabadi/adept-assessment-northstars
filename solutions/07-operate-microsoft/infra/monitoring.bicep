@@ -1,5 +1,6 @@
 // Azure Monitor assets for the notification worker: the backlog alert that Azure SRE Agent picks up, and a workbook
-// that shows the backlog, the delivery rate, and the worker's configuration changes side by side.
+// that shows whether the drill is ready to start, then the backlog, the delivery rate, and the worker's configuration
+// changes side by side.
 param location string = resourceGroup().location
 
 @description('RequestHub Application Insights component (from app/infra/requesthub.bicep).')
@@ -61,11 +62,15 @@ resource backlogAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
   }
 }
 
-var workbookContent = replace(replace(replace(replace(loadTextContent('workbook.json'),
+// The readiness table queries Azure Resource Graph across the subscription, filtered to this resource group.
+var workbookContent = replace(replace(replace(replace(replace(replace(replace(loadTextContent('workbook.json'),
   '__APP_INSIGHTS_ID__', toLower(appInsights.id)),
   '__LOG_ANALYTICS_ID__', toLower(logAnalytics.id)),
   '__WORKER_APP_NAME__', workerAppName),
-  '__THRESHOLD__', string(backlogAgeThresholdSeconds))
+  '__THRESHOLD__', string(backlogAgeThresholdSeconds)),
+  '__RESOURCE_GROUP__', resourceGroup().name),
+  '__SUBSCRIPTION_ID__', subscription().id),
+  '__ALERT_ID__', backlogAlert.id)
 
 resource workbook 'Microsoft.Insights/workbooks@2023-06-01' = {
   name: guid(resourceGroup().id, 'requesthub-notification-worker')
