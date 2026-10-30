@@ -255,7 +255,7 @@ Scroll down for the client-side and server-side metrics of the same window.
 
 Open the Logic App's **Run history** and select the newest run. Azure Load Testing's notification rule called the action group, which called the Logic App. The Logic App waited until the run had its verdict and Application Insights had the run's last requests. It built the report from the run and the API's telemetry, found no open Issue for this test, and opened one.
 
-![The lower half of the Logic App's run for the After the slowdown notification: Wait for the telemetry passed on its first check, then Build the report, Report, and Verdict; GitHub token configured took the True branch through Find the open load test Issues, This tests open Issues, The open Issue, and Passed or failed, and skipped No GitHub token configured. Every step succeeded](images/06-logic-app-run.png)
+![The lower half of the Logic App's run for the After the slowdown notification: Wait for the telemetry passed on its first check, then Build the report, Report, and Verdict; GitHub token configured took the True branch through Find the open load test Issues, This tests open Issues, The open Issue, and Passed or failed, and skipped No GitHub token configured. Every step that ran succeeded](images/06-logic-app-run.png)
 
 ![Issue #180, which the Logic App opened: [load-test requesthub-journey] RequestHub journey missed its performance criteria, open with status Backlog and the load-test label. Its report: After the slowdown FAILED with 10 virtual users for 119 s; Expected failure, because 151 server requests carried requesthub.fault.queue_delay_ms; my-requests at 1,570 ms and team-queue at 1,580 ms failed their 1,000 ms limit, while the error rate, decide, and submit passed](images/06-issue-opened.png)
 
@@ -298,7 +298,7 @@ az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id re
 
 The run passes, and the report finds no injected delay. About 2 minutes later the Logic App comments on the Issue with the passing report and closes it.
 
-![Issue #180, now Done, at the Logic App's comment: After the fix passed every criterion. Closing. Its report: PASSED with 10 virtual users for 120 s; Accepted, because the journey met every criterion and no server request carried the rehearsal slowdown; my-requests at 84 ms and team-queue at 81 ms against 1,000 ms, decide at 111 ms and submit at 172 ms against 1,500 ms, and 0 percent errors](images/08-issue-closed.png)
+![Issue #180, closed, with status Done, at the Logic App's comment: After the fix passed every criterion. Closing. Its report: PASSED with 10 virtual users for 120 s; Accepted, because the journey met every criterion and no server request carried the rehearsal slowdown; my-requests at 84 ms and team-queue at 81 ms against 1,000 ms, decide at 111 ms and submit at 172 ms against 1,500 ms, and 0 percent errors](images/08-issue-closed.png)
 
 **Point out:** nobody had to remember to follow up. The Issue opened on the failure and closed itself on the next accepted run. A run that passes while the slowdown is still on, or a replay of an older run, leaves it open.
 
