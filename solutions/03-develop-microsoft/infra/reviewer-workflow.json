@@ -654,18 +654,15 @@
         },
         "Result": {
           "type": "Compose",
-          "description": "What eval_reviewer.py reads back after a dry run.",
+          "description": "What eval_reviewer.py reads back after a dry run. It uses no data from the steps that send the GitHub token: Logic Apps hides the inputs of any step that uses their data, and a Compose's output is its input, so the run history would hide this step too.",
           "inputs": {
             "pr": "@outputs('PR_number')",
-            "head": "@body('Get_the_pull_request')?['head']?['sha']",
-            "base": "@outputs('Merge_base')",
             "dry_run": "@equals(triggerBody()?['dryRun'], true)",
             "rules": "@outputs('Rules')",
             "sandbox": "@outputs('Sandbox_results')",
             "agent": "@outputs('Review')?['agent']",
             "agent_error": "@outputs('Review')?['agent_error']",
-            "review": "@outputs('Review')?['markdown']",
-            "review_url": "@actions('Post_the_review')?['outputs']?['body']?['html_url']"
+            "review": "@outputs('Review')?['markdown']"
           },
           "runAfter": { "Unless_this_is_a_dry_run": ["Succeeded"] }
         }
