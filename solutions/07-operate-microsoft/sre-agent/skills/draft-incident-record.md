@@ -1,12 +1,13 @@
 ---
-name: file-incident-record
-description: File the record of a RequestHub notification backlog incident as one GitHub Issue in {{GITHUB_REPOSITORY}}, after recovery is verified, with placeholders instead of identifiers. Use it once per incident.
+name: draft-incident-record
+description: Draft the record of a RequestHub notification backlog incident in your last reply, after recovery is verified, with placeholders instead of identifiers, for a person to read and file as a GitHub Issue in {{GITHUB_REPOSITORY}}. Use it once per incident.
 ---
 
-# File the incident record in GitHub
+# Draft the incident record
 
 The team keeps one GitHub Issue per incident as its record. People outside the team can read it, so it describes
-resources by their role and never identifies the deployment.
+resources by their role and never identifies the deployment. You draft it in your reply; a person reads it and files
+it. You have no GitHub tool, and you never write to GitHub.
 
 ## Placeholders, never identifiers
 
@@ -23,16 +24,15 @@ worker revision", "the new worker revision". Never write:
 UTC times, durations, counts, metric values, setting names (`Faults__WorkerDelayMs`), and the alert rule's display
 name (`RequestHub notification backlog`) are fine.
 
-A guard hook checks every GitHub call before it runs, and blocks it if the text contains any of the identifiers above.
-If it blocks yours, rewrite the text with placeholders and submit it once more. Never try to get around the guard.
+## The record
 
-## The Issue
+End your last reply with the record, in this layout, with nothing after it:
 
-- Repository: `{{GITHUB_REPOSITORY}}`
-- Title: `Incident record: notification backlog, <YYYY-MM-DD>` (the UTC date the alert fired)
-- Labels: `ai-sdlc` and `phase:operate`, nothing else. Never `incident` or `incident-followup`: those labels start
-  another team's automation.
-- Body, in Markdown:
+- A line `Title: Incident record: notification backlog, <YYYY-MM-DD>` (the UTC date the alert fired).
+- A line `Labels: ai-sdlc, phase:operate`. Nothing else: never `incident` or `incident-followup`, because those labels
+  start another team's automation.
+- The body, in one code block marked `markdown`, so the person can copy it exactly as written. Use inline code inside
+  the body, never another code block:
 
 ```markdown
 ## Summary
@@ -66,15 +66,12 @@ approver's permissions.>
 <One bounded change that would prevent a repeat or detect it sooner, with how to verify it.>
 
 ---
-Filed by Azure SRE Agent from its investigation of the alert. All data comes from RequestHub's synthetic demo.
+Drafted by Azure SRE Agent from its investigation of the alert, and filed by a person who read it. All data comes from
+RequestHub's synthetic demo.
 ```
 
-## Filing it
+## Before you reply
 
-1. Write the title and body, then read them once more against the list above.
-2. Create the Issue with the GitHub tool. The platform holds the call until a person reviews the text and selects
-   **Allow once**. If they cancel it, do not retry: put the title and body in your reply instead.
-3. Reply with the Issue number. File only this one Issue for the incident unless the team asks for another.
-
-If no GitHub tool is available (GitHub is not connected), put the title, labels, and body in your reply, say that
-GitHub is not connected, and stop.
+1. Read the title and body once more against the list above.
+2. Above the record, say in one sentence that a person reads it and files it as a GitHub Issue in
+   `{{GITHUB_REPOSITORY}}`. Draft only this one record for the incident unless the team asks for another.

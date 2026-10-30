@@ -5,17 +5,23 @@ incident platform, and the telemetry connectors. Everything else lives in the ag
 from the files in sre-agent/, described by sre-agent/agent.yaml:
 
   knowledge      knowledge/*.md, uploaded to the agent's knowledge base
-  skills         skills/*.md, procedures with name and description front matter
+  skills         skills/*.md, procedures with name and description front matter. The skill earlier versions used to
+                 file the record (file-incident-record) is removed
   custom agent   instructions.md, its tools and skills, and a Stop hook (hooks/evidence-checklist.md)
-  GitHub         the GitHub Issue tools, for the custom agent and the file-incident-record skill. A person connects
-                 GitHub once in the agent's portal (Build + setup, Code access, with a token limited to Issues); until
-                 then the agent has no GitHub tool. Run this
-                 script again after connecting it
-  guard hook     hooks/no-identifiers.py, a global PreToolUse hook that blocks a GitHub Issue call whose text contains
-                 an identifier of this deployment (GUID, trace id, host name, resource id, suffixed name, e-mail
-                 address), and otherwise asks a person, so every Issue waits for Allow once
-  tool policy    global allow, ask, and deny rules: Azure writes and GitHub Issue tools ask first; pull request and
-                 workflow tools are denied, by pattern and by the exact names found in the agent's tool catalog
+  GitHub         nothing to apply. A person connects this repository once under Build + setup, Code access, with a
+                 read-only fine-grained token, so the agent can read its code. The agent gets no GitHub tool: it
+                 drafts the incident record in its reply (skills/draft-incident-record.md), and a person reads it and
+                 files it. This script reports whether the repository is connected
+  guard hook     hooks/no-identifiers.py, a global PreToolUse hook on every GitHub Issue tool, kept as a backstop: it
+                 blocks the GitHub write tools the policy denies and any call whose text contains an identifier of
+                 this deployment (GUID, trace id, host name, resource id, suffixed name, e-mail address), and otherwise
+                 asks a person
+  tool policy    global allow, ask, and deny rules: Azure writes ask first, and every GitHub write tool is denied,
+                 Issue writes included, by pattern and by the exact names found in the agent's tool catalog. So are
+                 the command tools that could use the token: the terminal, shell commands, and Python.
+                 CreateGithubIssue stays denied by name: after a person allows it, it appends a footer that names the
+                 agent instance and links the thread with the subscription ID and thread GUID, which neither the
+                 guard hook nor the approval card shows
   response plan  which Azure Monitor alerts go to the custom agent, in Review mode. The default quickstart plan is
                  removed so an alert is not investigated twice.
 
@@ -75,9 +81,25 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 # Tools that can change Azure resources or run arbitrary commands. None may run without a person's approval.
 WRITE_TOOLS = {"RunAzCliWriteCommands", "RunKubectlWriteCommand", "RunShellCommand", "RunInTerminal", "Terminal",
                "bash", "shell", "execute_bash"}
-# Names in the style of GitHub connector tools, to test the github patterns offline.
-GITHUB_ISSUE_SAMPLES = ("CreateGitHubIssue", "AddCommentToGitHubIssue", "github_create_issue")
-GITHUB_DENIED_SAMPLES = ("CreateGitHubPullRequest", "MergePullRequest", "TriggerGitHubWorkflow", "github_dispatch_workflow")
+# Command tools that must be denied outright: with GitHub connected, the agent's terminal can use gh and git with the
+# connection's token, and nothing in this solution needs a terminal, shell commands, or Python.
+COMMAND_TOOLS = ("RunInTerminal", "Terminal", "RunShellCommand", "ExecutePythonCode")
+# Skills that earlier versions of this solution applied; removed from the agent when found.
+RETIRED_SKILLS = ("file-incident-record",)
+# After a person allows it, this tool appends a footer that names the agent instance and links the thread with the
+# subscription ID and thread GUID. Neither the guard hook nor the approval card shows it, so it must stay denied.
+FOOTER_TOOL = "CreateGithubIssue"
+# GitHub tool names to test the github patterns offline: the agent's real runtime tools, names in their style, and
+# tools of GitHub's MCP server as a connector would name them.
+GITHUB_ISSUE_SAMPLES = ("CreateGithubIssue", "FetchGithubIssue", "FetchGithubIssuesLimited", "CreateGitHubIssue",
+                        "AddCommentToGitHubIssue", "github_create_issue", "github_issue_write")
+GITHUB_WRITE_SAMPLES = ("CreateGithubIssue", "CreateGitHubIssue", "UpdateGithubIssue", "CloseGithubIssue",
+                        "AddCommentToGitHubIssue", "github_create_issue", "github_issue_write", "github_add_issue_comment",
+                        "github_update_issue", "CreateGithubPullRequest", "MergePullRequest", "TriggerGitHubWorkflow",
+                        "github_dispatch_workflow", "CreateGithubBranch", "PushGithubCommit", "CreateGithubCommitStatus",
+                        "CreateGithubWebhook", "github_create_pull_request", "github_merge_pull_request",
+                        "github_push_files", "github_create_or_update_file", "github_delete_file",
+                        "github_create_repository", "github_fork_repository")
 
 
 @dataclass
@@ -86,7 +108,6 @@ class Skill:
     description: str
     tools: list[str]
     content: str
-    github_issue_tools: bool
 
 
 @dataclass
@@ -123,8 +144,7 @@ def load() -> Config:
     for entry in manifest.get("skills", []):
         text = read(entry["file"])
         meta = front_matter(text, entry["file"])
-        skills.append(Skill(meta.get("name", ""), meta.get("description", ""), list(entry.get("tools", [])), text,
-                            bool(entry.get("githubIssueTools"))))
+        skills.append(Skill(meta.get("name", ""), meta.get("description", ""), list(entry.get("tools", [])), text))
     knowledge = {Path(rel).name: read(rel) for rel in manifest.get("knowledge", [])}
     github = manifest.get("github") or {}
     return Config(agent, read(agent["instructions"]), read(agent["stopHook"]), skills, knowledge,
@@ -172,9 +192,11 @@ def run_guard(script: str, stdin: str) -> tuple[str, str]:
 
 
 def guard_problems(script: str, deny_patterns: list[str]) -> list[str]:
-    """Tests the guard hook. A clean incident record must wait for a person (ask). Every kind of identifier, hidden or
-    not, every denied tool, and every malformed or oversized call must be blocked. Nothing may come back as allow or
-    as no objection, nothing may fail open, and long input must be decided quickly."""
+    """Tests the guard hook, the backstop for GitHub Issue tools. Every denied write tool, CreateGithubIssue and an MCP
+    server's Issue tool included, must be blocked even with clean text. On an Issue tool the policy does not deny (a
+    read), a clean record must wait for a person (ask) and every kind of identifier, hidden or not, must be blocked.
+    Every malformed or oversized call must be blocked too. Nothing may come back as allow or as no objection, nothing
+    may fail open, and long input must be decided quickly."""
     suffix = "q1w2e3r4t5y6u"
     script = script.replace("{{RESOURCE_SUFFIXES}}", suffix).replace("{{GITHUB_DENIED_TOOLS}}", glob_regex(deny_patterns))
     clean = {
@@ -185,8 +207,10 @@ def guard_problems(script: str, deny_patterns: list[str]) -> list[str]:
                 "--remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc`, approved by an SRE Agent Administrator. "
                 "Evidence: the RequestHub notification backlog alert in portal.azure.com; requesthub-notification-backlog.",
     }
+    # An Issue tool the policy does not deny takes the hook's ask path. If every Issue tool were denied, none would.
+    open_tool = next((t for t in GITHUB_ISSUE_SAMPLES if not matches(t, deny_patterns)), None)
 
-    def call(tool_input: object, tool: str = "CreateGitHubIssue") -> str:
+    def call(tool_input: object, tool: str = open_tool or FOOTER_TOOL) -> str:
         return json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input})
 
     leaks = {
@@ -212,16 +236,20 @@ def guard_problems(script: str, deny_patterns: list[str]) -> list[str]:
         "a name split by an underscore": "worker ca-worker-z9y8x7_w6v5u4t",
         "a GUID split by Markdown bold": "thread 12345678**-1234-1234-1234-123456789abc",
     }
-    cases: list[tuple[str, str, str]] = [  # (what, stdin, expected verdict)
-        ("a clean incident record", call(clean), "ask"),
-        ("a clean incident record sent as a JSON string", call(json.dumps(clean)), "ask"),
-    ]
+    cases: list[tuple[str, str, str]] = []  # (what, stdin, expected verdict)
+    if open_tool:
+        cases += [
+            (f"a clean incident record on {open_tool}", call(clean), "ask"),
+            (f"a clean incident record on {open_tool}, sent as a JSON string", call(json.dumps(clean)), "ask"),
+        ]
     for kind, leak in leaks.items():
         cases.append((f"{kind} in the body", call({**clean, "body": clean["body"] + " " + leak}), "block"))
         cases.append((f"{kind} in the title, sent as a JSON string", call(json.dumps({**clean, "title": leak})), "block"))
     cases += [(f"the denied tool {p.replace('*', 'Issue')}", call(clean, p.replace("*", "Issue")), "block")
               for p in deny_patterns]
     cases += [
+        (f"{FOOTER_TOOL} with a clean incident record", call(clean, FOOTER_TOOL), "block"),
+        ("an MCP server's github_create_issue with a clean incident record", call(clean, "github_create_issue"), "block"),
         ("a GUID as a key", call({**clean, "fields": {"12345678-1234-1234-1234-123456789abc": "x"}}), "block"),
         ("a pull request tool", call(clean, "LinkGitHubPullRequestToIssue"), "block"),
         ("a workflow tool", call(clean, "TriggerWorkflowForIssue"), "block"),
@@ -276,7 +304,8 @@ def check(config: Config) -> list[str]:
     allow, ask, deny = (list(policy.get(k, [])) for k in ("allow", "ask", "deny"))
     for rule in allow:
         tool_glob = rule.split("(", 1)[0].strip()
-        widened = sorted(t for t in WRITE_TOOLS | set(GITHUB_ISSUE_SAMPLES) if matches(t, [tool_glob]))
+        widened = sorted(t for t in WRITE_TOOLS | set(GITHUB_ISSUE_SAMPLES) | set(GITHUB_WRITE_SAMPLES)
+                         if matches(t, [tool_glob]))
         if widened:
             problems.append(f"tool policy must not allow '{rule}': it lets {', '.join(widened)} run without approval")
     used = set(agent.get("tools", [])) | {t for s in config.skills for t in s.tools}
@@ -289,19 +318,29 @@ def check(config: Config) -> list[str]:
     if "RunAzCliWriteCommands(az monitor *)" not in deny:
         problems.append("tool policy must deny az monitor writes: the platform gives the agent's identity Monitoring "
                         "Contributor on the whole subscription, so an approved az monitor command would run with it")
+    problems += [f"tool policy must deny {t}: with GitHub connected, a command tool could use the connection's token"
+                 for t in COMMAND_TOOLS if t not in deny]
 
     github = config.github
     issue_tools, github_deny, guard = github.get("issueTools") or [], github.get("deny") or [], github.get("guardHook") or {}
+    if "customAgentTools" in github:
+        problems.append("github.customAgentTools is not supported: the agent gets no GitHub tool and drafts the "
+                        "incident record in its reply, for a person to file")
     if not issue_tools:
-        problems.append("github.issueTools must name the GitHub Issue tools the custom agent may use")
+        problems.append("github.issueTools must name the GitHub Issue tools, so the guard hook sees every one of them")
     for sample in GITHUB_ISSUE_SAMPLES:
         if not matches(sample, issue_tools):
             problems.append(f"github.issueTools must cover Issue tools such as {sample}")
-        if matches(sample, github_deny):
-            problems.append(f"github.deny must not cover Issue tools such as {sample}")
-    for sample in GITHUB_DENIED_SAMPLES:
+    for sample in GITHUB_WRITE_SAMPLES:
         if not matches(sample, github_deny):
-            problems.append(f"github.deny must deny pull request and workflow tools such as {sample}")
+            problems.append(f"github.deny must deny every GitHub write tool, Issue writes included, such as {sample}")
+    if FOOTER_TOOL not in github_deny:
+        problems.append(f"github.deny must name {FOOTER_TOOL}: after a person allows it, it appends a footer that names "
+                        "the agent instance and links the thread with the subscription ID and thread GUID, which "
+                        "neither the guard hook nor the approval card shows")
+    problems += [f"the custom agent and its skills must not use the GitHub tool {t}: the agent drafts the incident "
+                 "record in its reply, and a person files it"
+                 for t in sorted(used) if "github" in t.lower() or matches(t, issue_tools) or matches(t, github_deny)]
     if guard.get("failMode") != "block":
         problems.append("the guard hook must use failMode block: if it cannot run, nothing reaches GitHub")
     if not NAME.match(str(guard.get("name", ""))):
@@ -326,6 +365,23 @@ def github_repository() -> str:
     proc = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, cwd=REPO)
     match = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?/?$", proc.stdout.strip())
     return setting("GITHUB_REPOSITORY", match.group(1) if match else None)
+
+
+def github_connection(client: "Client", endpoint: str, repository: str) -> tuple[bool, str]:
+    """Whether this repository is connected under Build + setup, Code access, with a healthy credential: the condition
+    for the agent's runtime GitHub tools. Returns the answer and what was found, without any credential detail."""
+    status, _, body = client.call("GET", f"{endpoint}/api/v2/repos", DATA_PLANE_SCOPE, attempts=3)
+    if status != 200:
+        return False, f"cannot read the connected repositories (HTTP {status})"
+    wanted = f"https://github.com/{repository}".lower()
+    for repo in items(body):
+        props = repo.get("properties") or {}
+        url = str(props.get("url") or "").lower().removesuffix(".git").rstrip("/")
+        if url == wanted:
+            healthy = bool((props.get("connection") or {}).get("isHealthy"))
+            return healthy, (f"{repository} is connected, credential {'healthy' if healthy else 'not healthy'}, code "
+                             f"{str(props.get('cloneStatus') or 'not cloned').lower()}")
+    return False, f"{repository} is not connected under Build + setup, Code access"
 
 
 class Client:
@@ -414,9 +470,9 @@ def unique(entries: list[str]) -> list[str]:
     return [e for e in entries if not (e.lower() in seen or seen.add(e.lower()))]
 
 
-def build(config: Config, extra: dict[str, str], github_tools: list[str], github_denied: list[str]) -> dict:
-    """The request bodies for everything this script applies, with placeholders filled in. github_tools and
-    github_denied are the exact names of the GitHub tools in the agent's catalog that the patterns cover."""
+def build(config: Config, extra: dict[str, str], github_denied: list[str]) -> dict:
+    """The request bodies for everything this script applies, with placeholders filled in. github_denied are the tools
+    in the agent's catalog that github.deny covers, denied by their exact names too."""
     agent, plan, github = config.agent, config.plan, config.github
     guard, issue_patterns = github["guardHook"], list(github["issueTools"])
     ask, deny = list(config.policy.get("ask", [])), list(config.policy.get("deny", []))
@@ -424,8 +480,7 @@ def build(config: Config, extra: dict[str, str], github_tools: list[str], github
         "knowledge": {name: render(text, extra) for name, text in config.knowledge.items()},
         "skills": [{
             "name": s.name, "type": "Skill", "tags": [],
-            "properties": {"name": s.name, "description": render(s.description, extra),
-                           "tools": s.tools + (github_tools if s.github_issue_tools else []),
+            "properties": {"name": s.name, "description": render(s.description, extra), "tools": s.tools,
                            "skillContent": render(s.content, extra), "additionalFiles": []},
         } for s in config.skills],
         "customAgent": {
@@ -434,7 +489,7 @@ def build(config: Config, extra: dict[str, str], github_tools: list[str], github
                 "instructions": render(config.instructions, extra),
                 "handoffDescription": agent["handoffDescription"],
                 "handoffs": [],
-                "tools": agent["tools"] + github_tools,
+                "tools": agent["tools"],
                 "enableSkills": True,
                 "allowedSkills": agent["skills"],
                 "hooks": {"Stop": [{"type": "prompt", "prompt": render(config.stop_hook, extra), "timeout": 60,
@@ -444,7 +499,7 @@ def build(config: Config, extra: dict[str, str], github_tools: list[str], github
         "toolPolicy": {
             # Patterns cover tools the catalog adds later; exact names do not depend on how the service compares case.
             "allow": unique(list(config.policy.get("allow", []))),
-            "ask": unique(ask + issue_patterns + github_tools),
+            "ask": unique(ask + issue_patterns),
             "deny": unique(deny + list(github.get("deny", [])) + github_denied),
         },
         "guardHook": {
@@ -472,12 +527,11 @@ def build(config: Config, extra: dict[str, str], github_tools: list[str], github
 
 def apply(config: Config, dry_run: bool) -> int:
     agent, plan, github = config.agent, config.plan, config.github
-    issue_patterns, deny_patterns = list(github["issueTools"]), list(github.get("deny", []))
+    deny_patterns = list(github.get("deny", []))
     if dry_run:
         extra = {"GITHUB_REPOSITORY": github_repository(), "RESOURCE_SUFFIXES": "<read from the agent when applied>",
                  "GITHUB_DENIED_TOOLS": glob_regex(deny_patterns)}
-        bodies = build(config, extra, ["<GitHub Issue tools from the agent's tool catalog>"],
-                       ["<GitHub pull request and workflow tools from the agent's tool catalog>"])
+        bodies = build(config, extra, ["<GitHub tools in the agent's tool catalog that github.deny covers>"])
         bodies["knowledge"] = list(bodies["knowledge"])
         print(json.dumps(bodies, indent=2))
         return 0
@@ -512,14 +566,15 @@ def apply(config: Config, dry_run: bool) -> int:
         print(f"  FAILED  {tool} is not in the agent's tool catalog")
         failures.append(f"tool {tool}")
     github_denied = sorted(t for t in catalog if matches(t, deny_patterns))
-    github_tools = sorted(t for t in catalog if matches(t, issue_patterns) and t not in github_denied)
-    if github_tools:
-        print(f"  ok      GitHub Issue tools: {', '.join(github_tools)}")
-        print(f"  ok      GitHub tools denied: {', '.join(github_denied) or 'none in the catalog'}")
+    connected, detail = github_connection(client, endpoint, extra["GITHUB_REPOSITORY"])
+    if connected:
+        print(f"  ok      GitHub: {detail}; the agent can read its code and has no GitHub tool that writes")
     else:
-        print(f"  note    GitHub is not connected: no tool matches {', '.join(issue_patterns)}. Until a person connects "
-              "it (README, Connect GitHub) and runs this script again, the agent puts the incident record in its reply.")
-    bodies = build(config, extra, github_tools, github_denied)
+        print(f"  note    GitHub: {detail}. The agent works without the repository's code until a person connects it "
+              "(README, Connect GitHub); it has no GitHub tool that writes either way.")
+    print(f"  ok      GitHub write tools denied by pattern: {', '.join(deny_patterns)}"
+          + (f"; in the catalog: {', '.join(github_denied)}" if github_denied else ""))
+    bodies = build(config, extra, github_denied)
 
     print("Knowledge")
     for name, text in bodies["knowledge"].items():
@@ -537,6 +592,13 @@ def apply(config: Config, dry_run: bool) -> int:
 
     print("Custom agent")
     put("agents", agent["name"], bodies["customAgent"])
+    status, _, existing = client.call("GET", f"{endpoint}/api/v2/extendedAgent/skills", DATA_PLANE_SCOPE)
+    for retired in (s.get("name") for s in items(existing)):
+        if retired in RETIRED_SKILLS:
+            status, _, _ = client.call("DELETE", f"{endpoint}/api/v2/extendedAgent/skills/{retired}", DATA_PLANE_SCOPE)
+            print(f"  {'ok' if status < 300 else 'FAILED'}  removed the retired skill {retired}")
+            if status >= 300:
+                failures.append(f"remove skills/{retired}")
 
     print("Tool policy")
     url = f"{endpoint}/api/v2/agent/settings/global"
@@ -585,8 +647,12 @@ def apply(config: Config, dry_run: bool) -> int:
         props = body.get("properties", {}) if isinstance(body, dict) else {}
         ok = status == 200
         if ok and label.startswith("agents/"):
-            wanted = bodies["customAgent"]["properties"]
-            ok = set(wanted["tools"]) <= set(props.get("tools", [])) and set(agent["skills"]) <= set(props.get("allowedSkills", []))
+            wanted, got_tools = bodies["customAgent"]["properties"], props.get("tools", [])
+            github_tools = [t for t in got_tools if "github" in t.lower() or matches(t, deny_patterns)]
+            ok = (set(wanted["tools"]) <= set(got_tools) and set(agent["skills"]) <= set(props.get("allowedSkills", []))
+                  and not github_tools and not set(RETIRED_SKILLS) & set(props.get("allowedSkills", [])))
+            if github_tools:
+                print(f"  the custom agent still has GitHub tools: {', '.join(github_tools)}")
         if ok and label.startswith("hooks/"):
             got, wanted = props.get("hook") or {}, hook["properties"]["hook"]
             ok = (props.get("eventType") == "PreToolUse" and props.get("enabled") is not False
@@ -608,9 +674,9 @@ def apply(config: Config, dry_run: bool) -> int:
         print(f"\n{len(failures)} item(s) failed: {', '.join(failures)}")
         return 1
     print(f"\nSRE Agent configured. Response plan '{plan['name']}' sends {', '.join(plan['severities'])} alerts whose "
-          f"title contains '{plan['titleContains']}' to '{agent['name']}' in {plan['agentMode']} mode. "
-          + (f"It files the incident record in {extra['GITHUB_REPOSITORY']} after a person allows it."
-             if github_tools else "GitHub is not connected yet."))
+          f"title contains '{plan['titleContains']}' to '{agent['name']}' in {plan['agentMode']} mode. It drafts the "
+          f"incident record in its reply for a person to file in {extra['GITHUB_REPOSITORY']}; every GitHub write tool "
+          "is denied.")
     return 0
 
 
@@ -631,8 +697,9 @@ def main() -> int:
     if args.check:
         print(f"sre-agent/ is valid: custom agent '{config.agent['name']}', {len(config.skills)} skills, "
               f"{len(config.knowledge)} knowledge file(s), response plan '{config.plan['name']}' in "
-              f"{config.plan['agentMode']} mode, Azure and GitHub writes need approval, deletes, pull requests, and "
-              f"workflow runs denied, guard hook '{config.github['guardHook']['name']}' blocks identifiers.")
+              f"{config.plan['agentMode']} mode, no GitHub tool for the agent and every GitHub write tool denied "
+              f"(Issue writes included), Azure writes need approval, deletes denied, guard hook "
+              f"'{config.github['guardHook']['name']}' as a backstop.")
         return 0
     return apply(config, args.dry_run)
 
