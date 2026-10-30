@@ -168,6 +168,7 @@ def score(items: list[dict]) -> list[dict]:
 
 
 def report(items: list[dict]) -> str:
+    """The scores as a Markdown table, for out/eval/report.md."""
     names = list(GRADERS)
     lines = ["| PR | Kind | " + " | ".join(GRADERS[n][1] for n in names) + " | Dry run |",
              "| --- | --- | " + " | ".join("---" for _ in names) + " | --- |"]
@@ -178,6 +179,25 @@ def report(items: list[dict]) -> str:
     passed = [sum(1 for i in items if (i["_scores"][n] or 0) >= 1) for n in names]
     lines.append("| **Passed** | | " + " | ".join(f"**{p}/{len(items)}**" for p in passed) + " | |")
     return "\n".join(lines)
+
+
+def terminal_report(items: list[dict]) -> str:
+    """The same scores as a plain-text table that lines up in a terminal. The columns are the checks' names in Foundry,
+    without their pr_review_ prefix, and a legend below gives each check's title."""
+    names = list(GRADERS)
+    short = [n.removeprefix("pr_review_") for n in names]
+
+    def cell(score: float | None) -> str:
+        return "COULD NOT GRADE" if score is None else "pass" if score >= 1 else "FAIL" if score <= 0 else f"FAIL {score:.2f}"
+
+    rows = [["PR", "Kind", *short, "Dry run"]]
+    rows += [[f"#{i['pr']}", str(i["kind"]), *(cell(i["_scores"][n]) for n in names), str(i["_status"])] for i in items]
+    passed = [sum(1 for i in items if (i["_scores"][n] or 0) >= 1) for n in names]
+    rows.append(["Passed", "", *(f"{p}/{len(items)}" for p in passed), ""])
+    widths = [max(len(row[c]) for row in rows) for c in range(len(rows[0]))]
+    lines = ["  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip() for row in rows]
+    legend = [f"{s.ljust(max(map(len, short)))}  {GRADERS[n][1]}" for s, n in zip(short, names)]
+    return "\n".join(lines + [""] + legend)
 
 
 def grader_source(fn) -> str:
@@ -280,9 +300,9 @@ def main(argv: list[str] | None = None) -> int:
     if not cases or len(items) != len(cases):
         print(f"error: {len(items)} results for {len(cases)} labelled pull requests", file=sys.stderr)
         return 2
-    table = report(score(items))
-    (OUT / "report.md").write_text(f"# Azure pull request reviewer: labelled pull requests\n\n{table}\n", encoding="utf-8")
-    print("\n" + table + "\n")
+    items = score(items)
+    (OUT / "report.md").write_text(f"# Azure pull request reviewer: labelled pull requests\n\n{report(items)}\n", encoding="utf-8")
+    print("\n" + terminal_report(items) + "\n")
     ungraded = [f"#{i['pr']} ({', '.join(i['_errors'])})" for i in items if i.get("_errors")]
     if ungraded:
         print(f"error: COULD NOT GRADE {', '.join(ungraded)}", file=sys.stderr)
