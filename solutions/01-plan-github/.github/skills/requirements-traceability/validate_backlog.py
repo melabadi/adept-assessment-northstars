@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Validate a Plan-phase requirements package (backlog.json) against its schema and its sources.
 
-Used by both Plan solutions (GitHub Copilot and Microsoft Foundry) and by their review workflows.
-All checks are deterministic; an AI model cannot make a failing check pass.
+Used by 01-plan-github and its review workflow. All checks are deterministic; an AI model cannot make a failing check
+pass. 01-plan-microsoft runs the same checks as Microsoft Foundry evaluators.
 
 Checks
   1. JSON Schema: backlog.schema.json (next to this script).

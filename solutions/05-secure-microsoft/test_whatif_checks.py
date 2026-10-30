@@ -16,6 +16,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import whatif
 
@@ -148,6 +149,74 @@ class CodeSpans(unittest.TestCase):
 
     def test_line_breaks_and_table_pipes(self):
         self.assertEqual(whatif.code("a\nb\rc|d", table=True), "`a b c\\|d`")
+
+
+class PullRequestStatus(unittest.TestCase):
+    """The commit status posture/what-if never stays pending, and says what to do when it can. GitHub and Azure are fakes."""
+
+    class FakeGitHub:
+        def __init__(self, fail_on: str | None = None) -> None:
+            self.fail_on, self.statuses, self.comments = fail_on, [], []
+
+        def call(self, method, path, body=None):
+            if self.fail_on and self.fail_on in path:
+                raise KeyError("unexpected response shape")
+            if path.startswith("pulls/") and "/files" not in path:
+                return {"state": "open", "head": {"sha": "a" * 40}}
+            if path.startswith("statuses/"):
+                self.statuses.append((body["state"], body["description"]))
+                return {}
+            if path.startswith("issues/") and method == "POST":
+                self.comments.append(body["body"])
+                return {}
+            return []
+
+    PASS = {"changes": [], "unexpected": [], "remaining": [], "noise": 0, "previewless": [], "baseline": True}
+
+    def run_preview(self, github, preview) -> int:
+        def fetch(gh, sha, sandbox):
+            target = sandbox / whatif.ENTRY
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("param p string = 'x'\n", encoding="utf-8")
+
+        environment = {"POSTURE_GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "o/r", "AZURE_RESOURCE_GROUP": "rg"}
+        with mock.patch.dict(os.environ, environment), \
+                mock.patch.object(whatif, "GitHub", lambda repository, token: github), \
+                mock.patch.object(whatif, "fetch_templates", fetch), mock.patch.object(whatif, "sign_in", lambda: None), \
+                mock.patch.object(whatif, "erase_from_initial_environment", lambda name: True), \
+                mock.patch.object(whatif, "preview", preview):
+            return whatif.preview_pull_request(7, whatif.DEFAULT_EXPECT, "resources")
+
+    def test_pass_posts_the_summary_and_success(self):
+        github = self.FakeGitHub()
+        self.assertEqual(self.run_preview(github, lambda *a, **k: self.PASS), 0)
+        self.assertEqual(github.statuses[-1][0], "success")
+        self.assertIn("**PASS**", github.comments[-1])
+
+    def test_stopped_database_says_what_to_do_without_naming_it(self):
+        def preview(*args, **kwargs):
+            raise whatif.ConfigError("az deployment group what-if failed: ERROR: DeploymentWhatIfResourceError ... "
+                                     "ServerStoppedError - Server 'psql-abcdefghij123' is in 'Stopped' state.")
+        github = self.FakeGitHub()
+        self.assertEqual(self.run_preview(github, preview), 2)
+        state, description = github.statuses[-1]
+        self.assertEqual(state, "error")
+        self.assertIn("stopped PostgreSQL", description)
+        self.assertNotIn("psql", description)
+        self.assertLessEqual(len(description), 140)
+        self.assertEqual(github.comments, [])
+
+    def test_unexpected_failure_sets_error(self):
+        def preview(*args, **kwargs):
+            raise KeyError("whatIf output shape")
+        github = self.FakeGitHub()
+        self.assertEqual(self.run_preview(github, preview), 2)
+        self.assertEqual(github.statuses[-1][0], "error")
+
+    def test_failure_to_post_the_comment_sets_error(self):
+        github = self.FakeGitHub(fail_on="issues/")
+        self.assertEqual(self.run_preview(github, lambda *a, **k: self.PASS), 2)
+        self.assertEqual(github.statuses[-1][0], "error")
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the job runs on Linux; /proc is Linux-only")

@@ -1,0 +1,50 @@
+diff --git a/app/src/RequestHub.Core/Services/RequestWorkflow.cs b/app/src/RequestHub.Core/Services/RequestWorkflow.cs
+--- a/app/src/RequestHub.Core/Services/RequestWorkflow.cs
++++ b/app/src/RequestHub.Core/Services/RequestWorkflow.cs
+@@ -253,8 +253,7 @@
+             return WorkflowError.Forbidden($"You cannot decide requests routed to {request.DepartmentId}.");
+         }
+ 
+-        // Approvers can fast-track their own low-priority requests; everything else still needs a second person.
+-        if (request.RequesterId == user.Id && request.Priority != RequestPriority.Low)
++        if (request.RequesterId == user.Id)
+         {
+             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
+         }
+@@ -546,7 +545,7 @@
+         string? blocked = null;
+         if (!user.HasRole(Roles.Approver)) blocked = "not_approver";
+         else if (!user.CanAccessDepartment(request.DepartmentId)) blocked = "department";
+-        else if (request.RequesterId == user.Id && request.Priority != RequestPriority.Low) blocked = "self_approval";
++        else if (request.RequesterId == user.Id) blocked = "self_approval";
+         else if (terminal) blocked = "terminal";
+ 
+         return new PermissionsDto(
+diff --git a/app/tests/RequestHub.Tests/RequestLifecycleTests.cs b/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
+--- a/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
++++ b/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
+@@ -69,11 +69,21 @@
+     }
+ 
+     [Fact]
+-    public async Task Approver_can_fast_track_their_own_low_priority_request()
++    public async Task Requester_cannot_approve_their_own_request()
+     {
+-        // Hugo is an IT approver and the requester of REQ-1024, a low-priority request.
++        // Hugo is an IT approver and the requester of REQ-1024.
+         var response = await api.As("u-hugo").PostJson("/api/requests/REQ-1024/decisions", new { outcome = "Approved" });
+-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
++        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
++        Assert.Equal("decision.self_approval", await response.Code());
++    }
++
++    [Fact]
++    public async Task Requester_cannot_reject_their_own_request()
++    {
++        // Rejecting is a decision too: Hugo can't close his own REQ-1024 either, whatever its priority.
++        var response = await api.As("u-hugo").PostJson("/api/requests/REQ-1024/decisions", new { outcome = "Rejected", comment = "No longer needed." });
++        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
++        Assert.Equal("decision.self_approval", await response.Code());
+     }
+ 
+     [Fact]
