@@ -1,72 +1,72 @@
 # Test · Performance lab with Azure Load Testing
 
-Most teams find out how their app behaves under load in production, because a realistic load test is hard to set up, needs credentials, and produces charts nobody turns into a decision. In this solution, Azure Load Testing runs RequestHub's real request-and-approval journey, signed in as two managed identities, with explicit pass/fail criteria. A rehearsal slowdown on the deployed API shows the gate catching a regression: the run fails, the report shows the server-side cause next to the client results, the dashboard's AI summary offers a first explanation to verify, and a GitHub Issue tracks the failure until a passing run closes it. A GitHub Copilot agent and two skills change the scenario and explain results without ever relaxing a threshold to make a run pass.
+Most teams find out how their app behaves under load in production: a realistic load test is hard to set up, needs credentials, and produces charts nobody turns into a decision. In this solution the test lives in the repository, where people review changes to it, and everything else happens in Azure. Azure Load Testing runs RequestHub's real request-and-approval journey, signed in as two managed identities, and judges each run against pass/fail criteria. A notification rule hands every finished run to a Logic App, which writes the report and opens or closes a GitHub Issue. Two AI tools in Azure help explain a failure: the run's AI insights, and the Azure Copilot Observability Agent, which answers questions about the API's telemetry. A rehearsal slowdown on the deployed API shows the whole loop, and shows why people still check what the AI says.
 
-![The slowdown run in the Azure Load Testing dashboard: Failed, test criteria not met. The AI summary ties the slow team-queue and my-requests responses to longer request durations and suggests backend resource constraints; the statistics show 579 requests, a 1.51 second 90th percentile response time, and 0 percent errors](images/06-failed-run.png)
+![The slowdown run in Azure Load Testing: Failed, test criteria not met. The experimental AI summary suggests backend constraints, more failed HTTP requests, and a container app limited to one replica; the statistics show 541 requests, a 1.52 second 90th percentile response time, and 0 percent errors](images/05-failed-run.png)
 
 ## Where it fits
 
-**Phase 4 of 7: Test.** The GitHub counterpart is [04-test-github](../04-test-github/), which proves a functional fix with a regression test. This solution proves service-level behavior under load.
+**Phase 4 of 7: Test.** The GitHub counterpart is [04-test-github](../04-test-github/), where Copilot proves a functional fix with a regression test. This solution proves service-level behavior under load, with the AI and the orchestration in Azure. GitHub holds the code, the pull requests that change the test, and the Issues.
 
 | | Today | With this solution |
 | --- | --- | --- |
-| Performance evidence | Someone runs a load tool from a laptop before a big release, if at all. | A managed load test runs on demand and whenever the test changes, from a terminal or GitHub Actions. |
+| Performance evidence | Someone runs a load tool from a laptop before a big release, if at all. | Azure Load Testing runs the journey on demand from the portal, or on a weekday schedule. |
 | Realism | Anonymous calls to a home page. | The real journey, signed in: submit a request, list "my requests" and the team queue, open a request, approve or reject. |
 | Credentials | A test account's password or a long-lived token in a pipeline secret. | Two managed identities the test engines borrow during a run. No secret exists. |
-| The decision | Someone eyeballs a chart. | Pass/fail criteria (p95 per request, error rate) turn the run into PASSED or FAILED. |
-| Diagnosis | Load-tool numbers and app logs live in different places. | One report: each criterion with its actual value, client percentiles, and server-side telemetry for the same window. The dashboard adds an AI summary that correlates them. |
-| Follow-up | A message in chat. | A failing run opens a GitHub Issue; the next passing run closes it. |
-| Test data | Leftover records in a shared environment. | The load-test identity deletes its own requests before each run; the seeded data never changes. |
+| The decision | Someone eyeballs a chart. | Pass/fail criteria (p95 per request, error rate) turn each run into Passed or Failed. |
+| Follow-up | A message in chat. | Azure opens a GitHub Issue with the report; the next accepted run closes it. |
+| Diagnosis | Load-tool numbers and app logs live in different places. | The run's dashboard shows client and server metrics side by side with an AI summary, the Observability Agent answers questions about the telemetry, and the report counts the requests that carried the injected delay. |
+| Changing the test | A script on someone's laptop. | The journey and its criteria are files in the repository, reviewed in pull requests and applied with `azd provision`. |
 
 ## How it works
 
 ```mermaid
 flowchart LR
-  who([Presenter or<br/>GitHub Actions]) -->|load_test.py run or<br/>azure/load-testing action| alt[Azure Load Testing<br/>Locust engines]
-  alt -->|tokens for 2 managed<br/>identities, no secret| entra[Microsoft Entra ID]
-  alt -->|submit, list, open,<br/>decide, denial checks| api[RequestHub API<br/>Azure Container Apps]
+  repo[GitHub repository<br/>loadtest/, reviewed in PRs] -->|azd provision<br/>sync_test.py| alt[Azure Load Testing<br/>test, criteria, schedule]
+  who([Presenter or<br/>weekday schedule]) -->|Run| alt
+  alt -->|2 managed identities,<br/>no secret| api[RequestHub API<br/>Container Apps]
   api --> db[(PostgreSQL)]
   api -. telemetry .-> appi[Application Insights]
-  alt --> dash[Dashboard: criteria, client and<br/>server metrics, AI insights]
-  appi -. server metrics .-> dash
-  alt -->|criteria: PASSED or FAILED| report[load_test.py report]
-  appi -->|server p95, injected delay| report
-  report --> gh[Job summary, PR comment,<br/>Issue opened or closed]
+  alt --> dash[Run dashboard: criteria,<br/>metrics, AI insights]
+  alt -->|run ended:<br/>notification rule| ag[Action group]
+  ag --> la[Logic App]
+  la -->|read the run| alt
+  la -->|report.kql| appi
+  la -->|open, comment, close| issue[GitHub Issue]
+  agent[Azure Copilot<br/>Observability Agent] -->|KQL| appi
 ```
 
-- **Azure Load Testing** runs [`loadtest/locustfile.py`](loadtest/locustfile.py) on managed engines with the settings and criteria in [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml). Its dashboard shows client and server metrics side by side, and its **AI summary and insights** (experimental) explain a run in plain language.
-- **Two managed identities** sign the virtual users in. Requesters submit synthetic requests; approvers, a different identity, decide some of them, because RequestHub never lets anyone decide their own request. Both identities hold RequestHub app roles, and the API accepts them like any other caller.
-- **RequestHub** enforces the same roles and department access as for people. Every few journeys the test also checks that an invalid token gets 401 and a request from another department gets 403.
-- **GitHub Actions** ([`test-microsoft-load.yml`](.github/workflows/test-microsoft-load.yml)) signs in with OIDC and runs the test with the `azure/load-testing` action. The resource names it needs are environment secrets, so GitHub masks them in the log, and the report it posts names runs, not hosts. It can also rehearse a regression: inject the slowdown, run, remove it.
-- **GitHub Copilot**: the `test-microsoft` agent with the **load-scenario** and **performance-analysis** skills changes the journey and explains results within guardrails that [`check_scenario.py`](.github/skills/load-scenario/check_scenario.py) enforces.
-- **People** decide what a failure means and whether a release ships. The AI summary is a lead to check; the criteria are the verdict.
+- **Azure Load Testing** runs [`loadtest/locustfile.py`](loadtest/locustfile.py) on managed engines with the settings and criteria in [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml). Its run dashboard shows client and server metrics side by side and an experimental **AI summary and insights**. The test has a weekday schedule, created paused, and a notification rule that sends every finished run to an action group.
+- **Two managed identities** sign the virtual users in. Requesters submit synthetic requests; approvers, a different identity, decide some of them, because RequestHub never lets anyone decide their own request. Each run deletes the requests it submitted, so the seeded data is all that remains.
+- **RequestHub** enforces the same roles and department access as for people. Every few journeys the test also checks that an invalid token gets 401 and a request from another department gets 403. The API marks every request it slows down on purpose with the telemetry property `requesthub.fault.queue_delay_ms`.
+- **A Logic App** ([`infra/logicapp.json`](infra/logicapp.json)), called by the action group, handles one run at a time with its own managed identity. It reads the run from Azure Load Testing (Load Test Reader), stops at once unless the run belongs to this test and ended in the last hour, and waits for the verdict. It waits until Application Insights has the run's last requests, then runs [`infra/report.kql`](infra/report.kql) on the API's telemetry (Log Analytics Reader) for the report and its verdict. Then it opens or comments on this test's GitHub Issue through GitHub's Issues API, with a fine-grained token a person created for this repository only. It closes the Issue only when a run that started after the Issue opened passes, and the report finds no injected delay.
+- **The Azure Copilot Observability Agent**, in Application Insights › Logs, answers questions about the API's telemetry in plain language and runs the KQL itself.
+- **GitHub** holds the code, the pull requests that change the test, and the Issues. No workflow, Copilot agent, or skill is involved.
+- **People** decide what a failure means, check what the AI says against the evidence, and decide whether a release ships.
 
 ## What's in this folder
 
 ```text
 04-test-microsoft/
 ├── README.md
-├── images/                             screenshots from a live run of this demo
+├── images/                       screenshots from a live run of this demo
 ├── loadtest/
-│   ├── locustfile.py                   the journey: requester and approver virtual users, sign-in, cleanup
-│   └── requesthub-journey.yaml         workload settings and pass/fail criteria (no environment values)
-├── load_test.py                        run the test, report on it, sync the Issue, clean up load-test data
-├── slowdown.py                         demo helper: inject or remove the expiring slowdown on the deployed API
-├── azd_env.py                          reads settings from this solution's azd environment
-├── configure_github.py                 azd hooks: connect the solution to GitHub Actions
-├── requirements.txt                    Python packages (Locust pinned to the engines' version)
-├── azure.yaml                          azd project: infra plus the shared app's api and worker
-├── infra/
-│   ├── main.bicep                      resource group, RequestHub platform (app/infra), load testing
-│   ├── loadtest-identities.bicep       the requester and approver identities
-│   ├── loadtesting.bicep               Azure Load Testing, its roles, the identities' RequestHub app roles
-│   └── main.parameters.json
-└── .github/
-    ├── agents/test-microsoft.agent.md  Copilot agent that changes, runs, and explains the load test
-    ├── skills/
-    │   ├── load-scenario/              how to change the scenario safely (check_scenario.py)
-    │   └── performance-analysis/       how to read a result (queries.kql for Application Insights)
-    └── workflows/test-microsoft-load.yml
+│   ├── locustfile.py             the journey: requester and approver virtual users, sign-in, cleanup
+│   └── requesthub-journey.yaml   workload settings and pass/fail criteria (no environment values)
+├── sync_test.py                  azd hooks: check the scenario, then copy the test, notification rule, and schedule into Azure
+├── slowdown.py                   demo helper: inject or remove the expiring slowdown on the deployed API
+├── azd_env.py                    reads settings from this solution's azd environment
+├── requirements.txt              Python packages (Locust pinned to the engines' version)
+├── azure.yaml                    azd project: infra plus the shared app's api and worker
+└── infra/
+    ├── main.bicep                resource group, RequestHub platform (app/infra), load testing, reporting
+    ├── loadtest-identities.bicep the requester and approver identities
+    ├── loadtesting.bicep         Azure Load Testing, its roles, the identities' RequestHub app roles
+    ├── reporting.bicep           the Logic App, its action group, and its two read roles
+    ├── logicapp.json             the Logic App workflow: wait for the verdict, build the report, post to GitHub
+    ├── report.kql                the report: criteria, client and server tables, requests that carried the delay
+    ├── bicepconfig.json          Microsoft Graph extension, for the app role assignments
+    └── main.parameters.json
 ```
 
 The app lives in [`app/`](../../app/README.md). This solution deploys its own copy with two extra settings: the API accepts the load-test identities, and lets the requester identity delete the requests it submitted (`POST /api/admin/load-test/cleanup`).
@@ -74,10 +74,14 @@ The app lives in [`app/`](../../app/README.md). This solution deploys its own co
 ## Prerequisites
 
 - An Azure subscription where you can create resource groups, Microsoft Entra app registrations, and role assignments, for example as Owner.
-- A region that allows PostgreSQL Flexible Server and Azure Load Testing (the examples use `centralus`).
-- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) with the `load` and `application-insights` extensions, [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), and the [GitHub CLI](https://cli.github.com/) signed in as a repository admin. The hooks create a GitHub environment and its secrets.
-- Python 3.12 or 3.13, and PowerShell 7 for the commands below.
+- A region that offers PostgreSQL Flexible Server, Azure Load Testing, and the Observability Agent (the examples use `centralus`).
+- Access to Azure Copilot in your tenant, for the Observability Agent step.
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) with the `load` extension (in preview; tested with 2.1.0), the [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), and the [GitHub CLI](https://cli.github.com/) for the Issue checks.
+- A GitHub account that can open Issues in the repository, to create the token Azure posts with.
+- Python 3.12 or later, and PowerShell 7 for the commands below.
 - For a local run of the journey: the [.NET 10 SDK](https://dotnet.microsoft.com/download) and PostgreSQL (see [`app/README.md`](../../app/README.md#run-it-locally)).
+
+While deployed, the resource group costs about $1 to $2 a day (Container Apps, PostgreSQL Burstable, Container Registry Basic, Log Analytics), plus about $0.25 per test run: Azure Load Testing bills at least 10 virtual users for 10 minutes per run (1.67 virtual user hours). The Logic App and the action group add a few cents a month.
 
 ## Set up
 
@@ -87,20 +91,42 @@ Run once, from this folder:
 cd solutions/04-test-microsoft
 pip install -r requirements.txt
 az extension add --name load --upgrade
-az extension add --name application-insights --upgrade
 az login
 azd auth login
 azd env new ai-sdlc-test --location centralus
 azd up
 ```
 
-`azd up` takes about 15 minutes and ends with `SUCCESS`. Between provisioning and deploying, its hook prints `GitHub environment 'test-microsoft' in <owner>/<repo>: 11 secrets, 1 variable set.` It creates resource group `rg-ai-sdlc-test` with:
+`azd up` takes about 15 minutes and ends with `SUCCESS`. It creates resource group `rg-ai-sdlc-test` with:
 
 - **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep) and **the app** (API with web UI, and the notification worker), built in the registry, so Docker is not needed. You get every RequestHub role.
-- **Azure Load Testing** with two managed identities: `id-lt-requester-*` (RequestHub Requester) and `id-lt-approver-*` (RequestHub Approver). You and the GitHub Actions identity get **Load Test Contributor**; the Load Testing resource reads the app's metrics for its dashboard.
-- **GitHub environment `test-microsoft`**, created by the hooks. It holds the OIDC sign-in values and every resource name the workflow reads as secrets; the resource group name is its only variable. The workflow's identity may also update the API container app (for the slowdown rehearsal) and read Application Insights.
+- **Azure Load Testing** with two managed identities: `id-lt-requester-*` (RequestHub Requester) and `id-lt-approver-*` (RequestHub Approver). You get **Load Test Contributor**; the Load Testing resource reads the app's metrics for its dashboard.
+- **The reporting path**: an action group and a Logic App, whose identity may read test runs and the API's telemetry.
 
-To confirm the app and your access work, run `python load_test.py cleanup`. It prints `Requests in RequestHub: 24 before, 24 after`.
+Its postprovision hook, `python sync_test.py setup`, checks the scenario against the guardrails in [`sync_test.py`](sync_test.py) and copies it into Azure Load Testing. It prints:
+
+```text
+PASS loadtest/requesthub-journey.yaml: criteria name real requests, thresholds and workload within guardrails, ...
+Test 'requesthub-journey': created from loadtest/ (rendered to out/loadtest.yaml).
+Notification rule 'runs-to-github': created; every finished run goes to the Logic App, which reports it to GitHub.
+Schedule 'weekday-evenings': created for weekdays at 22:00 UTC, and paused. ...
+```
+
+When a change to `loadtest/` merges, run `azd provision` (about 5 minutes), or only `python sync_test.py setup` (about a minute), to apply it. A change that breaks a guardrail stops there and never reaches Azure; run `python sync_test.py check` before you open the pull request.
+
+### Let Azure post to GitHub (once, by a person)
+
+The Logic App posts with a token that you create, for this repository only:
+
+1. On GitHub, open **Settings › Developer settings › Personal access tokens › Fine-grained tokens › Generate new token**. Set the expiration (for example 90 days), the resource owner that owns this repository, **Repository access: Only select repositories** with this repository, and **Repository permissions › Issues: Read and write**. GitHub adds Metadata: Read-only on its own. Nothing else.
+2. In this folder:
+
+   ```powershell
+   azd env set GITHUB_ISSUES_TOKEN (Read-Host -MaskInput 'GitHub token')
+   azd provision
+   ```
+
+The token becomes a secure parameter of the Logic App: the Logic App's definition never returns it, and the actions that use it hide their inputs in the run history. Issues it opens show you as the author, and their text says that Azure wrote them. Until a token is set, the Logic App still builds every report, and its run history says *No GitHub token configured*. The Logic Apps GitHub connector isn't used because its sign-in asks for access to every repository and to the organization.
 
 ## Before each session
 
@@ -113,76 +139,82 @@ About 5 minutes, from `solutions/04-test-microsoft`.
    $pg = az postgres flexible-server list -g rg-ai-sdlc-test --query "[0].name" -o tsv
    az postgres flexible-server show -g rg-ai-sdlc-test -n $pg --query state -o tsv   # Ready
    python slowdown.py status                                                       # no slowdown configured
-   python load_test.py cleanup                                                     # 24 before, 24 after
    gh issue list --label load-test --state open --json number --jq length          # 0
+   $lt = azd env get-value LOAD_TEST_NAME
+   az load trigger schedule show --load-test-resource $lt -g rg-ai-sdlc-test --trigger-id weekday-evenings --query state -o tsv   # Paused
    ```
 
-   ![The starting-state checks: the PostgreSQL server is Ready, the API runs without a slowdown, cleanup finds 24 requests before and after, and no load-test Issue is open](images/00-starting-state.png)
+   ![The starting-state checks: the PostgreSQL server is Ready, the API runs without a slowdown, no load-test Issue is open, and the weekday schedule is paused](images/00-starting-state.png)
 
    - **The database is not `Ready`:** start it with `az postgres flexible-server start -g rg-ai-sdlc-test -n $pg`, which takes 3 to 5 minutes. A tenant policy can stop the server on a schedule, and the API then fails its readiness probe.
    - **A slowdown is configured:** run `python slowdown.py off` (1 to 3 minutes).
-   - **Cleanup deletes requests:** an earlier session left its data behind. That's fine; the count after cleanup is what matters.
-   - **A `load-test` Issue is open:** close it with `gh issue close <number>`, so step 5 opens a fresh one.
+   - **A `load-test` Issue is open:** close it with `gh issue close <number>`, so step 6 opens a fresh one.
+   - **The token:** in the portal, open the Logic App (resource group `rg-ai-sdlc-test` › the Logic App › **Overview** › **Run history**). If its last run failed at a GitHub step, the token expired or was revoked: create a new one (see [Set up](#let-azure-post-to-github-once-by-a-person)).
 
-2. **Open in advance.** A PowerShell 7 terminal in this folder. In the browser, signed in: the Azure portal on resource group `rg-ai-sdlc-test` › the Load Testing resource › **Tests** › `requesthub-journey`, and the repository's **Actions** tab on **Test · Microsoft · load test RequestHub**. In your editor: [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml), [`loadtest/locustfile.py`](loadtest/locustfile.py), and [`.github/workflows/test-microsoft-load.yml`](.github/workflows/test-microsoft-load.yml).
+2. **Open in advance.** In the browser, signed in: the Azure portal on resource group `rg-ai-sdlc-test` › the Load Testing resource › **Tests** › `requesthub-journey`; the Logic App's **Run history**; and the Application Insights resource › **Logs** with the **Agent** toggle on (close the Queries hub). The repository's Issues, filtered by the `load-test` label. A PowerShell 7 terminal in this folder. In your editor: [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml) and [`loadtest/locustfile.py`](loadtest/locustfile.py).
 
-3. **Start early.** Every load test run takes 10 to 12 minutes, most of it waiting. If time is short, start step 1 about 15 minutes before you begin and show its finished dashboard in step 2 instead of the live one. Start step 7 when you open questions.
+3. **Start early.** A run reaches its verdict about 8 minutes after you start it: 3 to start the engine, 2 of load, about 3 to compute the results. The Logic App reports it about 2 minutes later. Start step 2 about 10 minutes before you show it, and start step 8 when you open questions.
 
    | Step | Takes | Where the time goes |
    | --- | --- | --- |
-   | 1. Baseline run | 10 to 12 minutes | 3 to start the engine, 2 of load, about 2 to finish, up to 5 for Application Insights |
+   | 2. Baseline run | about 8 minutes | engine start, 2 minutes of load, results |
    | 4. Slowdown on | 1 to 3 minutes | a new API revision rolls out |
-   | 5. Workflow run | 12 to 13 minutes | the same run, from GitHub Actions |
-   | 7. Slowdown off, passing run | 11 to 15 minutes | 1 to 3 for the revision, 10 to 12 for the run |
-   | 8. Cleanup | under 1 minute | |
+   | 5. Run again | about 8 minutes | the same run |
+   | 6. Issue opens | about 2 minutes after the verdict | the notification, the Logic App waits for the verdict and telemetry |
+   | 7. AI explains | about 5 minutes | about a minute per question to the Observability Agent |
+   | 8. Fix and confirm | about 12 minutes | 1 to 3 for the revision, about 8 for the run, about 2 for the Issue to close |
 
-   Live from start to finish, the demo takes 40 to 50 minutes; with step 1 started early and step 7 during questions, about 25.
+   Live from start to finish, the demo takes about 45 minutes; with step 2 started early and step 8 during questions, about 30.
 
 ## Run the demo
 
 Run the commands from `solutions/04-test-microsoft`.
 
-### 1. Start the baseline run
-
-*10 to 12 minutes. Go on to step 2 while it runs.*
-
-```powershell
-python load_test.py run --open
-```
-
-The script writes the test configuration for your deployment to `out/loadtest.yaml`, updates the test in Azure Load Testing, starts a run, opens its dashboard in your browser, and prints each state: `PROVISIONING`, then `EXECUTING` after about 3 minutes, then `DONE`.
-
-![The terminal during the baseline run: test requesthub-journey updated, run run-20261028-175809 started with 120 seconds of load, its dashboard opened in the portal, EXECUTING at 177 seconds, DONE at 413 seconds, and the result PASSED](images/01-baseline-run.png)
-
-**Point out:** no credential appears anywhere. The engines sign in as two managed identities that exist only for this test.
-
-### 2. Show the test while the engine starts
-
-*About 5 minutes.*
-
-Open [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml): 10 users, 2 minutes, one journey per user every 6 seconds, and five criteria, for example *team queue p95 above 1,000 ms fails the run*. Then [`loadtest/locustfile.py`](loadtest/locustfile.py): requester and approver virtual users, each signed in with a managed identity token.
-
-![loadtest/requesthub-journey.yaml on GitHub with lines 40 to 47 highlighted: the failure criteria, an error rate above 1 percent, team-queue and my-requests p95 above 1,000 ms, and submit and decide p95 above 1,500 ms](images/02-test-definition.png)
-
-Once the run is `EXECUTING`, switch to the dashboard that `--open` opened. Client-side metrics fill in every few seconds, with the API's server-side metrics below them; the criteria get their verdict when the run completes.
-
-![The run's dashboard while it executes: 10 virtual users, 90th percentile response times between 20 and 60 ms, about 4.6 requests per second, and no errors. Test criteria wait for the run to complete](images/02-live-dashboard.png)
-
-**Point out:** the pass/fail criteria are a few lines of YAML in the repository, reviewed in pull requests like any code.
-
-### 3. Read the baseline
+### 1. Show the test in Azure
 
 *About 2 minutes.*
 
-When the run is done, the script reads Application Insights for the same window and prints the report, which it also saves in `out/report.md`. It says **PASSED** and *Accepted*. Every criterion is met, for example team queue p95 24 ms against 1,000 ms, with no errors in 589 requests and the 401 and 403 checks behaving. The server-side counts run lower than the client's because Application Insights samples at five traces per second by default.
+In the Azure portal, open resource group `rg-ai-sdlc-test` › the Load Testing resource › **Tests** › `requesthub-journey`. The test is the Locust journey from the repository, with its schedule (weekdays, paused) and every run so far.
 
-![The baseline report in the terminal: PASSED and Accepted; the criteria table with team-queue p95 24 ms against 1,000 ms; client-side and server-side tables; and what was tested: 10 virtual users, the 24 seeded requests, Container Apps with PostgreSQL Burstable in Central US](images/03-baseline-report.png)
+![The test page in Azure Load Testing: RequestHub request-and-approval journey, test ID requesthub-journey, type Locust; the Weekday evenings schedule, paused; and the test runs, newest first](images/01-test-in-azure.png)
 
-The dashboard shows the same verdict:
+Then open **Settings › Notifications**: one rule sends every finished run of the test to an action group, which calls the Logic App.
 
-![The baseline run in the Azure Load Testing dashboard: Passed and test criteria validated, 589 requests, 41 ms 90th percentile response time, 0 percent errors, a Get insights button for the AI summary, and all five criteria passed](images/03-baseline-dashboard.png)
+![The Load Testing resource's Notifications page: the rule Send finished runs to the Logic App, scoped to the test, with its action group](images/01-notification-rule.png)
 
-**Point out:** the report names the load, data, region, and compute next to the numbers, so nobody reads 10 users as a capacity claim.
+In your editor, show [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml): 10 users, 2 minutes, one journey per user every 6 seconds, and five criteria, for example *team queue p95 above 1,000 ms fails the run*.
+
+**Point out:** the test is code in the repository, reviewed like any change, and `azd provision` applies it. From there, Azure runs it, judges it, and reports it. There is no pipeline to maintain.
+
+### 2. Run the baseline
+
+*About 8 minutes to the verdict. Go on to talk about the journey while it runs.*
+
+On the test page, select **Run**, then **Run** on the confirmation pane. Or, from the terminal, give the run a name:
+
+```powershell
+$lt = azd env get-value LOAD_TEST_NAME
+az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id requesthub-journey `
+  --test-run-id "baseline-$(Get-Date -Format yyyyMMdd-HHmmss)" --display-name "Baseline" --no-wait
+```
+
+Open the run from the test page. Its engine starts in about 3 minutes, then the client-side metrics fill in every few seconds, with the API's server-side metrics below them.
+
+![The Baseline run's dashboard while it executes: 10 virtual users, 90th percentile response times between 20 and 50 ms, about 5 requests per second in total, and no errors. The AI summary and the test criteria wait for the run to complete](images/02-live-dashboard.png)
+
+**Point out:** no credential appears anywhere. The engines sign in as two managed identities that exist only for this test, and RequestHub checks their roles like anyone else's.
+
+### 3. Read the baseline
+
+*About 1 minute.*
+
+When the run completes, the dashboard shows the verdict: **Passed**, every criterion validated.
+
+![The Baseline run: Passed, test criteria validated; 587 requests, a 39 ms 90th percentile response time, 0 percent errors, a Get insights button for the AI summary, and all five criteria passed, for example team-queue p95 23 ms against 1,000 ms](images/03-baseline-dashboard.png)
+
+About 2 minutes later the Logic App reports the run too. With no Issue open, a passing run posts nothing.
+
+**Point out:** the criteria give the verdict, not someone reading a chart.
 
 ### 4. Ship a slowdown
 
@@ -192,86 +224,92 @@ The dashboard shows the same verdict:
 python slowdown.py on
 ```
 
-This sets `Faults__QueueDelayMs=1500` and `Faults__ExpiresAtUtc` (30 minutes ahead) on the API, which rolls out a new revision. The script waits until the revision takes all traffic, then times three calls to the request list from your machine. That time includes your network, so look at the jump, not the absolute number.
+This sets `Faults__QueueDelayMs=1500` and `Faults__ExpiresAtUtc` (30 minutes ahead) on the API, which rolls out a new revision. The script waits until the revision takes all traffic, calls the request list once to warm it up, then times three more calls from your machine. That time includes a network round trip, so look at the jump, not the absolute number.
 
-![slowdown.py on: 1,500 ms injected on the request list with an expiry; API revision 0000011 takes all traffic, the previous revision 0000010 is deactivated, and GET /api/requests now takes 2,078 ms](images/04-slowdown-on.png)
+![slowdown.py on: 1,500 ms injected on the request list, expiring in 30 minutes; API revision 0000017 takes all traffic, the previous revision is deactivated, and GET /api/requests now takes 1,739 ms](images/04-slowdown-on.png)
 
 **Point out:** the fault switches itself off when it expires, even if the demo is interrupted.
 
-### 5. Let the pipeline catch it
+### 5. Run again: the gate fails
 
-*12 to 13 minutes.*
-
-```powershell
-gh workflow run test-microsoft-load.yml
-gh run watch
-```
-
-While it runs, walk through [`.github/workflows/test-microsoft-load.yml`](.github/workflows/test-microsoft-load.yml): OIDC sign-in to Azure, the step that masks tenant and resource details before the load-test steps print anything, the `azure/load-testing` action, and the report step. The run fails on its criteria. Open it with `gh run view --web`: the job summary carries the report, labelled *Expected failure*.
-
-![The failed workflow run Test · Microsoft · load test RequestHub #14 on main: its job summary says FAILED and Expected failure, because 153 server requests carried the injected delay, and the criteria table shows my-requests p95 1,590 ms and team-queue p95 1,560 ms against 1,000 ms](images/05-workflow-run.png)
-
-The workflow also opens an Issue labelled `load-test`, with the same report and a link to the run.
-
-![Issue 154, open with the status Backlog, opened by github-actions with the load-test label: GitHub run 14 missed its performance criteria in the linked workflow run, followed by the same report and criteria table](images/05-issue.png)
-
-**Point out:** the report names the cause. Its first lines say 153 server requests carried the injected delay, and the server-side table further down the job summary shows that's every `GET /api/requests` Application Insights recorded. So the run is labelled an expected failure, not acceptance.
-
-### 6. Read the failure in Azure Load Testing
-
-*About 3 minutes.*
-
-Open the run in the Azure portal: resource group `rg-ai-sdlc-test` › the Load Testing resource › **Tests** › `requesthub-journey` › **GitHub run N (workflow_dispatch)**. Or from the terminal, which also prints the report again:
+*About 8 minutes to the verdict.*
 
 ```powershell
-$id = az load test-run list --load-test-resource (azd env get-value LOAD_TEST_NAME) -g rg-ai-sdlc-test --test-id requesthub-journey --query "[0].testRunId" -o tsv
-python load_test.py report --run-id $id --open
+az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id requesthub-journey `
+  --test-run-id "slowdown-$(Get-Date -Format yyyyMMdd-HHmmss)" --display-name "After the slowdown" --no-wait
 ```
 
-The dashboard can take a minute to draw its charts. Start with the criteria: the two list requests fail, and submit, decide, and the error rate pass.
+The run completes with **Failed**: the two list requests miss their criteria, and submit, decide, and the error rate pass.
 
-![The failed run's test criteria: team-queue p95 1,560 ms and my-requests p95 1,590 ms both failed against 1,000 ms; the error rate (0 percent), submit (246 ms), and decide (89 ms) passed](images/06-failed-criteria.png)
+![The After the slowdown run's test criteria: my-requests at 1,580 ms and team-queue at 1,600 ms fail their 1,000 ms limit at the 95th percentile; decide at 92 ms and submit at 197 ms pass their 1,500 ms limit, and the error rate passes at 0 percent](images/05-failed-criteria.png)
 
-Above the statistics, **AI summary and insights** (experimental) explains the failure. In our sessions, a failed run had its summary as soon as the dashboard opened; on a run without one, such as the baseline, select **Get insights**. It ties the slow list requests to longer request durations, then reaches further: a CPU spike, "backend resource constraints", and failed HTTP requests that point to "impaired backend error handling".
+Scroll down for the client-side and server-side metrics of the same window.
 
-![The failed run with its AI summary: Failed, test criteria not met. The summary ties team-queue and my-requests response times above 1,500 ms to longer request durations, a CPU spike to 20 percent, failed HTTP requests, and backend resource constraints; the statistics show 579 requests, a 1.51 second 90th percentile, and 0 percent errors](images/06-failed-run.png)
+![Client-side and server-side metrics of the After the slowdown run: my-requests and team-queue at about 1.5 seconds at the 90th percentile from the first minute, while decide and submit stay below 200 ms, and no client errors. On the server: one replica, low CPU on the API and the database, and a few failed requests](images/05-failed-metrics.png)
 
-Scroll down for the client-side and server-side metrics of the same window. The client-side charts show five requests by default and leave out team-queue; add it from the **Requests** filter.
+**Point out:** the criteria isolate the regression to the two list requests while the rest of the journey stays fast.
 
-![Client-side and server-side metrics of the failed run: my-requests at 1.53 seconds p90 while decide, open-request, and submit stay under 70 ms, with no errors. On the server side: the API container app's requests, a 514 ms average response time, CPU peaking at 20 percent on a single replica, Application Insights' server response time averaging 489 ms with 15 failed requests, and PostgreSQL CPU and connections staying flat](images/06-failed-metrics.png)
+### 6. Azure tells the team
 
-The criteria and the metrics agree: only the two list requests are slow, the rest of the journey stays fast, and the server-side durations show the time is spent inside the API.
+*About 2 minutes after the verdict.*
 
-**Point out:** the AI summary is a lead, not a verdict; check each claim against the evidence. "5 VUs" counts the users behind a single request (5 requesters or 5 approvers); the header shows 10 virtual users. The failed HTTP requests are the journey's deliberate 403 checks: Application Insights counts a 403 as failed, while the error percentage here is 0%, and the step 5 job summary lists them under Denied (401/403), with 0 server errors. And the cause isn't resource constraints: CPU peaked at 20% on one replica, and the job summary shows every request list Application Insights recorded carried the injected delay.
+Open the Logic App's **Run history** and select the newest run. Azure Load Testing's notification rule called the action group, which called the Logic App. The Logic App waited until the run had its verdict and Application Insights had the run's last requests. It built the report from the run and the API's telemetry, found no open Issue for this test, and opened one.
 
-### 7. Fix and confirm
+**Point out:** the report proves the cause. Its verdict says 148 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (148 against 182 list requests) because under load Application Insights keeps only a sample of the API's requests. The Issue names the run and the resource group, never a host name or an id.
 
-*11 to 15 minutes: 1 to 3 for the revision, 10 to 12 for the run.*
+### 7. AI explains, people verify
+
+*About 5 minutes.*
+
+Open the failed run's dashboard. For a failed run, the **AI summary and insights** usually appear on their own about a minute after the verdict; if you see **Get insights**, select it. The AI reads the run's client-side and server-side metrics and writes a summary with key insights.
+
+![The After the slowdown run with its experimental AI summary: the two list requests above 1,500 ms suggest backend bottlenecks; Application Insights shows more failed HTTP requests and longer durations; short request-rate spikes the server couldn't absorb; and a container app that ran on only one replica](images/05-failed-run.png)
+
+Then open the Application Insights resource › **Logs**, with the **Agent** toggle on, and ask the Observability Agent a neutral question: *Why was GET /api/requests slow in the last 30 minutes?* It reasons for about a minute, runs its own KQL, and answers with where the time went.
+
+![The Observability Agent's answer to the neutral question, after 1.23 minutes: 352 GET /api/requests requests, a 1.52 second 95th percentile, and no failures; the slowdown concentrated between 19:20 and 19:25 UTC, while 180 requests at 19:10 had a 27 ms 95th percentile; the slowest request took 2.52 seconds, with a first database call of about 499 ms, and PostgreSQL was usually fast. Its interpretation: a transient wait at the start of request handling, caused by a burst](images/07-agent-where.png)
+
+Neither AI names the cause. Now the presenter asks the agent to check a hypothesis against the telemetry. The API marks every request it slows down on purpose, so ask: *In the last 30 minutes, how many GET /api/requests requests carried the custom dimension requesthub.fault.queue_delay_ms, and how did their duration compare with the requests that did not?*
+
+![The Observability Agent checks the hypothesis in 0.37 minutes: 155 requests carried the dimension and averaged 1,522.5 ms, with a 1,539.5 ms 95th percentile; 197 did not and averaged 21.3 ms, with a 58.9 ms 95th percentile; about 71 times slower, clustered around 1.5 seconds, so a consistent delay rather than outliers](images/07-agent-hypothesis.png)
+
+**Point out:** neither AI found the cause on its own, and every lead needs checking against the evidence on screen.
+
+- The summary's *failed HTTP requests* are the journey's own checks that a request from another department gets 403. The journey expects those, so the client shows 0 percent errors. Its *5 VUs peak* counts the users per request (the run had 10), RequestHub runs on Container Apps rather than App Service, and a second replica wouldn't remove a fixed 1.5 second wait.
+- The agent explained its slowest request, which was the first call to the new revision in step 4, and blamed a burst of load. Its own table shows an earlier passing run at 19:10, with the same load, at a 27 ms 95th percentile.
+- The agent confirmed the cause because the presenter supplied the hypothesis. Select **Reasoned for** to see the KQL it ran. Its 155 requests cover 30 minutes, including the four timing calls from step 4; the report's 148 count only the run's own window.
+
+AI finds leads quickly; people check them, and the criteria and the report decide.
+
+### 8. Fix and confirm
+
+*About 12 minutes: 1 to 3 for the revision, about 8 for the run, about 2 for the Issue to close.*
 
 ```powershell
 python slowdown.py off
-python load_test.py run --issue
+az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id requesthub-journey `
+  --test-run-id "fix-$(Get-Date -Format yyyyMMdd-HHmmss)" --display-name "After the fix" --no-wait
 ```
 
-![slowdown.py off rolls out API revision 0000012 without the fault and deactivates 0000011; load_test.py run --issue reports PASSED and Accepted, with team-queue p95 94 ms and my-requests p95 47 ms, and closes Issue 154](images/07-recovery.png)
+![slowdown.py off: API revision 0000018, without the slowdown, takes all traffic, the previous revision is deactivated, and GET /api/requests takes 296 ms](images/08-slowdown-off.png)
 
-**Point out:** the Issue closes itself with the passing report; nobody had to remember to follow up.
+The run passes, and the report finds no injected delay. About 2 minutes later the Logic App comments on the Issue with the passing report and closes it.
 
-### 8. Clean up the test data
+**Point out:** nobody had to remember to follow up. The Issue opened on the failure and closed itself on the next accepted run. A run that passes while the slowdown is still on, or a replay of an older run, leaves it open.
 
-*Under 1 minute.* Each run already deletes the previous run's requests before it starts. To remove the last run's requests too:
+### Optional: run it every weekday
+
+Enable the schedule the setup created, so the journey runs every weekday evening and the Logic App reports every result:
 
 ```powershell
-python load_test.py cleanup
+az load trigger schedule enable --load-test-resource $lt -g rg-ai-sdlc-test --trigger-id weekday-evenings
 ```
 
-![load_test.py cleanup: deleted 100 requests that the load-test identity submitted; requests in RequestHub went from 124 to 24, and nothing else changed](images/08-cleanup.png)
+Only enable it while the environment stays up: a run against a stopped database fails, and Azure Load Testing disables a schedule after three consecutive failures. Pause it again with `az load trigger schedule pause`.
 
-**Point out:** only load-test requests go, about 100 per run; the 24 seeded requests stay, and the audit log records every cleanup.
+### Optional: compare two runs
 
-### Optional: rehearse from GitHub alone
-
-Run the workflow with the **slowdown** input: `gh workflow run test-microsoft-load.yml -f slowdown=true`. It injects the slowdown, runs the test, and removes the slowdown even when the run fails. Pull requests that change the load test also run it and comment the report.
+On the test page, select the Baseline run and the failed run, then **Compare**: the dashboard overlays their client-side metrics.
 
 ### Optional: change the journey on your machine
 
@@ -285,61 +323,63 @@ dotnet run --project app/src/RequestHub.Api    # http://localhost:5080; leave it
 In a second terminal:
 
 ```powershell
-python .github/skills/load-scenario/check_scenario.py
 cd solutions/04-test-microsoft
+python sync_test.py check
 locust -f loadtest/locustfile.py --headless -u 4 -r 2 -t 1m -H http://localhost:5080
 ```
 
-Expect `PASS` from the check, `Cleanup: deleted ... requests owned by u-ben`, and a results table with no failures. Then run it in Azure with `python load_test.py run`, or open a pull request: the workflow runs it against the deployed app and comments the report.
+Expect `PASS` from the check, `Cleanup: deleted ... requests owned by u-ben`, and a results table with no failures. Then open a pull request; after it merges, `azd provision` applies the change in Azure.
 
 ## What to observe
 
+- **AI and orchestration in Azure.** Azure Load Testing runs and judges the test, a notification rule and a Logic App report it, and Azure's AI explains it. GitHub keeps the code, the reviews, and the Issue.
 - **A real journey, signed in, with no secret.** The engines borrow two managed identities. The API applies the same roles and department checks as for people, and the denial checks prove it under load.
 - **Pass/fail, not a chart.** The criteria are code, reviewed in pull requests. A slowdown of 1.5 seconds on one endpoint fails the run within minutes.
-- **The cause is in the same report.** Client percentiles from Azure Load Testing and server percentiles from Application Insights for the same window, including how many requests carried the injected delay.
-- **AI that explains, criteria that decide.** The dashboard's AI summary turns charts into a paragraph a team can act on. It's a lead to verify: in our run it suggested resource constraints and read the deliberate 403 checks as failures, while the report showed the injected delay. The criteria give the verdict.
-- **Honest evidence.** A failure during the rehearsal is labelled an expected failure, not acceptance. Every result names the load, data, region, and compute it ran on.
-- **Follow-up without anyone remembering.** The Issue opens on the first failure, collects later failures, and closes itself on the next pass.
-- **Nothing to leak.** Resource names live in environment secrets and are masked in logs; reports, job summaries, and Issues name runs, not hosts.
+- **AI suggests, people verify.** The run's AI summary and the Observability Agent read the same telemetry, and each offered plausible leads that the evidence on screen contradicts. A hypothesis checked against the telemetry, the criteria, and the report settle it.
+- **Follow-up without anyone remembering.** The Issue opens on the first failure, collects later failures as comments, and closes itself on the next accepted run.
+- **Least access.** The Logic App's identity can only read test runs and telemetry. Its GitHub token reaches one repository and only its Issues. The Issues name runs and the resource group, never hosts or ids.
 
 ## Reset and clean up
 
-After each demo, make sure the slowdown is off, the test data is gone, and no Issue is left open:
+After each demo, make sure the slowdown is off and no Issue is left open:
 
 ```powershell
 python slowdown.py status     # "no slowdown configured", or run: python slowdown.py off
-python load_test.py cleanup   # 24 after
 gh issue list --label load-test --state open
 ```
 
-Test runs stay in Azure Load Testing as history; the next session doesn't need them removed.
+Each run deletes the requests it submitted, before and after the load, so the 24 seeded requests are all that remains. Test runs stay in Azure Load Testing as history; the next session doesn't need them removed.
 
-When you no longer need the solution, run this in the solution folder. `azd down` removes the resource group, but not the Microsoft Entra app registration RequestHub signs in with (Entra objects live outside resource groups), and a deleted app that is not purged stops the next `azd up` from creating it again:
+When you no longer need the solution, revoke the GitHub token (**Settings › Developer settings › Fine-grained tokens**), then run this in the solution folder. `azd down` removes the resource group, but not the Microsoft Entra app registration RequestHub signs in with (Entra objects live outside resource groups), and a deleted app that is not purged stops the next `azd up` from creating it again:
 
 ```powershell
 $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
 azd down --purge
 az ad app delete --id $app
 az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
-gh api -X DELETE 'repos/{owner}/{repo}/environments/test-microsoft'
 ```
 
 ## Use it in your own repository
 
-1. Copy `loadtest/`, `load_test.py`, `azd_env.py`, the skills, the agent, and the workflow. The [Azure Load Testing extension for Visual Studio Code](https://learn.microsoft.com/azure/app-testing/load-testing/quickstart-create-run-load-tests-from-visual-studio-code) can draft a first locustfile from an `.http` file or Postman collection with Copilot.
+1. Copy `loadtest/`, `sync_test.py`, `azd_env.py`, and `infra/reporting.bicep`, `logicapp.json`, and `report.kql`. To start from a user journey rather than a script, Azure Load Testing's **Record and create scripts** records it in your browser and uses AI to suggest correlations and parameters for a JMeter test ([quickstart](https://learn.microsoft.com/azure/app-testing/load-testing/quickstart-create-run-load-tests-from-recording)).
 2. Describe your own journey in the locustfile. Name every request; the criteria refer to the names.
-3. Set criteria from what your users need (a service level objective), not from what the first run measured. Run `python .github/skills/load-scenario/check_scenario.py` and adjust its guardrails to your environment.
+3. Set criteria from what your users need (a service level objective), not from what the first run measured, and adjust the guardrails in `sync_test.py` to your environment.
 4. Give the test its own identities with only the roles the journey needs, assign them to the Load Testing resource, and accept them in your API. If you test a production-like environment, keep the cleanup scoped to the identities' own data.
-5. Point `load_test.py` at your resources through environment variables or your azd environment, and keep resource names in environment secrets. Run the workflow after each deployment.
+5. Adapt `report.kql` to your telemetry: replace `requesthub.fault.queue_delay_ms` with whatever your app records for the change you want to prove, for example a feature flag or a deployment marker.
+6. Create the fine-grained token for your repository, and run `azd provision` after every change to `loadtest/` merges.
 
 ## Troubleshooting
 
-- **`AzureCLICredential: exit status 1` during `azd up`.** azd could not get a token from the Azure CLI. Run `az account get-access-token`, then run `azd up` again.
+- **`AzureCLICredential: exit status 1` during `azd up` or `azd provision`.** azd could not get a token from the Azure CLI. Run `az account get-access-token`, then run the command again.
 - **`Not a valid reference update` for `appRoleAssignedTo` during `azd up`.** Microsoft Graph had not seen the new identities yet. Run `azd provision` again.
-- **The API times out or fails its readiness probe, and `slowdown.py status` or the cleanup cannot reach it.** The PostgreSQL server is stopped; a tenant policy can stop it on a schedule. Start it with `az postgres flexible-server start -g rg-ai-sdlc-test -n $pg` (3 to 5 minutes; `$pg` as in [Before each session](#before-each-session)).
-- **Every request fails with 401 in the test run.** The API does not accept the identities yet. Run `azd deploy api`, which applies `LOAD_TEST_CLIENT_IDS` to the API's authentication settings.
-- **`Cleanup refused (HTTP 403)` in the engine log.** The API is missing `Demo__LoadTestRequesterIds`. Run `azd deploy api`.
-- **`No server-side telemetry for this window yet`.** Application Insights receives data a minute or two late. Run `python load_test.py report --run-id <id>` again.
-- **A run stays in `PROVISIONING` far longer than the usual 3 minutes.** Azure Load Testing is waiting for engine capacity in the region; one of our runs waited 25 minutes and then ran normally. Wait, or stop the run in the Azure portal and start it again.
+- **The API times out or fails its readiness probe, and runs fail with errors.** The PostgreSQL server is stopped; a tenant policy can stop it on a schedule. Start it with `az postgres flexible-server start -g rg-ai-sdlc-test -n $pg` (3 to 5 minutes; `$pg` as in [Before each session](#before-each-session)).
+- **Every request fails with 401 in a run.** The API does not accept the identities yet. Run `azd deploy api`, which applies `LOAD_TEST_CLIENT_IDS` to the API's authentication settings.
+- **`Cleanup refused (HTTP 403)` in the engine log** (the run's **View logs**). The API is missing `Demo__LoadTestRequesterIds`. Run `azd deploy api`.
+- **A run stays in `PROVISIONING` far longer than the usual 3 minutes.** Azure Load Testing is waiting for engine capacity in the region; one of our runs waited 25 minutes and then ran normally. Wait, or stop the run and start it again.
+- **No Issue appears after a failed run.** Open the Logic App's **Run history**. No run at all: the notification rule is missing; run `python sync_test.py setup`, then check **Settings › Notifications** on the Load Testing resource. A run that ends at *No GitHub token configured*: set the token. A run that fails at a GitHub step with 401: the token expired or was revoked; create a new one. A run that fails at *Stop when the run belongs to another test* or *Stop when the notification names no run*: the call didn't come from this test's notification rule. A run that fails at *Stop when the run is not recent*: the run ended more than an hour before the call, for example a resubmitted old run; replays never post.
+- **The report says *Telemetry not available*.** Application Insights hadn't received the run's requests after about 8 minutes. Open the Logic App's run and select **Resubmit** a few minutes later, within an hour of the run's end.
+- **The Issue stays open after a passing run.** Read the Logic App's comment on the Issue. *Passed with the slowdown on*: the fault was still active, so run `python slowdown.py off` and run the test again. *Telemetry not available*: resubmit later, as above. No comment at all: the run started before the Issue was opened, for example when two runs overlapped, so it says nothing about a fix.
+- **`az load notification-rule` or `az load trigger` is not found.** Update the extension: `az extension add --name load --upgrade`.
+- **The weekday schedule shows as disabled.** Three scheduled runs in a row failed, usually because the database was stopped. Start the database, then enable the schedule again.
 - **The run's dashboard shows only a spinner.** The portal draws the dashboard after the page loads, which took up to a minute in our sessions. Wait, or select **Refresh** on the run.
 - **A button in RequestHub's web UI fails with HTTP 403 and no body.** The API was deployed before pull request #134, which lets the app's own origin post through Container Apps authentication. Run `azd deploy api` from an up-to-date `main`. The load test uses bearer tokens and is not affected.
