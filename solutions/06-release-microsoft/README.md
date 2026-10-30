@@ -134,7 +134,7 @@ The app is [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`
 
    From now on, every commit to `main` is built once and released as a candidate: in our run, a merge became a gated candidate 4 min 26 s later. To pause that, for example on a day with many merges, turn the trigger off and start builds yourself (step 2 of *Run the demo*).
 
-   Azure CLI 2.91 can't change a task's source trigger: `az acr task update` fails with "Object of type set is not JSON serializable", even to change only the trigger's status or its token. These commands change the task through Azure Resource Manager instead. Run them in this folder:
+   Azure CLI 2.91 can't change a task's source trigger: `az acr task update` fails with "Object of type set is not JSON serializable", even to change only the trigger's status or its token. So change the task through Azure Resource Manager with `Update-BuildTask`. Define it once in each terminal, in this folder; defining it changes nothing:
 
    ```powershell
    $taskUrl = "https://management.azure.com$(az acr task show --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --name build-api --query id -o tsv)?api-version=2019-06-01-preview"
@@ -144,12 +144,23 @@ The app is [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`
      $task = Invoke-RestMethod -Method Patch -Uri $taskUrl -Headers $arm -ContentType 'application/json' -Body $body
      "commit trigger: $($task.properties.trigger.sourceTriggers.status)"
    }
+   ```
+
+   Then turn the commit trigger off:
+
+   ```powershell
    Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; status = 'Disabled' }) } }
    ```
 
-   It prints `commit trigger: Disabled`. To turn the trigger back on, run the last line with `'Enabled'`.
+   Or back on:
 
-   Before the token expires, give the task a new one, pasting it when asked. It goes to Azure in the request body, never on a command line:
+   ```powershell
+   Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; status = 'Enabled' }) } }
+   ```
+
+   Each call prints the trigger's new state, for example `commit trigger: Disabled`.
+
+   Before the token expires, give the task a new one, pasting it when asked. Define `Update-BuildTask` first, as above. The token goes to Azure in the request body, never on a command line:
 
    ```powershell
    $token = Read-Host -MaskInput 'New fine-grained token for this repository'
@@ -185,7 +196,7 @@ Allow 10 minutes before the audience arrives, more if the database was stopped.
      az postgres flexible-server start -g $rg -n (az postgres flexible-server list -g $rg --query "[0].name" -o tsv)
      ```
 
-   - **Build** must read `build-api builds every commit to main`: the commit trigger is on, so merging in step 2 of *Run the demo* starts the release. If it says the trigger is off, turn it on with `Update-BuildTask` and `'Enabled'` (*Set up*, step 3), or plan to start the build by hand in that step.
+   - **Build** must read `build-api builds every commit to main`: the commit trigger is on, so merging in step 2 of *Run the demo* starts the release. If it says the trigger is off, define `Update-BuildTask` first (*Set up*, step 3), then turn the trigger on with it; or plan to start the build by hand in that step.
 
 2. **Confirm the starting state:** `python release.py status --limit 4` lists active revisions first. Expect one revision labelled `stable` with 100% of traffic, possibly one labelled `previous`, no `candidate`, and no release step running.
 
@@ -368,4 +379,4 @@ In GitHub, delete the build task's token (**Settings** → **Developer settings*
 - **A button in RequestHub fails with HTTP 403 and no body.** You are on a revision label URL, which has a different origin, or the deployment predates [#134](https://github.com/melabadi/adept-assessment-northstars/pull/134). Use the production URL; for an older deployment, run `azd deploy api` from `main`. That deploy replaces the stable revision and clears the labels; the next release labels them again.
 - **Attachment uploads return HTTP 500 and the gate's `attachment` check fails, while every revision is ready.** An Azure Policy disabled public network access on the storage account. The shared module reaches Blob storage through a private endpoint by default; run `azd provision` in this folder to add it to an environment created before that change (about 5 minutes; revisions and traffic are not touched).
 - **`LocationIsOfferRestricted` for PostgreSQL during `azd up`.** Your subscription cannot create PostgreSQL Flexible Server in that region. Create a new azd environment in another region, for example `centralus`.
-- **`az acr task update` fails with "Object of type set is not JSON serializable".** Azure CLI 2.91 can't update a task's source trigger, so the command fails even when it only changes the token or turns the trigger on or off. Change the task with `Update-BuildTask`, as in *Set up*, step 3. `az acr task create`, `show`, `run`, and `list-runs` work.
+- **`az acr task update` fails with "Object of type set is not JSON serializable".** Azure CLI 2.91 can't update a task's source trigger, so the command fails even when it only changes the token or turns the trigger on or off. Define `Update-BuildTask` first (*Set up*, step 3), then change the task with it. `az acr task create`, `show`, `run`, and `list-runs` work.
