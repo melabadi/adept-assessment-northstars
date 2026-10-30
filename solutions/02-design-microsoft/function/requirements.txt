@@ -1,0 +1,12 @@
+# Python packages of the Azure Function (Flex Consumption, Python 3.12). Flex installs them with a remote build.
+# azure-functions 2.x needs Python 3.13; 1.25.0 is the newest release for 3.12.
+azure-functions==1.25.0
+azure-ai-projects==2.9.0
+azure-identity==1.26.0
+azure-keyvault-secrets==4.12.0
+azure-search-documents==12.0.0
+azure-storage-blob==12.31.0
+openai==3.35.1
+PyJWT[crypto]==2.15.1
+pyyaml==6.0.3
+requests==2.34.2

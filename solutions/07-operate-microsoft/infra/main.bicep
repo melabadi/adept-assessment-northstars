@@ -17,12 +17,6 @@ param principalId string
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@description('GitHub repository (owner/name) whose workflow applies the SRE Agent configuration through OIDC. Set by the preprovision hook.')
-param githubRepository string = ''
-
-@description('OIDC subject prefix for repositories that use immutable subjects. Set by the preprovision hook.')
-param githubOidcSubjectPrefix string = ''
-
 @allowed(['MicrosoftFoundry', 'Anthropic'])
 @description('Model provider for the SRE Agent. MicrosoftFoundry is Azure OpenAI; the agent picks the model for each task.')
 param sreAgentModelProvider string = 'MicrosoftFoundry'
@@ -30,7 +24,6 @@ param sreAgentModelProvider string = 'MicrosoftFoundry'
 @description('The alert fires when the oldest pending notification is older than this, in seconds. A healthy worker stays under a few seconds.')
 param backlogAgeThresholdSeconds int = 60
 
-var githubEnvironment = 'operate-microsoft'
 var tags = {
   'azd-env-name': environmentName
   solution: '07-operate-microsoft'
@@ -50,9 +43,10 @@ module app '../../../app/infra/requesthub.bicep' = {
     location: location
     principalId: principalId
     principalType: principalType
-    githubRepository: githubRepository
-    githubOidcSubjectPrefix: githubOidcSubjectPrefix
-    githubEnvironment: githubEnvironment
+    // Nothing in GitHub signs in to Azure in this solution: the shared automation identity gets no federated
+    // credential, no app roles, and no registry access.
+    automationCanPushImages: false
+    automationAppRoleNames: []
     tags: tags
   }
 }
@@ -81,7 +75,6 @@ module sreAgent 'sre-agent.bicep' = {
     modelProvider: sreAgentModelProvider
     presenterPrincipalId: principalId
     presenterPrincipalType: principalType
-    automationPrincipalId: empty(githubRepository) ? '' : app.outputs.automationPrincipalId
     tags: tags
   }
 }
@@ -89,7 +82,6 @@ module sreAgent 'sre-agent.bicep' = {
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenant().tenantId
 output AZURE_RESOURCE_GROUP string = rg.name
-output GITHUB_ENVIRONMENT string = githubEnvironment
 
 // Read by app/infra/api.parameters.json and worker.parameters.json when `azd deploy` ships the container apps.
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = app.outputs.registryLoginServer
@@ -109,7 +101,7 @@ output API_CLIENT_ID string = app.outputs.apiClientId
 output API_IDENTIFIER_URI string = app.outputs.apiIdentifierUri
 output AUTOMATION_CLIENT_ID string = app.outputs.automationClientId
 
-// Read by configure_sre_agent.py, incident.py, and the GitHub workflow.
+// Read by configure_sre_agent.py and incident.py.
 output APPLICATIONINSIGHTS_NAME string = app.outputs.appInsightsName
 output LOG_ANALYTICS_NAME string = app.outputs.logAnalyticsName
 output BACKLOG_ALERT_NAME string = monitoring.outputs.alertName

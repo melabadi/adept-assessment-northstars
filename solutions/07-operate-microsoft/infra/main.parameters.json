@@ -6,8 +6,6 @@
     "location": { "value": "${AZURE_LOCATION}" },
     "principalId": { "value": "${AZURE_PRINCIPAL_ID}" },
     "principalType": { "value": "${AZURE_PRINCIPAL_TYPE=User}" },
-    "githubRepository": { "value": "${GITHUB_REPOSITORY=}" },
-    "githubOidcSubjectPrefix": { "value": "${GITHUB_OIDC_SUBJECT_PREFIX=}" },
     "sreAgentModelProvider": { "value": "${SRE_AGENT_MODEL_PROVIDER=MicrosoftFoundry}" },
     "backlogAgeThresholdSeconds": { "value": "${BACKLOG_ALERT_THRESHOLD_SECONDS=60}" }
   }
