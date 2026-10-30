@@ -8,6 +8,9 @@
 #   bash run_change.sh status    prints {"state": "running" | "done", "step": ...}
 #   bash run_change.sh summary   prints the results as JSON
 #
+# The results are also in /mnt/data/run/summary.json, which the Logic App downloads as a file, because a session cuts a
+# command's output after 4 KB. `start` puts {"state": "not-finished"} there, and the run replaces it when it ends.
+#
 # The run installs Node 22, the .NET 10 SDK, and PostgreSQL in the session, then runs what the repository's CI runs:
 # the API's integration tests (dotnet test, against PostgreSQL in the session), and the web UI's typecheck and unit
 # tests. A failed web test run is repeated once, and the summary reports both runs, so a flaky test shows up as flaky.
@@ -147,6 +150,7 @@ case "${1:-}" in
     mkdir -p "$RUN"
     if [ -f "$PROGRESS" ]; then cat "$PROGRESS"; exit 0; fi  # already started: starting twice changes nothing
     printf '{"state":"running","step":"queued"}\n' > "$PROGRESS"
+    printf '{"state":"not-finished"}\n' > "$RUN/summary.json"
     nohup bash "$0" run > "$RUN/run.out" 2>&1 &
     cat "$PROGRESS"
     ;;
