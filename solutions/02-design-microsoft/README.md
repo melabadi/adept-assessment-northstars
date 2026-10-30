@@ -2,7 +2,7 @@
 
 Design reviews stall when nobody can find the standard that applies, when two standards disagree, or when the answer depends on which team is asking. In this solution the architecture advisor runs in Azure. A Microsoft Foundry agent answers design questions only from your approved standards, retrieved through Foundry IQ, and cites the id, version, and exact sentence of every standard it uses. It says so when the standards don't answer, and lists contradictions for an architect to decide. A question filed as a GitHub issue reaches Azure through a GitHub App. An Azure Logic App asks the agent, and an Azure Function checks every citation against the standards index. Only then does the advisor comment on the issue and open a pull request with a draft architecture decision record (ADR) that a person accepts or rejects. A Foundry evaluation scores the agents on ten labelled cases with the same checks.
 
-![The advisor's answer on a GitHub issue, posted from Azure: a recommendation grounded in the approved standards, each standard's id, version, and requirement, the deterministic checks that passed, and a link to the ADR draft pull request](images/06-issue-answer.png)
+![The advisor's evaluation in the Microsoft Foundry portal: the small-team agent's run of its labelled cases, with 100% (5 of 5) on each of the five evaluators that embed the gate's checks, citations, access, grounding, abstention, and conflicts, and every case passing](images/09-evaluation-run.png)
 
 ## Where it fits
 
@@ -167,7 +167,7 @@ python setup_azure.py github
    python setup_azure.py github --check
    ```
 
-   ![python setup_azure.py github --check: GitHub is connected (GitHub App) for the repository, webhook secret stored](images/00-github-connected.png)
+   It prints `GitHub is connected (GitHub App) for <owner>/<name>; webhook secret stored: True.`
 
 The setup page refuses to run again once an app is connected (HTTP 409). Nobody downloads a private key or pastes a secret.
 
@@ -221,12 +221,12 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 | 1 | The standards are code | 1 min |
 | 2 | The knowledge bases in Foundry | 1 min |
 | 3 | The advisor agents in Foundry | 2 min |
-| 4 | Ask from GitHub | 1 min |
-| 5 | Azure orchestrates | 1 min |
-| 6 | Review in GitHub | 3 min |
+| 4 | Ask from GitHub | about 1 min |
+| 5 | Azure orchestrates | about 1 min |
+| 6 | Review in GitHub | about 3 min |
 | 7 | Trace the answer | 1 min |
 | 8 | Evaluate in Foundry | 2 min |
-| 9 | Optional: merge a change to a standard | 3 min |
+| 9 | Optional: merge a change to a standard | about 3 min |
 | | **Total** | **about 15 minutes** |
 
 ## Run the demo
@@ -257,13 +257,9 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
 5. **Azure orchestrates.** Switch to the advisor Logic App's **Runs history** and open the newest run (refresh after a few seconds). It asks the agent with its managed identity, sends the answer to the Function's gate, and, because the checks passed, creates the branch, commits the ADR draft, opens the pull request, and comments on the issue. The run takes about 30 seconds.
 
-   ![The advisor Logic App run in the Azure portal: Ask the architecture advisor, Check the answer, then Create the ADR branch, Commit the ADR draft, Open the ADR pull request, and Comment with the answer, all succeeded](images/05-logic-app-run.png)
-
    **Point out:** the gate sits between the model and GitHub. If a citation were invented, out of scope, misversioned, or misquoted, the run would take the other branch and only comment the failures.
 
 6. **Review in GitHub.** Back on the issue, the advisor's comment shows the recommendation, the standards it relied on with their versions, and the checks that passed. It links the ADR draft pull request: open it and show **Files changed**.
-
-   ![The ADR draft pull request on GitHub, opened by the GitHub App: Closes the issue, and the draft ADR with status Proposed, the evidence (agent version, response id, retrieved standards), and the operating profile](images/07-adr-pull-request.png)
 
    **Point out:** the decision stays with a person. The ADR is *Proposed*; an architect merges it to accept it or closes it to reject it, and owns every conflict and unknown it lists.
 
