@@ -2,7 +2,7 @@
 
 Most teams find out how their app behaves under load in production: a realistic load test is hard to set up, needs credentials, and produces charts nobody turns into a decision. In this solution the test lives in the repository, where people review changes to it, and everything else happens in Azure. Azure Load Testing runs RequestHub's real request-and-approval journey, signed in as two managed identities, and judges each run against pass/fail criteria. A notification rule hands every finished run to a Logic App, which writes the report and opens or closes a GitHub Issue. Two AI tools in Azure help explain a failure: the run's AI insights, and the Azure Copilot Observability Agent, which answers questions about the API's telemetry. A rehearsal slowdown on the deployed API shows the whole loop, and shows why people still check what the AI says.
 
-![The slowdown run in Azure Load Testing: Failed, test criteria not met. The experimental AI summary suggests backend constraints, more failed HTTP requests, and a container app limited to one replica; the statistics show 541 requests, a 1.52 second 90th percentile response time, and 0 percent errors](images/05-failed-run.png)
+![The slowdown run in Azure Load Testing: Failed, test criteria not met. The experimental AI summary says response times spiked on team-queue and my-requests and calls the root cause unclear because server metrics are missing; the statistics show 579 requests, a 1.51 second 90th percentile response time, and 0 percent errors](images/05-failed-run.png)
 
 ## Where it fits
 
@@ -153,16 +153,16 @@ About 5 minutes, from `solutions/04-test-microsoft`.
 
 2. **Open in advance.** In the browser, signed in: the Azure portal on resource group `rg-ai-sdlc-test` › the Load Testing resource › **Tests** › `requesthub-journey`; the Logic App's **Run history**; and the Application Insights resource › **Logs** with the **Agent** toggle on (close the Queries hub). The repository's Issues, filtered by the `load-test` label. A PowerShell 7 terminal in this folder. In your editor: [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml) and [`loadtest/locustfile.py`](loadtest/locustfile.py).
 
-3. **Start early.** A run reaches its verdict about 8 minutes after you start it: 3 to start the engine, 2 of load, about 3 to compute the results. The Logic App reports it about 2 minutes later. Start step 2 about 10 minutes before you show it, and start step 8 when you open questions.
+3. **Start early.** A run reaches its verdict 8 to 9 minutes after you start it: about 3 to start the engine, 2 of load, and 3 to 4 to compute the results. The Logic App reports it about 2 minutes later. Start step 2 about 10 minutes before you show it, and start step 8 when you open questions.
 
    | Step | Takes | Where the time goes |
    | --- | --- | --- |
-   | 2. Baseline run | about 8 minutes | engine start, 2 minutes of load, results |
+   | 2. Baseline run | 8 to 9 minutes | engine start, 2 minutes of load, results |
    | 4. Slowdown on | 1 to 3 minutes | a new API revision rolls out |
-   | 5. Run again | about 8 minutes | the same run |
+   | 5. Run again | 8 to 9 minutes | the same run |
    | 6. Issue opens | about 2 minutes after the verdict | the notification, the Logic App waits for the verdict and telemetry |
    | 7. AI explains | about 5 minutes | about a minute per question to the Observability Agent |
-   | 8. Fix and confirm | about 12 minutes | 1 to 3 for the revision, about 8 for the run, about 2 for the Issue to close |
+   | 8. Fix and confirm | about 12 minutes | 1 to 3 for the revision, 8 to 9 for the run, about 2 for the Issue to close |
 
    Live from start to finish, the demo takes about 45 minutes; with step 2 started early and step 8 during questions, about 30.
 
@@ -188,7 +188,7 @@ In your editor, show [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-jo
 
 ### 2. Run the baseline
 
-*About 8 minutes to the verdict. Go on to talk about the journey while it runs.*
+*8 to 9 minutes to the verdict. Go on to talk about the journey while it runs.*
 
 On the test page, select **Run**, then **Run** on the confirmation pane. Or, from the terminal, give the run a name:
 
@@ -226,13 +226,13 @@ python slowdown.py on
 
 This sets `Faults__QueueDelayMs=1500` and `Faults__ExpiresAtUtc` (30 minutes ahead) on the API, which rolls out a new revision. The script waits until the revision takes all traffic, calls the request list once to warm it up, then times three more calls from your machine. That time includes a network round trip, so look at the jump, not the absolute number.
 
-![slowdown.py on: 1,500 ms injected on the request list, expiring in 30 minutes; API revision 0000017 takes all traffic, the previous revision is deactivated, and GET /api/requests now takes 1,739 ms](images/04-slowdown-on.png)
+![slowdown.py on: 1,500 ms injected on the request list, expiring in 30 minutes; API revision 0000020 takes all traffic, the two previous revisions are deactivated, and GET /api/requests now takes 1,722 ms](images/04-slowdown-on.png)
 
 **Point out:** the fault switches itself off when it expires, even if the demo is interrupted.
 
 ### 5. Run again: the gate fails
 
-*About 8 minutes to the verdict.*
+*8 to 9 minutes to the verdict.*
 
 ```powershell
 az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id requesthub-journey `
@@ -241,11 +241,11 @@ az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id re
 
 The run completes with **Failed**: the two list requests miss their criteria, and submit, decide, and the error rate pass.
 
-![The After the slowdown run's test criteria: my-requests at 1,580 ms and team-queue at 1,600 ms fail their 1,000 ms limit at the 95th percentile; decide at 92 ms and submit at 197 ms pass their 1,500 ms limit, and the error rate passes at 0 percent](images/05-failed-criteria.png)
+![The After the slowdown run's test criteria: my-requests at 1,570 ms and team-queue at 1,580 ms fail their 1,000 ms limit at the 95th percentile; decide at 107 ms and submit at 106 ms pass their 1,500 ms limit, and the error rate passes at 0 percent](images/05-failed-criteria.png)
 
 Scroll down for the client-side and server-side metrics of the same window.
 
-![Client-side and server-side metrics of the After the slowdown run: my-requests and team-queue at about 1.5 seconds at the 90th percentile from the first minute, while decide and submit stay below 200 ms, and no client errors. On the server: one replica, low CPU on the API and the database, and a few failed requests](images/05-failed-metrics.png)
+![Client-side and server-side metrics of the After the slowdown run: 10 virtual users; my-requests and team-queue at about 1.55 seconds at the 90th percentile throughout, decide and submit below 120 ms after the first seconds, and no client errors. On the server: one replica, the API's CPU at most about 20 percent, the database's around 10 percent with about 11 connections, and a few failed requests, which are the journey's deliberate 403 checks](images/05-failed-metrics.png)
 
 **Point out:** the criteria isolate the regression to the two list requests while the rest of the journey stays fast.
 
@@ -255,35 +255,38 @@ Scroll down for the client-side and server-side metrics of the same window.
 
 Open the Logic App's **Run history** and select the newest run. Azure Load Testing's notification rule called the action group, which called the Logic App. The Logic App waited until the run had its verdict and Application Insights had the run's last requests. It built the report from the run and the API's telemetry, found no open Issue for this test, and opened one.
 
-**Point out:** the report proves the cause. Its verdict says 148 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (148 against 182 list requests) because under load Application Insights keeps only a sample of the API's requests. The Issue names the run and the resource group, never a host name or an id.
+![The lower half of the Logic App's run for the After the slowdown notification: Wait for the telemetry passed on its first check, then Build the report, Report, and Verdict; GitHub token configured took the True branch through Find the open load test Issues, This tests open Issues, The open Issue, and Passed or failed, and skipped No GitHub token configured. Every step succeeded](images/06-logic-app-run.png)
+
+![Issue #180, which the Logic App opened: [load-test requesthub-journey] RequestHub journey missed its performance criteria, open with status Backlog and the load-test label. Its report: After the slowdown FAILED with 10 virtual users for 119 s; Expected failure, because 151 server requests carried requesthub.fault.queue_delay_ms; my-requests at 1,570 ms and team-queue at 1,580 ms failed their 1,000 ms limit, while the error rate, decide, and submit passed](images/06-issue-opened.png)
+
+**Point out:** the report proves the cause. Its verdict says 151 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (151 against 198 list requests) because under load Application Insights keeps only a sample of the API's requests. The Issue names the run and the resource group, never a host name or an id.
 
 ### 7. AI explains, people verify
 
 *About 5 minutes.*
 
-Open the failed run's dashboard. For a failed run, the **AI summary and insights** usually appear on their own about a minute after the verdict; if you see **Get insights**, select it. The AI reads the run's client-side and server-side metrics and writes a summary with key insights.
+Open the failed run's dashboard. For a failed run, the **AI summary and insights** usually appear on their own a minute or two after the verdict; if you see **Get insights**, select it. The AI reads the run's client-side and server-side metrics and writes a summary with key insights.
 
-![The After the slowdown run with its experimental AI summary: the two list requests above 1,500 ms suggest backend bottlenecks; Application Insights shows more failed HTTP requests and longer durations; short request-rate spikes the server couldn't absorb; and a container app that ran on only one replica](images/05-failed-run.png)
+![The After the slowdown run with its experimental AI summary: a 2 minute, 5 virtual user run that failed 2 criteria, with prolonged latency spikes on team-queue and my-requests, and the root cause unclear due to missing server metrics. Its key insights: team-queue and my-requests well above 1,500 ms at the 95th percentile; denied-invalid-token, decide, and submit got faster as users ramped up; open-request, denied-other-department, and my-requests stayed fast; and the two denied checks' request rates oscillated](images/05-failed-run.png)
 
 Then open the Application Insights resource › **Logs**, with the **Agent** toggle on, and ask the Observability Agent a neutral question: *Why was GET /api/requests slow in the last 30 minutes?* It reasons for about a minute, runs its own KQL, and answers with where the time went.
 
-![The Observability Agent's answer to the neutral question, after 1.23 minutes: 352 GET /api/requests requests, a 1.52 second 95th percentile, and no failures; the slowdown concentrated between 19:20 and 19:25 UTC, while 180 requests at 19:10 had a 27 ms 95th percentile; the slowest request took 2.52 seconds, with a first database call of about 499 ms, and PostgreSQL was usually fast. Its interpretation: a transient wait at the start of request handling, caused by a burst](images/07-agent-where.png)
+![The Observability Agent's answer to the neutral question, after 1.23 minutes: the slowdown was caused by a consistent 1.5 second queue delay before GET /api/requests was processed, not by the PostgreSQL dependency. Its evidence: 151 requests at a 1,537 ms 95th percentile in the busy 5 minutes; 155 slow requests carried requesthub.fault.queue_delay_ms, at 1,500 ms; the database's 467 calls had a 5.1 ms 95th percentile and no failures; no related exceptions. Next step: find what introduces the delay](images/07-agent-where.png)
 
-Neither AI names the cause. Now the presenter asks the agent to check a hypothesis against the telemetry. The API marks every request it slows down on purpose, so ask: *In the last 30 minutes, how many GET /api/requests requests carried the custom dimension requesthub.fault.queue_delay_ms, and how did their duration compare with the requests that did not?*
+In the run shown, the agent found the property that the API sets on every request it slows down on purpose, without being told about it. Its answers vary from run to run: in an earlier rehearsal, the same question blamed a burst of load. Whichever answer you get, check the lead against the telemetry: *In the last 30 minutes, how many GET /api/requests requests carried the custom dimension requesthub.fault.queue_delay_ms, and how did their duration compare with the requests that did not?*
 
-![The Observability Agent checks the hypothesis in 0.37 minutes: 155 requests carried the dimension and averaged 1,522.5 ms, with a 1,539.5 ms 95th percentile; 197 did not and averaged 21.3 ms, with a 58.9 ms 95th percentile; about 71 times slower, clustered around 1.5 seconds, so a consistent delay rather than outliers](images/07-agent-hypothesis.png)
+![The Observability Agent's answer after 0.77 minutes: in the last 30 minutes, 155 GET /api/requests requests carried requesthub.fault.queue_delay_ms and averaged 1,521.4 ms, with a 1,538.6 ms 95th percentile; 4 did not and averaged 22.8 ms, with a 63.1 ms 95th percentile](images/07-agent-hypothesis.png)
 
-**Point out:** neither AI found the cause on its own, and every lead needs checking against the evidence on screen.
+**Point out:** the two AI tools read the same run differently, and the evidence on screen settles it.
 
-- The summary's *failed HTTP requests* are the journey's own checks that a request from another department gets 403. The journey expects those, so the client shows 0 percent errors. Its *5 VUs peak* counts the users per request (the run had 10), RequestHub runs on Container Apps rather than App Service, and a second replica wouldn't remove a fixed 1.5 second wait.
-- The agent explained its slowest request, which was the first call to the new revision in step 4, and blamed a burst of load. Its own table shows an earlier passing run at 19:10, with the same load, at a 27 ms 95th percentile.
-- The agent confirmed the cause because the presenter supplied the hypothesis. Select **Reasoned for** to see the KQL it ran. Its 155 requests cover 30 minutes, including the four timing calls from step 4; the report's 148 count only the run's own window.
+- The run's summary calls the root cause unclear "due to missing server metrics", yet the server-side metrics are on the same dashboard (step 5). Its *5 VUs* counts the users per request (the run had 10), and it lists my-requests both among the slow requests and among the ones that stayed fast.
+- The agent found the injected delay, and every number it gave matches our own KQL. Select **Reasoned for** to see the queries it ran. Its 155 requests cover 30 minutes, including the four timing calls from step 4; the 4 without the property are the timing calls from the starting-state check. The report's 151 count only the run's own window.
 
 AI finds leads quickly; people check them, and the criteria and the report decide.
 
 ### 8. Fix and confirm
 
-*About 12 minutes: 1 to 3 for the revision, about 8 for the run, about 2 for the Issue to close.*
+*About 12 minutes: 1 to 3 for the revision, 8 to 9 for the run, about 2 for the Issue to close.*
 
 ```powershell
 python slowdown.py off
@@ -291,9 +294,11 @@ az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id re
   --test-run-id "fix-$(Get-Date -Format yyyyMMdd-HHmmss)" --display-name "After the fix" --no-wait
 ```
 
-![slowdown.py off: API revision 0000018, without the slowdown, takes all traffic, the previous revision is deactivated, and GET /api/requests takes 296 ms](images/08-slowdown-off.png)
+![slowdown.py off: API revision 0000021, without the slowdown, takes all traffic, the previous revision is deactivated, and GET /api/requests takes 297 ms](images/08-slowdown-off.png)
 
 The run passes, and the report finds no injected delay. About 2 minutes later the Logic App comments on the Issue with the passing report and closes it.
+
+![Issue #180, now Done, at the Logic App's comment: After the fix passed every criterion. Closing. Its report: PASSED with 10 virtual users for 120 s; Accepted, because the journey met every criterion and no server request carried the rehearsal slowdown; my-requests at 84 ms and team-queue at 81 ms against 1,000 ms, decide at 111 ms and submit at 172 ms against 1,500 ms, and 0 percent errors](images/08-issue-closed.png)
 
 **Point out:** nobody had to remember to follow up. The Issue opened on the failure and closed itself on the next accepted run. A run that passes while the slowdown is still on, or a replay of an older run, leaves it open.
 
@@ -335,7 +340,7 @@ Expect `PASS` from the check, `Cleanup: deleted ... requests owned by u-ben`, an
 - **AI and orchestration in Azure.** Azure Load Testing runs and judges the test, a notification rule and a Logic App report it, and Azure's AI explains it. GitHub keeps the code, the reviews, and the Issue.
 - **A real journey, signed in, with no secret.** The engines borrow two managed identities. The API applies the same roles and department checks as for people, and the denial checks prove it under load.
 - **Pass/fail, not a chart.** The criteria are code, reviewed in pull requests. A slowdown of 1.5 seconds on one endpoint fails the run within minutes.
-- **AI suggests, people verify.** The run's AI summary and the Observability Agent read the same telemetry, and each offered plausible leads that the evidence on screen contradicts. A hypothesis checked against the telemetry, the criteria, and the report settle it.
+- **AI suggests, people verify.** The run's AI summary and the Observability Agent read the same run differently: the summary missed the server metrics on its own dashboard, and the agent found the injected delay, which it doesn't do every time. A lead checked against the telemetry, the criteria, and the report settle it.
 - **Follow-up without anyone remembering.** The Issue opens on the first failure, collects later failures as comments, and closes itself on the next accepted run.
 - **Least access.** The Logic App's identity can only read test runs and telemetry. Its GitHub token reaches one repository and only its Issues. The Issues name runs and the resource group, never hosts or ids.
 
