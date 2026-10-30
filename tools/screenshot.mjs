@@ -318,7 +318,7 @@ const { fix: fixText } = makeFix(items, maskGuids, [...AZURE_REGIONS]);
 
 // Page furniture that never belongs in public docs, removed on every page of these hosts.
 const HOST_CSS = {
-  'github.com': '.staffbar-container, #serverstats { display: none !important; }',
+  'github.com': '.staffbar-container, #serverstats, [class*="staffbar-module_"] { display: none !important; }',
 };
 const hostCssSource = `(() => {
   const rules = ${JSON.stringify(HOST_CSS)};
