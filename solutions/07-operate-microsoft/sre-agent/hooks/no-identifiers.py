@@ -2,12 +2,13 @@
 """Azure SRE Agent PreToolUse hook: no GitHub Issue call goes out without a person, or with an identifier in it.
 
 The agent runs this script before every tool call whose name matches the hook's matcher (the GitHub Issue tools, see
-sre-agent/agent.yaml). It reads the call as JSON on stdin and scans every key and string in `tool_input` (title, body,
-labels, comments), as written and normalized. It blocks the call when it finds a GUID or a 32-character hex id, an
-Azure host name or resource id, an e-mail address, or a resource name with a random suffix, and it blocks the GitHub
-tools the agent never uses. Otherwise it asks for a person's approval, so every Issue waits for Allow once, whatever
-the tool policy and run mode say. It never allows a call by itself, and it fails closed: unreadable or oversized input
-is blocked, and an error exits with code 2, which always blocks.
+sre-agent/agent.yaml). In this solution it is a backstop: the tool policy denies every GitHub write tool, and the
+agent drafts the incident record for a person to file. The script blocks those write tools too. For any other Issue
+tool, it reads the call as JSON on stdin and scans every key and string in `tool_input` (title, body, labels,
+comments), as written and normalized, and blocks the call when it finds a GUID or a 32-character hex id, an Azure host
+name or resource id, an e-mail address, or a resource name with a random suffix. Otherwise it asks for a person's
+approval, whatever the tool policy and run mode say. It never allows a call by itself, and it fails closed: unreadable
+or oversized input is blocked, and an error exits with code 2, which always blocks.
 
 It is deterministic (regular expressions, no model), takes time linear in the size of the input, and uses only the
 Python standard library. configure_sre_agent.py fills in SUFFIXES and DENIED_TOOLS at the end of this file, from this
@@ -120,7 +121,8 @@ def decide(event: object) -> dict:
         return block("The guard could not find the tool call's arguments (tool_input), so nothing was sent.")
     tool_name = str(event.get("tool_name") or "")
     if DENIED_TOOLS.fullmatch(tool_name):
-        return block(f"{tool_name} is not allowed: this agent never opens pull requests or runs workflows.")
+        return block(f"{tool_name} is not allowed: this agent never writes to GitHub. It drafts the incident record in "
+                     "its reply, and a person files it.")
     tool_input = event["tool_input"]
     if isinstance(tool_input, str):
         try:

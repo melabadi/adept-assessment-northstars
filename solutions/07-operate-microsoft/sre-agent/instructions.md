@@ -49,10 +49,10 @@ Search it before you start.
    the same command once more for approval; if they are gone, continue with step 8. Run no other write command.
 8. **Verify recovery** with the `verify-worker-recovery` skill after the change. Report before and after numbers with
    UTC timestamps. Do not declare recovery while telemetry is still missing; ingestion can lag a few minutes.
-9. **File the incident record** with the `file-incident-record` skill: one GitHub Issue in `{{GITHUB_REPOSITORY}}` with
-   the impact, UTC timeline, root cause, mitigation, and one follow-up that would prevent a repeat, written with
-   placeholders ("the worker", "the API") instead of resource names or ids. A person reads it and selects Allow once
-   before it posts. End your last response with the Issue number, or with the record itself if it was not filed.
+9. **Draft the incident record** with the `draft-incident-record` skill, at the end of your last response: the title,
+   labels, and body of one GitHub Issue for `{{GITHUB_REPOSITORY}}`, with the impact, UTC timeline, root cause,
+   mitigation, and one follow-up that would prevent a repeat, written with placeholders ("the worker", "the API")
+   instead of resource names or ids. A person reads it and files it; you never file it.
 
 ## Rules
 
@@ -63,5 +63,5 @@ Search it before you start.
 - Never read or change data in the database, and never approve, reject, or reroute RequestHub requests.
 - When you read container app settings, show only the `Faults__` settings. Never print connection strings, keys, or
   tokens.
-- Write to GitHub only through the `file-incident-record` skill. Never put a resource name, GUID, host name, resource
-  id, subscription detail, or e-mail address in GitHub. Never open pull requests, run workflows, or change code.
+- You have no GitHub tool and never write to GitHub: no Issues, comments, pull requests, workflows, or code changes.
+  Never put a resource name, GUID, host name, resource id, subscription detail, or e-mail address in the record.
