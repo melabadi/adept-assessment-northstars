@@ -150,6 +150,13 @@ class CodeSpans(unittest.TestCase):
     def test_line_breaks_and_table_pipes(self):
         self.assertEqual(whatif.code("a\nb\rc|d", table=True), "`a b c\\|d`")
 
+    def test_summary_table_keeps_the_verdict_column_narrow(self):
+        outcome = {"changes": [{"kind": "Create", "type": "Microsoft.Network/privateEndpoints", "name": "pe-blob-x",
+                                "leaves": {}, "expected": True}],
+                   "unexpected": [], "remaining": [], "noise": 0, "previewless": [], "baseline": True}
+        text = whatif.summary(outcome, whatif.DEFAULT_EXPECT, "rg", "intro", details=False)
+        self.assertIn("| Create | `Microsoft.Network/privateEndpoints`<br>`pe-blob-x` | ✅ expected |", text)
+
 
 class PullRequestStatus(unittest.TestCase):
     """The commit status posture/what-if never stays pending, and says what to do when it can. GitHub and Azure are fakes."""

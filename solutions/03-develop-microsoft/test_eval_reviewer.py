@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -41,7 +42,8 @@ def good_item(case: dict) -> dict:
             "_run": "test", "_status": "Succeeded"}
 
 
-def run_main(items: list[dict], *args: str) -> tuple[int, str]:
+def run_main(items: list[dict], *args: str) -> tuple[int, str, str]:
+    """Runs eval_reviewer.main on these stored results. Returns the exit code, what it printed, and report.md."""
     with tempfile.TemporaryDirectory() as folder:
         out = Path(folder)
         (out / "results.jsonl").write_text("".join(json.dumps(i) + "\n" for i in items), encoding="utf-8")
@@ -52,7 +54,8 @@ def run_main(items: list[dict], *args: str) -> tuple[int, str]:
                 code = eval_reviewer.main(["--reuse", "--local", *args])
         finally:
             eval_reviewer.OUT = saved
-    return code, stdout.getvalue() + stderr.getvalue()
+        report = (out / "report.md").read_text(encoding="utf-8") if (out / "report.md").exists() else ""
+    return code, stdout.getvalue() + stderr.getvalue(), report
 
 
 class GraderTests(unittest.TestCase):
@@ -75,19 +78,36 @@ class GraderTests(unittest.TestCase):
 
 class ReportingTests(unittest.TestCase):
     def test_every_case_passing_exits_0(self):
-        code, out = run_main([good_item(c) for c in CASES])
+        code, out, _ = run_main([good_item(c) for c in CASES])
         self.assertEqual(code, 0, out)
 
     def test_a_case_without_a_result_fails(self):
-        code, out = run_main([good_item(c) for c in CASES[1:]])
+        code, out, report = run_main([good_item(c) for c in CASES[1:]])
         self.assertEqual(code, 1, out)
-        self.assertIn(f"| #{CASES[0]['pr']} |", out)
+        self.assertRegex(out, rf"(?m)^#{CASES[0]['pr']} +{CASES[0]['kind']} +FAIL +FAIL")
         self.assertIn("no stored result", out)
+        self.assertIn(f"| #{CASES[0]['pr']} |", report)
+
+    def test_the_terminal_table_lines_up_and_report_md_stays_markdown(self):
+        code, out, report = run_main([good_item(c) for c in CASES])
+        lines = out.splitlines()
+        header = next(line for line in lines if line.startswith("PR "))
+        columns = [m.start() for m in re.finditer(r"(?<=  )\S", header)]
+        rows = [line for line in lines if re.match(r"#\d+ ", line)] + [next(line for line in lines if line.startswith("Passed"))]
+        self.assertEqual(len(rows), len(CASES) + 1)
+        for row in rows:
+            for column in columns[1:-1]:  # every check's column, between Kind and Dry run
+                self.assertEqual(row[column - 1], " ", row)
+                self.assertNotEqual(row[column], " ", row)
+        self.assertNotIn("|", out)
+        for name, (_, title) in review_graders.GRADERS.items():
+            self.assertRegex(out, rf"(?m)^{name.removeprefix('pr_review_')} +{re.escape(title)}$")
+        self.assertIn("| PR | Kind |", report)
 
     def test_a_check_that_raises_is_could_not_grade_and_exits_2(self):
         broken = [good_item(c) for c in CASES]
         broken[0]["rules"] = "{not json"
-        code, out = run_main(broken)
+        code, out, _ = run_main(broken)
         self.assertEqual(code, 2, out)
         self.assertIn("COULD NOT GRADE", out)
 

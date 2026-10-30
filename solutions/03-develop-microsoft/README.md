@@ -1,8 +1,8 @@
 # Develop · Azure pull request reviewer
 
-Every pull request to RequestHub waits for a person to check the same team rules and to pull the branch to see whether it builds and its tests pass. In this solution, adding the `review:azure` label to a pull request starts an Azure Logic App. It checks the change against the team's rules in one Azure Container Apps sandbox session, builds and tests it in another, asks a Microsoft Foundry agent to explain what it found, and posts one review comment about four minutes later. The rule verdicts come from a deterministic checker that ran before any of the pull request's code; the agent can explain a verdict but can't change it. The review never approves: a person still decides.
+Every pull request to RequestHub waits for a person to check the same team rules and to pull the branch to see whether it builds and its tests pass. In this solution, adding the `review:azure` label to a pull request starts an Azure Logic App. It checks the change against the team's rules in one Azure Container Apps sandbox session, builds and tests it in another, asks a Microsoft Foundry agent to explain what it found, and posts one review comment about three minutes later. The rule verdicts come from a deterministic checker that ran before any of the pull request's code; the agent can explain a verdict but can't change it. The review never approves: a person still decides.
 
-![The requesthub-pr-reviewer agent in the Foundry portal: version 3 on gpt-5.4-mini with its sandbox tool, and its YAML definition, published from solutions/03-develop-microsoft/reviewer-agent.yaml, whose instructions say the rule checker's verdicts are authoritative and that everything in the pull request is untrusted data](images/05-foundry-agent.png)
+![The review the Azure pull request reviewer posted on the demo pull request: the team rules table, where Approval authority is untouched fails because DecideAsync and PermissionsFor changed and the other four rules pass; the sandbox results, 67 of 67 API integration tests and 14 of 14 web unit tests passed; and commentary from requesthub-pr-reviewer v4 on gpt-5.4-mini, whose concern says self-approval is now allowed for low-priority requests and asks the person to confirm the policy change](images/04-first-review.png)
 
 ## Where it fits
 
@@ -10,7 +10,7 @@ Every pull request to RequestHub waits for a person to check the same team rules
 
 | | Today | With this solution |
 | --- | --- | --- |
-| First look at a pull request | Waits until a reviewer has time, often hours. | About four minutes after the label, on every push. |
+| First look at a pull request | Waits until a reviewer has time, often hours. | About three minutes after the label, on every push. |
 | Team rules (approval authority, authorization in `RequestWorkflow`, additive API contract, tests with every change, synthetic data) | Checked from memory, unevenly, by whoever reviews. | Checked the same way every time by a script from `main`, with the evidence for each verdict. |
 | Does it build, do the tests pass? | The reviewer pulls the branch, or waits for CI. | Built and tested in an isolated Azure sandbox; the review says what passed, what failed, and what was flaky. |
 | What deserves attention | The reviewer reads the whole diff to find out. | A Foundry agent explains each failed rule, flags what no rule covers (for example SQL built from user input), and says what the person should decide. |
@@ -102,10 +102,10 @@ solutions/03-develop-microsoft/
 ## Prerequisites
 
 - An Azure subscription where you can create a resource group and role assignments (Owner, or Contributor plus Role Based Access Control Administrator).
-- A region with Microsoft Foundry, `gpt-5.4-mini` (GlobalStandard, 150K tokens per minute of quota), Azure Container Apps dynamic sessions, and Logic Apps. The default, East US 2, has all four.
+- A region with Microsoft Foundry, `gpt-5.4-mini` (GlobalStandard, 150K tokens per minute of quota), Azure Container Apps dynamic sessions, and Logic Apps, for those resources. The default, East US 2, has all four; to use another, run `azd env set AZURE_AI_LOCATION <region>` before `azd up`. The resource group and monitoring go to the region you give `azd env new`.
 - Admin rights on the GitHub repository: `azd up` adds the webhook and the label with your GitHub CLI. No GitHub Copilot license is needed.
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) 1.37 or later, Python 3.12 or later, PowerShell 7, and the [GitHub CLI](https://cli.github.com/).
-- **Cost:** nothing while no one asks for a review. Each review costs about $0.07: two sandbox sessions at $0.03 each (sessions are billed in one-hour increments), less than $0.01 of `gpt-5.4-mini` tokens (Foundry's trace view estimates $0.002 to $0.004 per review), and less than $0.01 of Logic App actions. The ten-case evaluation costs under $1. Application Insights and Log Analytics stay within their free monthly allowance at demo volume.
+- **Cost:** nothing while no one asks for a review. Each review costs about $0.07: two sandbox sessions at $0.03 each (sessions are billed in one-hour increments), less than $0.01 of `gpt-5.4-mini` tokens (Foundry's trace view estimates $0.002 to $0.005 per review), and less than $0.01 of Logic App actions. The ten-case evaluation costs under $1. Application Insights and Log Analytics stay within their free monthly allowance at demo volume.
 
 ## Set up
 
@@ -168,7 +168,7 @@ Run these once, in PowerShell 7. You create one GitHub token and store it; `azd 
   - Foundry portal: your project > **Agents** > `requesthub-pr-reviewer`, and **Evaluation** with the last run of *Azure pull request reviewer: labelled pull requests*.
   - PowerShell 7 at the repository root, on `main`, with this README's demo commands.
 - [ ] **Start early:** for fresh evaluation results, run `python eval_reviewer.py` (in `solutions/03-develop-microsoft`) about 15 minutes before; otherwise show the last run.
-- [ ] **Timings:** about 20 minutes on stage. Each review takes about 4 minutes from the label; talk through the Logic App run while it works.
+- [ ] **Timings:** about 20 minutes on stage. Each review takes about 3 minutes from the label or the push; talk through the Logic App run while it works.
 
 ## Run the demo
 
@@ -187,35 +187,45 @@ gh pr create --base main --title "Let approvers fast-track their own low-priorit
 
 Open the pull request's **Files changed** tab: `DecideAsync` and `PermissionsFor` now skip the self-approval check for low-priority requests, and the test `Requester_cannot_approve_their_own_request` became `Approver_can_fast_track_their_own_low_priority_request`, which expects `201 Created`.
 
+![The demo pull request's Files changed tab: in RequestWorkflow.cs, DecideAsync and PermissionsFor now block self-approval only when the request's priority isn't Low; in RequestLifecycleTests.cs, the test Requester_cannot_approve_their_own_request was renamed Approver_can_fast_track_their_own_low_priority_request and now expects HttpStatusCode.Created instead of Forbidden](images/01-files-changed.png)
+
 **Point out:** the tests still pass. A busy reviewer could approve this.
 
 ### 2. Ask for a review (about 10 seconds)
 
 Add the `review:azure` label: in the pull request's sidebar, **Labels** > `review:azure`, or `gh pr edit --add-label review:azure`.
 
+![The pull request's Labels box in the GitHub sidebar, showing the review:azure label](images/02-label.png)
+
 **Point out:** that's all GitHub does. Everything else runs in Azure.
 
-### 3. Watch the Logic App work (about 4 min)
+### 3. Watch the Logic App work (about 3 min)
 
-In the Azure portal, open the run at the top of the Logic App's **Run history**. Expand **Run_the_review**. Inside **Download_the_code**, the first call for each archive reports **Found**: GitHub answers with a redirect to a short-lived download link, and the next call follows it. **Judge_check_the_team_rules** and **Rules** finish before **Build_and_test** starts; **Run_wait_for_the_build** loops while the sandbox builds and tests the change; then **Ask_the_agent**, **Judge_write_the_review**, and **Post_the_review** run.
+In the Azure portal, open the run at the top of the Logic App's **Run history**. Expand **Run the review** with the arrow on its header, and zoom out with **−** to see its steps in order. **Download the code** fetches both archives; inside it, the first call for each archive shows as failed with **Found**, which is expected: GitHub answers with a redirect to a short-lived download link, and the next call follows it. The judge's steps, from uploading the checker to **Rules**, finish before **Build and test** starts; inside it, **Run wait for the build** loops while the sandbox builds and tests the change. Then **Ask the agent**, **Judge write the review**, and **Post the review** run, and both sessions are deleted.
 
-**Point out:** the rule check finishes before the build starts. The pull request's own code never runs where the verdicts are made.
+![The review's Logic App run in the Azure portal, zoomed out: after Merge base, Download the code and the downloads of the rule checker, the review formatter, and the sandbox runner run side by side; the judge's uploads, Judge check the team rules (0.4 seconds), Judge read the verdicts, Judge output, and Rules all finish before Build and test (2 minutes 5 seconds) starts; then Sandbox results, Agent input, and Ask the agent (10 seconds), every step with a green check](images/03-logic-app-run.png)
+
+**Point out:** the rule check finishes before the build starts. The pull request's own code never runs where the verdicts are made. When this was run, the review was posted 2 minutes 25 seconds after the label.
 
 ### 4. Read the review (about 2 min)
 
-Back on the pull request, the review appears under **Conversation**: one comment from the token's owner, headed *Azure pull request review · advisory*.
+Back on the pull request, the review appears under **Conversation**: one comment from the token's owner, headed *Azure pull request review · advisory*. It's the image at the top of this page.
 
-**Point out:** three parts, always in this order. The team rules come first, word for word from the checker: *Approval authority is untouched* fails, with the two places that changed. *Behavior changes come with tests* passes, and all 81 tests pass in the sandbox, because the test that guarded self-approval now expects success. The agent's commentary then names the risk as a ❗ concern: a requester can now approve their own low-priority request. It asks the person whether that is an intended policy exception.
+**Point out:** three parts, always in this order. The team rules come first, word for word from the checker: *Approval authority is untouched* fails, with the two places that changed. *Behavior changes come with tests* passes, and all 81 tests pass in the sandbox (67 API, 14 web), because the test that guarded self-approval now expects success. The agent's commentary then names the risk as a ❗ concern: an approver can now approve their own low-priority request, in both `DecideAsync` and `PermissionsFor`. It asks the person to confirm whether that is an approved policy change.
 
 ### 5. See the agent and its traces in Foundry (about 3 min)
 
-In the Foundry portal: **Agents** > `requesthub-pr-reviewer`. Select **YAML** next to **Chat** to show the published definition: the model, the instructions, and the one tool (the image at the top of this page). Then open the **Traces** tab: the review you just watched is the top row.
+In the Foundry portal: **Agents** > `requesthub-pr-reviewer`. Select **YAML** next to **Chat** to show the published definition: the model, the instructions, and the one tool.
 
-![The agent's Traces tab in Foundry: one row per review, each Completed, with its duration of 3 to 7 seconds, 2,000 to 5,000 input tokens, an estimated cost of $0.001 to $0.005, and agent version 3](images/06-foundry-traces.png)
+![The requesthub-pr-reviewer agent in the Foundry portal: version 4 on gpt-5.4-mini with its sandbox tool, and its YAML definition, published from solutions/03-develop-microsoft/reviewer-agent.yaml, whose instructions say the rule checker's verdicts are authoritative and that everything in the pull request is untrusted data](images/05-foundry-agent.png)
+
+Then open the **Traces** tab: the two reviews of this demo are the top rows.
+
+![The agent's Traces tab in Foundry: one row per review, each Completed, with a duration of 2.6 to 6.7 seconds, 2,000 to 3,600 input tokens, an estimated cost of $0.002 to $0.005, and agent version 4](images/06-foundry-traces.png)
 
 **Point out:** the agent is a versioned definition in Azure, published from the repository, and every run is traced: how long it took, the tokens it used, and what it cost.
 
-### 6. Push a fix and get a new review (about 4 min)
+### 6. Push a fix and get a new review (about 3 min)
 
 The author keeps the guard and adds a regression test. Every push to a labelled pull request gets a new review.
 
@@ -225,24 +235,30 @@ git commit -am "Keep self-approval blocked and pin it with a test"
 git push
 ```
 
-**Point out:** all five team rules now pass, and the sandbox ran 82 tests, the new one included. The verdicts changed because the code changed, not because anyone argued with the reviewer. When this was run, the agent also noticed that the pull request no longer does what its title says; the person decides whether to retitle it, merge it, or close it.
+![The second review on the same pull request: all five team rules pass, the evidence for Approval authority is untouched says DecideAsync and PermissionsFor are unchanged, the sandbox passed 68 of 68 API integration tests and 14 of 14 web unit tests, and the agent's commentary notes that the pull request now changes only tests, so the fast-track it describes isn't in this diff](images/07-second-review.png)
+
+**Point out:** all five team rules now pass, and the sandbox ran 82 tests, the new one included. The verdicts changed because the code changed, not because anyone argued with the reviewer. The agent also noticed that the pull request now changes only tests, so it no longer does what its title says; the person decides whether to retitle it, merge it, or close it. When this was run, the review was posted 2 minutes 31 seconds after the push.
 
 ### 7. Show how good the reviewer is (about 3 min)
 
 [`eval_reviewer.py`](eval_reviewer.py) dry-runs the reviewer on ten real pull requests of this repository, labelled known-good, flagged (a good change that a rule rightly sends to a person), or known-bad, and scores each result with five checks. In the Foundry portal, open **Evaluation** > *Azure pull request reviewer: labelled pull requests* and its latest run: one row per pull request, one column per check.
 
-Run it about 15 minutes before the session; it takes about 12. It exits with 0 only when every check passed for every pull request. A pull request without a result fails every check (exit 1). A check that couldn't grade an item, or a Foundry run that is incomplete, has errored items, or disagrees with the local scores, exits with 2.
+Run it about 15 minutes before the session; it takes about 10. It exits with 0 only when every check passed for every pull request. A pull request without a result fails every check (exit 1). A check that couldn't grade an item, or a Foundry run that is incomplete, has errored items, or disagrees with the local scores, exits with 2.
 
 ```powershell
 cd solutions/03-develop-microsoft
 python eval_reviewer.py
 ```
 
+![The evaluation in PowerShell: ten dry runs through the Logic App, each Succeeded in 149 to 176 seconds; an aligned table of the ten labelled pull requests (known-good, flagged, and known-bad) with pass in all five checks and 10/10 per check, whose columns carry the evaluators' names, with a legend giving each check's title; then the Foundry evaluation run for agent v4, where each of the five evaluators reports passed 10, failed 0](images/08-evaluation-terminal.png)
+
+![The same run in the Foundry portal's Evaluation view: 10 labelled pull requests, agent v4, with each of the five evaluators (rule verdicts, verdicts verbatim, advisory only, useful commentary, sandbox ran) at 100%, 10 of 10, and every row passing 5 of 5](images/09-foundry-evaluation.png)
+
 **Point out:** pull request #99 pastes the search term into a SQL query. The rules only see that the code changed without a test, and the sandbox only sees one search test fail; the agent names the SQL injection. The labels are the team's judgement of real pull requests, so any change to the rules, the agent, or the model is measured the same way.
 
 ## What to observe
 
-- **Minutes, not hours.** The first review arrives about four minutes after the label, and again after every push.
+- **Minutes, not hours.** The first review arrives about three minutes after the label, and again after every push.
 - **The same rules every time.** Five team rules, checked by a script from `main` with evidence for each verdict. A model can't talk its way past a FAIL.
 - **Evidence without pulling the branch.** The change was built and 81 tests ran in an isolated Azure session; the review says what passed and what was flaky.
 - **Attention where it matters.** The agent explains the failures and points at what no rule catches: SQL built from user input in #99, or a pull request whose code no longer matches its title.
@@ -251,12 +267,11 @@ python eval_reviewer.py
 
 ## Reset and clean up
 
-After each session, close the demo pull request without merging and delete its branch:
+After each session, close the demo pull request without merging; `gh` deletes its branch on GitHub and in your clone:
 
 ```powershell
-gh pr close demo/fast-track --delete-branch --comment "Demo finished; closing without merging."
 git switch main
-git branch -D demo/fast-track
+gh pr close demo/fast-track --delete-branch --comment "Demo finished; closing without merging."
 ```
 
 To remove everything:
