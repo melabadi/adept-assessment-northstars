@@ -122,7 +122,7 @@ class Arm:
         _, _, action = self.call("GET", f"{self.workflow}/runs/{run}/actions/Result?{LOGIC_API}")
         link = (action or {}).get("properties", {}).get("outputsLink", {}).get("uri")
         if not link:
-            return {}
+            raise RuntimeError("the run history doesn't show the Result step's output")
         _, _, outputs = self.call("GET", link, signed=True)  # a short-lived signed link to the run's stored output
         value = outputs.get("body", outputs) if isinstance(outputs, dict) else {}
         return value if isinstance(value, dict) else {}
