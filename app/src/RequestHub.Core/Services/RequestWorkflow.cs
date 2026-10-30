@@ -253,8 +253,7 @@ public sealed partial class RequestWorkflow(
             return WorkflowError.Forbidden($"You cannot decide requests routed to {request.DepartmentId}.");
         }
 
-        // Approvers can fast-track their own low-priority requests; everything else still needs a second person.
-        if (request.RequesterId == user.Id && request.Priority != RequestPriority.Low)
+        if (request.RequesterId == user.Id)
         {
             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
         }
@@ -546,7 +545,7 @@ public sealed partial class RequestWorkflow(
         string? blocked = null;
         if (!user.HasRole(Roles.Approver)) blocked = "not_approver";
         else if (!user.CanAccessDepartment(request.DepartmentId)) blocked = "department";
-        else if (request.RequesterId == user.Id && request.Priority != RequestPriority.Low) blocked = "self_approval";
+        else if (request.RequesterId == user.Id) blocked = "self_approval";
         else if (terminal) blocked = "terminal";
 
         return new PermissionsDto(
