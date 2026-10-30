@@ -12,20 +12,20 @@ revisions so only one copy of the API keeps running.
   python slowdown.py off                     # remove the settings (a new revision without the fault)
   python slowdown.py status                  # current revision, its fault settings, and a timed call to the list
 
-After `on` or `off` the script times three calls to the request list as the signed-in Azure CLI identity, so you can
-see the effect before you run the load test. The next `azd deploy` also removes the fault, because the deployment
-template does not set it.
+After `on` or `off` the script calls the request list once as the signed-in Azure CLI identity, to warm up the new
+revision, then times three more calls on the same connection, so you can see the effect before you run the load test.
+The next `azd deploy` also removes the fault, because the deployment template does not set it.
 
 Settings come from environment variables, else from this solution's azd environment (after `azd up`):
   AZURE_RESOURCE_GROUP, API_APP_NAME, API_URL, API_IDENTIFIER_URI.
-Needs the Azure CLI signed in with rights to update the container app (you after `azd up`; in GitHub Actions the
-workflow's identity has Container Apps Contributor on the resource group).
+Needs the Azure CLI signed in with rights to update the container app (you, after `azd up`).
 
 Exit codes: 0 done, 2 configuration or service error.
 """
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import shutil
@@ -33,8 +33,7 @@ import statistics
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -112,22 +111,34 @@ def wait_for(revision: str) -> None:
 
 
 def probe() -> None:
-    """Time three calls to the request list as the signed-in Azure CLI identity."""
+    """Time the request list as the signed-in Azure CLI identity: one warm-up call, then the median of three.
+
+    The calls share one connection, so the time is the API's plus one network round trip. The first call is not timed:
+    a revision that just started answers its first calls slowly, which would hide the effect of the change.
+    """
     try:
         kind = az("account", "show", "--query", "user.type")
         scope = setting("API_IDENTIFIER_URI")
         args = ["--scope", f"{scope}/user_impersonation"] if kind == "user" else ["--resource", scope]
         token = az("account", "get-access-token", *args, "--query", "accessToken")
+        url = urllib.parse.urlsplit(setting("API_URL").rstrip("/") + "/api/requests?scope=mine&pageSize=1")
+        connection_type = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
+        connection = connection_type(url.netloc, timeout=60)
         timings = []
-        for _ in range(3):
-            request = urllib.request.Request(setting("API_URL").rstrip("/") + "/api/requests?scope=mine&pageSize=1",
-                                             headers={"Authorization": f"Bearer {token}"})
-            started = time.perf_counter()
-            with urllib.request.urlopen(request, timeout=60) as response:
+        try:
+            for call in range(4):
+                started = time.perf_counter()
+                connection.request("GET", f"{url.path}?{url.query}", headers={"Authorization": f"Bearer {token}"})
+                response = connection.getresponse()
                 response.read()
-            timings.append((time.perf_counter() - started) * 1000)
+                if response.status != 200:
+                    raise OSError(f"the API answered HTTP {response.status}")
+                if call:
+                    timings.append((time.perf_counter() - started) * 1000)
+        finally:
+            connection.close()
         print(f"GET /api/requests now takes {statistics.median(timings):,.0f} ms (median of 3 calls).")
-    except (AzError, urllib.error.URLError, OSError) as exc:
+    except (AzError, http.client.HTTPException, OSError) as exc:
         print(f"warning: could not time the request list: {exc}", file=sys.stderr)
 
 
@@ -142,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="show the current revision, its fault settings, and time the request list")
     args = parser.parse_args(argv)
     utf8_stdout()
-    # Progress lines show up as they happen, also when output goes to a log (GitHub Actions).
+    # Progress lines show up as they happen, also when output goes to a log file.
     sys.stdout.reconfigure(line_buffering=True)
 
     try:

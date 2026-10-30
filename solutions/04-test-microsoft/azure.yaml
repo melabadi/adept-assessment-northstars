@@ -1,8 +1,9 @@
 # Azure Developer CLI project for the Test · Microsoft solution. Run `azd up` from this folder.
-# It provisions infra/ (RequestHub's hosting platform from app/infra, plus Azure Load Testing and the two identities the
-# load test signs in with) and deploys the shared app: the api and worker images are built in Azure Container Registry,
-# and each `azd deploy` applies app/infra/api.bicep or worker.bicep so image and configuration ship together. The hooks
-# connect the solution to GitHub Actions.
+# It provisions infra/ (RequestHub's hosting platform from app/infra, Azure Load Testing and the two identities the load
+# test signs in with, and the Logic App that reports finished runs to GitHub) and deploys the shared app: the api and
+# worker images are built in Azure Container Registry, and each `azd deploy` applies app/infra/api.bicep or worker.bicep
+# so image and configuration ship together. The hooks find the GitHub repository for the Issues before provisioning, and
+# copy the committed load test into Azure Load Testing after it (sync_test.py).
 name: ai-sdlc-test-microsoft
 metadata:
   template: ai-sdlc-test-microsoft@1.0.0
@@ -32,14 +33,14 @@ hooks:
   preprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py prepare
+      run: python sync_test.py prepare
     posix:
       shell: sh
-      run: python3 configure_github.py prepare
+      run: python3 sync_test.py prepare
   postprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py publish
+      run: python sync_test.py setup
     posix:
       shell: sh
-      run: python3 configure_github.py publish
+      run: python3 sync_test.py setup
