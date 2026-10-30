@@ -73,7 +73,8 @@ def sandbox_spec(endpoint: str, description: str) -> dict:
                             "shellCommand": {"type": "string", "description": "A read-only bash command."},
                             "timeoutInSeconds": {"type": "integer", "minimum": 5, "maximum": 60},
                         }}}}},
-                    "responses": {"200": {"description": "The command's exit status, stdout, and stderr.",
+                    "responses": {"200": {"description": "The command's exit status, stdout, and stderr. Each output is cut "
+                                                         "after about 4,000 characters, and a cut output ends with '...'.",
                                           "content": {"application/json": {"schema": {"type": "object"}}}}},
                 }
             }

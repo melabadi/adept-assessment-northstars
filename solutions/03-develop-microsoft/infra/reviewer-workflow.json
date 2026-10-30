@@ -258,24 +258,34 @@
         },
         "Judge_check_the_team_rules": {
           "type": "Http",
-          "description": "The rule checker from main reads both trees as data. No code from the pull request has run anywhere yet.",
+          "description": "The rule checker from main reads both trees as data and writes judge.json. No code from the pull request has run anywhere yet.",
           "inputs": {
             "method": "POST",
             "uri": "@{parameters('judgePool')}/executions?api-version=2025-10-02-preview&identifier=judge-@{workflow()?['run']?['name']}",
             "headers": { "Content-Type": "application/json" },
             "body": {
-              "shellCommand": "cd /mnt/data && python3 review_rules.py --base base.tgz --head head.tgz > judge.json; status=$?; cat judge.json; exit $status",
+              "shellCommand": "cd /mnt/data && python3 review_rules.py --base base.tgz --head head.tgz > judge.json; status=$?; echo \"review_rules.py exit code $status; judge.json is $(wc -c < judge.json) bytes\"; exit $status",
               "timeoutInSeconds": 120
             },
             "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
           },
           "runAfter": { "Judge_upload_the_head": ["Succeeded"] }
         },
+        "Judge_read_the_verdicts": {
+          "type": "Http",
+          "description": "Downloads judge.json from the judge's session. A session cuts a command's output after 4 KB, so every result travels as a file.",
+          "inputs": {
+            "method": "GET",
+            "uri": "@{parameters('judgePool')}/files/judge.json/content?api-version=2025-10-02-preview&identifier=judge-@{workflow()?['run']?['name']}",
+            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
+          },
+          "runAfter": { "Judge_check_the_team_rules": ["Succeeded"] }
+        },
         "Judge_output": {
           "type": "Compose",
-          "description": "What the rule checker printed: its verdicts, and the change as a unified diff for the agent.",
-          "inputs": "@json(body('Judge_check_the_team_rules')?['result']?['stdout'])",
-          "runAfter": { "Judge_check_the_team_rules": ["Succeeded"] }
+          "description": "What the rule checker wrote: its verdicts, and the change as a unified diff for the agent.",
+          "inputs": "@json(base64ToString(body('Judge_read_the_verdicts')?['$content']))",
+          "runAfter": { "Judge_read_the_verdicts": ["Succeeded"] }
         },
         "Rules": {
           "type": "Compose",
@@ -357,22 +367,27 @@
             },
             "Run_get_the_results": {
               "type": "Http",
+              "description": "Downloads run/summary.json. run_change.sh writes a not-finished placeholder when it starts, so a build that runs out of time has one too.",
               "inputs": {
-                "method": "POST",
-                "uri": "@{parameters('runPool')}/executions?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}",
-                "headers": { "Content-Type": "application/json" },
-                "body": { "shellCommand": "bash /mnt/data/run_change.sh summary", "timeoutInSeconds": 30 },
+                "method": "GET",
+                "uri": "@{parameters('runPool')}/files/summary.json/content?api-version=2025-10-02-preview&identifier=run-@{workflow()?['run']?['name']}&path=run",
                 "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
               },
               "runAfter": { "Run_wait_for_the_build": ["Succeeded", "Failed", "TimedOut"] }
+            },
+            "Run_results": {
+              "type": "Compose",
+              "description": "The summary as text, at most 20,000 characters: the pull request's code could have written anything in that file.",
+              "inputs": "@take(base64ToString(body('Run_get_the_results')?['$content']), 20000)",
+              "runAfter": { "Run_get_the_results": ["Succeeded"] }
             }
           },
           "runAfter": { "Rules": ["Succeeded"], "Get_the_sandbox_runner": ["Succeeded"] }
         },
         "Sandbox_results": {
           "type": "Compose",
-          "description": "Reported by the pull request's own code: evidence, not a verdict.",
-          "inputs": "@string(coalesce(actions('Run_get_the_results')?['outputs']?['body']?['result']?['stdout'], ''))",
+          "description": "Reported by the pull request's own code: evidence, not a verdict. Empty when the build couldn't run.",
+          "inputs": "@string(coalesce(actions('Run_results')?['outputs'], ''))",
           "runAfter": { "Build_and_test": ["Succeeded", "Failed", "TimedOut"] }
         },
         "Agent_input": {
@@ -552,17 +567,27 @@
             "uri": "@{parameters('judgePool')}/executions?api-version=2025-10-02-preview&identifier=judge-@{workflow()?['run']?['name']}",
             "headers": { "Content-Type": "application/json" },
             "body": {
-              "shellCommand": "cd /mnt/data && python3 format_review.py --judge judge.json --input review-input.json --agent agent.json",
+              "shellCommand": "cd /mnt/data && python3 format_review.py --judge judge.json --input review-input.json --agent agent.json > review.json; status=$?; echo \"format_review.py exit code $status; review.json is $(wc -c < review.json) bytes\"; exit $status",
               "timeoutInSeconds": 60
             },
             "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
           },
           "runAfter": { "Judge_upload_the_agent_answer": ["Succeeded"] }
         },
+        "Judge_read_the_review": {
+          "type": "Http",
+          "description": "Downloads review.json from the judge's session.",
+          "inputs": {
+            "method": "GET",
+            "uri": "@{parameters('judgePool')}/files/review.json/content?api-version=2025-10-02-preview&identifier=judge-@{workflow()?['run']?['name']}",
+            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://dynamicsessions.io" }
+          },
+          "runAfter": { "Judge_write_the_review": ["Succeeded"] }
+        },
         "Review": {
           "type": "Compose",
-          "inputs": "@json(body('Judge_write_the_review')?['result']?['stdout'])",
-          "runAfter": { "Judge_write_the_review": ["Succeeded"] }
+          "inputs": "@json(base64ToString(body('Judge_read_the_review')?['$content']))",
+          "runAfter": { "Judge_read_the_review": ["Succeeded"] }
         },
         "Unless_this_is_a_dry_run": {
           "type": "If",

@@ -28,7 +28,9 @@ instructions: |
 
   Use runInSandbox when it helps, and always when the sandbox reports a failing or flaky test: read the end of that
   test's log (/mnt/data/run/api.log, web-tests.log, web-tests-rerun.log) before you comment on it, and say what the log
-  shows. You can also read code around a change (the checkout is /mnt/data/run/src) or search it with grep. Use at most
+  shows. You can also read code around a change (the checkout is /mnt/data/run/src) or search it with grep. A command's
+  output is cut after about 4,000 characters, and a cut output ends with "...": read the end of a log with tail -n 40,
+  find lines with grep -n, and read a file in parts with sed -n, rather than printing whole files. Use at most
   6 commands, each under 60 seconds. Only read: never modify files, install software, or use the network. Pass
   run_session as the identifier.
 

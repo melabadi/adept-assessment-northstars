@@ -93,6 +93,7 @@ solutions/03-develop-microsoft/
 ├── eval_reviewer.py            dry-runs the reviewer on the labelled pull requests and evaluates the results in Foundry
 ├── test_eval_reviewer.py       tests for the scoring rules (python -m unittest)
 ├── test_configure_github.py    tests for the hooks: which webhook they touch, and that they never print its URL
+├── test_reviewer_workflow.py   tests for the workflow: the judge runs first, results travel as files, reviews only comment
 ├── azd_env.py                  reads settings from the azd environment
 ├── images/                     screenshots for this README
 └── requirements.txt            Python packages for publish_reviewer_agent.py and eval_reviewer.py
@@ -269,7 +270,8 @@ To remove everything:
 Copy this folder and change:
 
 - **The rules:** [`sandbox/review_rules.py`](sandbox/review_rules.py). Each rule is a function that reads the base and head trees and returns PASS or FAIL with evidence. Keep it standard-library Python: it runs in a session without network access. Update the rule ids in [`reviewer-agent.yaml`](reviewer-agent.yaml) and the tests in [`sandbox/test_sandbox_scripts.py`](sandbox/test_sandbox_scripts.py).
-- **The build:** [`sandbox/run_change.sh`](sandbox/run_change.sh) installs your toolchain and runs your tests. Keep the `start`, `status`, and `summary` commands, and the summary's shape, which [`sandbox/format_review.py`](sandbox/format_review.py) reads.
+- **The build:** [`sandbox/run_change.sh`](sandbox/run_change.sh) installs your toolchain and runs your tests. Keep the `start` and `status` commands, and the shape of `run/summary.json`, which [`sandbox/format_review.py`](sandbox/format_review.py) reads.
+- **Results travel as files.** A session cuts a command's output after 4 KB, so the Logic App downloads `judge.json`, `run/summary.json`, and `review.json` through the sessions file API, and reads command output only for the build's short status. Put any new result in a file too.
 - **The agent:** the instructions in [`reviewer-agent.yaml`](reviewer-agent.yaml) describe RequestHub; describe your application instead. `python publish_reviewer_agent.py` publishes a new version.
 - **Where the scripts live:** the `scriptsPath` parameter in [`infra/reviewer-workflow.json`](infra/reviewer-workflow.json) (default `solutions/03-develop-microsoft/sandbox`), and `REVIEW_CHECKER_REF` (default `main`) for the branch the Logic App reads them from.
 - **The evaluation:** replace [`eval_cases.jsonl`](eval_cases.jsonl) with your own labelled pull requests.
@@ -282,6 +284,7 @@ Copy this folder and change:
 | --- | --- |
 | `azd up` or `azd hooks run postprovision` prints "Webhook: not created, because GITHUB_REVIEW_TOKEN is not set." | The token isn't in the azd environment, so the hook created no webhook and no pull request is reviewed. Create the token (step 2 of *Set up*), run `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')`, then `azd provision`. |
 | The Logic App run fails at **Get_the_pull_request** with 404 or 401. | GitHub refused the token. In a private repository, a missing or expired token returns 404. `azd hooks run postprovision` checks the token and says what's wrong. Create a new fine-grained token, then `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')` and `azd provision`. |
+| The run fails at **Judge_output**, **Rules**, or **Review**. | A script in the judge's session didn't write what the Logic App reads. The step before it shows the script's exit code and the size of the file it wrote: exit code 2 from `review_rules.py` means it couldn't read the archives. Run the checker on the same pull request on your machine: `python sandbox/review_rules.py --base <merge-base folder> --head <head folder>`. |
 | The webhook's **Recent Deliveries** show 202, but no run appears. | The trigger skipped the event: only `labeled` with `review:azure`, and `synchronize`, `reopened`, or `ready_for_review` on a pull request that carries the label, start a review. Opening a pull request with the label already set sends `labeled` too. |
 | A review says a web test failed with "Test timed out in 5000ms". | The sandbox's four vCPUs are shared by the test workers, so a test can take longer than on CI. [`run_change.sh`](sandbox/run_change.sh) gives each web test 30 seconds and repeats a failed run once, and the review calls a test that passes on the rerun flaky. |
 | `eval_reviewer.py` stops with "This operation requires the following opt-in preview feature(s): Evaluations=V1Preview". | Custom evaluators are in preview and need an opt-in header, which the script sends. If the preview changes, run with `--local`: the local scores use the same checks. |
