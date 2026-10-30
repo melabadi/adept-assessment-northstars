@@ -5,8 +5,8 @@
 //   - the requester identity (RequestHub Requester app role) submits synthetic requests and may delete its own requests;
 //   - the approver identity (RequestHub Approver app role) decides some of them, so nobody decides their own request.
 // Both identities are assigned to the Load Testing resource, which lends them to the test engines during a run. The
-// presenter and the GitHub Actions identity may create and run tests (Load Test Contributor). The resource's own identity
-// reads the app's metrics (Monitoring Reader) so the test dashboard shows server-side metrics next to the client results.
+// presenter may create and run tests (Load Test Contributor). The resource's own identity reads the app's metrics
+// (Monitoring Reader) so the test dashboard shows server-side metrics next to the client results.
 extension microsoftGraphV1
 
 param environmentName string
@@ -17,9 +17,6 @@ param principalId string
 
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
-
-@description('Object id of the GitHub Actions identity, which creates and runs tests from workflows.')
-param automationPrincipalId string
 
 @description('Client id of RequestHub\'s Microsoft Entra app registration, whose app roles the load-test identities receive.')
 param apiClientId string
@@ -61,18 +58,15 @@ resource loadTest 'Microsoft.LoadTestService/loadTests@2022-12-01' = {
   }
 }
 
-resource testers 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for tester in [
-  { id: principalId, type: principalType }
-  { id: automationPrincipalId, type: 'ServicePrincipal' }
-]: {
+resource tester 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: loadTest
-  name: guid(loadTest.id, tester.id, roles.loadTestContributor)
+  name: guid(loadTest.id, principalId, roles.loadTestContributor)
   properties: {
-    principalId: tester.id
-    principalType: tester.type
+    principalId: principalId
+    principalType: principalType
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.loadTestContributor)
   }
-}]
+}
 
 resource metricsReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(resourceGroup().id, loadTest.id, roles.monitoringReader)
