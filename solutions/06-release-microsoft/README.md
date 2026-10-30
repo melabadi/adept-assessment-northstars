@@ -117,7 +117,7 @@ The app is [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`
    ![The preflight: 17 checks pass, covering multiple-revision mode, traffic, probes, the database, production, the five jobs, the release identity's three roles, the trigger, and the workbook; the build task is not set up yet](images/00-preflight.png)
 
 3. **Create the build task** (once, about 5 minutes). A person with admin rights on the repository does this; it is the only GitHub access Azure gets.
-   1. In GitHub, open **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**. Name it `ACR Tasks · RequestHub release builds`, choose an expiration (30 days is enough for a demo), and under **Repository access** select **Only select repositories** and this repository. Under **Repository permissions**, set **Contents** to **Read-only** and **Webhooks** to **Read and write**; GitHub adds **Metadata: Read-only** itself. ACR clones the repository with it, and creates the webhook that tells it about commits to `main`.
+   1. In GitHub, open **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**. Name it `ACR Tasks · RequestHub release builds`, choose an expiration (30 days is enough for a demo), and under **Repository access** select **Only select repositories** and this repository. Under **Repository permissions**, set **Contents** to **Read-only**, **Commit statuses** to **Read-only**, and **Webhooks** to **Read and write**; GitHub adds **Metadata: Read-only** itself. That is the set ACR accepted in our setup. ACR clones the repository with the token, and creates the webhook that tells it about commits to `main`.
    2. Create the task, pasting the token when asked:
 
       ```powershell
@@ -132,17 +132,31 @@ The app is [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`
 
    3. Run `python preflight.py` again. **Build** now reads `build-api builds every commit to main`.
 
-   From now on, every commit to `main` is built once and released as a candidate. To pause that, for example on a day with many merges, turn the trigger off and start builds yourself (step 2 of *Run the demo*):
+   From now on, every commit to `main` is built once and released as a candidate: in our run, a merge became a gated candidate 4 min 26 s later. To pause that, for example on a day with many merges, turn the trigger off and start builds yourself (step 2 of *Run the demo*).
+
+   Azure CLI 2.91 can't change a task's source trigger: `az acr task update` fails with "Object of type set is not JSON serializable", even to change only the trigger's status or its token. These commands change the task through Azure Resource Manager instead. Run them in this folder:
 
    ```powershell
-   az acr task update --registry $registry --name build-api --commit-trigger-enabled false
+   $taskUrl = "https://management.azure.com$(az acr task show --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --name build-api --query id -o tsv)?api-version=2019-06-01-preview"
+   function Update-BuildTask($properties) {
+     $arm = @{ Authorization = "Bearer $(az account get-access-token --query accessToken -o tsv)" }
+     $body = @{ properties = $properties } | ConvertTo-Json -Depth 8
+     $task = Invoke-RestMethod -Method Patch -Uri $taskUrl -Headers $arm -ContentType 'application/json' -Body $body
+     "commit trigger: $($task.properties.trigger.sourceTriggers.status)"
+   }
+   Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; status = 'Disabled' }) } }
    ```
 
-   Before the token expires, give the task a new one, pasting it when asked:
+   It prints `commit trigger: Disabled`. To turn the trigger back on, run the last line with `'Enabled'`.
+
+   Before the token expires, give the task a new one, pasting it when asked. It goes to Azure in the request body, never on a command line:
 
    ```powershell
    $token = Read-Host -MaskInput 'New fine-grained token for this repository'
-   az acr task update --registry $registry --name build-api --git-access-token $token --output none
+   Update-BuildTask @{
+     step = @{ type = 'FileTask'; contextAccessToken = $token }
+     trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; sourceRepository = @{ sourceControlAuthProperties = @{ tokenType = 'PAT'; token = $token } } }) }
+   }
    Remove-Variable token
    ```
 
@@ -171,7 +185,7 @@ Allow 10 minutes before the audience arrives, more if the database was stopped.
      az postgres flexible-server start -g $rg -n (az postgres flexible-server list -g $rg --query "[0].name" -o tsv)
      ```
 
-   - **Build** must read `build-api builds every commit to main`: the commit trigger is on, so merging in step 2 of *Run the demo* starts the release. If it says the trigger is off, turn it on (`az acr task update ... --commit-trigger-enabled true`, as in *Set up*), or plan to start the build by hand in that step.
+   - **Build** must read `build-api builds every commit to main`: the commit trigger is on, so merging in step 2 of *Run the demo* starts the release. If it says the trigger is off, turn it on with `Update-BuildTask` and `'Enabled'` (*Set up*, step 3), or plan to start the build by hand in that step.
 
 2. **Confirm the starting state:** `python release.py status --limit 4` lists active revisions first. Expect one revision labelled `stable` with 100% of traffic, possibly one labelled `previous`, no `candidate`, and no release step running.
 
@@ -207,7 +221,7 @@ Commands run from this folder.
 
    **Point out:** users get the `stable` revision; `previous` is still running with 0% of traffic, ready for an instant rollback. Only the release jobs, in Azure, change this.
 
-2. **Ship a build (about 4 minutes).** Merge a pull request to `main`. With the commit trigger off, start the build yourself for the newest commit of `main`. `--context` pins the build to that commit, even if `main` moves on meanwhile, and `commit` names it:
+2. **Ship a build (about 4 minutes).** Merge a pull request to `main`. With the commit trigger off, start the build yourself for the newest commit of `main`. `--context` pins the build to that commit, even if `main` moves on meanwhile: ACR clones it with the task's stored token and tags the image with it:
 
    ```powershell
    git fetch origin main
@@ -290,7 +304,7 @@ Every step also runs from a terminal signed in with `az login`, for example `pyt
 
 ## What to observe
 
-- **Azure runs the release.** From the image push to a gated candidate waiting for a go took about 2 minutes 15 seconds: Event Grid and the Logic App started the release job within seconds of the push. No build agent was involved, and GitHub holds no Azure credential.
+- **Azure runs the release.** In our run, a merge to `main` became a gated candidate waiting for a go 4 min 26 s later. ACR started the build 3 s after the merge and built it in 1 min 49 s. Event Grid and the Logic App started the release job 2 s after the image push, and the job took 2 min 39 s. No build agent was involved, and GitHub holds no Azure credential.
 - **Users never meet an untested build.** The candidate runs with 0% of traffic until a person promotes it. The `watch` terminal counted 2,877 of 2,877 successful calls during the release, the promotion, and the drill, and 122 of 122 during the rollback; the build changed only at the promotion and the rollback.
 - **The gate checks behavior, not just "it started".** Readiness comes from the platform and covers the database. The smoke test then submits a request, retries it safely, reads it back, attaches a file and downloads the same bytes (Blob storage, which readiness does not check), confirms the requester cannot approve it (`decision.self_approval`), and reads its audit history, on the candidate's own URL.
 - **Provenance you can verify.** One image per commit, released by digest. The release job reads the commit baked into the image, and the gate fails if `/api/meta` reports a different one.
@@ -354,3 +368,4 @@ In GitHub, delete the build task's token (**Settings** → **Developer settings*
 - **A button in RequestHub fails with HTTP 403 and no body.** You are on a revision label URL, which has a different origin, or the deployment predates [#134](https://github.com/melabadi/adept-assessment-northstars/pull/134). Use the production URL; for an older deployment, run `azd deploy api` from `main`. That deploy replaces the stable revision and clears the labels; the next release labels them again.
 - **Attachment uploads return HTTP 500 and the gate's `attachment` check fails, while every revision is ready.** An Azure Policy disabled public network access on the storage account. The shared module reaches Blob storage through a private endpoint by default; run `azd provision` in this folder to add it to an environment created before that change (about 5 minutes; revisions and traffic are not touched).
 - **`LocationIsOfferRestricted` for PostgreSQL during `azd up`.** Your subscription cannot create PostgreSQL Flexible Server in that region. Create a new azd environment in another region, for example `centralus`.
+- **`az acr task update` fails with "Object of type set is not JSON serializable".** Azure CLI 2.91 can't update a task's source trigger, so the command fails even when it only changes the token or turns the trigger on or off. Change the task with `Update-BuildTask`, as in *Set up*, step 3. `az acr task create`, `show`, `run`, and `list-runs` work.
