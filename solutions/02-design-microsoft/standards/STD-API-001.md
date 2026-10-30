@@ -4,7 +4,7 @@ version: "1.0"
 title: Contract compatibility
 scope: all
 category: api
-keywords: API contract, breaking change, rename fields, versioning, backward compatibility
+keywords: API contract, OpenAPI, breaking change, rename fields, versioning, backward compatibility
 status: approved
 ---
 
