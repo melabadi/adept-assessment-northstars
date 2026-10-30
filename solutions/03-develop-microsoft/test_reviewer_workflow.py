@@ -107,5 +107,27 @@ class GitHubAccess(unittest.TestCase):
                     self.assertNotIn("githubToken", json.dumps(action["inputs"]))
 
 
+def used(action: dict) -> set[str]:
+    """The actions whose data this action's inputs use."""
+    return set(re.findall(r"(?:body|outputs|actions)\('([A-Za-z0-9_]+)'\)", json.dumps(action.get("inputs"))))
+
+
+class RunHistory(unittest.TestCase):
+    def test_the_result_is_visible_in_the_run_history(self):
+        # Logic Apps hides the inputs of an action that uses data from an action with secure inputs or outputs, and a
+        # Compose's output is its input. eval_reviewer.py reads Result, so Result must use none of that data. To be
+        # safe, data from a hidden Compose counts as hidden too.
+        hidden = {name for name, _, action in ALL if action.get("runtimeConfiguration", {}).get("secureData")}
+        while True:
+            more = {name for name, _, action in ALL if action.get("type") == "Compose" and used(action) & hidden} - hidden
+            if not more:
+                break
+            hidden |= more
+        self.assertIn("Merge_base", hidden)  # hidden in every run: it uses the merge-base call, which sends the token
+        self.assertNotIn("Result", hidden, sorted(used(BY_NAME["Result"]) & hidden))
+        for field in ("rules", "review", "agent", "sandbox"):
+            self.assertIn(field, BY_NAME["Result"]["inputs"])
+
+
 if __name__ == "__main__":
     unittest.main()
