@@ -84,7 +84,7 @@ sequenceDiagram
 ```text
 07-operate-microsoft/
 ├── README.md
-├── images/                            screenshots from a live run of the drill, used in this README
+├── images/                            screenshots from live runs of the drill, used in this README
 ├── incident.py                        the drill harness: start (fault with an expiry, synthetic requests) and reset
 ├── configure_sre_agent.py             applies sre-agent/ to the live agent, or checks it offline (--check)
 ├── azd_env.py                         reads settings from this solution's azd environment
@@ -265,7 +265,8 @@ About 5 minutes, at least 15 minutes before you present.
 
 ## Run the demo
 
-Run the commands in this folder. The screenshots of steps 2 to 7 come from one live run of this drill.
+Run the commands in this folder. The screenshots of steps 3 to 6 come from two runs of this drill, so times and numbers
+differ between some of them.
 
 1. **Show the starting state and the guardrails** (3 minutes). The workbook's **Ready for a drill** table is all
    **Ready** (see [Before each session](#before-each-session)). In the SRE Agent portal, open **Incidents**, then
@@ -277,12 +278,9 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    Python script that runs in Azure before every GitHub Issue call, and its fail mode is **Block**. Close it with
    **Cancel**.
 
-   ![The guard hook in the SRE Agent portal: Edit hook shows no-identifiers-in-github with event type Pre Tool Use, activation Always, hook type Command, tool matcher .*Issue.*|.*issue.*, timeout 30, fail mode Block, and the start of its Python script with the GUID, hex id, and host name patterns](images/01-guard-hook.png)
-
-   The same configuration is versioned in [`sre-agent/agent.yaml`](sre-agent/agent.yaml), and `azd provision`
-   applies it:
-
-   ![sre-agent/agent.yaml: the GitHub section with the Issue tool patterns, the pull request and workflow patterns it denies, and the guard hook that fails closed; then the tool policy that allows reads, asks before Azure CLI writes, and denies deletes and role, identity, PostgreSQL, network, Key Vault, and Microsoft Entra commands](images/01-agent-yaml.png)
+   The same configuration is versioned in [`sre-agent/agent.yaml`](sre-agent/agent.yaml): the GitHub Issue tool
+   patterns, the pull request and workflow patterns it denies, the guard hook, and the tool policy. `azd provision`
+   applies it.
 
    In the Azure portal, the resource group's **Access control (IAM)** shows the agent's identities with reader roles.
    The subscription's **Access control (IAM)** shows one more: Monitoring Contributor, which the platform added so the
@@ -298,8 +296,6 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    python incident.py start
    ```
 
-   ![incident.py start: the az containerapp update command that adds the fault and its expiry, the slowed revision taking over, 200 synthetic requests submitted, 360 pending notifications](images/02-start.png)
-
    It prints the exact `az containerapp update` command that adds the fault: each delivery waits 10 seconds, and the
    fault expires after 45 minutes. It waits for the slowed revision to take over, then submits 200 synthetic requests.
    Expect about 360 pending notifications. At 6 a minute, the slowed worker would need an hour to deliver them, longer
@@ -310,8 +306,6 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
 3. **Watch the alert fire** (6 minutes). In the workbook, select refresh every minute or two: the oldest pending
    notification climbs in steps, because the slowed worker reports its backlog only after each batch. The **Ready for
    a drill** table now shows the worker fault as **Injected**.
-
-   <!-- batch 2: ![Workbook during the incident: the worker fault row says Injected and Not ready, the oldest pending notification climbs past the 60-second threshold, and about 360 notifications are pending](images/03-workbook-incident.png) -->
 
    About 6 minutes after the requests, Application Insights **Alerts** lists the Sev2 alert with condition *Fired*.
    The agent has already acknowledged it.
@@ -329,7 +323,7 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    Open it. The thread starts with the alert, then the agent searches its memory and finds the runbook from
    [`knowledge/`](sre-agent/knowledge/) and earlier incidents with the same symptoms.
 
-   ![The incident thread: the Azure Monitor alert card with its severity, status, and resource group, Alert received, and the agent reading its memory: the runbook and earlier incidents with similar symptoms](images/04-investigation.png)
+   ![The incident thread: the Azure Monitor alert card with its severity, status, and resource group, Alert received, and the agent reading its memory: the runbook and an earlier incident with similar symptoms](images/04-investigation.png)
 
    It then queries the metrics, logs, and delivery spans, lists the worker's revisions and the Activity Log, and
    compares the `Faults__` settings with the previous revision. It rules out database errors, API errors, and restarts,
@@ -368,19 +362,13 @@ Run the commands in this folder. The screenshots of steps 2 to 7 come from one l
    The alert resolves about 5 minutes after the backlog drains, after three healthy one-minute evaluations. The
    workbook now tells the whole story.
 
-   ![Workbook after the drill: the oldest pending notification climbs in steps and drops to zero at the fix, and the pending count falls to zero](images/06-workbook-recovered.png)
-
    **Point out:** recovery is measured, not assumed: the agent waits for post-change data and the resolved alert.
 
 7. **Review the incident record** (1 to 2 minutes). The agent writes the record with its `file-incident-record` skill
    and calls its GitHub Issue tool to file it. The guard hook checks the text for identifiers and, finding none, hands
    the call to you: the card shows the repository, the title, the labels, and the whole body.
 
-   <!-- batch 2: ![The approval card for the GitHub Issue tool: the repository, the title Incident record: notification backlog, the labels ai-sdlc and phase:operate, and the body with the impact table, UTC timeline, root cause, mitigation with placeholders, and one follow-up](images/07-issue-approval.png) -->
-
    Read it with the audience, then select **Allow once**. The agent replies with the Issue number.
-
-   ![The GitHub Issue the agent filed: summary, impact table, UTC timeline with evidence, root cause, mitigation, and one follow-up, labeled ai-sdlc and phase:operate](images/07-issue.png)
 
    **Point out:** the record names resources by their role ("the worker", "the API"), never by name or id. Two checks
    made sure of it: a deterministic hook that would have blocked an identifier, and a person who read it.
