@@ -36,7 +36,7 @@
  *   --clip <x,y,w,h>         capture this rectangle of the viewport, in CSS pixels
  *   --full                   capture the whole scrollable page
  *   --hide <selector>        make these elements invisible, keeping their space (repeatable)
- *   --remove <selector>      remove these elements from the layout (repeatable). GitHub's staff bar is always removed.
+ *   --remove <selector>      remove these elements from the layout (repeatable). GitHub's staff bar is always removed, and avatars hidden.
  *   --width <px>, --height <px>  viewport size (default 1280 x 800)
  *   --scale <n>              device scale factor (default 2, for sharp images on high-density screens)
  *   --theme <light|dark>     color scheme the page sees (default light, so every README looks the same)
@@ -318,7 +318,8 @@ const { fix: fixText } = makeFix(items, maskGuids, [...AZURE_REGIONS]);
 
 // Page furniture that never belongs in public docs, removed on every page of these hosts.
 const HOST_CSS = {
-  'github.com': '.staffbar-container, #serverstats, [class*="staffbar-module_"] { display: none !important; }',
+  'github.com': '.staffbar-container, #serverstats, [class*="staffbar-module_"] { display: none !important; } ' +
+    'img[src*="avatars.githubusercontent.com"], img.avatar, img[data-testid="github-avatar"] { visibility: hidden !important; }',
 };
 const hostCssSource = `(() => {
   const rules = ${JSON.stringify(HOST_CSS)};
