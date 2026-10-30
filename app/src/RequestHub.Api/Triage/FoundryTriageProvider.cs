@@ -14,7 +14,7 @@ public sealed class FoundrySettings
     public const string Section = "Foundry";
     /// <summary>https://&lt;account&gt;.services.ai.azure.com/api/projects/&lt;project&gt;</summary>
     public string? ProjectEndpoint { get; set; }
-    /// <summary>Name of the prompt agent published by solutions/03-develop-microsoft/publish_triage_agent.py.</summary>
+    /// <summary>Name of the Foundry prompt agent to call. It must already exist in the project at ProjectEndpoint.</summary>
     public string AgentName { get; set; } = "requesthub-triage";
     /// <summary>Pin a version, or leave empty to use the agent's latest version.</summary>
     public string? AgentVersion { get; set; }

@@ -4,8 +4,8 @@ namespace RequestHub.Core.Triage;
 
 /// <summary>
 /// Extension point for triage recommendations. A provider proposes routing; it never approves or rejects.
-/// The base app ships <see cref="SampleRulesTriageProvider"/>. Live AI providers (for example the Foundry
-/// agent in solutions/03-develop-microsoft) implement this interface and are selected with the Triage:Provider setting.
+/// The base app ships <see cref="SampleRulesTriageProvider"/>. Live AI providers (for example FoundryTriageProvider,
+/// which calls a Microsoft Foundry agent) implement this interface and are selected with the Triage:Provider setting.
 /// </summary>
 public interface ITriageProvider
 {
