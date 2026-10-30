@@ -24,7 +24,7 @@ Whatever the format, tell the same story: one app, RequestHub, goes through ever
 | [02-design-github](solutions/02-design-github/) | 25 min | If you show the cloud agent (option B), assign it at least 30 minutes before; it takes about 12. Request Copilot's code review early: it takes 4 to 5 minutes. |
 | [02-design-microsoft](solutions/02-design-microsoft/) | 15 min | Start the evaluation in GitHub Actions about 5 minutes before its step, and open the agent's Playground in advance (it takes up to a minute to load). |
 | [03-develop-github](solutions/03-develop-github/) | 25 min | Create the Issue and assign it to Copilot at least 30 minutes before: it works for 20 to 30. Run the Copilot CLI step (about 20 minutes) beforehand too. |
-| [03-develop-microsoft](solutions/03-develop-microsoft/) | 20 min | Sign in to the app once before the audience arrives, so Microsoft Entra's account picker and permissions prompt don't appear on stage. |
+| [03-develop-microsoft](solutions/03-develop-microsoft/) | 20 min | Run the reviewer's dry run on pull request #36 (about 3 minutes) to confirm its GitHub token still works. For fresh evaluation results, start `eval_reviewer.py` about 15 minutes before. |
 | [04-test-github](solutions/04-test-github/) | 20 min | Rebuild the lab branch and assign the Issue to Copilot 30 minutes before: it works for 15 to 30. The optional Copilot CLI step takes 12 to 18 minutes. |
 | [04-test-microsoft](solutions/04-test-microsoft/) | 30 min (45 fully live) | Start the baseline Azure Load Testing run from the portal about 10 minutes before its step: a run reaches its verdict in about 8 minutes, and the Logic App reports it about 2 minutes later. Start the final passing run during questions. |
 | [05-secure-github](solutions/05-secure-github/) | 15 min | Prepare the lab and start the review and the cloud agent 30 to 45 minutes before: the review took about 6 minutes and the repair 15 in the screenshot run. |
@@ -40,7 +40,7 @@ One demo per phase, chosen for a short running time and a clear story, with the 
 
 1. **Plan** (12 min): [01-plan-github](solutions/01-plan-github/), with the cloud agent's brief pull request already open.
 2. **Design** (15 min): [02-design-microsoft](solutions/02-design-microsoft/), two operating profiles get different, grounded answers.
-3. **Develop** (20 min): [03-develop-microsoft](solutions/03-develop-microsoft/), a Foundry agent inside the app, with a guard that hands conflicts to a person.
+3. **Develop** (20 min): [03-develop-microsoft](solutions/03-develop-microsoft/), Azure reviews a risky pull request in minutes: the team's rules first, then a sandbox build, then a Foundry agent's commentary.
 4. **Test** (20 min): [04-test-github](solutions/04-test-github/), with the failing tests and the fix already pushed.
 5. **Secure** (15 min): [05-secure-github](solutions/05-secure-github/), from Copilot's review finding to a proven fix.
 6. **Release** (20 min): [06-release-microsoft](solutions/06-release-microsoft/), a bad revision is caught before it gets traffic.

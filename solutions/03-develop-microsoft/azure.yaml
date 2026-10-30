@@ -1,32 +1,14 @@
-# Azure Developer CLI project for the Develop · Microsoft solution. Run `azd up` from this folder.
-# It provisions infra/ (RequestHub's hosting platform from app/infra plus Microsoft Foundry) and deploys the shared app:
-# the api and worker images are built in Azure Container Registry, and each `azd deploy` applies app/infra/api.bicep or
-# worker.bicep so image and configuration ship together. The hooks connect the solution to GitHub Actions.
+# Azure Developer CLI project for the Develop · Microsoft solution: the Azure pull request reviewer.
+# `azd up` from this folder provisions infra/ (Microsoft Foundry, two Azure Container Apps session pools, and the Logic
+# App that runs each review). Its hooks then publish the reviewer agent to Foundry and connect the repository: the
+# review:azure label, and, once GITHUB_REVIEW_TOKEN is set, a webhook that sends pull_request events to the Logic App.
+# There is no app to deploy: the reviewer reviews RequestHub's pull requests on GitHub.
 name: ai-sdlc-develop-microsoft
 metadata:
-  template: ai-sdlc-develop-microsoft@1.0.0
+  template: ai-sdlc-develop-microsoft@2.0.0
 infra:
   provider: bicep
   path: infra
-services:
-  api:
-    project: ../../app
-    language: docker
-    host: containerapp
-    module: ../../../app/infra/api
-    docker:
-      path: ./Dockerfile
-      context: .
-      remoteBuild: true
-  worker:
-    project: ../../app
-    language: docker
-    host: containerapp
-    module: ../../../app/infra/worker
-    docker:
-      path: ./Dockerfile.worker
-      context: .
-      remoteBuild: true
 hooks:
   preprovision:
     windows:
@@ -38,7 +20,14 @@ hooks:
   postprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py publish
+      run: python publish_reviewer_agent.py; if ($LASTEXITCODE -eq 0) { python configure_github.py publish }; exit $LASTEXITCODE
     posix:
       shell: sh
-      run: python3 configure_github.py publish
+      run: python3 publish_reviewer_agent.py && python3 configure_github.py publish
+  predown:
+    windows:
+      shell: pwsh
+      run: python configure_github.py remove
+    posix:
+      shell: sh
+      run: python3 configure_github.py remove

@@ -1,4 +1,6 @@
-# Python packages for this solution's scripts and skills (Python 3.12+): pip install -r requirements.txt
+# Python packages for this solution's scripts (Python 3.12+): pip install -r requirements.txt
+# The sandbox scripts in sandbox/ use only the standard library; these are for publish_reviewer_agent.py and eval_reviewer.py.
 azure-ai-projects==2.9.0
 azure-identity==1.26.0
+openai==3.38.0
 pyyaml==6.0.3
