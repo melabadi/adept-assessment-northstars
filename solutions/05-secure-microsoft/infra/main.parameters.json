@@ -7,6 +7,6 @@
     "principalId": { "value": "${AZURE_PRINCIPAL_ID}" },
     "principalType": { "value": "${AZURE_PRINCIPAL_TYPE=User}" },
     "githubRepository": { "value": "${GITHUB_REPOSITORY=}" },
-    "githubOidcSubjectPrefix": { "value": "${GITHUB_OIDC_SUBJECT_PREFIX=}" }
+    "postureGithubToken": { "value": "${POSTURE_GITHUB_TOKEN=}" }
   }
 }
