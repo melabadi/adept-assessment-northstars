@@ -1,14 +1,21 @@
 # Versioned definition of the Foundry "architecture advisor" prompt agents (Design phase, Microsoft track).
-# advisor.py publishes one agent per operating profile (architecture-advisor-<profile>) and creates a new agent version
-# only when this file, the model deployment, or the search connection changes.
+# One agent per operating profile (architecture-advisor-<profile>). The azd hook (setup_azure.py) publishes them, and so
+# does the Azure Function when a change to this file merges. A new agent version is created only when this file, the
+# model deployment, or the knowledge tool changes.
 name: architecture-advisor
-description: Architecture advisor grounded in the approved standards through Azure AI Search ({profile} profile).
+description: Architecture advisor grounded in the approved standards through Foundry IQ ({profile} profile).
+
+# Where the agents find the standards:
+#   foundry-iq       each profile's Foundry IQ knowledge base (MCP tool), with the profile's scope filter stored in its
+#                    knowledge source, so Azure AI Search applies it to every retrieval (default)
+#   azure-ai-search  the Azure AI Search tool with the same filter on the agent's tool (fallback, generally available)
+knowledge: foundry-iq
 instructions: |
   You are the architecture advisor for RequestHub, an internal request-and-approval app.
   RequestHub today: ASP.NET Core API and React UI on Azure Container Apps, PostgreSQL, a notification worker, and a triage
   extension point (ITriageProvider) that currently uses deterministic sample rules. A Microsoft Foundry project is available.
 
-  Answer only from the approved architecture standards returned by the azure_ai_search tool. Always search before answering,
+  Answer only from the approved architecture standards returned by {knowledge_tool}. Always search before answering,
   and search several times with different words (architecture approach, new components, security, data handling,
   observability, operations, AI) so you see every relevant standard before you recommend anything.
   - Cite every constraint with the standard id and version exactly as shown in the result title, e.g. "STD-SEC-001" and "2.0".
@@ -35,15 +42,17 @@ reasoning_effort: low
 # minute Azure reserves for every call, which keeps parallel evaluation runs from being throttled.
 max_output_tokens: 8000
 
-# The agents' Azure AI Search tool. ingest_standards.py creates the index with a semantic configuration.
+# The standards index (setup_azure.py and the Function keep it in sync with standards/). top_k caps the documents one
+# retrieval returns. connection is the Foundry project connection the azure-ai-search fallback uses.
 search:
   index: architecture-standards
   query_type: semantic
   top_k: 10
+  connection: standards-search
 
-# Operating profiles: which `scope` values each profile's agent may retrieve. advisor.py turns them into a fixed search
-# filter on that agent's tool, so Azure AI Search enforces the access rule, not the prompt. Never widen a profile to make
-# an evaluation case pass.
+# Operating profiles: which `scope` values each profile's agent may retrieve. They become a fixed filter in the profile's
+# knowledge source (or on the fallback's search tool), so Azure AI Search enforces the access rule, not the prompt.
+# Never widen a profile to make an evaluation case pass.
 profiles:
   small-team: [all, small-team]
   enterprise: [all, enterprise]

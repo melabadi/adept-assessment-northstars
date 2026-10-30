@@ -1,0 +1,15 @@
+{
+  "version": "2.0",
+  "logging": {
+    "logLevel": {
+      "default": "Warning",
+      "Function": "Information",
+      "Host.Results": "Information",
+      "advisor": "Information"
+    },
+    "applicationInsights": {
+      "samplingSettings": { "isEnabled": false }
+    }
+  },
+  "functionTimeout": "00:10:00"
+}
