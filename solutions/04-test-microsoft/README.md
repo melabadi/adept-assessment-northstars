@@ -162,7 +162,7 @@ About 5 minutes, from `solutions/04-test-microsoft`.
    | 5. Run again | about 8 minutes | the same run |
    | 6. Issue opens | about 2 minutes after the verdict | the notification, the Logic App waits for the verdict and telemetry |
    | 7. AI explains | about 5 minutes | about a minute per question to the Observability Agent |
-   | 8. Fix and confirm | about 12 minutes | 1 to 3 for the revision, about 8 for the run, 2 for the Issue to close |
+   | 8. Fix and confirm | about 12 minutes | 1 to 3 for the revision, about 8 for the run, about 2 for the Issue to close |
 
    Live from start to finish, the demo takes about 45 minutes; with step 2 started early and step 8 during questions, about 30.
 
@@ -212,7 +212,7 @@ When the run completes, the dashboard shows the verdict: **Passed**, every crite
 
 ![The Baseline run: Passed, test criteria validated; 587 requests, a 39 ms 90th percentile response time, 0 percent errors, a Get insights button for the AI summary, and all five criteria passed, for example team-queue p95 23 ms against 1,000 ms](images/03-baseline-dashboard.png)
 
-A few minutes later the Logic App reports the run too. With no Issue open, a passing run posts nothing.
+About 2 minutes later the Logic App reports the run too. With no Issue open, a passing run posts nothing.
 
 **Point out:** the criteria give the verdict, not someone reading a chart.
 
@@ -255,10 +255,6 @@ Scroll down for the client-side and server-side metrics of the same window.
 
 Open the Logic App's **Run history** and select the newest run. Azure Load Testing's notification rule called the action group, which called the Logic App. The Logic App waited until the run had its verdict and Application Insights had the run's last requests. It built the report from the run and the API's telemetry, found no open Issue for this test, and opened one.
 
-![The Logic App's run: TBD](images/06-logic-app-run.png)
-
-![The Issue the Logic App opened: TBD](images/06-issue-opened.png)
-
 **Point out:** the report proves the cause. Its verdict says 148 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (148 against 182 list requests) because under load Application Insights keeps only a sample of the API's requests. The Issue names the run and the resource group, never a host name or an id.
 
 ### 7. AI explains, people verify
@@ -287,7 +283,7 @@ AI finds leads quickly; people check them, and the criteria and the report decid
 
 ### 8. Fix and confirm
 
-*About 12 minutes: 1 to 3 for the revision, about 8 for the run, 2 for the Issue to close.*
+*About 12 minutes: 1 to 3 for the revision, about 8 for the run, about 2 for the Issue to close.*
 
 ```powershell
 python slowdown.py off
@@ -297,9 +293,7 @@ az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id re
 
 ![slowdown.py off: API revision 0000018, without the slowdown, takes all traffic, the previous revision is deactivated, and GET /api/requests takes 296 ms](images/08-slowdown-off.png)
 
-The run passes, and the report finds no injected delay. A few minutes later the Logic App comments on the Issue with the passing report and closes it.
-
-![The Issue, closed by the Logic App: TBD](images/08-issue-closed.png)
+The run passes, and the report finds no injected delay. About 2 minutes later the Logic App comments on the Issue with the passing report and closes it.
 
 **Point out:** nobody had to remember to follow up. The Issue opened on the failure and closed itself on the next accepted run. A run that passes while the slowdown is still on, or a replay of an older run, leaves it open.
 
