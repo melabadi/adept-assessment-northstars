@@ -250,7 +250,7 @@ cd solutions/03-develop-microsoft
 python eval_reviewer.py
 ```
 
-![The evaluation in PowerShell: ten dry runs through the Logic App, each Succeeded in 151 to 166 seconds; a table of the ten labelled pull requests (known-good, flagged, and known-bad) with all five checks passed for each, 10 of 10 per check; then the Foundry evaluation run for agent v4, where each of the five evaluators reports passed 10, failed 0](images/08-evaluation-terminal.png)
+![The evaluation in PowerShell: ten dry runs through the Logic App, each Succeeded in 149 to 176 seconds; an aligned table of the ten labelled pull requests (known-good, flagged, and known-bad) with pass in all five checks and 10/10 per check, whose columns carry the evaluators' names, with a legend giving each check's title; then the Foundry evaluation run for agent v4, where each of the five evaluators reports passed 10, failed 0](images/08-evaluation-terminal.png)
 
 ![The same run in the Foundry portal's Evaluation view: 10 labelled pull requests, agent v4, with each of the five evaluators (rule verdicts, verdicts verbatim, advisory only, useful commentary, sandbox ran) at 100%, 10 of 10, and every row passing 5 of 5](images/09-foundry-evaluation.png)
 
