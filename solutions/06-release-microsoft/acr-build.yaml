@@ -3,7 +3,8 @@
 #
 # The task is created once, by a person, with a fine-grained GitHub token that can read this repository and manage its
 # webhooks (see the README, "Set up"). On a commit to main, GitHub's webhook starts it and .Run.Commit is that commit.
-# Run it by hand for one commit of main, pinning the source to that commit:
+# On a run started by hand, ACR sets .Run.Commit to the commit it cloned, so the commit value is only a fallback.
+# Run it by hand for one commit of main, pinning the source to that commit (ACR clones it with the task's token):
 #   az acr task run --registry <registry> --name build-api --context <repository URL>.git#<commit> --set commit=<commit>
 version: v1.1.0
 steps:
