@@ -1,5 +1,6 @@
 # Versioned definition of the Foundry "requirements analyst" prompt agent (Plan phase, Microsoft track).
-# requirements_analyst.py publishes a new agent version only when this file, the model, or the inputs change.
+# setup_foundry.py publishes a new agent version only when the definition, the model, or the inputs change.
+# The Logic App sends `prompt` to the agent on every run (infra/resources.bicep passes it as a workflow parameter).
 name: requirements-analyst
 description: Turns stakeholder notes stored in Foundry into a cited requirements brief and a four-task engineering backlog.
 instructions: |

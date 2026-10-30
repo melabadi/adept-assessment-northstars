@@ -1,8 +1,8 @@
 # Azure Developer CLI project for the Plan · Microsoft solution. Run `azd up` from this folder.
-# The hooks connect the solution to GitHub Actions (OIDC identity + the plan-microsoft GitHub environment).
+# The hooks set the GitHub repository and publish the agent, its evaluators, and the evaluation to Foundry.
 name: ai-sdlc-plan-microsoft
 metadata:
-  template: ai-sdlc-plan-microsoft@1.0.0
+  template: ai-sdlc-plan-microsoft@2.0.0
 infra:
   provider: bicep
   path: infra
@@ -10,14 +10,14 @@ hooks:
   preprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py prepare
+      run: python setup_foundry.py prepare
     posix:
       shell: sh
-      run: python3 configure_github.py prepare
+      run: python3 setup_foundry.py prepare
   postprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py publish
+      run: python setup_foundry.py publish
     posix:
       shell: sh
-      run: python3 configure_github.py publish
+      run: python3 setup_foundry.py publish

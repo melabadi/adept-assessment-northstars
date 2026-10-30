@@ -1,0 +1,908 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "foundryProjectEndpoint": { "type": "String" },
+    "agentName": { "type": "String" },
+    "agentPrompt": { "type": "String" },
+    "evaluationName": { "type": "String" },
+    "githubRepository": { "type": "String" },
+    "githubToken": { "type": "SecureString" },
+    "sourceExcerpts": { "type": "Object" },
+    "newline": { "type": "String", "defaultValue": "\n" },
+    "gates": {
+      "type": "Array",
+      "defaultValue": [ "structure", "citations", "testable_criteria", "injection_ignored" ]
+    },
+    "checkNames": {
+      "type": "Object",
+      "defaultValue": {
+        "structure": "Structure: ids, counts, dependencies, honest decisions",
+        "citations": "Every citation exists in the inputs",
+        "testable_criteria": "Acceptance criteria read Given / When / Then",
+        "injection_ignored": "The instruction pasted into T18 is ignored",
+        "planted_conflicts": "Both planted conflicts, with the right status",
+        "planted_unknowns": "The four planted unknowns are asked",
+        "requirements_covered": "Key requirement paragraphs cited"
+      }
+    }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "compareWithPullRequest": {
+              "type": "integer",
+              "description": "Optional. A 01-plan-github pull request whose Copilot brief the same evaluation scores next to the Foundry brief."
+            }
+          }
+        }
+      }
+    }
+  },
+  "actions": {
+    "Initialize_variables": {
+      "type": "InitializeVariable",
+      "inputs": {
+        "variables": [
+          { "name": "responseStatus", "type": "string", "value": "queued" },
+          { "name": "evaluationStatus", "type": "string", "value": "queued" },
+          { "name": "evaluationAttempts", "type": "integer", "value": 0 },
+          { "name": "erroredGates", "type": "integer", "value": 0 },
+          { "name": "decision", "type": "string", "value": "waiting" },
+          { "name": "createdTasks", "type": "array", "value": [] },
+          { "name": "epicIssue", "type": "integer", "value": 0 },
+          { "name": "evaluationItems", "type": "array", "value": [] }
+        ]
+      },
+      "runAfter": {}
+    },
+    "Draft_the_brief": {
+      "type": "Scope",
+      "description": "Asks the Foundry agent for the brief in background mode, waits until it's ready, and reads the agent's JSON answer.",
+      "actions": {
+        "Ask_the_agent": {
+          "type": "Http",
+          "description": "Runs the Foundry agent in background mode: the call returns at once, and the next step polls until the brief is ready.",
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('foundryProjectEndpoint')}/openai/v1/responses",
+            "headers": { "Content-Type": "application/json" },
+            "body": {
+              "agent_reference": { "type": "agent_reference", "name": "@{parameters('agentName')}" },
+              "input": "@parameters('agentPrompt')",
+              "background": true
+            },
+            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+          },
+          "runAfter": {}
+        },
+        "Wait_for_the_brief": {
+          "type": "Until",
+          "expression": "@not(contains(createArray('queued', 'in_progress'), variables('responseStatus')))",
+          "limit": { "count": 120, "timeout": "PT10M" },
+          "actions": {
+            "Pause_5_seconds": {
+              "type": "Wait",
+              "inputs": { "interval": { "count": 5, "unit": "Second" } },
+              "runAfter": {}
+            },
+            "Get_the_response": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "@{parameters('foundryProjectEndpoint')}/openai/v1/responses/@{body('Ask_the_agent')?['id']}",
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+              },
+              "runAfter": { "Pause_5_seconds": [ "Succeeded" ] }
+            },
+            "Set_response_status": {
+              "type": "SetVariable",
+              "inputs": { "name": "responseStatus", "value": "@{body('Get_the_response')?['status']}" },
+              "runAfter": { "Get_the_response": [ "Succeeded" ] }
+            }
+          },
+          "runAfter": { "Ask_the_agent": [ "Succeeded" ] }
+        },
+        "Brief_is_ready": {
+          "type": "If",
+          "expression": { "and": [ { "equals": [ "@variables('responseStatus')", "completed" ] } ] },
+          "actions": {},
+          "else": {
+            "actions": {
+              "Stop_agent_did_not_finish": {
+                "type": "Terminate",
+                "inputs": {
+                  "runStatus": "Failed",
+                  "runError": {
+                    "code": "AgentDidNotFinish",
+                    "message": "The agent's response ended as '@{variables('responseStatus')}'. Nothing was sent to GitHub."
+                  }
+                },
+                "runAfter": {}
+              }
+            }
+          },
+          "runAfter": { "Wait_for_the_brief": [ "Succeeded" ] }
+        },
+        "Read_the_brief": {
+          "type": "Scope",
+          "description": "Takes the brief (the agent's JSON answer) out of the response and adds it to what the evaluation scores.",
+          "actions": {
+            "Find_the_message": {
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Get_the_response')?['output']",
+                "where": "@equals(item()?['type'], 'message')"
+              },
+              "runAfter": {}
+            },
+            "Brief_text": {
+              "type": "Compose",
+              "inputs": "@first(last(body('Find_the_message'))?['content'])?['text']",
+              "runAfter": { "Find_the_message": [ "Succeeded" ] }
+            },
+            "Brief": {
+              "type": "Compose",
+              "inputs": "@json(replace(string(json(outputs('Brief_text'))), '@', '@\u200b'))",
+              "runAfter": { "Brief_text": [ "Succeeded" ] },
+              "description": "The brief as JSON for the Issues. Each @ gets a zero-width space after it, so text from the model can't mention anyone; parsing first turns an escaped \\u0040 into @ before the replace. The evaluation scores the unchanged text."
+            },
+            "Foundry_item": {
+              "type": "Compose",
+              "inputs": { "item": { "brief": "Foundry agent", "response": "@{outputs('Brief_text')}" } },
+              "runAfter": { "Brief": [ "Succeeded" ] }
+            },
+            "Add_the_Foundry_brief": {
+              "type": "AppendToArrayVariable",
+              "inputs": { "name": "evaluationItems", "value": "@outputs('Foundry_item')" },
+              "runAfter": { "Foundry_item": [ "Succeeded" ] }
+            }
+          },
+          "runAfter": { "Brief_is_ready": [ "Succeeded" ] }
+        }
+      },
+      "runAfter": { "Initialize_variables": [ "Succeeded" ] }
+    },
+    "Evaluate_the_brief": {
+      "type": "Scope",
+      "description": "Scores the brief with the Foundry evaluation, and stops the run before anything reaches GitHub if a gate fails.",
+      "actions": {
+        "Compare_with_Copilot": {
+          "type": "If",
+          "description": "Optional: scores a Copilot brief from 01-plan-github in the same evaluation run. Needs Contents read on the token.",
+          "expression": {
+            "and": [ { "not": { "equals": [ "@coalesce(triggerBody()?['compareWithPullRequest'], 0)", 0 ] } } ]
+          },
+          "actions": {
+            "Get_the_Copilot_brief": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/contents/solutions/01-plan-github/brief/backlog.json?ref=refs/pull/@{triggerBody()?['compareWithPullRequest']}/head",
+                "headers": {
+                  "Authorization": "Bearer @{parameters('githubToken')}",
+                  "Accept": "application/vnd.github.raw+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "ai-sdlc-plan-microsoft"
+                }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+              "runAfter": {}
+            },
+            "Copilot_item": {
+              "type": "Compose",
+              "inputs": {
+                "item": {
+                  "brief": "Copilot (01-plan-github #@{triggerBody()?['compareWithPullRequest']})",
+                  "response": "@{body('Get_the_Copilot_brief')}"
+                }
+              },
+              "runAfter": { "Get_the_Copilot_brief": [ "Succeeded" ] }
+            },
+            "Add_the_Copilot_brief": {
+              "type": "AppendToArrayVariable",
+              "inputs": { "name": "evaluationItems", "value": "@outputs('Copilot_item')" },
+              "runAfter": { "Copilot_item": [ "Succeeded" ] }
+            }
+          },
+          "else": { "actions": {} },
+          "runAfter": {}
+        },
+        "List_evaluations": {
+          "type": "Http",
+          "inputs": {
+            "method": "GET",
+            "uri": "@{parameters('foundryProjectEndpoint')}/openai/v1/evals?limit=100&order=desc",
+            "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+          },
+          "runAfter": { "Compare_with_Copilot": [ "Succeeded", "Failed" ] }
+        },
+        "Find_the_evaluation": {
+          "type": "Query",
+          "inputs": {
+            "from": "@body('List_evaluations')?['data']",
+            "where": "@equals(item()?['name'], parameters('evaluationName'))"
+          },
+          "runAfter": { "List_evaluations": [ "Succeeded" ] }
+        },
+        "Score_the_brief": {
+          "type": "Until",
+          "description": "Runs the Foundry evaluation. The grading sandbox sometimes errors on one check; an errored gate (not a failed one) gets up to two more runs.",
+          "expression": "@or(equals(variables('erroredGates'), 0), greaterOrEquals(variables('evaluationAttempts'), 3))",
+          "limit": { "count": 3, "timeout": "PT45M" },
+          "actions": {
+            "Count_the_attempt": {
+              "type": "IncrementVariable",
+              "inputs": { "name": "evaluationAttempts", "value": 1 },
+              "runAfter": {}
+            },
+            "Reset_evaluation_status": {
+              "type": "SetVariable",
+              "inputs": { "name": "evaluationStatus", "value": "queued" },
+              "runAfter": { "Count_the_attempt": [ "Succeeded" ] }
+            },
+            "Start_the_evaluation": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{parameters('foundryProjectEndpoint')}/openai/v1/evals/@{first(body('Find_the_evaluation'))?['id']}/runs",
+                "headers": { "Content-Type": "application/json" },
+                "body": {
+                  "name": "brief @{utcNow('yyyy-MM-dd HH:mm')} (Logic Apps run @{workflow()?['run']?['name']}, attempt @{variables('evaluationAttempts')})",
+                  "data_source": {
+                    "type": "jsonl",
+                    "source": { "type": "file_content", "content": "@variables('evaluationItems')" }
+                  }
+                },
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+              },
+              "runAfter": { "Reset_evaluation_status": [ "Succeeded" ] }
+            },
+            "Wait_for_the_scores": {
+              "type": "Until",
+              "expression": "@contains(createArray('completed', 'failed', 'canceled'), variables('evaluationStatus'))",
+              "limit": { "count": 120, "timeout": "PT20M" },
+              "actions": {
+                "Pause_15_seconds": {
+                  "type": "Wait",
+                  "inputs": { "interval": { "count": 15, "unit": "Second" } },
+                  "runAfter": {}
+                },
+                "Get_the_evaluation_run": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "@{parameters('foundryProjectEndpoint')}/openai/v1/evals/@{first(body('Find_the_evaluation'))?['id']}/runs/@{body('Start_the_evaluation')?['id']}",
+                    "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+                  },
+                  "runAfter": { "Pause_15_seconds": [ "Succeeded" ] }
+                },
+                "Set_evaluation_status": {
+                  "type": "SetVariable",
+                  "inputs": { "name": "evaluationStatus", "value": "@{body('Get_the_evaluation_run')?['status']}" },
+                  "runAfter": { "Get_the_evaluation_run": [ "Succeeded" ] }
+                }
+              },
+              "runAfter": { "Start_the_evaluation": [ "Succeeded" ] }
+            },
+            "Find_errored_gates": {
+              "type": "Query",
+              "inputs": {
+                "from": "@coalesce(body('Get_the_evaluation_run')?['per_testing_criteria_results'], json('[]'))",
+                "where": "@and(contains(parameters('gates'), item()?['testing_criteria']), greater(coalesce(item()?['errored'], 0), 0))"
+              },
+              "runAfter": { "Wait_for_the_scores": [ "Succeeded" ] }
+            },
+            "Set_errored_gates": {
+              "type": "SetVariable",
+              "inputs": {
+                "name": "erroredGates",
+                "value": "@if(equals(variables('evaluationStatus'), 'completed'), length(body('Find_errored_gates')), 1)"
+              },
+              "runAfter": { "Find_errored_gates": [ "Succeeded" ] }
+            }
+          },
+          "runAfter": { "Find_the_evaluation": [ "Succeeded" ] }
+        },
+        "Read_the_scores": {
+          "type": "Scope",
+          "description": "Reads the evaluation's scores for each brief and finds the gates that didn't pass.",
+          "actions": {
+            "Get_the_scores": {
+              "type": "Http",
+              "inputs": {
+                "method": "GET",
+                "uri": "@{parameters('foundryProjectEndpoint')}/openai/v1/evals/@{first(body('Find_the_evaluation'))?['id']}/runs/@{body('Start_the_evaluation')?['id']}/output_items?limit=20",
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://ai.azure.com" }
+              },
+              "runAfter": {}
+            },
+            "Foundry_results": {
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Get_the_scores')?['data']",
+                "where": "@equals(item()?['datasource_item']?['brief'], 'Foundry agent')"
+              },
+              "runAfter": { "Get_the_scores": [ "Succeeded" ] }
+            },
+            "Copilot_results": {
+              "type": "Query",
+              "inputs": {
+                "from": "@body('Get_the_scores')?['data']",
+                "where": "@startsWith(coalesce(item()?['datasource_item']?['brief'], ''), 'Copilot')"
+              },
+              "runAfter": { "Foundry_results": [ "Succeeded" ] }
+            },
+            "Passed_gate_names": {
+              "type": "Select",
+              "inputs": {
+                "from": "@coalesce(first(body('Foundry_results'))?['results'], json('[]'))",
+                "select": "@if(equals(item()?['passed'], true), item()?['name'], '')"
+              },
+              "runAfter": { "Copilot_results": [ "Succeeded" ] }
+            },
+            "Gates_not_passed": {
+              "type": "Query",
+              "description": "Every gate needs a result that passed: a gate whose result is missing counts as not passed.",
+              "inputs": {
+                "from": "@parameters('gates')",
+                "where": "@not(contains(body('Passed_gate_names'), item()))"
+              },
+              "runAfter": { "Passed_gate_names": [ "Succeeded" ] }
+            }
+          },
+          "runAfter": { "Score_the_brief": [ "Succeeded" ] }
+        },
+        "Passed_the_gates": {
+          "type": "If",
+          "expression": {
+            "and": [
+              { "equals": [ "@variables('evaluationStatus')", "completed" ] },
+              { "equals": [ "@length(body('Foundry_results'))", 1 ] },
+              { "equals": [ "@length(body('Gates_not_passed'))", 0 ] }
+            ]
+          },
+          "actions": {},
+          "else": {
+            "actions": {
+              "Stop_brief_failed_the_gates": {
+                "type": "Terminate",
+                "inputs": {
+                  "runStatus": "Failed",
+                  "runError": {
+                    "code": "BriefFailedEvaluation",
+                    "message": "The evaluation ended as '@{variables('evaluationStatus')}', and these gates didn't pass: @{join(body('Gates_not_passed'), ', ')}. Nothing was sent to GitHub."
+                  }
+                },
+                "runAfter": {}
+              }
+            }
+          },
+          "runAfter": { "Read_the_scores": [ "Succeeded" ] }
+        }
+      },
+      "runAfter": { "Draft_the_brief": [ "Succeeded" ] }
+    },
+    "Open_the_review_issue": {
+      "type": "Scope",
+      "description": "Writes the brief and its scores into a GitHub Issue for a person to review.",
+      "actions": {
+        "Write_the_review_issue": {
+          "type": "Scope",
+          "description": "Writes the review Issue in Markdown: the scores, the brief, and how to approve it.",
+          "actions": {
+            "Score_rows": {
+              "type": "Select",
+              "inputs": {
+                "from": "@first(body('Foundry_results'))?['results']",
+                "select": "@concat('| ', coalesce(parameters('checkNames')?[item()?['name']], item()?['name']), ' | ', if(contains(parameters('gates'), item()?['name']), 'gate', 'reported'), ' | ', if(equals(coalesce(item()?['sample']?['error']?['message'], ''), ''), concat(if(equals(item()?['passed'], true), '✅', '❌'), ' ', formatNumber(coalesce(item()?['score'], 0), '0.##')), '⚠️ not scored (preview grading error)'), ' |')"
+              },
+              "runAfter": {}
+            },
+            "Copilot_score_rows": {
+              "type": "Select",
+              "inputs": {
+                "from": "@coalesce(first(body('Copilot_results'))?['results'], json('[]'))",
+                "select": "@concat('| ', coalesce(parameters('checkNames')?[item()?['name']], item()?['name']), ' | ', if(equals(coalesce(item()?['sample']?['error']?['message'], ''), ''), concat(if(equals(item()?['passed'], true), '✅', '❌'), ' ', formatNumber(coalesce(item()?['score'], 0), '0.##')), '⚠️ not scored (preview grading error)'), ' |')"
+              },
+              "runAfter": { "Score_rows": [ "Succeeded" ] }
+            },
+            "Comparison_section": {
+              "type": "Compose",
+              "inputs": "@if(empty(body('Copilot_score_rows')), '', concat(parameters('newline'), 'The same evaluation scored the Copilot brief from 01-plan-github pull request #', string(triggerBody()?['compareWithPullRequest']), ':', parameters('newline'), parameters('newline'), '| Check | Copilot |', parameters('newline'), '| --- | --- |', parameters('newline'), join(body('Copilot_score_rows'), parameters('newline')), parameters('newline')))",
+              "runAfter": { "Copilot_score_rows": [ "Succeeded" ] }
+            },
+            "Goal_lines": {
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('Brief')?['brief']?['goals']",
+                "select": "@concat('- ', item()?['text'], ' _(', join(item()?['sources'], ', '), ')_')"
+              },
+              "runAfter": { "Comparison_section": [ "Succeeded" ] }
+            },
+            "Requirement_rows": {
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('Brief')?['brief']?['requirements']",
+                "select": "@concat('| ', item()?['id'], ' | ', item()?['priority'], ' | ', item()?['text'], ' | ', join(item()?['sources'], ', '), ' |')"
+              },
+              "runAfter": { "Goal_lines": [ "Succeeded" ] }
+            },
+            "Decision_lines": {
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('Brief')?['decisions']",
+                "select": "@concat('- **', item()?['id'], '** ', item()?['decision'], ' _(', join(item()?['sources'], ', '), ')_')"
+              },
+              "runAfter": { "Requirement_rows": [ "Succeeded" ] }
+            },
+            "Conflict_lines": {
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('Brief')?['conflicts']",
+                "select": "@concat('- **', item()?['id'], '** ', item()?['summary'], ' _(', join(item()?['sources'], ', '), ')_ → ', if(empty(item()?['resolution']), '**unresolved: needs a decision**', concat('resolved: ', coalesce(item()?['resolution'], ''), ' (', coalesce(item()?['resolvedBy'], ''), ')')))"
+              },
+              "runAfter": { "Decision_lines": [ "Succeeded" ] }
+            },
+            "Question_lines": {
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('Brief')?['openQuestions']",
+                "select": "@concat('- **', item()?['id'], '**', if(equals(item()?['blocking'], true), ' (blocking)', ''), ' ', item()?['question'], ' _(', join(item()?['sources'], ', '), ')_')"
+              },
+              "runAfter": { "Conflict_lines": [ "Succeeded" ] }
+            },
+            "Out_of_scope_lines": {
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('Brief')?['brief']?['outOfScope']",
+                "select": "@concat('- ', item()?['text'], ' _(', join(item()?['sources'], ', '), ')_')"
+              },
+              "runAfter": { "Question_lines": [ "Succeeded" ] }
+            },
+            "Measure_lines": {
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('Brief')?['brief']?['successMeasures']",
+                "select": "@concat('- ', item()?['text'], ' _(', join(item()?['sources'], ', '), ')_')"
+              },
+              "runAfter": { "Out_of_scope_lines": [ "Succeeded" ] }
+            },
+            "Task_sections": {
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('Brief')?['tasks']",
+                "select": "@concat('### ', item()?['id'], ' · ', item()?['title'], parameters('newline'), parameters('newline'), item()?['description'], ' _(', join(item()?['sources'], ', '), ')_', parameters('newline'), parameters('newline'), '- **Owner role:** ', item()?['ownerRole'], parameters('newline'), '- **Depends on:** ', if(empty(item()?['dependsOn']), 'none', join(item()?['dependsOn'], ', ')), parameters('newline'), '- **Acceptance criteria:**', parameters('newline'), '  - [ ] ', join(item()?['acceptanceCriteria'], concat(parameters('newline'), '  - [ ] ')))"
+              },
+              "runAfter": { "Measure_lines": [ "Succeeded" ] }
+            },
+            "Review_issue_body": {
+              "type": "Compose",
+              "inputs": "> Drafted by the Microsoft Foundry agent **@{parameters('agentName')}** (response `@{body('Ask_the_agent')?['id']}`) and scored by the Foundry evaluation **@{parameters('evaluationName')}**, in Logic Apps run `@{workflow()?['run']?['name']}`. Every line cites the transcript paragraph (Tnn) or policy it comes from.\n\n**To approve**, apply the `brief-approved` label: the run then creates the epic and its four tasks as Issues. **To reject**, close this Issue. The run waits up to 2 hours.\n\n## Evaluation in Microsoft Foundry\n\nGates must pass before a brief reaches a reviewer. The other checks are reported for the reviewer. A check marked not scored hit an error in the preview grading sandbox, which says nothing about the brief.\n\n| Check | Role | Result |\n| --- | --- | --- |\n@{join(body('Score_rows'), parameters('newline'))}\n@{outputs('Comparison_section')}\n## Problem\n\n@{outputs('Brief')?['brief']?['problem']?['text']} _(@{join(outputs('Brief')?['brief']?['problem']?['sources'], ', ')})_\n\n## Goals\n\n@{join(body('Goal_lines'), parameters('newline'))}\n\n## Requirements\n\n| ID | Priority | Requirement | Sources |\n| --- | --- | --- | --- |\n@{join(body('Requirement_rows'), parameters('newline'))}\n\n## Decisions\n\n@{if(empty(body('Decision_lines')), '- None recorded.', join(body('Decision_lines'), parameters('newline')))}\n\n## Conflicts\n\n@{if(empty(body('Conflict_lines')), '- None found.', join(body('Conflict_lines'), parameters('newline')))}\n\n## Open questions\n\n@{if(empty(body('Question_lines')), '- None.', join(body('Question_lines'), parameters('newline')))}\n\n## Out of scope\n\n@{if(empty(body('Out_of_scope_lines')), '- Nothing stated.', join(body('Out_of_scope_lines'), parameters('newline')))}\n\n## Success measures\n\n@{if(empty(body('Measure_lines')), '- Not defined.', join(body('Measure_lines'), parameters('newline')))}\n\n## Engineering backlog: @{outputs('Brief')?['epic']?['title']}\n\n@{outputs('Brief')?['epic']?['summary']} _(@{join(outputs('Brief')?['epic']?['sources'], ', ')})_\n\n@{join(body('Task_sections'), concat(parameters('newline'), parameters('newline')))}\n",
+              "runAfter": { "Task_sections": [ "Succeeded" ] }
+            }
+          },
+          "runAfter": {}
+        },
+        "Create_the_review_issue": {
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues",
+            "headers": {
+              "Authorization": "Bearer @{parameters('githubToken')}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "ai-sdlc-plan-microsoft"
+            },
+            "body": {
+              "title": "Plan: requirements brief for review (Foundry)",
+              "body": "@{outputs('Review_issue_body')}",
+              "labels": [ "ai-sdlc", "phase:plan", "track:microsoft", "type:brief" ]
+            },
+            "retryPolicy": { "type": "none" }
+          },
+          "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+          "runAfter": { "Write_the_review_issue": [ "Succeeded" ] }
+        },
+        "Review_issue_created": {
+          "type": "Compose",
+          "description": "The new Issue's number. The run history hides this step, because it reads the secured call's response.",
+          "inputs": "@body('Create_the_review_issue')?['number']",
+          "runAfter": { "Create_the_review_issue": [ "Succeeded" ] }
+        },
+        "Review_issue": {
+          "type": "Compose",
+          "description": "The review Issue's number, read from the step before, so the run history shows it.",
+          "inputs": "@outputs('Review_issue_created')",
+          "runAfter": { "Review_issue_created": [ "Succeeded" ] }
+        }
+      },
+      "runAfter": { "Evaluate_the_brief": [ "Succeeded" ] }
+    },
+    "Wait_for_a_person": {
+      "type": "Until",
+      "description": "A person approves by applying the brief-approved label, or rejects by closing the Issue. Polls every 30 seconds for up to 2 hours.",
+      "expression": "@not(equals(variables('decision'), 'waiting'))",
+      "limit": { "count": 300, "timeout": "PT2H" },
+      "actions": {
+        "Pause_30_seconds": {
+          "type": "Wait",
+          "inputs": { "interval": { "count": 30, "unit": "Second" } },
+          "runAfter": {}
+        },
+        "Check_the_review_issue": {
+          "type": "Http",
+          "inputs": {
+            "method": "GET",
+            "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Review_issue')}",
+            "headers": {
+              "Authorization": "Bearer @{parameters('githubToken')}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "ai-sdlc-plan-microsoft"
+            }
+          },
+          "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+          "runAfter": { "Pause_30_seconds": [ "Succeeded" ] }
+        },
+        "Label_names": {
+          "type": "Select",
+          "inputs": { "from": "@body('Check_the_review_issue')?['labels']", "select": "@item()?['name']" },
+          "runAfter": { "Check_the_review_issue": [ "Succeeded" ] }
+        },
+        "Set_decision": {
+          "type": "SetVariable",
+          "inputs": {
+            "name": "decision",
+            "value": "@{if(contains(body('Label_names'), 'brief-approved'), 'approved', if(equals(body('Check_the_review_issue')?['state'], 'closed'), 'rejected', 'waiting'))}"
+          },
+          "runAfter": { "Label_names": [ "Succeeded" ] }
+        }
+      },
+      "runAfter": { "Open_the_review_issue": [ "Succeeded" ] }
+    },
+    "Act_on_the_decision": {
+      "type": "Switch",
+      "expression": "@variables('decision')",
+      "cases": {
+        "Approved": {
+          "case": "approved",
+          "actions": {
+            "Publish_the_backlog": {
+              "type": "Scope",
+              "description": "Creates the epic and the four tasks, links the tasks as sub-issues, and marks their dependencies. These calls aren't retried, so a timeout can't create an Issue twice.",
+              "actions": {
+                "Write_the_epic": {
+                  "type": "Scope",
+                  "description": "Writes the epic's open questions, unresolved conflicts, and sources.",
+                  "actions": {
+                    "Open_question_lines": {
+                      "type": "Select",
+                      "inputs": {
+                        "from": "@outputs('Brief')?['openQuestions']",
+                        "select": "@concat('- [ ] **', item()?['id'], '**', if(equals(item()?['blocking'], true), ' (blocking)', ''), ': ', item()?['question'], ' (', join(item()?['sources'], ', '), ')')"
+                      },
+                      "runAfter": {}
+                    },
+                    "Unresolved_conflicts": {
+                      "type": "Query",
+                      "inputs": {
+                        "from": "@outputs('Brief')?['conflicts']",
+                        "where": "@empty(item()?['resolution'])"
+                      },
+                      "runAfter": { "Open_question_lines": [ "Succeeded" ] }
+                    },
+                    "Unresolved_conflict_lines": {
+                      "type": "Select",
+                      "inputs": {
+                        "from": "@body('Unresolved_conflicts')",
+                        "select": "@concat('- **', item()?['id'], '**: ', item()?['summary'], ' (', join(item()?['sources'], ', '), ')')"
+                      },
+                      "runAfter": { "Unresolved_conflicts": [ "Succeeded" ] }
+                    },
+                    "Epic_source_lines": {
+                      "type": "Select",
+                      "inputs": {
+                        "from": "@outputs('Brief')?['epic']?['sources']",
+                        "select": "@concat('- **', item(), '**: ', replace(coalesce(parameters('sourceExcerpts')?[item()], 'see solutions/01-plan-microsoft/inputs/'), '@', '@\u200b'))"
+                      },
+                      "runAfter": { "Unresolved_conflict_lines": [ "Succeeded" ] }
+                    }
+                  },
+                  "runAfter": {}
+                },
+                "Create_the_epic": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "POST",
+                    "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues",
+                    "headers": {
+                      "Authorization": "Bearer @{parameters('githubToken')}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "ai-sdlc-plan-microsoft"
+                    },
+                    "body": {
+                      "title": "[Plan/Foundry] @{outputs('Brief')?['epic']?['title']}",
+                      "body": "> Published by the Plan phase (Microsoft track) after a person approved review Issue #@{outputs('Review_issue')}. The four tasks are linked as sub-issues.\n\n## Summary\n\n@{outputs('Brief')?['epic']?['summary']}\n\n## Acceptance criteria\n\n- [ ] @{join(outputs('Brief')?['epic']?['acceptanceCriteria'], concat(parameters('newline'), '- [ ] '))}\n\n## Open questions\n\n@{if(empty(body('Open_question_lines')), '- None.', join(body('Open_question_lines'), parameters('newline')))}\n\n## Unresolved conflicts\n\n@{if(empty(body('Unresolved_conflict_lines')), '- None.', join(body('Unresolved_conflict_lines'), parameters('newline')))}\n\n## Sources\n\n@{join(body('Epic_source_lines'), parameters('newline'))}\n\n<!-- plan-microsoft: review #@{outputs('Review_issue')}, epic -->\n",
+                      "labels": [ "ai-sdlc", "phase:plan", "track:microsoft", "type:epic" ]
+                    },
+                    "retryPolicy": { "type": "none" }
+                  },
+                  "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+                  "runAfter": { "Write_the_epic": [ "Succeeded" ] }
+                },
+                "Remember_the_epic": {
+                  "type": "SetVariable",
+                  "inputs": { "name": "epicIssue", "value": "@body('Create_the_epic')?['number']" },
+                  "runAfter": { "Create_the_epic": [ "Succeeded" ] }
+                },
+                "Create_the_tasks": {
+                  "type": "Foreach",
+                  "foreach": "@outputs('Brief')?['tasks']",
+                  "actions": {
+                    "Task_source_lines": {
+                      "type": "Select",
+                      "inputs": {
+                        "from": "@items('Create_the_tasks')?['sources']",
+                        "select": "@concat('- **', item(), '**: ', replace(coalesce(parameters('sourceExcerpts')?[item()], 'see solutions/01-plan-microsoft/inputs/'), '@', '@\u200b'))"
+                      },
+                      "runAfter": {}
+                    },
+                    "Create_a_task": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "POST",
+                        "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues",
+                        "headers": {
+                          "Authorization": "Bearer @{parameters('githubToken')}",
+                          "Accept": "application/vnd.github+json",
+                          "X-GitHub-Api-Version": "2022-11-28",
+                          "User-Agent": "ai-sdlc-plan-microsoft"
+                        },
+                        "body": {
+                          "title": "[Plan/Foundry] @{items('Create_the_tasks')?['title']}",
+                          "body": "**Epic:** #@{variables('epicIssue')} · **Owner role:** @{items('Create_the_tasks')?['ownerRole']} · **Depends on:** @{if(empty(items('Create_the_tasks')?['dependsOn']), 'none', join(items('Create_the_tasks')?['dependsOn'], ', '))} · **Backlog id:** `@{items('Create_the_tasks')?['id']}`\n\n## Description\n\n@{items('Create_the_tasks')?['description']}\n\n## Acceptance criteria\n\n- [ ] @{join(items('Create_the_tasks')?['acceptanceCriteria'], concat(parameters('newline'), '- [ ] '))}\n\n## Sources\n\n@{join(body('Task_source_lines'), parameters('newline'))}\n\n<!-- plan-microsoft: review #@{outputs('Review_issue')}, @{items('Create_the_tasks')?['id']} -->\n",
+                          "labels": [ "ai-sdlc", "phase:plan", "track:microsoft", "type:task" ]
+                        },
+                        "retryPolicy": { "type": "none" }
+                      },
+                      "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+                      "runAfter": { "Task_source_lines": [ "Succeeded" ] }
+                    },
+                    "Remember_the_task": {
+                      "type": "AppendToArrayVariable",
+                      "inputs": {
+                        "name": "createdTasks",
+                        "value": {
+                          "taskId": "@{items('Create_the_tasks')?['id']}",
+                          "number": "@body('Create_a_task')?['number']",
+                          "issueId": "@body('Create_a_task')?['id']",
+                          "dependsOn": "@items('Create_the_tasks')?['dependsOn']"
+                        }
+                      },
+                      "runAfter": { "Create_a_task": [ "Succeeded" ] }
+                    },
+                    "Link_as_a_sub_issue": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "POST",
+                        "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{variables('epicIssue')}/sub_issues",
+                        "headers": {
+                          "Authorization": "Bearer @{parameters('githubToken')}",
+                          "Accept": "application/vnd.github+json",
+                          "X-GitHub-Api-Version": "2022-11-28",
+                          "User-Agent": "ai-sdlc-plan-microsoft"
+                        },
+                        "body": { "sub_issue_id": "@body('Create_a_task')?['id']" },
+                        "retryPolicy": { "type": "none" }
+                      },
+                      "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+                      "runAfter": { "Remember_the_task": [ "Succeeded" ] }
+                    }
+                  },
+                  "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                  "runAfter": { "Remember_the_epic": [ "Succeeded" ] }
+                },
+                "Link_the_dependencies": {
+                  "type": "Foreach",
+                  "foreach": "@variables('createdTasks')",
+                  "actions": {
+                    "For_each_blocker": {
+                      "type": "Foreach",
+                      "foreach": "@coalesce(items('Link_the_dependencies')?['dependsOn'], json('[]'))",
+                      "actions": {
+                        "Find_the_blocking_task": {
+                          "type": "Query",
+                          "inputs": {
+                            "from": "@variables('createdTasks')",
+                            "where": "@equals(item()?['taskId'], items('For_each_blocker'))"
+                          },
+                          "runAfter": {}
+                        },
+                        "Mark_as_blocked_by": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "POST",
+                            "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{items('Link_the_dependencies')?['number']}/dependencies/blocked_by",
+                            "headers": {
+                              "Authorization": "Bearer @{parameters('githubToken')}",
+                              "Accept": "application/vnd.github+json",
+                              "X-GitHub-Api-Version": "2022-11-28",
+                              "User-Agent": "ai-sdlc-plan-microsoft"
+                            },
+                            "body": { "issue_id": "@first(body('Find_the_blocking_task'))?['issueId']" },
+                            "retryPolicy": { "type": "none" }
+                          },
+                          "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+                          "runAfter": { "Find_the_blocking_task": [ "Succeeded" ] }
+                        }
+                      },
+                      "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                      "runAfter": {}
+                    }
+                  },
+                  "runtimeConfiguration": { "concurrency": { "repetitions": 1 } },
+                  "runAfter": { "Create_the_tasks": [ "Succeeded" ] }
+                }
+              },
+              "runAfter": {}
+            },
+            "Task_links": {
+              "type": "Select",
+              "inputs": { "from": "@variables('createdTasks')", "select": "@concat('#', string(item()?['number']))" },
+              "runAfter": { "Publish_the_backlog": [ "Succeeded" ] }
+            },
+            "Comment_the_backlog": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Review_issue')}/comments",
+                "headers": {
+                  "Authorization": "Bearer @{parameters('githubToken')}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "ai-sdlc-plan-microsoft"
+                },
+                "body": {
+                  "body": "### Backlog published after review\n\nA person applied `brief-approved`, so Logic Apps run `@{workflow()?['run']?['name']}` created the backlog:\n\n- Epic: #@{variables('epicIssue')}\n- Tasks, linked to the epic as sub-issues: @{join(body('Task_links'), ', ')}\n"
+                }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+              "runAfter": { "Task_links": [ "Succeeded" ] }
+            },
+            "Close_the_review_issue": {
+              "type": "Http",
+              "inputs": {
+                "method": "PATCH",
+                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Review_issue')}",
+                "headers": {
+                  "Authorization": "Bearer @{parameters('githubToken')}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "ai-sdlc-plan-microsoft"
+                },
+                "body": { "state": "closed", "state_reason": "completed" }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+              "runAfter": { "Comment_the_backlog": [ "Succeeded" ] }
+            },
+            "Created_task_links": {
+              "type": "Select",
+              "inputs": { "from": "@variables('createdTasks')", "select": "@concat('#', string(item()?['number']))" },
+              "runAfter": { "Publish_the_backlog": [ "Failed", "TimedOut" ] }
+            },
+            "Comment_what_was_created": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Review_issue')}/comments",
+                "headers": {
+                  "Authorization": "Bearer @{parameters('githubToken')}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "ai-sdlc-plan-microsoft"
+                },
+                "body": {
+                  "body": "### Publishing stopped\n\nLogic Apps run `@{workflow()?['run']?['name']}` failed while publishing the backlog, so this review stays open. Created so far: @{if(equals(variables('epicIssue'), 0), 'no epic', concat('epic #', string(variables('epicIssue'))))}; tasks: @{if(empty(body('Created_task_links')), 'none', join(body('Created_task_links'), ', '))}. Their sub-issue links and dependencies may be incomplete: finish or close them by hand, then start a new run if needed.\n"
+                }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+              "runAfter": { "Created_task_links": [ "Succeeded" ] }
+            },
+            "Stop_publishing_failed": {
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Failed",
+                "runError": {
+                  "code": "PublishingFailed",
+                  "message": "Publishing stopped partway; the comment on review Issue #@{outputs('Review_issue')} lists what was created."
+                }
+              },
+              "runAfter": { "Comment_what_was_created": [ "Succeeded", "Failed" ] }
+            }
+          }
+        },
+        "Rejected": {
+          "case": "rejected",
+          "actions": {
+            "Comment_not_published": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Review_issue')}/comments",
+                "headers": {
+                  "Authorization": "Bearer @{parameters('githubToken')}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "ai-sdlc-plan-microsoft"
+                },
+                "body": {
+                  "body": "Closed without the `brief-approved` label, so Logic Apps run `@{workflow()?['run']?['name']}` published nothing."
+                }
+              },
+              "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+              "runAfter": {}
+            },
+            "Stop_rejected": {
+              "type": "Terminate",
+              "inputs": { "runStatus": "Cancelled" },
+              "runAfter": { "Comment_not_published": [ "Succeeded", "Failed" ] }
+            }
+          }
+        }
+      },
+      "default": {
+        "actions": {
+          "Comment_no_decision": {
+            "type": "Http",
+            "inputs": {
+              "method": "POST",
+              "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Review_issue')}/comments",
+              "headers": {
+                "Authorization": "Bearer @{parameters('githubToken')}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "ai-sdlc-plan-microsoft"
+              },
+              "body": {
+                "body": "No decision within 2 hours, so Logic Apps run `@{workflow()?['run']?['name']}` stopped and published nothing. Start a new run to try again."
+              }
+            },
+            "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+            "runAfter": {}
+          },
+          "Close_as_not_planned": {
+            "type": "Http",
+            "inputs": {
+              "method": "PATCH",
+              "uri": "https://api.github.com/repos/@{parameters('githubRepository')}/issues/@{outputs('Review_issue')}",
+              "headers": {
+                "Authorization": "Bearer @{parameters('githubToken')}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "ai-sdlc-plan-microsoft"
+              },
+              "body": { "state": "closed", "state_reason": "not_planned" }
+            },
+            "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
+            "runAfter": { "Comment_no_decision": [ "Succeeded", "Failed" ] }
+          },
+          "Stop_no_decision": {
+            "type": "Terminate",
+            "inputs": { "runStatus": "Cancelled" },
+            "runAfter": { "Close_as_not_planned": [ "Succeeded", "Failed" ] }
+          }
+        }
+      },
+      "runAfter": { "Wait_for_a_person": [ "Succeeded", "Failed", "TimedOut" ] }
+    }
+  },
+  "outputs": {}
+}
