@@ -49,7 +49,7 @@ flowchart LR
 - **GitHub** holds the code, the review Issue, and the published backlog. No GitHub Actions workflow and no Copilot step is involved: the presenter starts the run in Azure, and the run checks the Issue for the label.
 - **A person** reviews the brief, owns the unresolved decisions, and applies the `brief-approved` label.
 
-Azure services sign in to each other with managed identities: the Logic App to Foundry, and Foundry to Application Insights. Reaching GitHub needs a credential. It's a fine-grained token limited to this repository's Issues, passed to the Logic App as a `securestring` workflow parameter: reading the workflow never returns it, and every action that uses it hides its inputs and outputs in the run history.
+Azure services sign in to each other with managed identities: the Logic App to Foundry, and Foundry to Application Insights. Reaching GitHub needs a credential. It's a fine-grained token limited to this repository's Issues, passed to the Logic App as a `securestring` workflow parameter: reading the workflow never returns it. Every action that uses it has secure inputs and outputs, so the run history never shows its inputs, where the token is, and shows GitHub's response only when GitHub refused the call: an error message, never the token.
 
 **Model and call mode.** The agent runs on `gpt-4.1` in background mode: the Logic App's call returns at once, and the workflow polls until the brief is ready, about 20 to 30 seconds later. A single synchronous call would have to finish within the 120-second limit of a Consumption Logic App; background mode removes that limit. Three runs in a row passed all four gates. `gpt-4.1` retires on 2027-04-14. To move to a reasoning model such as `gpt-5.4`, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), replace `temperature` with `reasoning_effort: low` in `agent.yaml`, and run `azd provision`.
 
@@ -214,7 +214,7 @@ About 15 minutes, plus up to 5 more when the evaluation runs again. Steps 12 and
 
 3. **Show the workflow** (1 minute). In the Azure portal, open the Logic App `logic-plan-backlog`, then **Development Tools** → **Logic app designer**. Select the arrow on **Draft the brief** to show its four steps, then collapse it again.
 
-   ![The Logic App designer for logic-plan-backlog: the manual trigger, Initialize variables, then the phases Draft the brief (4 actions), Evaluate the brief (6 actions), and Open the review issue (3 actions), a Do-until loop named Wait for a person (4 actions), and the switch Act on the decision](images/03-workflow.png)
+   ![The Logic App designer for logic-plan-backlog: the manual trigger, Initialize variables, then the phases Draft the brief, Evaluate the brief, and Open the review issue, a Do-until loop named Wait for a person, and the switch Act on the decision, each collapsed](images/03-workflow.png)
 
    **Point out:** the whole path from the notes to the backlog is one workflow in Azure, in five phases. It calls Foundry with its own managed identity, without a key, and only the last three phases talk to GitHub.
 
@@ -266,7 +266,7 @@ About 15 minutes, plus up to 5 more when the evaluation runs again. Steps 12 and
 
     ![The finished run in the Logic App: Initialize variables, Draft the brief, Evaluate the brief, Open the review issue, Wait for a person, and Act on the decision all succeeded](images/11-run-complete.png)
 
-    **Point out:** the run history keeps every step's inputs and outputs, except for the GitHub calls, whose inputs carry the token and are hidden.
+    **Point out:** the run history keeps every step's inputs and outputs. The GitHub calls are the exception: their inputs carry the token and stay hidden, and so do GitHub's answers. **Review issue** shows the number of the Issue the run waited on.
 
 12. **Optional: ask Copilot in Azure about the agent's tokens** (2 minutes). Open the Application Insights resource `appi-plan`, select **Copilot** in the portal's top bar, and ask:
 

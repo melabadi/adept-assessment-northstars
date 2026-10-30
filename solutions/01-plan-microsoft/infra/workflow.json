@@ -510,11 +510,17 @@
           "runtimeConfiguration": { "secureData": { "properties": [ "inputs", "outputs" ] } },
           "runAfter": { "Write_the_review_issue": [ "Succeeded" ] }
         },
-        "Review_issue": {
+        "Review_issue_created": {
           "type": "Compose",
-          "description": "The review Issue's number, outside the secured GitHub call so the run history shows it.",
+          "description": "The new Issue's number. The run history hides this step, because it reads the secured call's response.",
           "inputs": "@body('Create_the_review_issue')?['number']",
           "runAfter": { "Create_the_review_issue": [ "Succeeded" ] }
+        },
+        "Review_issue": {
+          "type": "Compose",
+          "description": "The review Issue's number, read from the step before, so the run history shows it.",
+          "inputs": "@outputs('Review_issue_created')",
+          "runAfter": { "Review_issue_created": [ "Succeeded" ] }
         }
       },
       "runAfter": { "Evaluate_the_brief": [ "Succeeded" ] }
