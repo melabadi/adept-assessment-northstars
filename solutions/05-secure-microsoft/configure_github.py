@@ -1,20 +1,20 @@
-"""Connect this solution's Azure resources to GitHub Actions. azd runs it as hooks; you rarely call it yourself.
+"""Connect this solution's Azure automation to its GitHub repository. azd runs it as hooks; you rarely call it yourself.
 
   python configure_github.py prepare    (azd preprovision hook)
-      Finds the GitHub repository (`gh repo view`) and its OIDC subject prefix, and stores them in the azd
-      environment as GITHUB_REPOSITORY and GITHUB_OIDC_SUBJECT_PREFIX. Bicep uses them to create the federated
-      credential that lets this solution's GitHub environment sign in to Azure without a stored secret.
+      Finds the GitHub repository (`gh repo view`) and stores it in the azd environment as GITHUB_REPOSITORY, so the Logic
+      Apps and the what-if job know where to file Issues and pull requests. Warns when POSTURE_GITHUB_TOKEN is not set.
 
   python configure_github.py publish    (azd postprovision hook)
-      Creates or updates the GitHub environment `secure-microsoft`. Secrets: the Azure sign-in values, and every value
-      that names a deployed resource (the RequestHub API's URL and its Microsoft Entra identifier), because GitHub masks
-      secrets in logs while it prints variables in every step's environment listing. Variables: only names that identify
-      nothing, such as the resource group and the deployment parameters the what-if preview needs. Variables from earlier
-      versions that now are secrets are deleted. With OIDC there is no password or key to store.
+      Creates or updates one repository webhook that sends pull_request events to the Logic App posture-preview, so a push
+      to a pull request that changes this solution's infra/ gets a new Azure what-if preview. The webhook's URL is the
+      Logic App's trigger URL, which carries a signature: it is read from Azure each time and never printed or saved.
 
-Needs the GitHub CLI signed in with admin rights on the repository (environments and secrets need them).
-To target another repository, run `azd env set GITHUB_REPOSITORY owner/name` first.
-To skip the GitHub side entirely, run `azd env set SKIP_GITHUB true`.
+  python configure_github.py remove     (azd predown hook)
+      Deletes that webhook.
+
+Uses the GitHub CLI of the person running azd, who needs admin rights on the repository (webhooks need them). To target
+another repository, run `azd env set GITHUB_REPOSITORY owner/name` first. To skip GitHub, run
+`azd env set SKIP_GITHUB true`.
 """
 from __future__ import annotations
 
@@ -23,36 +23,16 @@ import os
 import shutil
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
-ENVIRONMENT = "secure-microsoft"
-# GitHub secret name -> azd environment value
-SECRETS = {
-    "AZURE_CLIENT_ID": "AUTOMATION_CLIENT_ID",
-    "AZURE_TENANT_ID": "AZURE_TENANT_ID",
-    "AZURE_SUBSCRIPTION_ID": "AZURE_SUBSCRIPTION_ID",
-    "API_URL": "API_URL",
-    "API_IDENTIFIER_URI": "API_IDENTIFIER_URI",
-}
-# GitHub variable name -> azd environment value. Documented names only; nothing here identifies the deployment.
-VARIABLES = {
-    "AZURE_ENV_NAME": "AZURE_ENV_NAME",
-    "AZURE_LOCATION": "AZURE_LOCATION",
-    "AZURE_RESOURCE_GROUP": "AZURE_RESOURCE_GROUP",
-    "POLICY_ASSIGNMENT_NAME": "POLICY_ASSIGNMENT_NAME",
-}
-# Deployment parameters the what-if preview needs to reproduce `azd provision` exactly. Set only when present: the prefix is
-# empty for repositories with classic OIDC subjects (and GitHub variable names cannot start with GITHUB_). The presenter's
-# object id is not a credential; it is a secret to keep it out of logs.
-OPTIONAL_VARIABLES = {"OIDC_SUBJECT_PREFIX": "GITHUB_OIDC_SUBJECT_PREFIX"}
-OPTIONAL_SECRETS = {"AZURE_PRINCIPAL_ID": "AZURE_PRINCIPAL_ID"}
-# Variables that earlier versions published and that are secrets now.
-RETIRED_VARIABLES = ("API_URL", "API_IDENTIFIER_URI")
+TRIGGER = "Pull_request_event"
 
 
 def run(*args: str, stdin: str | None = None) -> str:
     proc = subprocess.run(args, input=stdin, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise SystemExit(f"error: {' '.join(args[:3])} failed: {(proc.stderr or proc.stdout).strip()}")
+        # Never echo the command line: for webhooks it can contain the trigger URL.
+        raise SystemExit(f"error: {' '.join(args[:3])} failed: {(proc.stderr or proc.stdout).strip()[:400]}")
     return proc.stdout.strip()
 
 
@@ -63,57 +43,85 @@ def azd_values() -> dict[str, str]:
 def prepare() -> None:
     values = azd_values()
     repo = values.get("GITHUB_REPOSITORY") or run("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner")
-    claims = json.loads(run("gh", "api", f"repos/{repo}/actions/oidc/customization/sub"))
-    prefix = claims.get("sub_claim_prefix", "") if claims.get("use_immutable_subject") else ""
     run("azd", "env", "set", "GITHUB_REPOSITORY", repo)
-    run("azd", "env", "set", "GITHUB_OIDC_SUBJECT_PREFIX", prefix)
-    print(f"GitHub repository {repo}, OIDC subject prefix: {prefix or 'repo:' + repo + ' (classic)'}")
+    print(f"GitHub repository: {repo}")
+    if not values.get("POSTURE_GITHUB_TOKEN"):
+        print("warning: POSTURE_GITHUB_TOKEN is not set. The Logic Apps and the what-if job cannot reach GitHub until you "
+              "create the fine-grained token (see the README, Set up) and run `azd provision` again.")
+
+
+def trigger_url(values: dict[str, str]) -> str:
+    az = shutil.which("az") or "az"
+    workflow = values.get("PREVIEW_WORKFLOW_NAME", "posture-preview")
+    subscription = values.get("AZURE_SUBSCRIPTION_ID") or run(az, "account", "show", "--query", "id", "-o", "tsv")
+    url = (f"https://management.azure.com/subscriptions/{subscription}/resourceGroups/{values['AZURE_RESOURCE_GROUP']}"
+           f"/providers/Microsoft.Logic/workflows/{workflow}/triggers/{TRIGGER}/listCallbackUrl?api-version=2019-05-01")
+    return run(az, "rest", "--method", "post", "--url", url, "--query", "value", "-o", "tsv")
+
+
+def same_endpoint(a: str, b: str) -> bool:
+    """Two trigger URLs for the same Logic App trigger, whatever their signature."""
+    left, right = urlsplit(a), urlsplit(b)
+    return (left.hostname, left.path.rstrip("/")) == (right.hostname, right.path.rstrip("/"))
+
+
+def existing_hook(repo: str, url: str) -> dict | None:
+    hooks = json.loads(run("gh", "api", f"repos/{repo}/hooks?per_page=100") or "[]")
+    return next((h for h in hooks if same_endpoint((h.get("config") or {}).get("url", ""), url)), None)
 
 
 def publish() -> None:
     values = azd_values()
-    # azd passes AZURE_PRINCIPAL_ID to hooks as an environment variable but does not always save it; fall back to the
-    # signed-in Azure CLI user, who is the person running azd.
-    principal = values.get("AZURE_PRINCIPAL_ID") or os.environ.get("AZURE_PRINCIPAL_ID")
-    if not principal and (az := shutil.which("az")):
-        proc = subprocess.run([az, "ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"], capture_output=True, text=True)
-        principal = proc.stdout.strip() if proc.returncode == 0 else ""
-    if principal:
-        values["AZURE_PRINCIPAL_ID"] = principal
     repo = values.get("GITHUB_REPOSITORY")
-    if not repo:
-        raise SystemExit("error: GITHUB_REPOSITORY is not set; run `azd provision` again so the preprovision hook sets it.")
-    missing = [name for name in [*SECRETS.values(), *VARIABLES.values()] if not values.get(name)]
-    if missing:
-        raise SystemExit(f"error: azd outputs missing: {', '.join(missing)}. Did `azd provision` succeed?")
-    run("gh", "api", "-X", "PUT", f"repos/{repo}/environments/{ENVIRONMENT}")
-    secrets = {**SECRETS, **{k: v for k, v in OPTIONAL_SECRETS.items() if values.get(v)}}
-    variables = {**VARIABLES, **{k: v for k, v in OPTIONAL_VARIABLES.items() if values.get(v)}}
-    for secret, source in secrets.items():
-        run("gh", "secret", "set", secret, "--env", ENVIRONMENT, "--repo", repo, stdin=values[source])
-    for variable, source in variables.items():
-        run("gh", "variable", "set", variable, "--env", ENVIRONMENT, "--repo", repo, "--body", values[source])
-    existing = json.loads(run("gh", "variable", "list", "--env", ENVIRONMENT, "--repo", repo, "--json", "name") or "[]")
-    retired = [v["name"] for v in existing if v["name"] in RETIRED_VARIABLES]
-    for variable in retired:
-        run("gh", "variable", "delete", variable, "--env", ENVIRONMENT, "--repo", repo)
-    print(f"GitHub environment '{ENVIRONMENT}' in {repo}: {len(secrets)} secrets, {len(variables)} variables set"
-          + (f", {len(retired)} retired variables deleted." if retired else "."))
+    if not repo or not values.get("AZURE_RESOURCE_GROUP"):
+        raise SystemExit("error: GITHUB_REPOSITORY or AZURE_RESOURCE_GROUP is not set. Did `azd provision` succeed?")
+    url = trigger_url(values)
+    config = {"url": url, "content_type": "json", "insecure_ssl": "0"}
+    hook = existing_hook(repo, url)
+    if hook:
+        run("gh", "api", "-X", "PATCH", f"repos/{repo}/hooks/{hook['id']}", "--input", "-",
+            stdin=json.dumps({"active": True, "events": ["pull_request"], "config": config}))
+        print(f"Webhook {hook['id']} in {repo}: pull_request events → Logic App posture-preview (updated).")
+    else:
+        created = json.loads(run("gh", "api", "-X", "POST", f"repos/{repo}/hooks", "--input", "-",
+                                 stdin=json.dumps({"name": "web", "active": True, "events": ["pull_request"],
+                                                   "config": config})))
+        print(f"Webhook {created['id']} in {repo}: pull_request events → Logic App posture-preview (created).")
+
+
+def remove() -> None:
+    values = azd_values()
+    repo = values.get("GITHUB_REPOSITORY")
+    if not repo or not values.get("AZURE_RESOURCE_GROUP"):
+        print("No GitHub repository or resource group in the azd environment: nothing to remove.")
+        return
+    try:
+        url = trigger_url(values)
+    except SystemExit:
+        print("The Logic App posture-preview no longer exists; delete the webhook by hand if it remains "
+              "(repository Settings > Webhooks).")
+        return
+    hook = existing_hook(repo, url)
+    if hook:
+        run("gh", "api", "-X", "DELETE", f"repos/{repo}/hooks/{hook['id']}")
+        print(f"Webhook {hook['id']} deleted from {repo}.")
+    else:
+        print("No posture-preview webhook found: nothing to remove.")
 
 
 def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"prepare", "publish"}:
+    commands = {"prepare": prepare, "publish": publish, "remove": remove}
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if len(sys.argv) != 2 or sys.argv[1] not in commands:
         print(__doc__)
         return 2
     if os.environ.get("SKIP_GITHUB", "").lower() == "true":
-        print("SKIP_GITHUB is true: GitHub environment not configured.")
+        print("SKIP_GITHUB is true: GitHub not configured.")
         return 0
     if not shutil.which("gh"):
         raise SystemExit("error: the GitHub CLI (gh) is required. Install it, run `gh auth login`, or set SKIP_GITHUB=true.")
-    if sys.argv[1] == "prepare":
-        prepare()
-    else:
-        publish()
+    commands[sys.argv[1]]()
     return 0
 
 
