@@ -112,6 +112,18 @@ def publish() -> int:
     return 0
 
 
+def assignment_label(state: dict, resource_group_id: str) -> str:
+    """How posture-intake and posture-verify name a policy assignment (Policy_rows and Policy_summary in infra/logic).
+
+    Only assignments in this solution's resource group, or below it, are named. One inherited from a management group or
+    the subscription belongs to the tenant's governance, so it appears only as the kind of scope it comes from.
+    """
+    scope = (state.get("policyAssignmentScope") or "").lower()
+    if (scope + "/").startswith(resource_group_id.lower() + "/"):
+        return state.get("policyAssignmentName") or ""
+    return "management group assignment" if "/managementgroups/" in scope else "subscription assignment"
+
+
 def live_finding(resource_group: str, account: str) -> tuple[dict, str]:
     """The finding as posture-intake builds it, read from Azure with the CLI, and the storage account's id."""
     storage = az_json("storage", "account", "show", "--resource-group", resource_group, "--name", account)
@@ -130,7 +142,8 @@ def live_finding(resource_group: str, account: str) -> tuple[dict, str]:
         "remediation": (defender.get("metadata") or {}).get("remediationDescription", ""),
         "resourceType": "Microsoft.Storage/storageAccounts",
         "resourceGroup": resource_group,
-        "azurePolicy": [{"assignment": s.get("policyAssignmentName"), "state": s.get("complianceState")} for s in policy],
+        "azurePolicy": [{"assignment": assignment_label(s, storage["id"].split("/providers/")[0]),
+                         "state": s.get("complianceState")} for s in policy],
         "liveConfiguration": {"approvedPrivateEndpoints": len(approved),
                               "publicNetworkAccess": storage.get("publicNetworkAccess")},
     }
