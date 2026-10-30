@@ -129,7 +129,7 @@ Write for someone who has never seen the repository and will present the demo to
 
 Screenshots go in the solution's `images/` folder, named after the step they illustrate (`images/05-proof-check.png`), and are linked with alt text that says what the image shows: `![The proof check: the new test fails before the fix and passes after it](images/05-proof-check.png)`. Capture them from a real run of the demo.
 
-**Capture every screenshot with [`tools/screenshot.mjs`](tools/screenshot.mjs)**, never with another screenshot tool. It masks what identifies your tenant and account before the image is saved: your subscription and tenant, your account and tenant domain, resource host names and the unique tokens in resource names, GUIDs, e-mail addresses, and user profile paths. It refuses to save an image when anything is left, and reads every image back with OCR. One-time setup:
+**Capture every screenshot with [`tools/screenshot.mjs`](tools/screenshot.mjs)**, never with another screenshot tool. It masks what identifies your tenant and account before the image is saved: your subscription and tenant, your account and tenant domain, resource host names and the unique tokens in resource names, GUIDs, e-mail addresses, and user profile paths. On GitHub it also hides avatars, because the docs show no real people, and removes the staff bar. It refuses to save an image when anything is left, and reads every image back with OCR. One-time setup:
 
 ```powershell
 npm ci --prefix app/web                      # Playwright, used by the tool
