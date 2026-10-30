@@ -688,7 +688,10 @@ def report_pull_request(github: GitHub, number: int, sha: str, status, expect: l
         return 1
     except (ConfigError, json.JSONDecodeError, OSError) as exc:
         print(f"error: {mask(str(exc))}", file=sys.stderr)
-        status("error", "The preview could not run; see the posture-whatif job in Azure")
+        # A tenant policy can stop RequestHub's PostgreSQL server on a schedule, and what-if cannot preview a stopped
+        # server: say so, without naming it.
+        status("error", "A stopped PostgreSQL server blocks what-if: start it, then update the pull request to preview again"
+               if "ServerStoppedError" in str(exc) else "The preview could not run; see the posture-whatif job in Azure")
         return 2
     report = summary(outcome, expect, resource_group, intro, details=False)
     post_comment(github, number, report)

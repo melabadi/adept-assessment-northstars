@@ -162,7 +162,7 @@ Allow 15 minutes, most of it for the portal pages to load. Run the commands in t
    ![The starting-state checks in a terminal: the database Ready, 0 private endpoints, the Azure Policy assignment NonCompliant, and no open posture Issue](images/00-before-session.png)
 
    You want `Ready`, `0`, `NonCompliant`, and no open Issue.
-   - **The database is `Stopped`.** A tenant policy can stop PostgreSQL servers on a schedule, and the app then times out. Start it; it takes 3 to 5 minutes:
+   - **The database is `Stopped`.** A tenant policy can stop PostgreSQL servers on a schedule. Then the app times out, and the what-if preview and `azd provision` fail with `ServerStoppedError`. Start it; it takes 3 to 5 minutes:
 
      ```powershell
      az postgres flexible-server start -g $rg -n (az postgres flexible-server list -g $rg --query "[0].name" -o tsv)
@@ -353,7 +353,7 @@ azd env remove ai-sdlc-secure --force
 - **`azd up` fails in the postprovision hook with `ModuleNotFoundError`.** The hook runs `python remediation_agent.py publish` with the first Python on your PATH. Run `pip install -r requirements.txt` with that Python, or activate the virtual environment you installed it in, then run `azd provision`.
 - **A `posture-intake` run fails with `Unauthorized` (HTTP 401) at its first GitHub call.** The token is missing or expired. Create a new one ([Set up](#set-up), step 1), store it with `azd env set POSTURE_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')`, and run `azd provision`.
 - **Defender for Cloud still reports the account Healthy after a reset.** Defender reassesses on its own schedule, up to a day after the reset. `posture-intake` reads the recommendation's status from Azure, not from the click, so until then a run records Defender's confirmation instead of filing work. Reset at least a day before you present. If you can't wait, show steps 3 to 5 with this README's screenshots, and say why.
-- **The app times out, or its readiness probe fails.** The PostgreSQL server was stopped, for example by a tenant policy on a schedule. Start it as in [Before each session](#before-each-session); it takes 3 to 5 minutes.
+- **The commit status `posture/what-if` says a stopped PostgreSQL server blocks what-if, `azd provision` fails with `ServerStoppedError`, or the app times out.** The PostgreSQL server was stopped, for example by a tenant policy on a schedule. Start it as in [Before each session](#before-each-session); it takes 3 to 5 minutes. Then update the pull request, for example edit its description: `posture-preview` previews a commit again when its last preview ended in error.
 - **A button in the app fails with HTTP 403 and no body.** The deployment predates [#134](https://github.com/melabadi/adept-assessment-northstars/pull/134), the shared module's fix for browser requests behind Container Apps authentication. Run `azd deploy api` in this folder from an up-to-date `main`.
 - **A storage setting in your Bicep is ignored after deployment.** An organization-wide Azure Policy with a Modify effect can rewrite storage settings, such as shared key access or public network access, at deployment time. Run `az policy state list --resource <storage account id>` and look for `modify` in `policyDefinitionAction`. This solution uses private link because such a policy cannot fix it for you.
 - **Attachments fail with HTTP 500 before the fix.** Expected where policy closes public storage endpoints: the API's Blob request is refused with `403 AuthorizationFailure`. The fix is what makes uploads work.
