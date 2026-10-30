@@ -2,7 +2,7 @@
 
 Turning workshop notes into a backlog is slow, and it is easy to lose track of where a requirement came from or to quietly settle a disagreement nobody decided. In this solution the AI and its orchestration run in Azure. A Logic App asks a Microsoft Foundry agent to read the stakeholder transcript and draft a requirements brief and backlog, with a source for every line. A Foundry evaluation then checks the brief, and the Logic App puts it in a GitHub Issue for a person to review. When the person approves, the Logic App publishes the epic and its tasks as GitHub Issues. GitHub holds only the code and the Issues.
 
-![The finished run of the Logic App that turns the workshop notes into a backlog: Initialize variables, Draft the brief, Evaluate the brief, Open the review issue, Wait for a person, and Act on the decision all succeeded](images/11-run-complete.png)
+![The Logic App that turns the workshop notes into a backlog, in the Azure portal's designer: after Initialize variables come Draft the brief, Evaluate the brief, Open the review issue, a loop that waits for a person, and Act on the decision](images/03-workflow.png)
 
 ## Where it fits
 
@@ -53,7 +53,7 @@ Azure services sign in to each other with managed identities: the Logic App to F
 
 **Model and call mode.** The agent runs on `gpt-4.1` in background mode: the Logic App's call returns at once, and the workflow polls until the brief is ready, about 20 to 30 seconds later. A single synchronous call would have to finish within the 120-second limit of a Consumption Logic App; background mode removes that limit. Three runs in a row passed all four gates. `gpt-4.1` retires on 2027-04-14. To move to a reasoning model such as `gpt-5.4`, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), replace `temperature` with `reasoning_effort: low` in `agent.yaml`, and run `azd provision`.
 
-**Preview pieces.** Foundry Agent Service, agent tracing, and Logic Apps are generally available. Custom evaluators and cloud evaluations are in preview. The evaluator catalog asks for the opt-in header `Foundry-Features: Evaluations=V1Preview`, which [`setup_foundry.py`](setup_foundry.py) sends. The preview grading sandbox sometimes errors on one check ("An error occurred during grading"), and the run then takes about 4 minutes instead of 1.5. As a preview workaround, the workflow runs the evaluation again, up to three attempts, when a gate errored. It never retries a gate that failed.
+**Preview pieces.** Foundry Agent Service, agent tracing, and Logic Apps are generally available. Custom evaluators and cloud evaluations are in preview. The evaluator catalog asks for the opt-in header `Foundry-Features: Evaluations=V1Preview`, which [`setup_foundry.py`](setup_foundry.py) sends. The preview grading sandbox often errors on one check ("An error occurred during grading"; about half of our evaluation runs), and that evaluation run then takes about 4 minutes instead of 1.5. As a preview workaround, the workflow runs the evaluation again, up to three attempts, when a gate errored. It never retries a gate that failed. The review Issue marks a reported check that errored as not scored.
 
 ## What's in this folder
 
@@ -162,8 +162,6 @@ Azure services sign in to each other with managed identities: the Logic App to F
    "GitHub token: HTTP $($r.StatusCode), expires $($r.Headers['github-authentication-token-expiration'])"
    ```
 
-   ![The starting-state check in PowerShell 7: the evaluator tests pass, and setup_foundry.py reports the vector store, agent requirements-analyst v10 on gpt-4.1, the seven evaluators, and the evaluation plan-brief-checks as reused; no open Issue and no running run are listed; the GitHub token answers HTTP 200 with its expiry date](images/00-starting-state.png)
-
    You should see:
    - `evaluator tests: 6 passed`, then every Foundry line ending in `reused`: the agent, the seven evaluators, and the evaluation match this folder;
    - no open Issue labeled `track:microsoft`, and no run still waiting for a decision. Otherwise run [Reset and clean up](#reset-and-clean-up) first;
@@ -177,22 +175,22 @@ Azure services sign in to each other with managed identities: the Logic App to F
    - GitHub on this repository's Issues, filtered with `is:open label:track:microsoft` (empty until step 8);
    - [`inputs/stakeholder-transcript.md`](inputs/stakeholder-transcript.md) on GitHub.
 
-3. **Start a backup run 10 minutes early** (optional). Start one run as in step 4 and leave its review Issue open. If the live run is slow, for example when the evaluation runs again, continue the demo on the backup's review Issue. Reset closes both afterwards.
+3. **Start a backup run 10 minutes early** (optional). Start one run as in step 4 and leave its review Issue open. If the live run is slow, for example when the evaluation runs again, continue the demo on the backup's review Issue. To show step 13 as well, start the backup with the payload that step describes: its review Issue then scores both briefs. Reset closes both review Issues afterwards.
 
-4. **Timings** measured on live runs:
+4. **Timings:**
 
    | Step | Time |
    | --- | --- |
    | Starting-state check (`publish` takes about 30 seconds) | about 1 minute |
    | **Draft the brief**: the agent's answer | 20 to 25 seconds |
-   | **Evaluate the brief** | about 1½ minutes, or 4 to 6 when a preview grading error makes it run again |
-   | From **Run** to the review Issue | 2 to 7 minutes |
-   | From the label to the published backlog | under a minute: the Logic App checks every 30 seconds |
-   | Whole demo | about 15 minutes, 20 with the optional steps |
+   | **Evaluate the brief** | about 1½ minutes; 4 to 8 when a preview grading error makes it run again |
+   | From **Run** to the review Issue | about 2 to 9 minutes |
+   | From the label to the published backlog | about 1 minute (estimate): the Logic App checks the Issue every 30 seconds |
+   | Whole demo | about 15 minutes, 20 with the optional steps (estimate) |
 
 ## Run the demo
 
-About 15 minutes, plus up to 5 more when the evaluation runs again. Steps 12 and 13 are optional.
+About 15 minutes, plus up to 7 more when the evaluation runs again. Steps 12 and 13 are optional.
 
 1. **Show the input** (1 minute). Open [`inputs/stakeholder-transcript.md`](inputs/stakeholder-transcript.md). It hides the problems real notes have:
    - **T04 vs T05**: advisory or automatic routing? **T19** records the decision.
@@ -220,51 +218,35 @@ About 15 minutes, plus up to 5 more when the evaluation runs again. Steps 12 and
 
 4. **Start a run** (under a minute). Go to **Overview** and select **Run** → **Run**. The **Run history** tab shows the new run as **Running**.
 
-   ![The Logic App's Overview with Essentials collapsed: the Run button in the command bar, and in Run history the new run at the top with the status Running](images/04-start-run.png)
-
    **Point out:** the run starts in Azure. No GitHub Actions workflow and no Copilot step is involved; Logic Apps keeps the history of every run.
 
 5. **Watch the agent draft the brief** (about 30 seconds). Select the run in **Run history**. **Draft the brief** turns green after about 20 seconds; select its arrow to show **Ask the agent**, **Wait for the brief**, **Brief is ready**, and **Read the brief**.
-
-   ![The run in the Logic App: Initialize variables and Draft the brief have succeeded, and Evaluate the brief is running](images/05-run-draft.png)
 
    **Point out:** the Logic App called the agent in background mode. The call returned at once, and **Wait for the brief** polled until the answer was ready. The Logic App signs in to Foundry with its managed identity: no key is stored anywhere.
 
 6. **Show the trace** (1 minute). In Foundry, on the agent, open **Traces**, then select the newest trace ID.
 
-   ![The trace of this run in Foundry: invoke_agent requirements-analyst:10 contains a file_search tool call and one gpt-4.1 chat call, about 15 seconds and 6,300 tokens in all, with the agent's instructions in the input panel](images/06-trace.png)
-
    **Point out:** the agent searched the transcript and the policies, then wrote the brief in one model call. The **Traces** list shows each run's duration, tokens, and estimated cost: about 2.5 cents.
 
-7. **Show the evaluation** (1 to 2 minutes; the run takes about 1½ minutes, or 4 to 6 when it runs again). In Foundry, open **Evaluations** → **Evaluator catalog** to show the seven custom evaluators, then the **Evaluations** tab → `plan-brief-checks` and the newest run.
+7. **Show the evaluation** (1 to 2 minutes; the evaluation takes about 1½ minutes, or 4 to 8 when it runs again). In Foundry, open **Evaluations** → **Evaluator catalog** to show the seven custom evaluators, then the **Evaluations** tab → `plan-brief-checks` and the newest run.
 
    ![The Foundry evaluator catalog with the seven custom code-based evaluators, marked Preview: Testable criteria, Injected instruction ignored, Citations, Key requirements covered, Planted unknowns, Planted conflicts, and Structure, each with its version](images/07-evaluators.png)
 
-   ![The evaluation run in Foundry: structure, citations, testable criteria, and the injected instruction pass, next to the scores of the three reported checks](images/07-evaluation.png)
-
    **Point out:** the checks are Python code, so the same brief always gets the same score. The four gates decide whether a person sees the brief at all; the three reported checks tell the reviewer where to look.
 
-8. **Read the review Issue** (3 minutes). On GitHub, open the new Issue labeled `type:brief`.
-
-   ![The review Issue the Logic App opened: the evaluation's scores, then the brief's goals and requirements with their sources, the unresolved Finance-versus-IT conflict, and the open questions](images/08-review-issue.png)
+8. **Read the review Issue** (about 3 minutes). On GitHub, open the new Issue labeled `type:brief`.
 
    **Point out:** the brief hands the open conflict and the unknowns to a person instead of guessing, and every line names the paragraph or policy it comes from.
 
-9. **Approve** (under a minute). Apply the `brief-approved` label to the review Issue, or run `gh issue edit <number> --add-label brief-approved`. Within 30 seconds the Logic App sees the label, publishes the backlog, comments the links, and closes the review Issue.
-
-   ![The review Issue after approval: the brief-approved label, the Logic App's comment linking the epic and the four task Issues, and the Issue closed](images/09-published.png)
+9. **Approve** (about 1 minute). Apply the `brief-approved` label to the review Issue, or run `gh issue edit <number> --add-label brief-approved`. The Logic App checks the Issue every 30 seconds. Once it sees the label, it publishes the backlog, comments the links, and closes the review Issue.
 
    **Point out:** nothing reached the backlog until a person applied the label. GitHub never calls into Azure: the Logic App reads the Issue.
 
-10. **Show the backlog** (1 minute). Open the epic from the comment.
-
-    ![The epic Issue: a summary, acceptance criteria, the open questions and the unresolved conflict with their sources, and the four task sub-issues](images/10-epic.png)
+10. **Show the backlog** (about 1 minute). Open the epic from the comment.
 
     **Point out:** the tasks are sub-issues of the epic with "blocked by" dependencies, and each Issue quotes the paragraphs it came from.
 
 11. **Show the finished run** (1 minute). Back in the Logic App, select the run again.
-
-    ![The finished run in the Logic App: Initialize variables, Draft the brief, Evaluate the brief, Open the review issue, Wait for a person, and Act on the decision all succeeded](images/11-run-complete.png)
 
     **Point out:** the run history keeps every step's inputs and outputs. The GitHub calls are the exception: their inputs carry the token and stay hidden, and so do GitHub's answers. **Review issue** shows the number of the Issue the run waited on.
 
@@ -280,9 +262,7 @@ About 15 minutes, plus up to 5 more when the evaluation runs again. Steps 12 and
 
     **Point out:** Copilot in Azure writes the query, and a person runs it and checks the result. Its answer varies from run to run, and a vaguer question can get an Azure Resource Graph query about the resource instead.
 
-13. **Optional: score a Copilot brief next to the Foundry brief** (2 minutes; the token needs **Contents: Read-only**). On the Logic App's **Overview**, select **Run** → **Run with payload**, and send `{"compareWithPullRequest": 129}`: a 01-plan-github pull request whose head holds Copilot's brief. One evaluation run scores both briefs, and the review Issue shows them side by side.
-
-    ![The review Issue of a comparison run: the scores of the Foundry brief and of Copilot's brief side by side, check by check](images/13-compare.png)
+13. **Optional: score a Copilot brief next to the Foundry brief** (about 2 minutes; the token needs **Contents: Read-only**). This takes a run started with a payload: on the Logic App's **Overview**, select **Run** → **Run with payload**, and send `{"compareWithPullRequest": 129}`, a 01-plan-github pull request whose head holds Copilot's brief. The run takes as long as any other, so start it before the session, as the backup run in [Before each session](#before-each-session). One evaluation run scores both briefs, and the run's review Issue shows them side by side. If the token can't read the pull request, the run goes on with the Foundry brief alone.
 
     **Point out:** the same seven checks score both tracks' briefs, so the comparison needs no Copilot step on this side.
 
@@ -330,7 +310,7 @@ Set up before this version, when the solution ran in GitHub Actions? The GitHub 
 - **The run fails at `Create_the_review_issue` with `Unauthorized`.** The Logic App has no valid GitHub token: it isn't set, it expired, or it was revoked. Create a new one as in [Set up](#set-up), then run `azd env set PLAN_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token') -e ai-sdlc-plan` and `azd provision`. Run history shows GitHub's error message for a failed call; the token is in the hidden inputs.
 - **The run fails with `BriefFailedEvaluation`.** A gate didn't pass, or reported no result, and the run's error names it. Nothing was sent to GitHub. Open the evaluation run in Foundry to see the scores, improve the `instructions` in `agent.yaml`, run `python setup_foundry.py publish`, and start a new run. Don't loosen an evaluator to make a brief pass.
 - **The run fails with `PublishingFailed`.** GitHub refused a call while the backlog was being published. The comment on the review Issue lists the epic and the tasks already created; finish or close them by hand, then start a new run if needed. The review Issue stays open.
-- **An evaluation check shows "An error occurred during grading".** The preview grading sandbox sometimes errors on one check, and that run takes about 4 minutes. The workflow runs the evaluation again, up to three attempts, when a gate errored. If every attempt errors on a gate, the run fails; start a new one.
+- **An evaluation check shows "An error occurred during grading".** The preview grading sandbox often errors on one check, and that evaluation run takes about 4 minutes. The workflow runs the evaluation again, up to three attempts, when a gate errored; the review Issue marks a reported check that errored as not scored. If every attempt errors on a gate, the run fails; start a new one.
 - **`error: the evaluator tests failed, so nothing was published`.** A change to an evaluator broke a test in `tests/`, and the output above the error names it. Fix the evaluator, or the test if the rule changed on purpose, then run `python setup_foundry.py publish` again.
 - **`This operation requires the following opt-in preview feature(s): Evaluations=V1Preview`.** You called the evaluator catalog without the preview header. `setup_foundry.py` sends it; send `Foundry-Features: Evaluations=V1Preview` from your own code too.
 - **`Invalid grader source: use of builtin 'compile()' is not allowed in Python graders`.** An evaluator calls something named `compile()`, `re.compile` included. Use `re.search` and `re.match` with a pattern string instead.
