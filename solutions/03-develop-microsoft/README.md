@@ -47,7 +47,7 @@ sequenceDiagram
 
 | Who | Does what |
 | --- | --- |
-| **GitHub** | Holds the code and the pull request. The `review:azure` label asks for a review; a repository webhook tells Azure. Nothing runs in GitHub Actions, and nothing depends on GitHub Copilot. |
+| **GitHub** | Holds the code and the pull request. The `review:azure` label asks for a review; a repository webhook tells Azure. `azd up` creates both with your GitHub CLI. Nothing runs in GitHub Actions, and nothing depends on GitHub Copilot. |
 | **Azure Logic Apps** (Consumption) | Runs one review per event: reads the pull request through GitHub's REST API with a fine-grained token, drives the two sandbox sessions, starts the agent and polls for its answer, and posts the review. Its run history shows every step. |
 | **Azure Container Apps dynamic sessions** | Two pools of Shell sessions. The **judge** pool has no network: it runs the rule checker ([`sandbox/review_rules.py`](sandbox/review_rules.py)) on the code as data and, at the end, writes the review ([`sandbox/format_review.py`](sandbox/format_review.py)). The **run** pool builds and tests the pull request ([`sandbox/run_change.sh`](sandbox/run_change.sh)): .NET 10 and the API's integration tests against PostgreSQL, Node 22 and the web UI's typecheck and unit tests. |
 | **Microsoft Foundry** | Hosts the `requesthub-pr-reviewer` prompt agent on `gpt-5.4-mini` ([`reviewer-agent.yaml`](reviewer-agent.yaml)). Its one tool, `runInSandbox`, reads files in the run session with the project's managed identity. Every agent run is traced to Application Insights, and the evaluations live in the project. |
@@ -70,7 +70,9 @@ sequenceDiagram
 ```text
 solutions/03-develop-microsoft/
 ├── README.md
-├── azure.yaml                  azd project: provisions infra/, then publishes the agent (postprovision hook)
+├── azure.yaml                  azd project: provisions infra/, then runs the hooks below
+├── configure_github.py         azd hooks: the review:azure label, a check of the token, and the repository webhook,
+│                               created with your GitHub CLI; `azd down` deletes the webhook
 ├── infra/
 │   ├── main.bicep              the resource group and the deployment's parameters (subscription scope)
 │   ├── resources.bicep         Foundry, the model, two session pools, the Logic App, monitoring, and least-privilege roles
@@ -90,6 +92,7 @@ solutions/03-develop-microsoft/
 ├── review_graders.py           the five checks that score the reviewer (Foundry code-based evaluators)
 ├── eval_reviewer.py            dry-runs the reviewer on the labelled pull requests and evaluates the results in Foundry
 ├── test_eval_reviewer.py       tests for the scoring rules (python -m unittest)
+├── test_configure_github.py    tests for the hooks: which webhook they touch, and that they never print its URL
 ├── azd_env.py                  reads settings from the azd environment
 ├── images/                     screenshots for this README
 └── requirements.txt            Python packages for publish_reviewer_agent.py and eval_reviewer.py
@@ -99,59 +102,56 @@ solutions/03-develop-microsoft/
 
 - An Azure subscription where you can create a resource group and role assignments (Owner, or Contributor plus Role Based Access Control Administrator).
 - A region with Microsoft Foundry, `gpt-5.4-mini` (GlobalStandard, 150K tokens per minute of quota), Azure Container Apps dynamic sessions, and Logic Apps. The default, East US 2, has all four.
-- Admin rights on the GitHub repository, to add the webhook. No GitHub Copilot license is needed.
+- Admin rights on the GitHub repository: `azd up` adds the webhook and the label with your GitHub CLI. No GitHub Copilot license is needed.
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) 1.37 or later, Python 3.12 or later, PowerShell 7, and the [GitHub CLI](https://cli.github.com/).
 - **Cost:** nothing while no one asks for a review. Each review costs about $0.07: two sandbox sessions at $0.03 each (sessions are billed in one-hour increments), less than $0.01 of `gpt-5.4-mini` tokens (Foundry's trace view estimates $0.002 to $0.004 per review), and less than $0.01 of Logic App actions. The ten-case evaluation costs under $1. Application Insights and Log Analytics stay within their free monthly allowance at demo volume.
 
 ## Set up
 
-Run these once, from this folder, in PowerShell 7.
+Run these once, in PowerShell 7. You create one GitHub token and store it; `azd up` does the rest.
 
-1. **Install the Python packages and sign in.**
+1. **Install the Python packages and sign in.** `gh auth status` should say you're logged in to github.com; if it doesn't, run `gh auth login`.
 
    ```powershell
    cd solutions/03-develop-microsoft
    pip install -r requirements.txt
    az login
    azd auth login
+   gh auth status
    ```
 
-2. **Create a fine-grained personal access token** for the reviewer, with the least access that works. On GitHub: **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** > **Generate new token**.
+2. **Create a fine-grained personal access token** for the reviewer, with the least access that works. A person does this; nothing in the solution can. On GitHub: **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** > **Generate new token**.
    - **Resource owner:** the account or organization that owns the repository. An organization may have to approve the token.
    - **Repository access:** Only select repositories, this repository only.
    - **Repository permissions:** **Contents**: Read-only, and **Pull requests**: Read and write. GitHub adds **Metadata**: Read-only. Nothing else.
-   - **Expiration:** as short as your demo period allows; note the date.
+   - **Expiration:** as short as your demo period allows.
 
-3. **Create the azd environment.** The token is read without showing it on screen, and stays in this folder's `.azure/` directory, which git ignores.
+   Copy the token: GitHub shows it only once.
+
+3. **Store the token and deploy** from this folder (a few minutes):
 
    ```powershell
    azd env new ai-sdlc-develop --location centralus --subscription (az account show --query id -o tsv)
-   azd env set GITHUB_REPOSITORY (gh repo view --json nameWithOwner --jq .nameWithOwner)
    azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')
-   ```
-
-4. **Provision.** A few minutes for a new environment. azd creates the resource group `rg-ai-sdlc-develop` and its resources, then publishes the agent. To see the agent's version afterwards, run `azd hooks run postprovision`: it publishes again only if the definition changed, and prints, for example, `unchanged: requesthub-pr-reviewer v3 (model gpt-5.4-mini)`.
-
-   ```powershell
    azd up
    ```
 
-5. **Add the webhook.** Copy the Logic App's trigger URL to the clipboard without displaying it. The URL carries a signature: treat it as a secret.
+   `Read-Host -MaskInput` keeps the token off the screen and out of your PowerShell history. azd creates the resource group `rg-ai-sdlc-develop` and the resources in [How it works](#how-it-works). Its hooks then publish the agent, and connect this clone's GitHub repository with your GitHub CLI: they create the `review:azure` label, check that GitHub accepts the token, and create one webhook that sends `pull_request` events to the Logic App. The webhook's URL carries the Logic App's signature, so the hook reads it from Azure each time and never prints it. It worked when `azd up` ends with `SUCCESS` and its postprovision hook printed:
 
-   ```powershell
-   $wf = az resource show -g rg-ai-sdlc-develop -n logic-pr-reviewer --resource-type Microsoft.Logic/workflows --query id -o tsv
-   az rest --method post --uri "https://management.azure.com$wf/triggers/When_a_pull_request_event_arrives/listCallbackUrl?api-version=2019-05-01" --query value -o tsv | Set-Clipboard
+   ```text
+   published new version: requesthub-pr-reviewer v1 (model gpt-5.4-mini)
+   Label review:azure in <owner>/<repo>: ready.
+   GITHUB_REVIEW_TOKEN: GitHub accepts it for <owner>/<repo>; it expires <date>.
+   Webhook <id> in <owner>/<repo>: pull_request events → Logic App logic-pr-reviewer (created).
    ```
 
-   On GitHub: the repository's **Settings** > **Webhooks** > **Add webhook**. **Payload URL**: paste. **Content type**: `application/json`. **Secret**: leave it empty (a Consumption Logic App can't check the signature; the URL's own signature protects the trigger, and the Logic App reads everything again from GitHub's API). **Which events**: **Let me select individual events**, then only **Pull requests**. Select **Add webhook**. GitHub sends a `ping`; the trigger skips it, so no run starts.
+   `azd hooks run postprovision` runs the hooks again and prints the same lines; nothing changes if nothing needs to. To review another repository, run `azd env set GITHUB_REPOSITORY <owner>/<repo>` before `azd up`.
 
-6. **Create the label.**
+   **Where the token is stored.** In your local azd environment file, `.azure/ai-sdlc-develop/.env` in this folder, which git ignores. In the Logic App as a secure parameter, which Azure never returns when someone reads the Logic App. Every action that sends it has secure inputs, so the run history doesn't show it either. No sandbox session ever gets it. Anyone who can change the Logic App can use the token, so keep write access to the resource group as narrow as write access to the repository. To rotate the token, run the `azd env set` line again, then `azd provision`.
 
-   ```powershell
-   gh label create "review:azure" --color 0078D4 --description "Ask the Azure pull request reviewer to review this pull request"
-   ```
+   Without the token, `azd up` still deploys everything and warns you, but creates no webhook, so no pull request is reviewed until you set the token and run `azd provision` again.
 
-7. **Check it end to end** with a dry run on pull request #36, which posts nothing. It takes about 3 minutes and should print a row of ✅.
+4. **Check it end to end** with a dry run on pull request #36, which posts nothing. It takes about 3 minutes and should print a row of ✅.
 
    ```powershell
    python eval_reviewer.py --cases 36 --local
@@ -160,7 +160,7 @@ Run these once, from this folder, in PowerShell 7.
 ## Before each session
 
 - [ ] **Starting state.** No demo pull request is open and its branch is gone: `gh pr list --label review:azure --state open` prints nothing, and `git ls-remote --heads origin demo/fast-track` prints nothing.
-- [ ] **The reviewer works.** Run the dry run from step 7 of *Set up* (3 minutes). It fails at the first GitHub call if the token expired: create a new one, `azd env set GITHUB_REVIEW_TOKEN ...`, and `azd provision`.
+- [ ] **The reviewer works.** In `solutions/03-develop-microsoft`, run `azd hooks run postprovision` (about 20 seconds): it prints when the token expires, and puts back the label or the webhook if someone removed them. Then run the dry run from step 4 of *Set up* (3 minutes). If GitHub refuses the token, create a new one, `azd env set GITHUB_REVIEW_TOKEN ...`, and `azd provision`.
 - [ ] **Open in advance:**
   - GitHub: the repository's **Pull requests** tab.
   - Azure portal: the `logic-pr-reviewer` Logic App, **Development Tools** > **Run history**.
@@ -272,9 +272,9 @@ git branch -D demo/fast-track
 
 To remove everything:
 
-1. `azd down --purge` in this folder deletes the resource group, the Foundry account and its evaluations, and purges the account.
-2. On GitHub, delete the webhook (**Settings** > **Webhooks**) and the fine-grained token (**Settings** > **Developer settings** > **Fine-grained tokens**).
-3. `gh label delete "review:azure"` if you no longer need the label.
+1. `azd down --purge` in this folder. Its predown hook deletes the webhook first; then azd deletes the resource group and the Foundry account with its evaluations, and purges the account.
+2. On GitHub, delete the fine-grained token: **Settings** > **Developer settings** > **Fine-grained tokens**.
+3. `gh label delete "review:azure"` if you no longer need the label. Past pull requests lose it.
 
 ## Use it in your own repository
 
@@ -292,7 +292,8 @@ Copy this folder and change:
 
 | Symptom | Cause and fix |
 | --- | --- |
-| The Logic App run fails at **Get_the_pull_request** with 404 or 401. | GitHub refused the token. In a private repository, a missing or expired token returns 404. Create a new fine-grained token, then `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')` and `azd provision`. |
+| `azd up` or `azd hooks run postprovision` prints "Webhook: not created, because GITHUB_REVIEW_TOKEN is not set." | The token isn't in the azd environment, so the hook created no webhook and no pull request is reviewed. Create the token (step 2 of *Set up*), run `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')`, then `azd provision`. |
+| The Logic App run fails at **Get_the_pull_request** with 404 or 401. | GitHub refused the token. In a private repository, a missing or expired token returns 404. `azd hooks run postprovision` checks the token and says what's wrong. Create a new fine-grained token, then `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')` and `azd provision`. |
 | The webhook's **Recent Deliveries** show 202, but no run appears. | The trigger skipped the event: only `labeled` with `review:azure`, and `synchronize`, `reopened`, or `ready_for_review` on a pull request that carries the label, start a review. Opening a pull request with the label already set sends `labeled` too. |
 | A review says a web test failed with "Test timed out in 5000ms". | The sandbox's four vCPUs are shared by the test workers, so a test can take longer than on CI. [`run_change.sh`](sandbox/run_change.sh) gives each web test 30 seconds and repeats a failed run once, and the review calls a test that passes on the rerun flaky. |
 | `eval_reviewer.py` stops with "This operation requires the following opt-in preview feature(s): Evaluations=V1Preview". | Custom evaluators are in preview and need an opt-in header, which the script sends. If the preview changes, run with `--local`: the local scores use the same checks. |
