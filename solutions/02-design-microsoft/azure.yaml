@@ -1,23 +1,46 @@
-# Azure Developer CLI project for the Design · Microsoft solution. Run `azd up` from this folder.
-# The hooks connect the solution to GitHub Actions (OIDC identity + the design-microsoft GitHub environment).
+# Azure Developer CLI project for the Design · Microsoft solution. Run `azd up` from this folder, in the solution's
+# Python virtual environment (the hooks use its packages).
+#   preprovision   detect the GitHub repository the advisor answers
+#   postprovision  sync the standards index, Foundry IQ knowledge bases, advisor agents, and evaluators
+#   predeploy      run the offline tests: a broken gate never reaches Azure
+#   postdeploy     report whether GitHub is connected (python setup_azure.py github connects it)
 name: ai-sdlc-design-microsoft
 metadata:
-  template: ai-sdlc-design-microsoft@1.0.0
+  template: ai-sdlc-design-microsoft@2.0.0
 infra:
   provider: bicep
   path: infra
+services:
+  function:
+    project: function
+    language: python
+    host: function
 hooks:
   preprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py prepare
+      run: python setup_azure.py prepare
     posix:
       shell: sh
-      run: python3 configure_github.py prepare
+      run: python3 setup_azure.py prepare
   postprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py publish
+      run: python setup_azure.py foundry
     posix:
       shell: sh
-      run: python3 configure_github.py publish
+      run: python3 setup_azure.py foundry
+  predeploy:
+    windows:
+      shell: pwsh
+      run: python -m unittest -q test_advisor
+    posix:
+      shell: sh
+      run: python3 -m unittest -q test_advisor
+  postdeploy:
+    windows:
+      shell: pwsh
+      run: python setup_azure.py github --check
+    posix:
+      shell: sh
+      run: python3 setup_azure.py github --check
