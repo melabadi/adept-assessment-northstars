@@ -13,10 +13,12 @@ Scores (per package)
 
 Usage
   python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-github/brief/backlog.json
-  python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-github/brief/backlog.json solutions/01-plan-microsoft/brief/backlog.json
+  python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-github/brief/backlog.json <another backlog.json>
   python .github/skills/brief-compare/compare_briefs.py <backlog.json>... --markdown comparison.md
 
 Each column is named after the solution folder that holds the backlog (for example 01-plan-github).
+The Microsoft track (solutions/01-plan-microsoft) keeps its brief in a review Issue and scores the same planted
+issues with Microsoft Foundry evaluators instead.
 
 Exit code 0 always (this is a report, not a gate); 2 on file errors.
 """

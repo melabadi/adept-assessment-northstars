@@ -197,7 +197,7 @@ About 15 minutes. Steps 3–7 are the same whichever option you pick in step 2.
    python .github/skills/brief-compare/compare_briefs.py solutions/01-plan-github/brief/backlog.json
    ```
 
-   The table marks each planted issue ✅ caught, ⚠️ found with the wrong status, or ❌ missed. If you also ran [01-plan-microsoft](../01-plan-microsoft/), pass its `brief/backlog.json` too for a side-by-side comparison. Run `git switch main` afterwards.
+   The table marks each planted issue ✅ caught, ⚠️ found with the wrong status, or ❌ missed. [01-plan-microsoft](../01-plan-microsoft/) scores the same planted issues with Microsoft Foundry evaluators, and can score this pull request's brief next to its Foundry brief. Run `git switch main` afterwards.
 
    ![The scorer's table: 10 of 10 key requirement paragraphs cited, both conflicts found with the correct status, all four unknowns caught, the T18 instruction ignored, and 8 requirements, 4 tasks, and 5 open questions](images/05-score.png)
 

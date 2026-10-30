@@ -1,0 +1,257 @@
+{
+  "scenario": "assisted-triage-brief",
+  "brief": {
+    "problem": {
+      "text": "Requests are often routed to the wrong department, causing delays and manual rerouting by reviewers. There is no measurement of how often this happens, and the process is inefficient.",
+      "sources": [
+        "T01",
+        "T02"
+      ]
+    },
+    "goals": [
+      {
+        "text": "Reduce the time requests sit before reaching the correct team.",
+        "sources": [
+          "T01"
+        ]
+      },
+      {
+        "text": "Provide reviewers with assistant-generated recommendations for department and priority, including the policy basis.",
+        "sources": [
+          "T03"
+        ]
+      },
+      {
+        "text": "Ensure recommendations remain advisory, with human confirmation required for routing.",
+        "sources": [
+          "T04",
+          "T19"
+        ]
+      },
+      {
+        "text": "Audit every recommendation and tool used by the assistant, including who asked, when, and what was returned.",
+        "sources": [
+          "T13"
+        ]
+      }
+    ],
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "The assistant must generate department and priority recommendations for each new request, citing the relevant policy IDs and versions.",
+        "priority": "must",
+        "sources": [
+          "T03",
+          "T08"
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "Recommendations must remain advisory, requiring reviewer confirmation before routing; no automatic routing is allowed.",
+        "priority": "must",
+        "sources": [
+          "T04",
+          "T19"
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "The rationale, policy IDs, and versions used for each recommendation must be visible to reviewers.",
+        "priority": "must",
+        "sources": [
+          "T08"
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "All recommendations and assistant tool usage must be auditable, recording who asked, when, and what was returned.",
+        "priority": "must",
+        "sources": [
+          "T13"
+        ]
+      }
+    ],
+    "outOfScope": [
+      {
+        "text": "Automatic approval of any kind is out of scope for this release.",
+        "sources": [
+          "T20"
+        ]
+      },
+      {
+        "text": "Email notifications to requesters are out of scope for this release.",
+        "sources": [
+          "T20"
+        ]
+      }
+    ],
+    "successMeasures": [
+      {
+        "text": "Success will be measured by the share of requests rerouted after triage, with a two-week baseline measurement before the assistant is activated.",
+        "sources": [
+          "T23"
+        ]
+      }
+    ]
+  },
+  "epic": {
+    "id": "EPIC-TRIAGE",
+    "title": "Assisted Request Triage",
+    "summary": "Implement an assistant that provides advisory triage recommendations for routing requests, with policy citations, reviewer confirmation, and full auditability.",
+    "acceptanceCriteria": [
+      "Given a new request, When the assistant generates a recommendation, Then the reviewer sees the suggested department, priority, rationale, and policy citations.",
+      "Given a reviewer confirms a recommendation, When the confirmation is processed, Then the routing is updated and the action is audited.",
+      "Given the assistant is unavailable, When a reviewer opens a request, Then the panel shows an unavailable message and manual routing stays enabled.",
+      "Given a request is rerouted after a suggestion, When a reviewer views the suggestion, Then the UI indicates the suggestion is stale."
+    ],
+    "sources": [
+      "T03",
+      "T04",
+      "T08",
+      "T10",
+      "T13",
+      "T14"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "title": "Generate and Display Triage Recommendations",
+      "description": "Implement logic to generate department and priority recommendations for new requests, displaying rationale and policy citations to reviewers.",
+      "ownerRole": "Backend engineer",
+      "acceptanceCriteria": [
+        "Given a new request, When the assistant processes it, Then a department and priority recommendation with rationale and policy citations is generated.",
+        "Given a reviewer opens a request, When a recommendation is available, Then the UI displays the suggested department, priority, rationale, and policy IDs/versions.",
+        "Given a request with insufficient information, When the assistant cannot determine a department, Then the request is marked for human review and a clarifying question is suggested."
+      ],
+      "sources": [
+        "T03",
+        "T08",
+        "T07"
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "TASK-2",
+      "title": "Reviewer Confirmation and Manual Rerouting",
+      "description": "Enable reviewers to confirm or reroute recommendations, ensuring no automatic routing occurs without confirmation.",
+      "ownerRole": "Frontend engineer",
+      "acceptanceCriteria": [
+        "Given a reviewer sees a recommendation, When they confirm it, Then the request is routed as suggested and the action is audited.",
+        "Given a reviewer reroutes a request after a suggestion, When another reviewer opens it, Then the UI indicates the suggestion is stale.",
+        "Given a reviewer double-clicks to confirm, When the action is processed, Then only one audit entry and one notification are created.",
+        "Given a reviewer opens a request, When the assistant is unavailable, Then the panel shows an unavailable message and manual routing stays enabled."
+      ],
+      "sources": [
+        "T04",
+        "T10",
+        "T14",
+        "T16"
+      ],
+      "dependsOn": [
+        "TASK-1"
+      ]
+    },
+    {
+      "id": "TASK-3",
+      "title": "Audit Trail for Recommendations and Actions",
+      "description": "Record all recommendations, tool usage, confirmations, and reroutes in the audit log, including user, timestamp, and returned data.",
+      "ownerRole": "Full-stack engineer",
+      "acceptanceCriteria": [
+        "Given a recommendation is generated, When it is displayed to a reviewer, Then the event is logged with user, time, and data.",
+        "Given a reviewer confirms or reroutes a request, When the action is processed, Then the audit log records the user, time, and action taken.",
+        "Given an assistant tool is used to look up information, When the lookup completes, Then the audit log records the lookup details.",
+        "Given a reviewer opens a request, When the assistant is unavailable, Then the audit log records the manual routing action."
+      ],
+      "sources": [
+        "T13",
+        "T14"
+      ],
+      "dependsOn": [
+        "TASK-1",
+        "TASK-2"
+      ]
+    },
+    {
+      "id": "TASK-4",
+      "title": "Multilingual and Performance Support",
+      "description": "Ensure the assistant and UI support both English and French, and meet agreed performance standards.",
+      "ownerRole": "QA engineer",
+      "acceptanceCriteria": [
+        "Given a reviewer in Montréal opens a request, When the UI loads, Then all assistant content is available in French.",
+        "Given a reviewer in any office opens a request, When the UI loads, Then all assistant content is available in English.",
+        "Given a reviewer opens a request, When the assistant responds, Then the response time meets the agreed performance target.",
+        "Given a reviewer opens a request, When the assistant is unavailable, Then the UI displays the appropriate message in the user's language."
+      ],
+      "sources": [
+        "T11",
+        "T12",
+        "T14"
+      ],
+      "dependsOn": [
+        "TASK-1",
+        "TASK-2"
+      ]
+    }
+  ],
+  "openQuestions": [
+    {
+      "id": "Q1",
+      "question": "What is the agreed performance target for 'fast' assistant response?",
+      "sources": [
+        "T12"
+      ],
+      "blocking": false
+    },
+    {
+      "id": "Q2",
+      "question": "Who is allowed to override a suggestion: only reviewers, or approvers too?",
+      "sources": [
+        "T21"
+      ],
+      "blocking": false
+    },
+    {
+      "id": "Q3",
+      "question": "How long should recommendations (not decisions) be retained in the audit log?",
+      "sources": [
+        "T22"
+      ],
+      "blocking": false
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "C1",
+      "summary": "POL-ROUTE-004 requires expensive requests to go to Finance, but POL-ROUTE-001 says IT owns all computing equipment, regardless of cost. Ben objects to Finance receiving expensive IT requests.",
+      "sources": [
+        "T06",
+        "T07",
+        "POL-ROUTE-001",
+        "POL-ROUTE-004"
+      ],
+      "resolution": null,
+      "resolvedBy": null
+    },
+    {
+      "id": "C2",
+      "summary": "Ava wants automatic routing when the assistant is confident, but Priya and policy POL-GOV-001 require human confirmation for all routing.",
+      "sources": [
+        "T04",
+        "T05",
+        "POL-GOV-001"
+      ],
+      "resolution": "The first release will deliver recommendations plus reviewer confirmation only; no automatic routing without a person confirming.",
+      "resolvedBy": "T19"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "decision": "The first release delivers recommendations plus reviewer confirmation. No automatic routing without a person confirming.",
+      "sources": [
+        "T19"
+      ]
+    }
+  ]
+}
