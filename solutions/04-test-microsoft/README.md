@@ -257,6 +257,8 @@ Open the Logic App's **Run history** and select the newest run. Azure Load Testi
 
 ![The lower half of the Logic App's run for the After the slowdown notification: Wait for the telemetry passed on its first check, then Build the report, Report, and Verdict; GitHub token configured took the True branch through Find the open load test Issues, This tests open Issues, The open Issue, and Passed or failed, and skipped No GitHub token configured. Every step that ran succeeded](images/06-logic-app-run.png)
 
+The run view collapses the switch. To show the step that opened the Issue, select **Passed or failed**, then the **Failed** case, then **An Issue is already open**: its False branch ran **Open an Issue**.
+
 ![Issue #180, which the Logic App opened: [load-test requesthub-journey] RequestHub journey missed its performance criteria, open with status Backlog and the load-test label. Its report: After the slowdown FAILED with 10 virtual users for 119 s; Expected failure, because 151 server requests carried requesthub.fault.queue_delay_ms; my-requests at 1,570 ms and team-queue at 1,580 ms failed their 1,000 ms limit, while the error rate, decide, and submit passed](images/06-issue-opened.png)
 
 **Point out:** the report proves the cause. Its verdict says 151 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (151 against 198 list requests) because under load Application Insights keeps only a sample of the API's requests. The Issue names the run and the resource group, never a host name or an id.
