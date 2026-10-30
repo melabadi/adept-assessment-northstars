@@ -2,7 +2,7 @@
 
 Design reviews stall when nobody can find the standard that applies, when two standards disagree, or when the answer depends on which team is asking. In this solution the architecture advisor runs in Azure. A Microsoft Foundry agent answers design questions only from your approved standards, retrieved through Foundry IQ, and cites the id, version, and exact sentence of every standard it uses. It says so when the standards don't answer, and lists contradictions for an architect to decide. A question filed as a GitHub issue reaches Azure through a GitHub App. An Azure Logic App asks the agent, and an Azure Function checks every citation against the standards index. Only then does the advisor comment on the issue and open a pull request with a draft architecture decision record (ADR) that a person accepts or rejects. A Foundry evaluation scores the agents on ten labelled cases with the same checks.
 
-![The advisor's evaluation in the Microsoft Foundry portal: the small-team agent's run of its labelled cases, with 100% (5 of 5) on each of the five evaluators that embed the gate's checks, citations, access, grounding, abstention, and conflicts, and every case passing](images/09-evaluation-run.png)
+![The advisor's answer on a GitHub issue, posted from Azure by the GitHub App: for the small-team profile, keep the live AI triage provider inside the existing RequestHub API, followed by the first standards it relied on, each with its id, version, and requirement](images/06-issue-answer.png)
 
 ## Where it fits
 
@@ -167,7 +167,7 @@ python setup_azure.py github
    python setup_azure.py github --check
    ```
 
-   It prints `GitHub is connected (GitHub App) for <owner>/<name>; webhook secret stored: True.`
+   ![python setup_azure.py github --check: GitHub is connected (GitHub App) for the repository, webhook secret stored: True](images/00-github-connected.png)
 
 The setup page refuses to run again once an app is connected (HTTP 409). Nobody downloads a private key or pastes a secret.
 
@@ -214,7 +214,7 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
   4. GitHub: the advisor's [issue form, with the demo question filled in](../../../../issues/new?template=02-design-microsoft-advisor.yml&question=Should%20the%20live%20AI%20triage%20provider%20run%20inside%20the%20existing%20RequestHub%20API%20behind%20ITriageProvider%2C%20or%20as%20a%20new%20separate%20service%3F). GitHub can't prefill the profile; you pick it in step 4.
   5. The [Azure portal](https://portal.azure.com): resource group `rg-ai-sdlc-design` → the Logic App whose name starts with `logic-advisor-` → **Runs history**.
   6. The Foundry project: **Build** → **Evaluations**.
-- [ ] **Start early.** About 5 minutes before step 8, start the evaluation from this folder, in the activated environment: `python evaluate.py --no-wait`. Its two runs take about 3 minutes.
+- [ ] **Start early.** About 15 minutes before step 8, run the evaluation from this folder, in the activated environment: `python evaluate.py`. It takes 3 to 6 minutes and should end with `10/10 cases passed`. If it reports `COULD NOT GRADE`, Foundry's preview grader failed on one evaluator ([Troubleshooting](#troubleshooting)): run it again. If the second run can't be graded either, plan to show the fallback in step 8.
 
 | Step | What | Time |
 | --- | --- | --- |
@@ -255,11 +255,21 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    **Point out:** the issue is the whole interface. Nothing runs in GitHub; the GitHub App sends the event to Azure.
 
-5. **Azure orchestrates.** Switch to the advisor Logic App's **Runs history** and open the newest run (refresh after a few seconds). It asks the agent with its managed identity, sends the answer to the Function's gate, and, because the checks passed, creates the branch, commits the ADR draft, opens the pull request, and comments on the issue. The run takes about 30 seconds.
+5. **Azure orchestrates.** Switch to the advisor Logic App's **Runs history** and open the newest run (refresh after a few seconds). It asks the agent with its managed identity, sends the answer to the Function's gate, and, because the checks passed, creates the branch, commits the ADR draft, opens the pull request, and comments on the issue. The run takes about 30 seconds, most of it the agent's answer. Two more paths comment on the issue when something fails: one when the agent or the gate is unavailable, one when a GitHub step fails after the gate.
+
+   ![The advisor Logic App run in the Azure portal: the trigger, then Answer and check (22 seconds: Ask the architecture advisor 18 seconds, Check the answer 3 seconds), then Checks passed and its True branch, Create the ADR branch, Commit the ADR draft, Open the ADR pull request, and Comment with the answer, all succeeded; the False branch and the incomplete-draft comment were skipped](images/05-logic-app-run.png)
 
    **Point out:** the gate sits between the model and GitHub. If a citation were invented, out of scope, misversioned, or misquoted, the run would take the other branch and only comment the failures.
 
-6. **Review in GitHub.** Back on the issue, the advisor's comment shows the recommendation, the standards it relied on with their versions, and the checks that passed. It links the ADR draft pull request: open it and show **Files changed**.
+6. **Review in GitHub.** Back on the issue, the advisor's comment arrives about 45 seconds after you filed it. It shows the recommendation, the standards it relied on with their versions, the conflicts and unknowns for an architect, and the checks that passed.
+
+   ![The end of the advisor's comment: the conflict between STD-SEC-002 and STD-OBS-002 that needs an architect's decision, five unknowns, the deterministic checks that passed, the link to the ADR draft pull request, and the evidence line with the agent version, model, response id, duration, and Logic App run](images/06-issue-checks.png)
+
+   The comment links the ADR draft pull request. Open it, then its file: **Files changed**, or **⋯** → **View file** for the rendered ADR.
+
+   ![The ADR draft pull request on GitHub, opened by the GitHub App from branch design/advisor-issue-176: it closes the issue, names the Foundry agent version and response id, and asks the reviewer to check the citations and give each conflict and unknown an owner](images/07-adr-pull-request.png)
+
+   ![The rendered ADR draft, committed by the GitHub App: status Proposed, the issue, the Foundry agent and model that drafted it, the evidence (response id, time, and the standards retrieved), the operating profile, the checks that passed, then Context and Summary](images/07-adr-draft.png)
 
    **Point out:** the decision stays with a person. The ADR is *Proposed*; an architect merges it to accept it or closes it to reject it, and owns every conflict and unknown it lists.
 
@@ -269,7 +279,7 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    **Point out:** each answer took about 10 seconds and cost under a cent, and the tokens and cost are visible per run, not estimated after the fact.
 
-8. **Evaluate in Foundry.** **Build** → **Evaluations** → **Architecture advisor · labelled cases**, then the run you started before the session. Ten labelled cases, five per profile, cover grounding, scope-based access, a planted contradiction, and a planted gap, and each evaluator is a column.
+8. **Evaluate in Foundry.** **Build** → **Evaluations** → **Architecture advisor · labelled cases**, then the newest run of each agent, which you started before the session. Ten labelled cases, five per profile, cover grounding, scope-based access, a planted contradiction, and a planted gap, and each evaluator is a column.
 
    ![Foundry portal, the small-team evaluation run: 100% on advisor_citations, advisor_access, advisor_grounding, advisor_abstention, and advisor_conflicts, and every case passing](images/09-evaluation-run.png)
 
@@ -277,9 +287,15 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    ![python evaluate.py: both agents completed, every evaluator 5 of 5 for each profile, every case passing, 10 of 10 in 166 seconds](images/09-evaluate.png)
 
+   If a column has no score, Foundry's preview grader failed on that evaluator: its items say *An error occurred during grading*, and the run's totals still count them as passed. `python evaluate.py` reports such a run as `COULD NOT GRADE` instead of passing it. Then show the fallback: `python evaluate.py --local` asks the same agent versions the same questions and scores the answers on your machine with the same checks, in about 3 minutes.
+
+   ![python evaluate.py --local: all ten cases pass, each with its profile, the agent version that answered, and 11 to 21 seconds per answer](images/09-evaluate-local.png)
+
    **Point out:** the evaluators run the gate's own code (`checks.py`), so the cases measure exactly what protects GitHub, and the scope and abstention cases prove the advisor says "the standards don't say" rather than inventing a budget.
 
-9. **Optional: merge a change to a standard.** Merge a pull request that edits a file in `standards/` (for example, add a keyword). The push reaches the Function, and the standards Logic App (`logic-standards-…` in the Azure portal, **Runs history**) re-indexes that commit, publishes new agent versions only if `agent.yaml` changed, and starts a new evaluation run, which appears in step 8's list a few minutes later. It only publishes commits that are on the default branch, so an unmerged proposal never reaches the index or the agents.
+9. **Optional: merge a change to a standard.** Merge a pull request that edits a file in `standards/` (for example, add a keyword). The push reaches the Function, and about 6 seconds after the merge the standards Logic App (`logic-standards-…` in the Azure portal, **Runs history**) starts. In about 20 seconds it re-indexes that commit, publishes new agent versions only if `agent.yaml` changed, and starts a new evaluation run, which appears in step 8's list a few minutes later, named after the commit. It only publishes commits that are on the default branch, so an unmerged proposal never reaches the index or the agents.
+
+   ![The standards Logic App run in the Azure portal: Re-index the standards (9 seconds), Publish the advisor agents (4 seconds), and Evaluate the agents in Foundry (6 seconds), all succeeded](images/10-standards-run.png)
 
    **Point out:** every change to the standards is measured, by Azure, before the next question.
 
@@ -289,7 +305,7 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 - **Access by design.** The two profiles get different answers to the same question because their knowledge bases return different standards, and the gate and the `access` evaluator prove nothing leaked.
 - **Trust is measured, not assumed.** The gate stops a bad answer before GitHub sees it, and the evaluation shows the same checks across ten cases, per profile, every time the standards change.
 - **The decision stays human.** The advisor only proposes: the ADR is a pull request an architect merges or closes.
-- **AI helps the people in the SDLC.** The architect gets a cited first draft in about 30 seconds instead of a search through wikis, and the team gets a decision record by default.
+- **AI helps the people in the SDLC.** The architect gets a cited first draft in under a minute instead of a search through wikis, and the team gets a decision record by default.
 
 ## Reset and clean up
 
@@ -337,6 +353,7 @@ foreach ($name in 'github-app-id', 'github-app-private-key', 'github-webhook-sec
 - **`setup_azure.py github --check` warns that the Function answered 404 or 503 right after a deploy.** The Function restarts after a deployment and indexes its routes for up to a minute. Run the check again.
 - **An issue gets no answer.** Check that the issue has the `design-advisor` label (GitHub skips labels that don't exist in the repository), then look at the advisor Logic App's **Runs history**. No run means the webhook didn't reach the Function: GitHub → **Settings** → **Developer settings** → **GitHub Apps** → the app → **Advanced** → **Recent Deliveries** lists each delivery and the Function's response.
 - **An evaluation run fails with `use of builtin 'compile()' is not allowed in Python graders`.** Foundry runs `checks.py` as a Python grader, which refuses any call named `compile()`, even `re.compile`. Use pattern strings with `re.findall` and `re.sub`; the tests check this.
-- **`python evaluate.py` reports `COULD NOT GRADE` and exits with code 2.** Some answers weren't graded, and the Foundry portal counts some of those items as passed, so trust `evaluate.py` here. Right after the checks change, Foundry rolls out the new evaluator versions over a few minutes, and an evaluator that isn't ready errors on every item: run the evaluation again a few minutes later. `no answer to grade` means the agent call itself failed; open the run in Foundry to see the error on that item.
+- **`python evaluate.py` reports `COULD NOT GRADE` and exits with code 2.** Foundry's code-based evaluators are a preview, and the service sometimes fails to grade every item of one evaluator in a run. Those items say *An error occurred during grading*, yet the Foundry portal counts them as passed, so trust `evaluate.py` here. It happened in 7 of 19 runs measured over two days, right after new evaluator versions and many hours later alike. The checks take milliseconds, far inside Foundry's limit of 2 minutes per grading call, and turn any error into a fail, so the error comes from the service. Run the evaluation again, or use `python evaluate.py --local`. `no answer to grade` means the agent call itself failed, and `no result for this case` means Foundry returned no result for it; open the run in Foundry for the details.
+- **A case fails every evaluator at once.** The agent's run ended without an answer: in Foundry, the item's output has no final message. It happened once in more than 100 answers, after 80 seconds instead of the usual 15. Run the evaluation again; if the same case keeps failing, read that case's trace in the agent's **Traces** tab.
 - **`DefaultAzureCredential failed to retrieve a token` from a script.** The Azure CLI took too long to return a token. Run `az account get-access-token --resource https://ai.azure.com` to check that it responds, then run the script again.
 - **The Foundry portal opens another project.** It reopens the project you used last. Pick `design` in the project switcher next to **Microsoft Foundry**, at the top left.
