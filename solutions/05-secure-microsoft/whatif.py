@@ -516,10 +516,12 @@ def summary(outcome: dict, expect: list[str], resource_group: str, intro: str, d
     """The preview as Markdown. Without details it lists resources and counts only, never property values."""
     lines = [f"### Azure what-if preview · `{resource_group}`", "", intro, ""]
     if outcome["changes"]:
-        lines += ["| Change | Resource type | Resource | |", "| --- | --- | --- | --- |"]
+        # Three columns, with the type and the name on two lines of one cell, so the table fits the width of a pull
+        # request's conversation column and the verdict stays visible.
+        lines += ["| Change | Resource | |", "| --- | --- | --- |"]
         for c in outcome["changes"]:
             properties = f" ({len(c['leaves'])} propert{'y' if len(c['leaves']) == 1 else 'ies'})" if c["kind"] == "Modify" else ""
-            lines.append(f"| {c['kind']}{properties} | {code(c['type'], table=True)} | {code(c['name'], table=True)} | "
+            lines.append(f"| {c['kind']}{properties} | {code(c['type'], table=True)}<br>{code(c['name'], table=True)} | "
                          f"{'✅ expected' if c['expected'] else '⚠️ unexpected'} |")
             if details:
                 lines += [f"  - {describe(p, v)}" for p, v in sorted(c["leaves"].items())]
@@ -530,7 +532,7 @@ def summary(outcome: dict, expect: list[str], resource_group: str, intro: str, d
         lines.append(f"- No longer in the template, so the deployment leaves them in place (incremental deployments never "
                      f"delete): {', '.join(outcome['remaining'])}. Remove them yourself if they should go.")
     if outcome["noise"]:
-        lines.append(f"- {outcome['noise']} other resource(s) show differences what-if reports on every run (values it can "
+        lines.append(f"- {outcome['noise']} other resource(s) show differences that what-if reports on every run (values it can "
                      "only compute during deployment, defaults Azure sets). " + ("They are identical with and without "
                      "this change, so they are not counted." if outcome["baseline"] else "Only properties the template "
                      "sets are counted."))

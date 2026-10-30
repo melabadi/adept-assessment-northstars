@@ -206,7 +206,7 @@
                           "type": "Select",
                           "inputs": {
                             "from": "@body('Get_policy_states_now')?['value']",
-                            "select": "@concat('| Azure Policy · `', item()?['policyAssignmentName'], '` (', if(contains(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/resourcegroups/'), 'this resource group', 'inherited'), ') | ', item()?['complianceState'], if(equals(item()?['complianceState'], 'Compliant'), ' ✅', ' ❌'), ' | evaluated ', formatDateTime(item()?['timestamp'], 'yyyy-MM-dd HH:mm'), ' UTC |')"
+                            "select": "@concat('| Azure Policy · `', if(startsWith(concat(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/'), concat(toLower(parameters('resourceGroupId')), '/')), item()?['policyAssignmentName'], if(contains(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/managementgroups/'), 'management group assignment', 'subscription assignment')), '` (', if(startsWith(concat(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/'), concat(toLower(parameters('resourceGroupId')), '/')), 'this resource group', 'inherited'), ') | ', item()?['complianceState'], if(equals(item()?['complianceState'], 'Compliant'), ' ✅', ' ❌'), ' | evaluated ', formatDateTime(item()?['timestamp'], 'yyyy-MM-dd HH:mm'), ' UTC |')"
                           },
                           "runAfter": { "Get_policy_states_now": ["Succeeded"] }
                         },
