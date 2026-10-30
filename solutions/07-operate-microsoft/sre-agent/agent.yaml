@@ -33,19 +33,24 @@ skills:
     tools: [QueryAppInsightsByAppId, RunAzCliReadCommands]
   - file: skills/file-incident-record.md
     tools: []
-    githubIssueTools: true         # gets the GitHub Issue tools below
+    githubIssueTools: true         # gets github.customAgentTools below
 
-# GitHub. A person connects it once in the agent's portal (Build + setup, Code access), with a token that can only read
-# and write Issues in this repository (README, "Connect GitHub"). The Issue tools exist only after that; until then
-# the custom agent has no GitHub tool and puts the incident record in its reply.
+# GitHub. A person connects this repository once in the agent's portal (Build + setup, Code access) with a fine-grained
+# token (README, "Connect GitHub"). The agent's GitHub tools are runtime tools: they exist only while the repository is
+# connected, and the tool catalog API doesn't list them. Until then the custom agent has no GitHub tool and puts the
+# incident record in its reply.
 github:
-  # Tool name patterns (* is a wildcard), matched without regard to case. Matching tools from the agent's tool catalog
-  # go to the custom agent and the file-incident-record skill. The patterns and the exact names they match go into the
-  # tool policy's ask list, and the patterns into the guard hook's matcher.
+  # The only GitHub tool the custom agent and the file-incident-record skill get, by exact name. It is added while
+  # this repository is connected and its credential is healthy.
+  customAgentTools: [CreateGithubIssue]
+  # Tool name patterns (* is a wildcard) for every GitHub Issue tool, reads included (CreateGithubIssue,
+  # FetchGithubIssue, FetchGithubIssuesLimited), matched without regard to case. They go into the tool policy's ask
+  # list and the guard hook's matcher, so every Issue call waits for a person.
   issueTools: ["*Issue*"]
-  # Everything else the connection can do stays off: no pull requests, merges, or workflow runs. The patterns and the
-  # exact names they match go into the tool policy's deny list, and the guard hook blocks them too.
-  deny: ["*PullRequest*", "*pull_request*", "*Workflow*"]
+  # Everything else the token could allow stays off: pull requests, workflows, branches, commits and their statuses,
+  # merges, pushes, and webhooks. The patterns (and the exact catalog names they match) go into the tool policy's deny
+  # list, and the guard hook blocks them too.
+  deny: ["*PullRequest*", "*pull_request*", "*Workflow*", "*Branch*", "*Commit*", "*Merge*", "*Push*", "*Webhook*"]
   # A global PreToolUse hook that runs before every call to the Issue tools, ahead of the tool policy. It is
   # deterministic (regular expressions): it blocks the call when the text contains an identifier of this deployment,
   # and otherwise asks a person, so every Issue waits for Allow once.
@@ -72,7 +77,7 @@ responsePlan:
   mergeEnabled: false              # every drill starts a fresh investigation thread
 
 # Global tool policy for every conversation on this agent. Deny wins, then allow, then ask. The github section adds
-# its patterns and the exact tool names they match: Issue tools to ask, pull request and workflow tools to deny.
+# its patterns: Issue tools to ask, the other GitHub write tools to deny.
 toolPolicy:
   allow:
     - RunAzCliReadCommands
@@ -95,5 +100,8 @@ toolPolicy:
     - RunAzCliWriteCommands(az ad *)
     - bash(az * delete *)
     - RunKubectlWriteCommand
-    - RunInTerminal
+    - RunInTerminal                # with GitHub connected, the terminal can use gh and git with the connection's token
     - Terminal
+    - RunShellCommand
+    - ExecutePythonCode
+    - DisconnectRepositoryFromResourceForGitHub   # disabled by default; would change the agent's GitHub connection

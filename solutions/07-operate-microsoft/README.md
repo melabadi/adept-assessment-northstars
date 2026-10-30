@@ -59,20 +59,21 @@ sequenceDiagram
   acknowledge and close alerts
   ([Learn](https://learn.microsoft.com/azure/sre-agent/diagnose-azure-observability)); that role covers alerts, alert
   rules, action groups, and diagnostic settings, not the app. Its tool policy lets it read freely, asks a person
-  before any Azure CLI write and before any GitHub Issue, and denies every `az monitor` write, deletes, changes to
-  identities, roles, networking, Key Vault, and PostgreSQL, pull requests, and workflow runs. A Stop hook makes it
-  show timestamps, facts versus hypotheses, and a rollback before it finishes.
+  before any Azure CLI write and before any GitHub Issue call, and denies every `az monitor` write, deletes, changes to
+  identities, roles, networking, Key Vault, and PostgreSQL, every other GitHub write (pull requests, workflows,
+  branches, commits, merges, pushes, webhooks), and the terminal, shell, and Python tools. A Stop hook makes it show
+  timestamps, facts versus hypotheses, and a rollback before it finishes.
 - **The guard hook** ([`hooks/no-identifiers.py`](sre-agent/hooks/no-identifiers.py)) runs before every call to a
   GitHub Issue tool, ahead of the tool policy. It reads every key and string of the call, as written and with hidden
   characters, HTML, Markdown markers, and URL escapes undone, and blocks the call if it finds a GUID or trace id, an
   Azure host name or resource id, an e-mail address, or a resource name with its random suffix. Otherwise it asks for
   a person itself, so every Issue waits for **Allow once** whatever the tool policy or run mode says. It is
-  deterministic (regular expressions, no model), never allows a call on its own, blocks pull request and workflow
-  tools, and fails closed: unreadable or oversized input is blocked, and if the script fails, nothing is posted. No
-  pattern catches every disguise, which is why a person still reads each Issue.
-- **GitHub** stores the Issue. The agent reaches it through its GitHub connection, which a person sets up once with a
-  fine-grained token that can only read and write Issues in this repository. The agent cannot read code, open pull
-  requests, or run workflows.
+  deterministic (regular expressions, no model), never allows a call on its own, so it can't undo a deny, and fails
+  closed: unreadable or oversized input is blocked, and if the script fails, nothing is posted. No pattern catches
+  every disguise, which is why a person still reads each Issue.
+- **GitHub** stores the Issue. A person connects this repository once under **Code access**, with a fine-grained token
+  for this repository only. The custom agent gets one GitHub tool, `CreateGithubIssue`; through Code access the agent
+  can also read the repository's code, but it can't change it.
 - **The presenter** starts the drill, decides whether to apply the proposal, approves it, and lends it their Azure
   permissions with a second click. The change shows their name in the Activity Log. They also read the incident record
   before it posts.
@@ -176,15 +177,17 @@ a few AAUs and changes nothing. Under **Incidents**, **Triggers & response plans
 
 ### Connect GitHub
 
-A person does this once, because it authorizes an Azure service to write to GitHub. The token can do one thing:
-read and write Issues in this repository.
+A person does this once, because it authorizes an Azure service to use GitHub. The agent files Issues through the
+repository connection under **Code access**.
 
 1. In GitHub, open **Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained tokens**, and select
    **Generate new token**:
    - **Token name:** `sre-agent-operate-microsoft`. **Expiration:** 30 days.
    - **Repository access:** Only select repositories, and pick this repository.
-   - **Permissions:** Repository permissions, **Issues: Read and write**. GitHub adds **Metadata: Read-only** by
-     itself. Nothing else.
+   - **Permissions:** Repository permissions, **Issues: Read and write** (to file the incident record) and
+     **Contents: Read-only** (Code access clones the repository to connect it;
+     [Learn](https://learn.microsoft.com/azure/sre-agent/github-connector#permissions-by-auth-type)). GitHub adds
+     **Metadata: Read-only** by itself. Nothing else.
 
    Select **Generate token** and copy it.
 2. In the [SRE Agent portal](https://sre.azure.com), open `sre-ai-sdlc-operate`, then **Build + setup**, **Code
@@ -193,23 +196,26 @@ read and write Issues in this repository.
    - **Connection method:** **Personal access token (PAT)**. Paste the token under **Provide PAT** and select
      **Connect**. A *Connected* card appears.
 
-   Select **Next**, then **Add repository**. The repository is listed under **Code access**. Its row can show
-   **Failed**: Code access would index the repository's code, which this token cannot read. The agent's Issue tools
-   work anyway.
-3. Give the custom agent the Issue tools:
+   Select **Next**, then **Save**. The repository is listed under **Code access** with a green connection and a
+   **Last synced** time.
+3. Give the custom agent its GitHub tool:
 
    ```powershell
    python configure_sre_agent.py
    ```
 
-   The `Tools` section now lists the GitHub Issue tools it found, and the last line ends with
-   `It files the incident record in <owner>/<repo> after a person allows it.`
+   The `Tools` section reports `GitHub: <owner>/<repo> is connected, credential healthy, code ready; the custom agent
+   gets CreateGithubIssue`, and the last line ends with `It files the incident record in <owner>/<repo> after a person
+   allows it.`
 
-Two choices keep the access small. **OAuth** in that dialog would apply to every repository your GitHub account can
-reach, and the **GitHub** card under **Build + setup**, **Connectors** is GitHub's MCP server, which exposes GitHub's
-whole tool catalog. A token for one repository and one permission is the least access that works. Issues the agent
-files show the token's owner as their author. The token expires after 30 days: create a new one the same way, then
-select the repository under **Code access** and connect again with the new token.
+The agent can't use more than this solution needs, even with a token that allows more, for example one you share with
+other solutions. The custom agent gets one GitHub tool, `CreateGithubIssue`. Every GitHub Issue call goes through the
+guard hook and waits for **Allow once**. The tool policy denies the GitHub tools for pull requests, workflows,
+branches, commits, merges, pushes, and webhooks, and the terminal, shell, and Python tools, which could use the token.
+Two choices in the portal would widen the access: **OAuth** in that dialog applies to every repository your GitHub
+account can reach, and the **GitHub** card under **Build + setup**, **Connectors** is GitHub's MCP server, with
+GitHub's whole tool catalog. Issues the agent files show the token's owner as their author. When the token expires,
+create a new one the same way, then select the repository under **Code access** and connect again with the new token.
 
 ## Before each session
 
@@ -235,7 +241,7 @@ About 5 minutes, at least 15 minutes before you present.
      minutes after the backlog drains.
    - **Azure SRE Agent not `Running`.** In the SRE Agent portal, **Settings**, **Basics**, select **Start**.
 2. **Check GitHub and your sign-in.** In the SRE Agent portal, **Build + setup**, **Code access**, **GitHub** lists
-   this repository. The token lasts 30 days; GitHub's **Fine-grained tokens** page shows when it expires.
+   this repository with a green connection. GitHub's **Fine-grained tokens** page shows when its token expires.
    `az account show` must show the account that ran `azd up`: it is the SRE Agent Administrator who approves the
    mitigation, and its token reads RequestHub's Admin API.
 3. **Open in advance**, signed in, one tab each:
@@ -278,9 +284,9 @@ differ between some of them.
    Python script that runs in Azure before every GitHub Issue call, and its fail mode is **Block**. Close it with
    **Cancel**.
 
-   The same configuration is versioned in [`sre-agent/agent.yaml`](sre-agent/agent.yaml): the GitHub Issue tool
-   patterns, the pull request and workflow patterns it denies, the guard hook, and the tool policy. `azd provision`
-   applies it.
+   The same configuration is versioned in [`sre-agent/agent.yaml`](sre-agent/agent.yaml): the one GitHub tool the
+   custom agent gets, the GitHub write tools it denies, the guard hook, and the tool policy. `azd provision` applies
+   it.
 
    In the Azure portal, the resource group's **Access control (IAM)** shows the agent's identities with reader roles.
    The subscription's **Access control (IAM)** shows one more: Monitoring Contributor, which the platform added so the
@@ -365,8 +371,8 @@ differ between some of them.
    **Point out:** recovery is measured, not assumed: the agent waits for post-change data and the resolved alert.
 
 7. **Review the incident record** (1 to 2 minutes). The agent writes the record with its `file-incident-record` skill
-   and calls its GitHub Issue tool to file it. The guard hook checks the text for identifiers and, finding none, hands
-   the call to you: the card shows the repository, the title, the labels, and the whole body.
+   and calls `CreateGithubIssue` to file it. The guard hook checks the text for identifiers and, finding none, hands
+   the call to you: the card shows the repository (`repoUrl`), the `title`, the labels (`tags`), and the whole `body`.
 
    Read it with the audience, then select **Allow once**. The agent replies with the Issue number.
 
@@ -385,8 +391,8 @@ differ between some of them.
   revision that added the setting. It named what it could not prove, such as how much the burst of requests added.
 - **Least privilege that holds.** The agent could not change the worker even after approval: its identities read the
   resource group, and their one write role, Monitoring Contributor for alert handling, doesn't cover the app. The
-  change ran as the approving administrator, scoped to two settings on one container app. Its GitHub token can only
-  touch Issues in one repository.
+  change ran as the approving administrator, scoped to two settings on one container app. In GitHub it has one tool,
+  which files an Issue in one repository after a person allows it; every other GitHub write is denied.
 - **Careful when something fails.** In one run the first approved command failed because it did not name its
   subscription and the approver's default subscription was another one. The agent did not retry blindly: it read the
   fault settings again and asked for approval once more. The command now always names its subscription.
@@ -397,9 +403,10 @@ differ between some of them.
 - **An honest weak spot.** The worker publishes its backlog only between batches, so a slow worker delays its own
   alert by a few minutes. It is a good follow-up: measure the queue independently of the worker.
 - **Agent configuration is code.** A change that set the response plan to Autonomous, allowed writes without approval,
-  allowed `az monitor` writes, let the guard hook fail open, let a clean Issue through without a person, or stopped it
-  from blocking an identifier in any of the forms it tests fails `python configure_sre_agent.py --check` before it
-  reaches the agent.
+  allowed `az monitor` writes, gave the custom agent another GitHub tool, stopped denying pull requests, workflows, or
+  the terminal, let the guard hook fail open, let a clean Issue through without a person, or stopped it from blocking
+  an identifier in any of the forms it tests fails `python configure_sre_agent.py --check` before it reaches the
+  agent.
 
 ## Reset and clean up
 
@@ -413,10 +420,10 @@ python incident.py reset
 row of the workbook's **Ready for a drill** table says **Ready**: the alert row does about 5 minutes after the backlog
 drains.
 
-When you no longer need the solution, first remove the agent's access to GitHub: delete the token in GitHub
-(**Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained tokens**), which revokes it at once,
-then in the SRE Agent portal select the repository under **Build + setup**, **Code access**, **GitHub**, and select
-**Delete**. Then run from this folder:
+When you no longer need the solution, first remove the agent's access to GitHub: in the SRE Agent portal select the
+repository under **Build + setup**, **Code access**, **GitHub**, and select **Delete**. Then delete the token in GitHub
+(**Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained tokens**), which revokes it at once;
+if other agents share it, wait until they no longer need it. Then run from this folder:
 
 ```powershell
 $sre = (az identity list -g rg-ai-sdlc-operate -o json | ConvertFrom-Json | Where-Object name -like 'id-sre-*').principalId
@@ -447,7 +454,7 @@ that last step, a new `azd up` with the same environment name can't create the a
    (`instructions.md`), your KQL (`skills/`), your runbook (`knowledge/`), your incident record template
    (`skills/file-incident-record.md`), and the alert's severity and title (`agent.yaml`). Name the subscription in
    every write command the agent may propose. Run `python configure_sre_agent.py --check`, then `azd provision`.
-5. Connect your repository under **Code access** with a token limited to Issues, as in
+5. Connect your repository under **Code access** with a token limited to Issues and read-only contents, as in
    [Connect GitHub](#connect-github).
 6. Replace the drill in `incident.py` with a fault that fits your service, for example an
    [Azure Chaos Studio](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-overview) experiment. Give every
@@ -474,7 +481,10 @@ that last step, a new `azd up` with the same environment name can't create the a
   from its report yourself.
 - **The agent puts the incident record in its reply instead of filing it.** GitHub is not connected, its token
   expired, or `configure_sre_agent.py` ran before you connected it. Check **Build + setup**, **Code access**,
-  **GitHub**, then run `python configure_sre_agent.py` and look for the GitHub Issue tools in its `Tools` section.
+  **GitHub**, then run `python configure_sre_agent.py` and look for `the custom agent gets CreateGithubIssue` in its
+  `Tools` section.
+- **The repository's row under Code access shows Failed.** The token can't read the repository's contents. Create a
+  token with **Contents: Read-only** as well, as in [Connect GitHub](#connect-github), and connect again.
 - **A RequestHub button fails with HTTP 403 and no body.** The API was deployed before the fix that lets the app's own
   origin send requests through Container Apps authentication (#134). Run `azd deploy api` from `main`.
 - **The alert takes several minutes to fire.** The worker reports its backlog after each batch of up to 20

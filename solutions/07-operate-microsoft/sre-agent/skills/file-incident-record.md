@@ -28,11 +28,13 @@ If it blocks yours, rewrite the text with placeholders and submit it once more. 
 
 ## The Issue
 
-- Repository: `{{GITHUB_REPOSITORY}}`
-- Title: `Incident record: notification backlog, <YYYY-MM-DD>` (the UTC date the alert fired)
-- Labels: `ai-sdlc` and `phase:operate`, nothing else. Never `incident` or `incident-followup`: those labels start
-  another team's automation.
-- Body, in Markdown:
+Create it with `CreateGithubIssue`, with these parameters:
+
+- `repoUrl`: `https://github.com/{{GITHUB_REPOSITORY}}`
+- `title`: `Incident record: notification backlog, <YYYY-MM-DD>` (the UTC date the alert fired)
+- `tags` (the Issue's labels): `ai-sdlc` and `phase:operate`, nothing else. Never `incident` or `incident-followup`:
+  those labels start another team's automation.
+- `body`, in Markdown:
 
 ```markdown
 ## Summary
@@ -72,9 +74,9 @@ Filed by Azure SRE Agent from its investigation of the alert. All data comes fro
 ## Filing it
 
 1. Write the title and body, then read them once more against the list above.
-2. Create the Issue with the GitHub tool. The platform holds the call until a person reviews the text and selects
+2. Call `CreateGithubIssue` once. The platform holds the call until a person reviews the text and selects
    **Allow once**. If they cancel it, do not retry: put the title and body in your reply instead.
 3. Reply with the Issue number. File only this one Issue for the incident unless the team asks for another.
 
-If no GitHub tool is available (GitHub is not connected), put the title, labels, and body in your reply, say that
-GitHub is not connected, and stop.
+If `CreateGithubIssue` is not available (GitHub is not connected), put the title, labels, and body in your reply, say
+that GitHub is not connected, and stop.
