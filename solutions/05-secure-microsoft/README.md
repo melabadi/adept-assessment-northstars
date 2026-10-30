@@ -2,7 +2,7 @@
 
 Cloud misconfigurations are usually found by one team in a security portal and fixed by another team in code, if they are fixed at all. In this solution, Azure Policy and Microsoft Defender for Cloud flag a real misconfiguration on RequestHub's attachment storage: it has no private endpoint. Copilot in Azure explains the risk in the portal. One click on the recommendation starts an Azure Logic App that files a GitHub Issue with each source's evidence, asks a Microsoft Foundry agent for the smallest Bicep fix, checks the answer, and opens it as a draft pull request. A what-if preview that runs in Azure shows that the fix changes only storage networking. A person reviews, merges, and deploys it, and another Logic App records the evidence on the Issue. GitHub holds only the code, the Issue, and the pull request: the AI and the automation run in Azure.
 
-![Copilot in Azure's answer: the recommendation reduces the risk of unauthorized access, data exfiltration, and reconnaissance, and a private endpoint fixes it, followed by a basic Bicep example with placeholder names such as yourStorageAccountName](images/02-azure-copilot.png)
+![The draft pull request that the Foundry agent posture-remediator drafted in Azure: it sets the module parameter storagePrivateEndpoint to true, remediates Issue #178 without closing it, lists the expected changes and the risks, and says nothing is deployed until someone runs azd provision](images/04-agent-pull-request.png)
 
 ## Where it fits
 
@@ -62,7 +62,7 @@ sequenceDiagram
 
 **The finding means different things in different subscriptions,** and the Issue says which applies. Where an organization-wide Azure Policy closes the public endpoints of storage accounts, as in the subscription this was built in, an account without a private endpoint is unreachable: attachment uploads fail with HTTP 500. Elsewhere, it is reachable from the internet, and only authentication protects the attachments.
 
-Nothing the automation posts identifies your deployment. The Issue, the pull request, and the comments name the resource group, the policy assignments, and resource types. Resource names appear with their random token masked as `…` (for example `st…`), and GUIDs never appear.
+Nothing the automation posts identifies your deployment. The Issue, the pull request, and the comments name the resource group, this solution's policy assignment, and resource types. A policy assignment inherited from a management group or the subscription belongs to your organization's governance, so it appears only as `management group assignment` or `subscription assignment`; `test_policy_names.py` checks this. Resource names appear with their random token masked as `…` (for example `st…`), and GUIDs never appear.
 
 ## What's in this folder
 
@@ -82,6 +82,7 @@ Nothing the automation posts identifies your deployment. The Issue, the pull req
 ├── posture-remediator.md         the Foundry agent's instructions
 ├── remediation_agent.py          publishes the agent (azd hook); `try` runs it against your checkout
 ├── test_edit_checks.py           offline tests of the checks posture-intake applies to the agent's edit
+├── test_policy_names.py          offline tests that the Issue, the agent, and the evidence name only this solution's policy assignment
 ├── test_whatif_checks.py         offline tests of the preview's untrusted-Bicep check and comment sanitizing
 ├── whatif.py                     the what-if preview and its untrusted-Bicep check, run by the job or on your checkout
 ├── configure_github.py           azd hooks: finds the repository, creates and removes the webhook
@@ -162,14 +163,14 @@ Allow 15 minutes, most of it for the portal pages to load. Run the commands in t
    ![The starting-state checks in a terminal: the database Ready, 0 private endpoints, the Azure Policy assignment NonCompliant, and no open posture Issue](images/00-before-session.png)
 
    You want `Ready`, `0`, `NonCompliant`, and no open Issue.
-   - **The database is `Stopped`.** A tenant policy can stop PostgreSQL servers on a schedule. Then the app times out, and the what-if preview and `azd provision` fail with `ServerStoppedError`. Start it; it takes 3 to 5 minutes:
+   - **The database is `Stopped`.** A tenant policy can stop PostgreSQL servers on a schedule. Then the app times out, and the what-if preview and `azd provision` fail with `ServerStoppedError`. Start it; it takes 2 to 5 minutes:
 
      ```powershell
      az postgres flexible-server start -g $rg -n (az postgres flexible-server list -g $rg --query "[0].name" -o tsv)
      ```
 
    - **A private endpoint is left, or an Issue is open.** The last run was not reset: follow [Reset](#reset-and-clean-up).
-   - **Azure Policy still says `Compliant` after a reset.** It has not re-evaluated yet. Run `az policy state trigger-scan -g $rg`, which takes 2 to 10 minutes.
+   - **Azure Policy still says `Compliant` after a reset.** It has not re-evaluated yet. Run `az policy state trigger-scan -g $rg`, which takes 2 to 15 minutes.
 
 2. **Defender for Cloud still reports the account Unhealthy** (1 minute):
 
@@ -200,20 +201,20 @@ Allow 15 minutes, most of it for the portal pages to load. Run the commands in t
    - GitHub: the repository's **Issues** and **Pull requests** tabs.
    - PowerShell 7 in the solution folder.
 
-5. **Plan the timing.** The demo takes about 30 minutes; a third of it is waiting:
+5. **Plan the timing.** The demo takes about 25 minutes; a third of it is waiting:
 
    | Step | Takes | While you wait |
    | --- | --- | --- |
    | 1. Show the finding | 2 minutes | |
    | 2. Ask Copilot in Azure | 2 minutes | |
-   | 3. Trigger the automation | 1 to 2 minutes | Open the run and walk through its steps. |
-   | 4. Read the Issue and the pull request | 3 minutes | |
-   | 5. Preview | 2 to 4 minutes | Explain why the preview never runs the pull request's code. |
-   | 6. Merge and apply | 5 to 7 minutes | Explain least privilege: the automation could not have deployed this. |
-   | 7. Verify | 3 to 15 minutes | Attach a file in the app (optional). |
+   | 3. Trigger the automation | 1 minute (the run took 17 seconds) | Open the run and walk through its steps. |
+   | 4. Read the Issue and the pull request | 3 minutes | The preview of step 5 runs meanwhile. |
+   | 5. Preview | 1 to 2 minutes after the trigger (PASS after 93 seconds) | Explain why the preview never runs the pull request's code. |
+   | 6. Merge and apply | 5 to 7 minutes (`azd provision` took 5 minutes) | Explain least privilege: the automation could not have deployed this. |
+   | 7. Verify | 2 to 15 minutes (2 minutes 10 seconds) | Attach a file in the app (optional). |
    | Later: Defender confirms | 30 minutes to a day | Nothing to do: workflow automation records it. |
 
-   In a 15-minute slot, run steps 3 to 5 before the audience arrives, show steps 1 and 2 live, and then walk through the Issue, the pull request, and its preview.
+   The times in parentheses come from the run shown in the screenshots. In a 15-minute slot, show steps 1 to 5 live, start `azd provision` while you explain least privilege, and show step 7 with this README's screenshots if Azure Policy is slow to report.
 
 ## Run the demo
 
@@ -243,25 +244,39 @@ Run the commands in the solution folder.
 
    **Point out:** Copilot explains the risk and writes a generic private endpoint with placeholder names such as `yourStorageAccountName`. It does not know this repository's Bicep; the Foundry agent does, next.
 
-3. **Hand the finding to the automation** (1 to 2 minutes). Back on the recommendation's page, open **Take action** and select **Trigger logic app**. Select `posture-intake`, then **Trigger**.
+3. **Hand the finding to the automation** (1 minute). Back on the recommendation's page, open **Take action** and select **Trigger logic app**. Select `posture-intake`, then **Trigger**.
 
    ![The Trigger a logic app pane opened from the recommendation: the Logic App posture-intake selected, with trigger type Recommendation, above the Trigger button](images/03-trigger-logic-app.png)
 
-   In the `posture-intake` tab, refresh **Runs history**: a run appears within seconds and succeeds in about a minute. Open it to walk through its steps: the recommendation, the storage account, and Azure Policy read from Azure with the managed identity, the Issue, the call to the Foundry agent, the checks of its answer, the branch, the commit, the pull request, and the preview it starts.
+   In the `posture-intake` tab, refresh **Runs history**: a run appears within seconds and succeeds in about 20 seconds (17 in the run shown). Open it to walk through its steps. The run view shows the top level; open **Recommendation status** to see the rest: the storage account and Azure Policy read from Azure with the managed identity, the Issue, the call to the Foundry agent, the checks of its answer, the branch, the commit, the pull request, and the preview it starts.
 
-   **Point out:** the pane offers `posture-intake` because its trigger type is *Recommendation*: one click hands this finding to the automation.
+   ![The posture-intake run in the Azure portal: started by the Defender recommendation trigger, Is this solutions control true after 17 seconds, then Read assessment and Recommendation status in its True branch, all succeeded, and the False branch not run](images/03-intake-run.png)
 
-4. **Read the Issue and the agent's pull request** (3 minutes). In GitHub, the Issue *Posture: attachment storage in rg-ai-sdlc-secure has no private endpoint*, labelled `posture`, has a table with one row per source: the live configuration, each Azure Policy assignment, and Defender for Cloud with the recommendation's severity. Below it: where to fix it, and when the work is done. A comment links the draft pull request.
+   **Point out:** the run starts from the Defender recommendation, and before it acts, it reads the recommendation again from Azure (*Read assessment*): it does not trust the event it was sent.
 
-   The draft pull request changes one value in `infra/resources.bicep`, `storagePrivateEndpoint: true`, and the comment above it. Its description says what changes and why, lists the expected resource changes and the risks, and refers to the Issue without closing it.
+4. **Read the Issue and the agent's pull request** (3 minutes). In GitHub, the Issue *Posture: attachment storage in rg-ai-sdlc-secure has no private endpoint*, labelled `posture`, appeared 3 seconds into the run. Its table has one row per source: the live configuration, each Azure Policy assignment (an inherited one by its scope, not its name), and Defender for Cloud with the recommendation's severity. Below it: where to fix it, and when the work is done. A comment links the draft pull request.
+
+   ![The posture Issue's body: the storage account has no approved private endpoint and its public endpoint is closed; a table with the resource configuration, two Azure Policy assignments NonCompliant (one inherited from a management group, one in this resource group), and Defender for Cloud Unhealthy with Medium severity; then where to fix it, a Done when checklist, and that the Logic App posture-intake filed it from the Defender for Cloud recommendation](images/04-posture-issue.png)
+
+   The draft pull request appeared 10 seconds later. Its description says what changes and why, lists the expected resource changes and the risks, and refers to the Issue without closing it.
+
+   ![The draft pull request's description: set the module parameter storagePrivateEndpoint to true; Remediates #178, and merging does not close the Issue; five expected changes; the risks to check; drafted in Azure by the Foundry agent posture-remediator, run by the Logic App posture-intake](images/04-agent-pull-request.png)
+
+   Under **Files changed**, the agent's whole change: one value, `storagePrivateEndpoint: true`, and the comment above it, between the `posture:editable` markers.
+
+   ![The pull request's diff of resources.bicep: between the posture:editable-begin and posture:editable-end lines, two comment lines and storagePrivateEndpoint: false are replaced by a new two-line comment and storagePrivateEndpoint: true](images/04-agent-diff.png)
 
    In the Foundry portal tab, show the agent that drafted it: a versioned definition with its model and the instructions from [`posture-remediator.md`](posture-remediator.md).
 
-   ![The Foundry agent posture-remediator in the Foundry portal: version 1, model gpt-5-mini on a Global Standard deployment, and the start of its instructions](images/04-foundry-agent.png)
+   ![The Foundry agent posture-remediator in the Foundry portal: version 4, model gpt-5-mini on a Global Standard deployment, the start of its instructions, and its description: drafts the smallest Bicep fix for a cloud posture finding](images/04-foundry-agent.png)
 
-   **Point out:** the agent that drafted the fix is a versioned definition, version 1 on `gpt-5-mini`, with instructions written for this repository.
+   **Point out:** the agent's whole change is one value and the comment above it, between the lines the team marked for posture fixes.
 
-5. **Preview before anyone deploys** (2 to 4 minutes, in Azure). On the pull request, the commit status `posture/what-if` turns from pending to success, and the `posture-whatif` job comments the preview: a private DNS zone and its link, the private endpoint and its DNS zone group, and a new subnet in the virtual network. It ends with **PASS**. To watch it in Azure, open the Container Apps job `posture-whatif` > **Execution history**.
+5. **Preview before anyone deploys** (1 to 2 minutes after the trigger, in Azure). On the pull request, the commit status `posture/what-if` turns from pending to success: in the run shown, 93 seconds after the trigger, while you read the Issue. The `posture-whatif` job comments the preview: a private DNS zone and its virtual network link, the private endpoint and its DNS zone group, and a modified virtual network (its new subnet). It ends with **PASS**. To watch it in Azure, open the Container Apps job `posture-whatif` > **Execution history**.
+
+   ![The Azure what-if preview comment on the pull request: five changes, each expected (a private DNS zone, its virtual network link, the private endpoint with a masked name, its DNS zone group, and the virtual network modified), ten resources with recurring what-if noise not counted, one resource what-if cannot preview, and PASS](images/05-what-if-preview.png)
+
+   The agent's description expected a storage account change, and the preview shows none: the account already denies public access, so only the private networking changes. The preview, not the agent, says what a deployment would do.
 
    **Point out:** before anything is deployed, the comment lists each resource the change creates or modifies, all of them expected, and ends with PASS.
 
@@ -273,17 +288,27 @@ Run the commands in the solution folder.
    azd provision
    ```
 
-   **Point out:** a person deploys the fix from their own terminal; the automation identity cannot.
+   ![azd provision deploying the merged fix in the solution folder: resource names masked, the Private Endpoint among the resources it deployed, and SUCCESS after 5 minutes 1 second](images/06-azd-provision.png)
 
-7. **Verify** (3 to 15 minutes, depending on Azure Policy). In the Logic App `posture-verify`, select **Overview** > **Run** > **Run**, or from the terminal:
+   **Point out:** a person deploys the fix from their own terminal; the private endpoint is in the output.
+
+7. **Verify** (2 to 15 minutes, depending on Azure Policy; 2 minutes 10 seconds in the run shown). In the Logic App `posture-verify`, select **Overview** > **Run** > **Run**, or from the terminal:
 
    ```powershell
    az rest --method post --url "/subscriptions/{subscriptionId}/resourceGroups/$(azd env get-value AZURE_RESOURCE_GROUP)/providers/Microsoft.Logic/workflows/posture-verify/triggers/Every_hour/run?api-version=2019-05-01"
    ```
 
-   The run starts an Azure Policy evaluation and waits until this solution's assignment reports Compliant. It then comments the evidence on the Issue and closes it: one approved private endpoint, the Azure Policy assignments `Compliant ✅`, and Defender for Cloud `Unhealthy ⏳ not reassessed since the fix`. In the Policy tab, the storage account is now compliant. Optional: attach a file to a request in the app; the upload works through the private endpoint.
+   The run starts an Azure Policy evaluation and waits until this solution's assignment reports Compliant. It then comments the evidence on the Issue and closes it.
 
-   **Point out:** the Issue closes on evidence, not on the merge, and Defender for Cloud's row says honestly that it has not reassessed yet.
+   ![The posture verification comment on the Issue: one approved private endpoint, both Azure Policy assignments Compliant (one inherited from a management group, one in this resource group), and Defender for Cloud Unhealthy and not reassessed since the fix; Verified, checked in Azure by the Logic App posture-verify](images/07-verified.png)
+
+   In the Policy tab, the storage account is now compliant.
+
+   ![The same Azure Policy assignment after the fix: Compliant, 100%, 1 out of 1 resources, with the storage account (name masked) listed as compliant](images/07-policy-compliant.png)
+
+   Optional: attach a file to a request in the app. The upload now works through the private endpoint: in the run shown, an upload through the API returned HTTP 500 before the fix and HTTP 201 after it.
+
+   **Point out:** the evidence keeps one row per source, and Defender for Cloud's row says it has not reassessed yet.
 
 **Later: Defender for Cloud confirms** (30 minutes to a day). When Defender reassesses the account as Healthy, its workflow automation `posture-defender-healthy` sends the recommendation to `posture-intake`, which comments on the Issue that Defender for Cloud now reports the storage account Healthy. There is nothing to run, but the reset removes the fix it would confirm, so wait for it before you reset if you want it on the Issue.
 
@@ -300,7 +325,7 @@ Run the commands in the solution folder.
 
 ## Reset and clean up
 
-To run the demo again, put the finding back (about 15 minutes, most of it waiting):
+To run the demo again, put the finding back (about 20 minutes, most of it waiting):
 
 1. Revert the fix: run `gh pr revert <pull request number>`, then merge the revert pull request. The webhook previews it too: the subnet goes away, and the private endpoint and its DNS zone are listed as left in place, because incremental deployments never delete.
 2. Remove the private endpoint and its DNS zone, then deploy `main` again:
@@ -316,7 +341,7 @@ To run the demo again, put the finding back (about 15 minutes, most of it waitin
    ```
 
    Incremental deployments never delete resources, so you remove the private endpoint before `azd provision` removes its subnet. The storage account keeps its closed public endpoint and its Deny rule; only the private path goes away, so attachments fail again until the fix is reapplied.
-3. Run `az policy state trigger-scan -g $rg` (2 to 10 minutes), until the starting-state check in [Before each session](#before-each-session) shows `NonCompliant`. Defender for Cloud follows on its own schedule: if it confirmed the fix, it can keep saying `Healthy` for up to a day.
+3. Run `az policy state trigger-scan -g $rg` (2 to 15 minutes), until the starting-state check in [Before each session](#before-each-session) shows `NonCompliant`. Defender for Cloud follows on its own schedule: if it confirmed the fix, it can keep saying `Healthy` for up to a day.
 4. On GitHub, delete the branches of the two merged pull requests (**Delete branch** on each). `posture-verify` already closed the Issue.
 
 To clear files you attached in the app, reset its demo data (you are an Admin):
@@ -343,7 +368,7 @@ azd env remove ai-sdlc-secure --force
 1. Copy this folder. It needs nothing in `.github/`.
 2. In `infra/resources.bicep`, compose your own app's Bicep and assign the built-in policy for the control you care about.
 3. In `infra/automation.bicep`, set the control: `privateLinkPolicyDefinition`, and `privateLinkAssessment`, the Defender for Cloud assessment key of the matching recommendation (`az security assessment list --query "[?displayName=='<recommendation>'].name" -o tsv`). Then set the file the agent may edit (`editablePath`), the module it reads (`modulePath`), the folder the preview watches (`infraPrefix`), and the path of `whatif.py` in the job's bootstrap script. Set the same values at the top of `remediation_agent.py` and `whatif.py`, and in `whatif.py`, list in `DEFAULT_EXPECT` the resource types your fixes may touch. In the editable file, put the lines the agent may change between `// posture:editable-begin` and `// posture:editable-end`, and keep roles and policy assignments outside them. List the lines the edited region may contain in `Result_region_not_allowed` in `infra/logic/intake.json` and in `ALLOWED_LINES` in `remediation_agent.py`, and the setting names the agent's texts must never contain in `Edit_problems` and `PROTECTED`.
-4. Rewrite `posture-remediator.md` for your files and rules. Try it on your checkout with `python remediation_agent.py try` before `azd provision` publishes it as a new version. Run `python -m unittest test_edit_checks.py test_whatif_checks.py` after you change the editable region, the allowed lines, the protected names, or the preview's checks.
+4. Rewrite `posture-remediator.md` for your files and rules. Try it on your checkout with `python remediation_agent.py try` before `azd provision` publishes it as a new version. Run `python -m unittest test_edit_checks.py test_policy_names.py test_whatif_checks.py` after you change the editable region, the allowed lines, the protected names, the Issue's policy rows, or the preview's checks.
 5. Adapt the Issue's title and text in `infra/logic/intake.json` to your control.
 6. Keep the identity at Reader and Policy Enrollments Contributor on the resource group, and the token at four permissions on your repository only.
 
@@ -352,6 +377,7 @@ azd env remove ai-sdlc-secure --force
 - **`AzureCLICredential: exit status 1` during `azd up`, `azd deploy`, or `azd provision`.** azd could not get a token from the Azure CLI, which happens when other Azure CLI sessions run at the same time. Run `az account get-access-token`, then run the command again.
 - **`azd up` fails in the postprovision hook with `ModuleNotFoundError`.** The hook runs `python remediation_agent.py publish` with the first Python on your PATH. Run `pip install -r requirements.txt` with that Python, or activate the virtual environment you installed it in, then run `azd provision`.
 - **A `posture-intake` run fails with `Unauthorized` (HTTP 401) at its first GitHub call.** The token is missing or expired. Create a new one ([Set up](#set-up), step 1), store it with `azd env set POSTURE_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')`, and run `azd provision`.
+- **The token check in [Before each session](#before-each-session) returns 401 right after you stored a new token.** An `azd provision` or `azd up` that was already running when you stored it rewrote `.azure/ai-sdlc-secure/.env` with the old value when it finished. Store the token again once no azd command is running in this folder, then run `azd provision`.
 - **Defender for Cloud still reports the account Healthy after a reset.** Defender reassesses on its own schedule, up to a day after the reset. `posture-intake` reads the recommendation's status from Azure, not from the click, so until then a run records Defender's confirmation instead of filing work. Reset at least a day before you present. If you can't wait, show steps 3 to 5 with this README's screenshots, and say why.
 - **The commit status `posture/what-if` says a stopped PostgreSQL server blocks what-if, `azd provision` fails with `ServerStoppedError`, or the app times out.** The PostgreSQL server was stopped, for example by a tenant policy on a schedule. Start it as in [Before each session](#before-each-session); it takes 3 to 5 minutes. Then update the pull request, for example edit its description: `posture-preview` previews a commit again when its last preview ended in error.
 - **A button in the app fails with HTTP 403 and no body.** The deployment predates [#134](https://github.com/melabadi/adept-assessment-northstars/pull/134), the shared module's fix for browser requests behind Container Apps authentication. Run `azd deploy api` in this folder from an up-to-date `main`.
