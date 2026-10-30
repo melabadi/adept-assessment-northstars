@@ -20,17 +20,17 @@ Whatever the format, tell the same story: one app, RequestHub, goes through ever
 | Solution | On stage | Start early |
 | --- | --- | --- |
 | [01-plan-github](solutions/01-plan-github/) | 15 min (12 with the cloud agent's pull request) | If you show the cloud agent (option B), assign it about 10 minutes before: it finishes in about 5. |
-| [01-plan-microsoft](solutions/01-plan-microsoft/) | 15 min (13 without the comparison) | Nothing; allow 10 minutes before the audience arrives to confirm the starting state and warm up Azure. |
+| [01-plan-microsoft](solutions/01-plan-microsoft/) | 15 min (20 with the optional steps) | Start a backup run about 10 minutes before: a run reaches its review Issue in about 2 to 9 minutes, depending on the preview evaluation. |
 | [02-design-github](solutions/02-design-github/) | 25 min | If you show the cloud agent (option B), assign it at least 30 minutes before; it takes about 12. Request Copilot's code review early: it takes 4 to 5 minutes. |
-| [02-design-microsoft](solutions/02-design-microsoft/) | 15 min | Start the evaluation in GitHub Actions about 5 minutes before its step, and open the agent's Playground in advance (it takes up to a minute to load). |
+| [02-design-microsoft](solutions/02-design-microsoft/) | 15 min | Start the Foundry evaluation (`python evaluate.py --no-wait`, in the solution folder) about 5 minutes before step 8: its two runs take about 3 minutes. Open the agent's Playground in advance (it takes up to a minute to load). |
 | [03-develop-github](solutions/03-develop-github/) | 25 min | Create the Issue and assign it to Copilot at least 30 minutes before: it works for 20 to 30. Run the Copilot CLI step (about 20 minutes) beforehand too. |
-| [03-develop-microsoft](solutions/03-develop-microsoft/) | 20 min | Sign in to the app once before the audience arrives, so Microsoft Entra's account picker and permissions prompt don't appear on stage. |
+| [03-develop-microsoft](solutions/03-develop-microsoft/) | 20 min | Run the reviewer's dry run on pull request #36 (about 3 minutes) to confirm its GitHub token still works. For fresh evaluation results, start `eval_reviewer.py` about 15 minutes before. |
 | [04-test-github](solutions/04-test-github/) | 20 min | Rebuild the lab branch and assign the Issue to Copilot 30 minutes before: it works for 15 to 30. The optional Copilot CLI step takes 12 to 18 minutes. |
-| [04-test-microsoft](solutions/04-test-microsoft/) | 30 min (50 fully live) | Start the baseline load test about 15 minutes before: each run takes about 12. Run the final passing run during questions. |
+| [04-test-microsoft](solutions/04-test-microsoft/) | 30 min (45 fully live) | Start the baseline Azure Load Testing run from the portal about 10 minutes before its step: a run reaches its verdict in about 8 minutes, and the Logic App reports it about 2 minutes later. Start the final passing run during questions. |
 | [05-secure-github](solutions/05-secure-github/) | 15 min | Prepare the lab and start the review and the cloud agent 30 to 45 minutes before: the review took about 6 minutes and the repair 15 in the screenshot run. |
-| [05-secure-microsoft](solutions/05-secure-microsoft/) | 30 min (15 with Copilot's pull request ready) | Copilot's fix takes 6 to 20 minutes: in a short slot, scan and hand the Issue to Copilot before the audience arrives. Azure Policy can take up to 15 minutes to re-evaluate after the fix. |
+| [05-secure-microsoft](solutions/05-secure-microsoft/) | 30 min (15 with the agent's pull request ready) | In a short slot, select **Trigger logic app** on the recommendation about 10 minutes before: the Issue, the agent's draft pull request, and its what-if preview follow in about 5 minutes. Defender for Cloud must still report the account Unhealthy, so reset at least a day before. Azure Policy can take up to 15 minutes to re-evaluate after the fix. |
 | [06-release-github](solutions/06-release-github/) | 20 min | Start the release candidate about 15 minutes before: the candidate takes 3.5 to 7 minutes, and Copilot's summary 5 to 6 more. |
-| [06-release-microsoft](solutions/06-release-microsoft/) | 20 min | Start `release.py watch` two minutes before, so the audience sees what users get; a release takes about 5 minutes. |
+| [06-release-microsoft](solutions/06-release-microsoft/) | 20 min | Start `release.py watch` two minutes before, so the audience sees what users get. A release takes about 4 minutes: about 2 to build the commit, then about 2 for the release job to deploy and check the candidate. |
 | [07-operate-github](solutions/07-operate-github/) | 20 min | In a short slot, run the triage (about 5 minutes) and Copilot's follow-up (4 to 10 more) before the audience arrives. |
 | [07-operate-microsoft](solutions/07-operate-microsoft/) | 25 min | In a short slot, start the incident up to 10 minutes before you show the investigation (no more than 30: the fault switches itself off after 45); the alert fires about 6 minutes after the start. |
 
@@ -40,7 +40,7 @@ One demo per phase, chosen for a short running time and a clear story, with the 
 
 1. **Plan** (12 min): [01-plan-github](solutions/01-plan-github/), with the cloud agent's brief pull request already open.
 2. **Design** (15 min): [02-design-microsoft](solutions/02-design-microsoft/), two operating profiles get different, grounded answers.
-3. **Develop** (20 min): [03-develop-microsoft](solutions/03-develop-microsoft/), a Foundry agent inside the app, with a guard that hands conflicts to a person.
+3. **Develop** (20 min): [03-develop-microsoft](solutions/03-develop-microsoft/), Azure reviews a risky pull request in minutes: the team's rules first, then a sandbox build, then a Foundry agent's commentary.
 4. **Test** (20 min): [04-test-github](solutions/04-test-github/), with the failing tests and the fix already pushed.
 5. **Secure** (15 min): [05-secure-github](solutions/05-secure-github/), from Copilot's review finding to a proven fix.
 6. **Release** (20 min): [06-release-microsoft](solutions/06-release-microsoft/), a bad revision is caught before it gets traffic.
@@ -52,7 +52,8 @@ To show the other offering of a phase, swap in its other solution; the table abo
 
 ### Once
 
-- Work through the root README's [Before you start](README.md#before-you-start), then each solution's **Set up**. The Microsoft solutions each deploy into their own resource group with `azd up`, which takes from 2 to 16 minutes depending on the solution.
+- Work through the root README's [Before you start](README.md#before-you-start), then each solution's **Set up**. The Microsoft solutions each deploy into their own resource group with `azd up`, which takes from 2 to 20 minutes depending on the solution.
+- Connect each Microsoft solution to GitHub once, as its **Set up** describes: a fine-grained token limited to this repository (Plan, Develop, Test, Secure, Release), a private GitHub App (Design), or Azure SRE Agent's Code access (Operate). Their AI and automation run in Azure; no GitHub Actions workflow takes part.
 - For the two agentic workflows (06-release-github and 07-operate-github), create the `COPILOT_GITHUB_TOKEN` secret as their READMEs describe.
 - Use a demo tenant and a demo subscription. On stage, your audience sees your real Azure portal, your account, and your resource names.
 
@@ -79,7 +80,7 @@ To show the other offering of a phase, swap in its other solution; the table abo
 ## After the session
 
 - Reset each solution you used, following its **Reset and clean up**. Resets close the Issues and pull requests the demo created, delete temporary branches, and put Azure resources back in their starting state.
-- When you are done with a Microsoft solution, its clean-up section removes everything it created, including the Microsoft Entra app registration and the GitHub environment.
+- When you are done with a Microsoft solution, its clean-up section removes everything it created, including any Microsoft Entra app registration, and says how to revoke its GitHub access: delete its token or GitHub App on GitHub.
 
 ## What it costs while it is deployed
 
@@ -87,8 +88,8 @@ The GitHub demos use your Copilot plan and Actions minutes. The Microsoft soluti
 
 | Bills by the hour while deployed | Solutions |
 | --- | --- |
-| A PostgreSQL flexible server and two container apps kept at one replica each | 03-develop, 04-test, 05-secure, 06-release, and 07-operate (Microsoft) |
-| Azure AI Search, Basic tier | 02-design-microsoft |
-| Azure SRE Agent: 4 Azure Agent Units (AAUs) an hour while it exists, plus roughly 10 to 35 AAUs per investigation (capped at 1,000 a month) | 07-operate-microsoft |
+| A PostgreSQL flexible server and two container apps kept at one replica each (RequestHub) | 04-test, 05-secure, 06-release, and 07-operate (Microsoft) |
+| Azure AI Search, Basic tier, and two private endpoints: about $90 a month | 02-design-microsoft |
+| Azure SRE Agent: 4 Azure Agent Units (AAUs) an hour while it exists (about $292 a month), plus roughly 10 to 35 AAUs per investigation (capped at 1,000 a month) | 07-operate-microsoft |
 
-Foundry models, Azure Load Testing, and Defender for Cloud bill mostly for what you use. Delete a solution's resource group when you won't present it for a while: `azd up` recreates it.
+Everything else bills for what you use: Foundry models and evaluations, Logic Apps, Container Apps jobs and dynamic sessions, Azure Load Testing, and Defender for Cloud. 01-plan-microsoft and 03-develop-microsoft cost close to nothing while nobody runs them. Delete a solution's resource group when you won't present it for a while: `azd up` recreates it.

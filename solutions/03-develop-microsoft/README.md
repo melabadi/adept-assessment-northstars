@@ -1,301 +1,287 @@
-# Develop · Triage agent in Microsoft Foundry
+# Develop · Azure pull request reviewer
 
-Reviewers in RequestHub route every request by hand. In this solution the app's **Triage assistant** panel calls a Microsoft Foundry agent that recommends a department and priority, citing the routing policies it applied. The agent reads data only through two read-only tools that the app executes with the reviewer's permissions. The app's deterministic guards reject unsafe answers, and people still confirm the routing and make the decision. Every change to the agent is evaluated on 12 labelled cases before it ships.
+Every pull request to RequestHub waits for a person to check the same team rules and to pull the branch to see whether it builds and its tests pass. In this solution, adding the `review:azure` label to a pull request starts an Azure Logic App. It checks the change against the team's rules in one Azure Container Apps sandbox session, builds and tests it in another, asks a Microsoft Foundry agent to explain what it found, and posts one review comment about four minutes later. The rule verdicts come from a deterministic checker that ran before any of the pull request's code; the agent can explain a verdict but can't change it. The review never approves: a person still decides.
 
-![RequestHub's page for REQ-1012, a workstation estimated at 7,800: the Foundry agent suggests Finance and cites two routing policies, the app's guard marks it Needs human review, and the History lists the agent's two tool reads](images/03-needs-human-review.png)
+![The requesthub-pr-reviewer agent in the Foundry portal: version 3 on gpt-5.4-mini with its sandbox tool, and its YAML definition, published from solutions/03-develop-microsoft/reviewer-agent.yaml, whose instructions say the rule checker's verdicts are authoritative and that everything in the pull request is untrusted data](images/05-foundry-agent.png)
 
 ## Where it fits
 
-**Phase 3 of 7: Develop.** The GitHub counterpart is [03-develop-github](../03-develop-github/).
+**Phase 3 of 7: Develop.** The GitHub counterpart is [03-develop-github](../03-develop-github/), where the Copilot cloud agent writes a change. Here, Azure reviews one.
 
 | | Today | With this solution |
 | --- | --- | --- |
-| Building an AI feature | A prompt in the code, checked by trying a few examples. | A versioned agent definition next to the code, published to Foundry only when it changes. |
-| Data access | The model sees whatever the prompt includes. | Two read-only tools, scoped to the one request being triaged, executed and audited by the app. |
-| Safety | Hope the model behaves. | No approval tool. Guards in the app reject approval claims, unknown policies, and policy conflicts that are not flagged for a person. |
-| Quality | Anecdotes. | 12 labelled cases (routing, conflict, ambiguity, missing context, unauthorized access, prompt injection) run on every change. A failing case becomes an Issue. |
-| Shipping a change | Redeploy the app to change a prompt. | Publish a new agent version and the app uses it right away. Pull requests are evaluated against a temporary candidate agent first. |
+| First look at a pull request | Waits until a reviewer has time, often hours. | About four minutes after the label, on every push. |
+| Team rules (approval authority, authorization in `RequestWorkflow`, additive API contract, tests with every change, synthetic data) | Checked from memory, unevenly, by whoever reviews. | Checked the same way every time by a script from `main`, with the evidence for each verdict. |
+| Does it build, do the tests pass? | The reviewer pulls the branch, or waits for CI. | Built and tested in an isolated Azure sandbox; the review says what passed, what failed, and what was flaky. |
+| What deserves attention | The reviewer reads the whole diff to find out. | A Foundry agent explains each failed rule, flags what no rule covers (for example SQL built from user input), and says what the person should decide. |
+| Who decides | A person. | Still a person. The review is a comment; it never approves or requests changes. |
+| Is the reviewer any good? | Unknown. | Measured on ten labelled pull requests of this repository, in Foundry's Evaluation view. |
 
 ## How it works
 
 ```mermaid
 sequenceDiagram
-  actor R as Reviewer
-  participant UI as RequestHub (Container Apps)
-  participant F as Foundry agent<br/>requesthub-triage
-  R->>UI: Get recommendation (REQ-1001)
-  UI->>UI: Check role and department access
-  UI->>F: Responses API, managed identity
-  F-->>UI: Call get_request and get_routing_policies
-  UI->>UI: Run the tools for this request only, write audit entries
-  UI-->>F: Permitted fields and policies
-  F-->>UI: JSON recommendation with cited policies
-  UI->>UI: Guards: known policies, no approval claims, conflicts flagged
-  UI-->>R: Suggested department, priority, rationale, citations
-  R->>UI: Confirm or change the routing
-  Note over R,UI: Only an approver can approve or reject
+  actor A as Author
+  participant GH as GitHub
+  participant LA as Logic App<br/>logic-pr-reviewer
+  participant J as Judge session<br/>no network
+  participant R as Run session
+  participant F as Foundry agent<br/>requesthub-pr-reviewer
+  actor P as Person who decides
+  A->>GH: Push a pull request, add the review:azure label
+  GH->>LA: Webhook: pull_request event
+  LA->>GH: Read the pull request again, its head commit, labels, and merge base
+  LA->>GH: Download the base and head archives, and the scripts from main
+  LA->>J: Run the rule checker on both trees, as data
+  J-->>LA: Five verdicts with evidence, and the diff
+  Note over LA,R: Only now does any of the pull request's code run
+  LA->>R: Build the head, run the API and web UI tests
+  R-->>LA: Build and test summary
+  LA->>F: Responses API: verdicts, diff, sandbox summary
+  F->>R: runInSandbox: read a test log or the code
+  F-->>LA: Commentary as strict JSON
+  LA->>J: Write the review: verdicts word for word, then the commentary
+  LA->>GH: Post one COMMENT review
+  P->>GH: Read the review and decide
 ```
 
-- **Microsoft Foundry** hosts the `requesthub-triage` prompt agent on `gpt-4.1-mini`. [`triage-agent.yaml`](triage-agent.yaml) defines it: instructions, the two tool schemas, and a strict JSON output schema.
-- **RequestHub** in Azure Container Apps calls the agent with its managed identity. It executes the tools itself (`ScopedTriageTools` in [`RequestWorkflow.cs`](../../app/src/RequestHub.Core/Services/RequestWorkflow.cs)), applies the guards, and stores the recommendation and an audit entry for every tool call. The guards are code: an answer that claims approval or cites an unknown policy is rejected, and when the cited policies route the request to different departments, the app sets **Needs human review** even if the model did not.
-- **GitHub Actions** ([`develop-microsoft-eval.yml`](.github/workflows/develop-microsoft-eval.yml)) publishes and evaluates the agent through OIDC. A pull request gets a temporary candidate agent, an evaluation report as a comment, and the candidate is deleted afterwards. A push to `main` publishes the real agent and opens an Issue for each failing case. The Foundry project endpoint is a GitHub environment secret, so the logs show `***` where the host name would be.
-- **People** confirm the routing (reviewers) and approve or reject (approvers). No agent or tool can do either.
+| Who | Does what |
+| --- | --- |
+| **GitHub** | Holds the code and the pull request. The `review:azure` label asks for a review; a repository webhook tells Azure. `azd up` creates both with your GitHub CLI. Nothing runs in GitHub Actions, and nothing depends on GitHub Copilot. |
+| **Azure Logic Apps** (Consumption) | Runs one review per event: reads the pull request through GitHub's REST API with a fine-grained token, drives the two sandbox sessions, starts the agent and polls for its answer, and posts the review. Its run history shows every step. |
+| **Azure Container Apps dynamic sessions** | Two pools of Shell sessions. The **judge** pool has no network: it runs the rule checker ([`sandbox/review_rules.py`](sandbox/review_rules.py)) on the code as data and, at the end, writes the review ([`sandbox/format_review.py`](sandbox/format_review.py)). The **run** pool builds and tests the pull request ([`sandbox/run_change.sh`](sandbox/run_change.sh)): .NET 10 and the API's integration tests against PostgreSQL, Node 22 and the web UI's typecheck and unit tests. |
+| **Microsoft Foundry** | Hosts the `requesthub-pr-reviewer` prompt agent on `gpt-5.4-mini` ([`reviewer-agent.yaml`](reviewer-agent.yaml)). Its one tool, `runInSandbox`, reads files in the run session with the project's managed identity. Every agent run is traced to Application Insights, and the evaluations live in the project. |
+| **The person** | Adds the label, reads the review, and decides. |
+
+### Why the review can be trusted
+
+- **The judge runs before the defendant.** The rule checker comes from `main`, never from the pull request, and runs in its own session before any of the pull request's code runs anywhere. The Logic App doesn't start the build until it has the verdicts.
+- **Verdicts are posted word for word.** The review copies the checker's table from the file the checker wrote. The agent sees the verdicts and may explain them, but nothing it writes can change them, and its commentary comes after them under its own heading.
+- **A PASS is evidence, not proof.** The checker looks for the usual ways each rule gets broken (see [`sandbox/review_rules.py`](sandbox/review_rules.py)). A change it has no pattern for, such as a new body for `CanAccessDepartment` or a test that no longer asserts anything, can pass. The review says so, and the person still reads the diff.
+- **The webhook is untrusted.** The Logic App takes only the pull request number from it, then reads the pull request, its head commit, and its labels from GitHub's API. The other message it accepts is a dry run, `{"dryRun": true, "pr": <number>}`, which is what `eval_reviewer.py` sends: it skips the open, draft, default-branch, and label checks and never posts. Only the trigger URL's signature keeps others from sending one, so keep the URL secret.
+- **Only this repository's branches.** A pull request from a fork is never built or reviewed, not even in a dry run: otherwise its code would run in the sandbox, and reach the agent, on every push, without anyone approving it.
+- **The pull request is untrusted.** Its code, comments, test output, and description are data for the agent, never instructions. Text from the pull request or the model is posted inert: no HTML or HTML entities, no links, no @mentions, and a backtick can't hide any of them. GUIDs and Azure host names are removed before anything is posted.
+- **No stale reviews.** A review is posted on the commit it reviewed, and only if that commit is still the pull request's head when the review is ready. If someone pushed in the meantime, the review is skipped: the newer push has its own on the way. (Adding the label again, reopening, or marking the pull request ready reviews the same commit again.)
+- **No secret goes into a sandbox.** The GitHub token stays in the Logic App: a `securestring` parameter that Azure Resource Manager never returns, used only by actions with secure inputs. The sessions get only the archives and the scripts.
+- **Least privilege.** The token can read code and write pull request reviews in this one repository. The Logic App's identity can run sessions in the two pools and call the agent. The agent's identity can run sessions in the run pool only.
 
 ## What's in this folder
 
 ```text
-03-develop-microsoft/
+solutions/03-develop-microsoft/
 ├── README.md
-├── triage-agent.yaml                   the Foundry agent: instructions, tools, output schema
-├── publish_triage_agent.py             publishes a new agent version only when the definition changes
-├── eval_triage.py                      runs the labelled cases through the RequestHub API and checks every result
-├── eval_cases.jsonl                    the 12 labelled cases
-├── azd_env.py                          reads settings from this solution's azd environment
-├── configure_github.py                 azd hooks: connect the solution to GitHub Actions
-├── requirements.txt                    Python packages
-├── images/                             screenshots from a live run, used in this README
-├── azure.yaml                          azd project: infra plus the shared app's api and worker
+├── azure.yaml                  azd project: provisions infra/, then runs the hooks below
+├── configure_github.py         azd hooks: the review:azure label, a check of the token, and the repository webhook,
+│                               created with your GitHub CLI; `azd down` deletes the webhook
 ├── infra/
-│   ├── main.bicep                      resource group, RequestHub platform (app/infra), Foundry
-│   ├── foundry.bicep                   Foundry account, project, model, Foundry User roles
-│   └── main.parameters.json
-└── .github/
-    ├── agents/develop-microsoft.agent.md   Copilot agent that changes and evaluates the Foundry agent
-    ├── skills/
-    │   ├── foundry-tools/              how tools are declared, executed, and checked (check_tools.py)
-    │   └── triage-evaluation/          how to run and read the evaluation
-    └── workflows/develop-microsoft-eval.yml
+│   ├── main.bicep              the resource group and the deployment's parameters (subscription scope)
+│   ├── resources.bicep         Foundry, the model, two session pools, the Logic App, monitoring, and least-privilege roles
+│   ├── reviewer-workflow.json  the Logic App's workflow: one review per pull request event
+│   └── main.parameters.json    values from the azd environment
+├── sandbox/                    what runs in the sessions; standard library only
+│   ├── review_rules.py         the rule checker: five team rules, verdicts with evidence (the "judge")
+│   ├── run_change.sh           builds and tests the pull request's code
+│   ├── format_review.py        writes the review comment
+│   └── test_sandbox_scripts.py unit tests for the two Python scripts (python -m unittest)
+├── reviewer-agent.yaml         the Foundry agent: instructions, the sandbox tool, and the strict output schema
+├── publish_reviewer_agent.py   publishes a new agent version when the definition changes
+├── demo/
+│   ├── fast-track.patch        the demo change: approvers may approve their own low-priority requests
+│   └── keep-the-guard.patch    the follow-up: keep the guard and add a regression test
+├── eval_cases.jsonl            ten labelled pull requests of this repository
+├── review_graders.py           the five checks that score the reviewer (Foundry code-based evaluators)
+├── eval_reviewer.py            dry-runs the reviewer on the labelled pull requests and evaluates the results in Foundry
+├── test_eval_reviewer.py       tests for the scoring rules (python -m unittest)
+├── test_configure_github.py    tests for the hooks: which webhook they touch, and that they never print its URL
+├── azd_env.py                  reads settings from the azd environment
+├── images/                     screenshots for this README
+└── requirements.txt            Python packages for publish_reviewer_agent.py and eval_reviewer.py
 ```
-
-The app itself lives in [`app/`](../../app/README.md). This solution deploys it with the Foundry provider switched on.
 
 ## Prerequisites
 
-- An Azure subscription where you can create resource groups, Microsoft Entra app registrations, and role assignments, for example as Owner.
-- A region that allows PostgreSQL Flexible Server for the app (the examples use `centralus`) and quota for `gpt-4.1-mini` (Global Standard, 50,000 tokens per minute) in the Foundry region (`eastus2` by default).
-- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), and the [GitHub CLI](https://cli.github.com/) signed in as a repository admin. The hooks create a GitHub environment and its secrets.
-- Python 3.12 or later.
-- For the local evaluation: the [.NET 10 SDK](https://dotnet.microsoft.com/download) and PostgreSQL (Docker is easiest, see [`app/README.md`](../../app/README.md#run-it-locally)).
+- An Azure subscription where you can create a resource group and role assignments (Owner, or Contributor plus Role Based Access Control Administrator).
+- A region with Microsoft Foundry, `gpt-5.4-mini` (GlobalStandard, 150K tokens per minute of quota), Azure Container Apps dynamic sessions, and Logic Apps. The default, East US 2, has all four.
+- Admin rights on the GitHub repository: `azd up` adds the webhook and the label with your GitHub CLI. No GitHub Copilot license is needed.
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) 1.37 or later, Python 3.12 or later, PowerShell 7, and the [GitHub CLI](https://cli.github.com/).
+- **Cost:** nothing while no one asks for a review. Each review costs about $0.07: two sandbox sessions at $0.03 each (sessions are billed in one-hour increments), less than $0.01 of `gpt-5.4-mini` tokens (Foundry's trace view estimates $0.002 to $0.004 per review), and less than $0.01 of Logic App actions. The ten-case evaluation costs under $1. Application Insights and Log Analytics stay within their free monthly allowance at demo volume.
 
 ## Set up
 
-Run once, from the repository root:
+Run these once, in PowerShell 7. You create one GitHub token and store it; `azd up` does the rest.
 
-```powershell
-cd solutions/03-develop-microsoft
-pip install -r requirements.txt
-az login
-azd auth login
-azd env new ai-sdlc-develop --location centralus
-azd up
-python publish_triage_agent.py
-```
+1. **Install the Python packages and sign in.** `gh auth status` should say you're logged in to github.com; if it doesn't, run `gh auth login`.
 
-`azd up` takes about 13 minutes. It creates resource group `rg-ai-sdlc-develop` and fills it as follows:
+   ```powershell
+   cd solutions/03-develop-microsoft
+   pip install -r requirements.txt
+   az login
+   azd auth login
+   gh auth status
+   ```
 
-- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): a Container Apps environment, private PostgreSQL with Microsoft Entra authentication only, Blob storage behind a private endpoint, a container registry, Application Insights, and a Microsoft Entra app registration with RequestHub's app roles. You get every role.
-- **The app**, deployed as two container apps (API with web UI, and the notification worker). The images are built in the registry, so Docker is not needed.
-- **Microsoft Foundry** in `eastus2`: an account, a `develop` project, and `gpt-4.1-mini`. You, the app's managed identity, and the GitHub Actions identity get the **Foundry User** role (formerly Azure AI User).
-- **GitHub environment `develop-microsoft`**, created by the hooks. The OIDC sign-in values and the Foundry project endpoint are secrets, which GitHub masks in workflow logs; only the model deployment name, which identifies nothing, is a variable.
+2. **Create a fine-grained personal access token** for the reviewer, with the least access that works. A person does this; nothing in the solution can. On GitHub: **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** > **Generate new token**.
+   - **Resource owner:** the account or organization that owns the repository. An organization may have to approve the token.
+   - **Repository access:** Only select repositories, this repository only.
+   - **Repository permissions:** **Contents**: Read-only, and **Pull requests**: Read and write. GitHub adds **Metadata**: Read-only. Nothing else.
+   - **Expiration:** as short as your demo period allows.
 
-`publish_triage_agent.py` publishes `requesthub-triage v1`. Until it runs, the triage panel reports that the assistant is unavailable.
+   Copy the token: GitHub shows it only once.
 
-What you should see: `azd up` ends with `SUCCESS`, and its last hook prints `GitHub environment 'develop-microsoft' in <owner>/<repo>: 4 secrets, 1 variables set.` The publish script prints `published new version: requesthub-triage v1 (model gpt-4.1-mini)`, and `unchanged: requesthub-triage v1 (model gpt-4.1-mini)` when you run it again.
+3. **Store the token and deploy** from this folder (a few minutes):
 
-The first time you open the app, Microsoft Entra asks you to pick your account and to accept the permissions the RequestHub app registration requests (sign-in and your basic profile).
+   ```powershell
+   azd env new ai-sdlc-develop --location centralus --subscription (az account show --query id -o tsv)
+   azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')
+   azd up
+   ```
+
+   `Read-Host -MaskInput` keeps the token off the screen and out of your PowerShell history. azd creates the resource group `rg-ai-sdlc-develop` and the resources in [How it works](#how-it-works). Its hooks then publish the agent, and connect this clone's GitHub repository with your GitHub CLI: they create the `review:azure` label, check that GitHub accepts the token, and create one webhook that sends `pull_request` events to the Logic App. The webhook's URL carries the Logic App's signature, so the hook reads it from Azure each time and never prints it. It worked when `azd up` ends with `SUCCESS` and its postprovision hook printed:
+
+   ```text
+   published new version: requesthub-pr-reviewer v1 (model gpt-5.4-mini)
+   Label review:azure in <owner>/<repo>: ready.
+   GITHUB_REVIEW_TOKEN: GitHub accepts it for <owner>/<repo>; it expires <date>.
+   Webhook <id> in <owner>/<repo>: pull_request events → Logic App logic-pr-reviewer (created).
+   ```
+
+   `azd hooks run postprovision` runs the hooks again and prints the same lines; nothing changes if nothing needs to. To review another repository, run `azd env set GITHUB_REPOSITORY <owner>/<repo>` before `azd up`.
+
+   **Where the token is stored.** In your local azd environment file, `.azure/ai-sdlc-develop/.env` in this folder, which git ignores. In the Logic App as a secure parameter, which Azure never returns when someone reads the Logic App. Every action that sends it has secure inputs, so the run history doesn't show it either. No sandbox session ever gets it. Anyone who can change the Logic App can use the token, so keep write access to the resource group as narrow as write access to the repository. To rotate the token, run the `azd env set` line again, then `azd provision`.
+
+   Without the token, `azd up` still deploys everything and warns you, but creates no webhook, so no pull request is reviewed until you set the token and run `azd provision` again.
+
+4. **Check it end to end** with a dry run on pull request #36, which posts nothing. It takes about 3 minutes and should print a row of ✅.
+
+   ```powershell
+   python eval_reviewer.py --cases 36 --local
+   ```
 
 ## Before each session
 
-- [ ] **Confirm the starting state.** From the repository root:
-
-  ```powershell
-  $pg = az postgres flexible-server list -g rg-ai-sdlc-develop --query "[0].name" -o tsv
-  az postgres flexible-server show -g rg-ai-sdlc-develop -n $pg --query state -o tsv   # Ready
-  python solutions/03-develop-microsoft/publish_triage_agent.py                       # unchanged: requesthub-triage v1 (model gpt-4.1-mini)
-  gh pr list --head demo/develop-shorter-rationale --state open                       # prints nothing
-  gh issue list --label triage-eval --state open                                      # prints nothing
-  ```
-
-  - If the server state is `Stopped`, start it: `az postgres flexible-server start -g rg-ai-sdlc-develop -n $pg` takes 3 to 5 minutes. A tenant policy can stop PostgreSQL servers on a schedule, and the app then fails its readiness probe.
-  - Run the publish script from an up-to-date `main`. It publishes a new version only when your `triage-agent.yaml` differs from the latest published version, so it normally prints `unchanged`.
-  - If a demo pull request or a `triage-eval` Issue is still open, follow [Reset and clean up](#reset-and-clean-up).
-  - Reset the demo data (the commands are in [Reset and clean up](#reset-and-clean-up)), then open **REQ-1001** in the app. Its **Triage assistant** shows **No recommendation yet**:
-
-  ![The Triage assistant panel in its starting state: No recommendation yet, and the Get recommendation button](images/00-starting-state.png)
-
-- [ ] **Start the slow parts early.** Sign in to the app once before the audience arrives, so Microsoft Entra's account picker, and the first time its permissions prompt, do not appear on stage. If you show the local evaluation in step 6, start the API in its own terminal a few minutes before: the first build takes about a minute.
-- [ ] **Open in advance.**
-  - Browser tabs: the app on **REQ-1001** and on **REQ-1012** (get the URL with `azd env get-value API_URL` in this folder). In [ai.azure.com](https://ai.azure.com), the `develop` project's **Agents** page and the **requesthub-triage** agent. On GitHub, **Actions** › **Develop · Microsoft · evaluate the triage agent**.
-  - In the editor: [`triage-agent.yaml`](triage-agent.yaml) and [`eval_cases.jsonl`](eval_cases.jsonl).
-  - Two PowerShell terminals at the repository root.
-- [ ] **Plan the time.** About 20 minutes on stage. The waiting times come from the live runs behind this README:
-
-| Step | On stage | Waiting |
-| --- | --- | --- |
-| 1. Show the agent | 2 min | the Foundry page loads in about 20 s |
-| 2. Get a recommendation | 2 min | about 6 s per recommendation |
-| 3. A conflict goes to a person | 2 min | about 6 s |
-| 4. Every tool call is audited | 1 min | |
-| 5. People route and decide | 1 min | |
-| 6. Evaluate the agent | 3 min | about 2 min in GitHub Actions, about 90 s locally |
-| 7. Change the agent safely | 4 min | the check takes about 2½ min |
-| 8. Ship it, or don't | 2 min | |
+- [ ] **Starting state.** No demo pull request is open and its branch is gone: `gh pr list --label review:azure --state open` prints nothing, and `git ls-remote --heads origin demo/fast-track` prints nothing.
+- [ ] **The reviewer works.** In `solutions/03-develop-microsoft`, run `azd hooks run postprovision` (about 20 seconds): it prints when the token expires, and puts back the label or the webhook if someone removed them. Then run the dry run from step 4 of *Set up* (about 3 minutes). If GitHub refuses the token, create a new one, `azd env set GITHUB_REVIEW_TOKEN ...`, and `azd provision`.
+- [ ] **Open in advance:**
+  - GitHub: the repository's **Pull requests** tab.
+  - Azure portal: the `logic-pr-reviewer` Logic App, **Development Tools** > **Run history**.
+  - Foundry portal: your project > **Agents** > `requesthub-pr-reviewer`, and **Evaluation** with the last run of *Azure pull request reviewer: labelled pull requests*.
+  - PowerShell 7 at the repository root, on `main`, with this README's demo commands.
+- [ ] **Start early:** for fresh evaluation results, run `python eval_reviewer.py` (in `solutions/03-develop-microsoft`) about 15 minutes before; otherwise show the last run.
+- [ ] **Timings:** about 20 minutes on stage. Each review takes about 4 minutes from the label; talk through the Logic App run while it works.
 
 ## Run the demo
 
-Run the commands from the repository root unless a step says otherwise. The screenshots come from the live run with demo pull request #131 and workflow runs 40728168191 and 40723993656. Your response ids, confidences, and rationales will differ, because the agent answers live every time.
+### 1. Open a pull request with a risky change (about 1 min)
 
-1. **Show the agent.** Open [`triage-agent.yaml`](triage-agent.yaml): the instructions, two tools (`get_request` and `get_routing_policies`), and a strict output schema. Nothing in it can change a request. Then show the same agent as Foundry runs it: in [ai.azure.com](https://ai.azure.com), open the `develop` project (resource group `rg-ai-sdlc-develop`) and select **Build** › **Agents** › **requesthub-triage**. The **Playground** tab shows the model, the instructions, and the two function tools.
-
-   ![The requesthub-triage agent in the Foundry portal's Playground: model gpt-4.1-mini, the instructions from triage-agent.yaml, and the two function tools get_request and get_routing_policies](images/01-agent-in-foundry.png)
-
-   *About 2 minutes.* **Point out:** the agent can only read, through two function tools, and it has no approval tool. Its definition lives in Git next to the code, and Foundry runs the version that the publish script created from it.
-
-2. **Get a recommendation.** Open the app, sign in, and open **REQ-1001** (a replacement laptop). In **Triage assistant**, select **Get recommendation**.
-
-   ![The Triage assistant for REQ-1001: an AI recommendation from foundry-agent with its provider trace, IT Services at High priority with 95% confidence, the rationale, and the cited policy POL-ROUTE-001 v1.2](images/02-recommendation.png)
-
-   *About 6 seconds.* **Point out:** the recommendation cites the policy it applied, `POL-ROUTE-001`, with its version, and **Provider trace** is the Foundry response id, so every answer can be traced back. The note at the bottom says it plainly: recommendations are advisory.
-
-3. **A conflict goes to a person.** Open **REQ-1012**, a workstation estimated at 7,800, and select **Get recommendation**. Two policies disagree: computing equipment goes to IT (`POL-ROUTE-001`), and spend above 5,000 goes to Finance (`POL-ROUTE-004`). The panel shows **Needs human review** and cites both. The agent sometimes flags the conflict itself. When it does not, as in this run, RequestHub's guard does, and says so with `[Guard: ...]` in the rationale.
-
-   ![REQ-1012: the agent suggests Finance citing POL-ROUTE-001 and POL-ROUTE-004, the app's guard marks it Needs human review, and the History lists the agent's two tool reads](images/03-needs-human-review.png)
-
-   *About 2 minutes.* **Point out:** the guard is code in the API (`RecommendAsync` in [`RequestWorkflow.cs`](../../app/src/RequestHub.Core/Services/RequestWorkflow.cs)), not a prompt, so the model's answer cannot skip it.
-
-4. **Every tool call is audited.** Scroll to the request's **History**.
-
-   ![REQ-1012's History: the request submitted by its requester, then Assistant read request data for get_request and for get_routing_policies, and Assistant suggested Finance, all by the signed-in reviewer with one correlation ID](images/04-history.png)
-
-   *About 1 minute.* **Point out:** the agent read this request and the routing policies, and nothing else. Each read is recorded on behalf of the reviewer who asked, with one correlation ID per recommendation.
-
-5. **People route and decide.** Below the **Triage assistant** are the **Routing** and **Decision** panels.
-
-   ![The Routing panel, where a reviewer picks a new department and can add a reason, and the Decision panel with Approve and Reject](images/05-people-decide.png)
-
-   *About 1 minute.* **Point out:** the recommendation has no "apply" button. A reviewer changes the routing, which is audited and can carry a reason, and only an approver can approve or reject, never on their own request.
-
-6. **Evaluate the agent.** The evaluation needs several personas, so it runs against RequestHub with the development persona switcher: in GitHub Actions, or on your machine. In GitHub Actions:
-
-   ```powershell
-   gh workflow run develop-microsoft-eval.yml
-   Start-Sleep -Seconds 5
-   $run = gh run list --workflow develop-microsoft-eval.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId'
-   gh run watch $run --exit-status
-   ```
-
-   The run's **Summary** page shows the report:
-
-   ![The evaluation workflow's job summary: 12/12 runs passed against the live agent, with each case's department, review flag, cited policies, and tool calls](images/06-eval-actions.png)
-
-   Or locally, with PostgreSQL on `localhost:5432`. Start the API in the second terminal and leave it running, then run the evaluation in the first:
-
-   ```powershell
-   $env:Triage__Provider = "Foundry"
-   $env:Foundry__ProjectEndpoint = (azd env get-value FOUNDRY_PROJECT_ENDPOINT --cwd solutions/03-develop-microsoft)
-   dotnet run --project app/src/RequestHub.Api            # second terminal; http://localhost:5080
-   python solutions/03-develop-microsoft/eval_triage.py   # first terminal
-   ```
-
-   ![The local evaluation in PowerShell: twelve cases from normal routing to prompt injection, all PASS, and 12/12 runs passed](images/06-eval-local.png)
-
-   Each line is one case: routing, conflict, ambiguity, missing context, unauthorized access, and prompt injection. Add `--cases T06,T08 --repeat 3` to show how stable a case is (6/6 in 36 seconds in this run). The local screenshot ran the API on its own port and database, because the machine was shared (see [Troubleshooting](#troubleshooting)). *About 2 minutes in GitHub Actions, and about 90 seconds locally once the API runs.* **Point out:** every case goes through the API, so it checks authorization, the tools, the guards, and that triage changed nothing on the request. T09 and T10 are refused before the agent runs, and T11 and T12 hide instructions in the request text that the agent must ignore.
-
-7. **Change the agent safely.** Make a small change on a branch, here a shorter rationale, and open a pull request:
-
-   ```powershell
-   git fetch origin
-   git switch -c demo/develop-shorter-rationale origin/main --no-track
-   $file = 'solutions/03-develop-microsoft/triage-agent.yaml'
-   (Get-Content $file -Raw) -replace 'under 400 characters', 'under 200 characters' | Set-Content $file -NoNewline
-   git commit -am "Triage agent: keep the rationale under 200 characters (demo)"
-   git push -u origin demo/develop-shorter-rationale
-   gh pr create --fill
-   ```
-
-   The **Develop · Microsoft · evaluate the triage agent** workflow (check **Publish the agent and evaluate it**) publishes the change as a candidate agent `requesthub-triage-pr-<number>`, runs the 12 cases against it, comments the report on the pull request, and deletes the candidate. The candidate exists for about a minute: refresh the **Agents** page in Foundry once the run's **Publish the agent** step is done.
-
-   ![The develop project's Agents page during the check: the candidate requesthub-triage-pr-131 next to requesthub-triage, both at version 1](images/07-candidate-agent.png)
-
-   ![The evaluation comment on demo pull request #131: candidate agent requesthub-triage-pr-131 evaluated in a linked run, and 12/12 runs passed](images/07-pr-comment.png)
-
-   *About 4 minutes, of which the check takes about 2½.* **Point out:** the change was evaluated live before anyone could merge it, and the app in Azure kept calling `requesthub-triage` the whole time.
-
-8. **Ship it, or don't.** To keep the demo repeatable, close the pull request without merging and delete its branch:
-
-   ```powershell
-   gh pr close demo/develop-shorter-rationale --delete-branch
-   ```
-
-   The **Agents** page lists only `requesthub-triage`, still at version 1:
-
-   ![The Agents page after the check: only requesthub-triage, still at version 1, because the candidate was deleted](images/08-agents-after.png)
-
-   If you merge instead, the push to `main` publishes `requesthub-triage v2`, evaluates it again, and the app uses it at once, without a redeploy: get a new recommendation for REQ-1001 to see the shorter rationale. Revert the change afterwards; the revert publishes v3 with the original instructions. *About 2 minutes.* **Point out:** only `main` publishes the agent the app calls, and every version is evaluated.
-
-## What to observe
-
-- **The agent never reaches data it should not.** Unauthorized callers are refused before the agent runs (T09, T10). An instruction hidden in a request to read another request is refused by the tool and audited (T12).
-- **Advisory only.** The agent has no approval tool. An answer that claims approval or cites an unknown policy is rejected and nothing is saved. Conflicts always go to a person (T06, T08): when the cited policies route a request to different departments, the app's guard sets **Needs human review** even if the model did not (step 3).
-- **Measured quality.** Twelve labelled cases with deterministic checks, run on every change, with repeat runs to show variation instead of hiding it.
-- **A safe change process.** Pull requests are evaluated against a temporary candidate agent. Only `main` publishes the agent the app uses, and a new version needs no redeploy.
-- **No secrets anywhere.** The app uses its managed identity, GitHub Actions uses OIDC, and your terminal uses your Microsoft Entra ID sign-in. The Foundry endpoint is a GitHub environment secret, so workflow logs show `***` instead of resource names.
-
-## Reset and clean up
-
-After each demo, close the demo pull request without merging if step 8 did not, and close any `triage-eval` Issue the evaluation opened:
+The change sounds reasonable: approvers wait for a colleague even for a replacement keyboard, so let them approve their own low-priority requests. It quietly weakens a core rule (a requester can never decide their own request), and its author "fixed" the test that guarded the rule so the suite still passes. From the repository root:
 
 ```powershell
-gh pr close demo/develop-shorter-rationale --delete-branch
-gh issue list --label triage-eval --state open
-gh issue close <number> --reason "not planned"
+git fetch origin
+git switch -c demo/fast-track origin/main
+git apply solutions/03-develop-microsoft/demo/fast-track.patch
+git commit -am "Let approvers fast-track their own low-priority requests"
+git push -u origin demo/fast-track
+gh pr create --base main --title "Let approvers fast-track their own low-priority requests" --body "Approvers wait for a colleague even for a replacement keyboard. This lets an approver approve their own low-priority requests; anything else still needs a second person. Tests updated."
 ```
 
-The check deletes its candidate agent itself; the `develop` project's **Agents** page in Foundry lists only `requesthub-triage`. If you merged and reverted, it is now at a higher version, which is fine. To put the app's demo data back to its initial state, run this in the solution folder (you are an Admin):
+Open the pull request's **Files changed** tab: `DecideAsync` and `PermissionsFor` now skip the self-approval check for low-priority requests, and the test `Requester_cannot_approve_their_own_request` became `Approver_can_fast_track_their_own_low_priority_request`, which expects `201 Created`.
+
+**Point out:** the tests still pass. A busy reviewer could approve this.
+
+### 2. Ask for a review (about 10 seconds)
+
+Add the `review:azure` label: in the pull request's sidebar, **Labels** > `review:azure`, or `gh pr edit --add-label review:azure`.
+
+**Point out:** that's all GitHub does. Everything else runs in Azure.
+
+### 3. Watch the Logic App work (about 4 min)
+
+In the Azure portal, open the run at the top of the Logic App's **Run history**. Expand **Run_the_review**. Inside **Download_the_code**, the first call for each archive reports **Found**: GitHub answers with a redirect to a short-lived download link, and the next call follows it. **Judge_check_the_team_rules** and **Rules** finish before **Build_and_test** starts; **Run_wait_for_the_build** loops while the sandbox builds and tests the change; then **Ask_the_agent**, **Judge_write_the_review**, and **Post_the_review** run.
+
+**Point out:** the rule check finishes before the build starts. The pull request's own code never runs where the verdicts are made.
+
+### 4. Read the review (about 2 min)
+
+Back on the pull request, the review appears under **Conversation**: one comment from the token's owner, headed *Azure pull request review · advisory*.
+
+**Point out:** three parts, always in this order. The team rules come first, word for word from the checker: *Approval authority is untouched* fails, with the two places that changed. *Behavior changes come with tests* passes, and all 81 tests pass in the sandbox, because the test that guarded self-approval now expects success. The agent's commentary then names the risk as a ❗ concern: a requester can now approve their own low-priority request. It asks the person whether that is an intended policy exception.
+
+### 5. See the agent and its traces in Foundry (about 3 min)
+
+In the Foundry portal: **Agents** > `requesthub-pr-reviewer`. Select **YAML** next to **Chat** to show the published definition: the model, the instructions, and the one tool (the image at the top of this page). Then open the **Traces** tab: the review you just watched is the top row.
+
+![The agent's Traces tab in Foundry: one row per review, each Completed, with its duration of 3 to 7 seconds, 2,000 to 5,000 input tokens, an estimated cost of $0.001 to $0.005, and agent version 3](images/06-foundry-traces.png)
+
+**Point out:** the agent is a versioned definition in Azure, published from the repository, and every run is traced: how long it took, the tokens it used, and what it cost.
+
+### 6. Push a fix and get a new review (about 4 min)
+
+The author keeps the guard and adds a regression test. Every push to a labelled pull request gets a new review.
 
 ```powershell
-$token = az account get-access-token --scope "$(azd env get-value API_IDENTIFIER_URI)/user_impersonation" --query accessToken -o tsv
-curl.exe -s -X POST -H "Authorization: Bearer $token" "$(azd env get-value API_URL)/api/admin/reset"
+git apply solutions/03-develop-microsoft/demo/keep-the-guard.patch
+git commit -am "Keep self-approval blocked and pin it with a test"
+git push
 ```
 
-It prints `{"reset":true,"industry":"general","requests":24}`.
+**Point out:** all five team rules now pass, and the sandbox ran 82 tests, the new one included. The verdicts changed because the code changed, not because anyone argued with the reviewer. When this was run, the agent also noticed that the pull request no longer does what its title says; the person decides whether to retitle it, merge it, or close it.
 
-When you no longer need the solution:
+### 7. Show how good the reviewer is (about 3 min)
+
+[`eval_reviewer.py`](eval_reviewer.py) dry-runs the reviewer on ten real pull requests of this repository, labelled known-good, flagged (a good change that a rule rightly sends to a person), or known-bad, and scores each result with five checks. In the Foundry portal, open **Evaluation** > *Azure pull request reviewer: labelled pull requests* and its latest run: one row per pull request, one column per check.
+
+Run it about 15 minutes before the session; it takes about 12. It exits with 0 only when every check passed for every pull request. A pull request without a result fails every check (exit 1). A check that couldn't grade an item, or a Foundry run that is incomplete, has errored items, or disagrees with the local scores, exits with 2.
 
 ```powershell
 cd solutions/03-develop-microsoft
-$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-azd down --purge
-az ad app delete --id $app
-az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
-gh api -X DELETE 'repos/{owner}/{repo}/environments/develop-microsoft'
+python eval_reviewer.py
 ```
 
-`azd down` deletes the resource group. RequestHub's sign-in app registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it and `az rest` empties it from the recycle bin. Without that last step, a new `azd up` with the same environment name can't create the app registration again for 30 days.
+**Point out:** pull request #99 pastes the search term into a SQL query. The rules only see that the code changed without a test, and the sandbox only sees one search test fail; the agent names the SQL injection. The labels are the team's judgement of real pull requests, so any change to the rules, the agent, or the model is measured the same way.
+
+## What to observe
+
+- **Minutes, not hours.** The first review arrives about four minutes after the label, and again after every push.
+- **The same rules every time.** Five team rules, checked by a script from `main` with evidence for each verdict. A model can't talk its way past a FAIL.
+- **Evidence without pulling the branch.** The change was built and 81 tests ran in an isolated Azure session; the review says what passed and what was flaky.
+- **Attention where it matters.** The agent explains the failures and points at what no rule catches: SQL built from user input in #99, or a pull request whose code no longer matches its title.
+- **A person decides.** The workflow posts every review as a comment (`COMMENT`), never as an approval or a change request, and its token can't merge (it can't write code). The token's Pull requests permission could approve a pull request, so the guard is the workflow itself: change it only through a reviewed pull request, like any other code.
+- **Measured, not anecdotal.** Ten labelled pull requests and five checks in Foundry's Evaluation view, run again after every change to the rules, the agent, or the model.
+
+## Reset and clean up
+
+After each session, close the demo pull request without merging and delete its branch:
+
+```powershell
+gh pr close demo/fast-track --delete-branch --comment "Demo finished; closing without merging."
+git switch main
+git branch -D demo/fast-track
+```
+
+To remove everything:
+
+1. `azd down --purge` in this folder. Its predown hook deletes the webhook first; then azd deletes the resource group and the Foundry account with its evaluations, and purges the account.
+2. On GitHub, delete the fine-grained token: **Settings** > **Developer settings** > **Fine-grained tokens**.
+3. `gh label delete "review:azure"` if you no longer need the label. Past pull requests lose it.
 
 ## Use it in your own repository
 
-1. Copy this folder and its `.github/` contents into your repository's `.github/` folder.
-2. Describe your agent in `triage-agent.yaml`: instructions, tools with closed schemas, and an output schema. The **foundry-tools** skill explains the rules for tools.
-3. Execute the tools in your own API with the caller's permissions and an audit entry, as `FoundryTriageProvider` and `ScopedTriageTools` do in RequestHub. Keep anything that changes data out of the agent's reach.
-4. Write labelled cases for your own risks in `eval_cases.jsonl`, and point `azure.yaml` and `infra/main.bicep` at your app.
-5. Keep resource names out of public logs: store the Foundry endpoint, and anything else that names a deployed resource, as a GitHub environment secret, as `configure_github.py` does. Variables appear in every workflow step's environment listing.
+Copy this folder and change:
+
+- **The rules:** [`sandbox/review_rules.py`](sandbox/review_rules.py). Each rule is a function that reads the base and head trees and returns PASS or FAIL with evidence. Keep it standard-library Python: it runs in a session without network access. Update the rule ids in [`reviewer-agent.yaml`](reviewer-agent.yaml) and the tests in [`sandbox/test_sandbox_scripts.py`](sandbox/test_sandbox_scripts.py).
+- **The build:** [`sandbox/run_change.sh`](sandbox/run_change.sh) installs your toolchain and runs your tests. Keep the `start`, `status`, and `summary` commands, and the summary's shape, which [`sandbox/format_review.py`](sandbox/format_review.py) reads.
+- **The agent:** the instructions in [`reviewer-agent.yaml`](reviewer-agent.yaml) describe RequestHub; describe your application instead. `python publish_reviewer_agent.py` publishes a new version.
+- **Where the scripts live:** the `scriptsPath` parameter in [`infra/reviewer-workflow.json`](infra/reviewer-workflow.json) (default `solutions/03-develop-microsoft/sandbox`), and `REVIEW_CHECKER_REF` (default `main`) for the branch the Logic App reads them from.
+- **The evaluation:** replace [`eval_cases.jsonl`](eval_cases.jsonl) with your own labelled pull requests.
+- **For a team, prefer a GitHub App to a personal token:** a GitHub App's installation token isn't tied to a person and can be limited to the same two permissions.
+- **Who can read the run history:** the Logic App keeps every run's inputs and outputs, including the diff and the review, for 90 days (the archives and the token are hidden). Give read access to the resource group only to people who may read the code.
 
 ## Troubleshooting
 
-- **A button in the app fails with HTTP 403 and no body** (the panel says *Something went wrong. Details: HTTP 403*). Container Apps authentication rejects a browser `POST` from an origin that is not in its `login.allowedExternalRedirectUrls` list, and deployments made before #134 lack the app's own origin there. Run `azd deploy api` in this folder from an up-to-date `main`. Calls with a bearer token, such as the reset command, are not affected.
-- **The app still shows the old screens after `azd deploy api`.** The browser reused its cached copy of the page. Reload it with Ctrl+F5.
-- **The app times out or fails its readiness probe.** Its PostgreSQL server was stopped, for example by a tenant policy that stops servers on a schedule. Start it; it takes 3 to 5 minutes:
-
-  ```powershell
-  $pg = az postgres flexible-server list -g rg-ai-sdlc-develop --query "[0].name" -o tsv
-  az postgres flexible-server start -g rg-ai-sdlc-develop -n $pg
-  ```
-
-- **The triage panel says the assistant is unavailable.** Run `python publish_triage_agent.py` in this folder. If the agent exists, new role assignments can take a few minutes; check the app's logs in Application Insights.
-- **The evaluation workflow fails with `FOUNDRY_PROJECT_ENDPOINT is not set`.** An earlier version of this solution stored the endpoint as a GitHub environment variable. In this folder, run `azd hooks run postprovision`: it stores the endpoint as a secret and deletes the variable. If it says `GITHUB_REPOSITORY is not set`, run `azd hooks run preprovision` first.
-- **`LocationIsOfferRestricted` for PostgreSQL during `azd up`.** Your subscription cannot create PostgreSQL Flexible Server in that region. Create a new azd environment in another region, for example `centralus`.
-- **`AzureCLICredential: exit status 1` from an azd command**, such as `azd up` or `azd env refresh`. azd could not get a token from the Azure CLI in time; the CLI can take more than 10 seconds per token. Run `az account get-access-token`, then run the azd command again.
-- **`DeploymentNotFound` or `The project does not exist` right after re-creating the solution.** After `azd down --purge`, re-creating it under the same environment name reuses the same Foundry names, and the project endpoint can keep answering for the deleted account for more than an hour. Create it under a new environment name instead (for example `azd env new ai-sdlc-develop2 --location centralus`, then `azd up` and `python publish_triage_agent.py`).
-- **The evaluation stops with `the API uses triage provider 'sample-rules'`.** Start the API with `Triage__Provider=Foundry` and `Foundry__ProjectEndpoint` as in step 6.
-- **Port 5080 or the `requesthub` database is already in use**, for example on a shared machine. Give the local API its own: set `$env:ConnectionStrings__RequestHub = "Host=localhost;Port=5432;Database=requesthub_eval;Username=requesthub;Password=devpass"`, add `-- --urls http://localhost:5131` to the `dotnet run` command, and set `$env:REQUESTHUB_API = "http://localhost:5131"` before you run `eval_triage.py`.
+| Symptom | Cause and fix |
+| --- | --- |
+| `azd up` or `azd hooks run postprovision` prints "Webhook: not created, because GITHUB_REVIEW_TOKEN is not set." | The token isn't in the azd environment, so the hook created no webhook and no pull request is reviewed. Create the token (step 2 of *Set up*), run `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')`, then `azd provision`. |
+| The Logic App run fails at **Get_the_pull_request** with 404 or 401. | GitHub refused the token. In a private repository, a missing or expired token returns 404. `azd hooks run postprovision` checks the token and says what's wrong. Create a new fine-grained token, then `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')` and `azd provision`. |
+| The webhook's **Recent Deliveries** show 202, but no run appears. | The trigger skipped the event: only `labeled` with `review:azure`, and `synchronize`, `reopened`, or `ready_for_review` on a pull request that carries the label, start a review. Opening a pull request with the label already set sends `labeled` too. |
+| A review says a web test failed with "Test timed out in 5000ms". | The sandbox's four vCPUs are shared by the test workers, so a test can take longer than on CI. [`run_change.sh`](sandbox/run_change.sh) gives each web test 30 seconds and repeats a failed run once, and the review calls a test that passes on the rerun flaky. |
+| `eval_reviewer.py` stops with "This operation requires the following opt-in preview feature(s): Evaluations=V1Preview". | Custom evaluators are in preview and need an opt-in header, which the script sends. If the preview changes, run with `--local`: the local scores use the same checks. |

@@ -1,8 +1,7 @@
 """Settings for this solution's scripts: environment variables first, then the solution's azd environment.
 
 After `azd up` in solutions/02-design-microsoft, `azd env get-values` (run in that folder) holds every endpoint the
-scripts need, so nobody exports anything by hand. GitHub Actions sets the same names as environment variables from the
-`design-microsoft` GitHub environment, and azd is not needed there.
+scripts need, so nobody exports anything by hand.
 """
 from __future__ import annotations
 
@@ -42,9 +41,9 @@ def setting(name: str, default: str | None = None) -> str:
 
 
 def credential():
-    """Microsoft Entra ID sign-in: `az login` on your machine, OIDC through azure/login in GitHub Actions, or a managed
-    identity in Azure. Tokens are shared across the Foundry, OpenAI, and Search clients, so the Azure CLI (which can
-    need more than the SDK's default 10 seconds) runs once per audience."""
+    """Microsoft Entra ID sign-in: `az login` on your machine (the scripts and the azd hooks run as you). Tokens are
+    shared across the Foundry, OpenAI, and Search clients, so the Azure CLI (which can need more than the SDK's default
+    10 seconds) runs once per audience."""
     from azure.identity import DefaultAzureCredential
 
     return _SharedTokens(DefaultAzureCredential(process_timeout=60))

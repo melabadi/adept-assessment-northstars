@@ -1,0 +1,91 @@
+// The report that the Logic App posts to GitHub for a finished Azure Load Testing run.
+//
+// The Logic App replaces __RUN__ with the run as base64 JSON (its name, result, timing, pass/fail criteria, and
+// per-request statistics, nothing else) and runs this query on the Log Analytics workspace that holds RequestHub's
+// Application Insights data. The query returns one row, in this column order (the Logic App reads them by position):
+//   report   the Markdown report;
+//   delayed  how many server requests in the run's window carried the rehearsal slowdown (requesthub.fault.queue_delay_ms);
+//   verdict  accepted, warning (passed with the slowdown on), expected-failure, regression, no-telemetry, or no-verdict.
+//            The Logic App closes the Issue only for accepted.
+//
+// The report never contains host names, resource names with their random suffix, ids, or subscription details:
+// GitHub Issues are visible to everyone who can read the repository.
+let run = parse_json(base64_decode_tostring('__RUN__'));
+let started = todatetime(run.startDateTime);
+let ended = todatetime(run.endDateTime);
+// Whole milliseconds with a thousands separator: 1560.4 -> "1,560".
+let ms = (v: real) {
+    iff(toint(round(v)) >= 1000,
+        strcat(tostring(toint(round(v)) / 1000), ',', substring(tostring(1000 + toint(round(v)) % 1000), 1)),
+        tostring(toint(round(v))))
+};
+let criteria_lines = toscalar(print pair = run.passFailCriteria.passFailMetrics
+    | mv-expand kind=array pair
+    | extend c = pair[1]
+    | extend request = iff(isempty(tostring(c.requestName)), 'all requests', tostring(c.requestName))
+    | extend unit = iff(tostring(c.clientMetric) == 'error', '%', ' ms')
+    | extend line = strcat('| ', request, ' ', tostring(c.aggregate), '(', tostring(c.clientMetric), ') | ',
+        tostring(c.condition), ' ', ms(todouble(c.value)), unit, ' | ', ms(todouble(c.actualValue)), unit, ' | ',
+        tostring(c.result), ' |')
+    | summarize make_list(line));
+let client = print pair = run.testRunStatistics
+    | mv-expand kind=array pair
+    | extend name = tostring(pair[0]), s = pair[1]
+    | extend line = strcat('| ', name, ' | ', tostring(toint(s.sampleCount)), ' | ', tostring(round(todouble(s.errorPct), 1)),
+        '% | ', ms(todouble(s.medianResTime)), ' | ', ms(todouble(s.pct2ResTime)), ' | ', ms(todouble(s.pct3ResTime)), ' |');
+let client_lines = toscalar(client | where name != 'Total' | summarize make_list(line));
+let client_total = toscalar(client | where name == 'Total' | project line);
+// Under load, Application Insights keeps only a sample of the requests. ItemCount says how many requests a kept row
+// stands for, so the sums estimate the real counts wherever the sampler records it.
+let server = AppRequests
+    | where TimeGenerated between (started .. ended)
+    | where Name has '/api/'
+    | summarize requests = sum(ItemCount), server_errors = sumif(ItemCount, toint(ResultCode) >= 500),
+        denied = sumif(ItemCount, ResultCode in ('401', '403')), p95 = percentilew(DurationMs, ItemCount, 95),
+        delayed = sumif(ItemCount, isnotempty(tostring(Properties['requesthub.fault.queue_delay_ms']))) by Name;
+let server_requests = coalesce(toscalar(server | summarize sum(requests)), 0);
+let delayed = coalesce(toscalar(server | summarize sum(delayed)), 0);
+let server_lines = toscalar(server
+    | extend line = strcat('| ', Name, ' | ', tostring(requests), ' | ', tostring(server_errors), ' | ', tostring(denied),
+        ' | ', ms(p95), ' | ', tostring(delayed), ' |')
+    | summarize make_list(line));
+let result = tostring(run.testResult);
+let outcome = case(
+    result !in ('PASSED', 'FAILED'), 'no-verdict',
+    server_requests == 0, 'no-telemetry',
+    result == 'PASSED' and delayed > 0, 'warning',
+    result == 'PASSED', 'accepted',
+    delayed > 0, 'expected-failure',
+    'regression');
+let verdict = case(
+    outcome == 'accepted', '**Accepted:** the journey met every criterion, and no server request carried the rehearsal slowdown.',
+    outcome == 'warning', strcat('**Passed with the slowdown on:** the journey met every criterion, but ', tostring(delayed),
+        ' server requests carried `requesthub.fault.queue_delay_ms`, so this run does not prove a fix. The Logic App does',
+        ' not close a load-test Issue on it.'),
+    outcome == 'expected-failure', strcat('**Expected failure:** the API ran with the rehearsal slowdown (', tostring(delayed),
+        ' server requests carried `requesthub.fault.queue_delay_ms`), and the criteria caught it. This run proves the gate',
+        ' works; it is not an acceptance run.'),
+    outcome == 'regression', '**Regression:** no injected delay in the telemetry for this window. Find the cause before you ship.',
+    outcome == 'no-telemetry', strcat('**Telemetry not available:** Application Insights has no server requests for this',
+        ' run yet, so the report cannot tell a rehearsal from a regression, and the Logic App does not close a load-test',
+        ' Issue on it. Resubmit the Logic App run in a few minutes.'),
+    strcat('**', result, ':** the run did not produce a verdict.'));
+print report = strcat(
+    '## Load test: ', tostring(run.displayName), '\n\n',
+    '**', result, '** · test `', tostring(run.testId), '` · ', tostring(run.virtualUsers), ' virtual users · ',
+    tostring(toint(todouble(run.duration) / 1000)), ' s\n\n',
+    verdict, '\n\n',
+    '### Pass/fail criteria\n\n| Criterion | Fails when | Actual | Result |\n|---|---|---|---|\n',
+    strcat_array(array_sort_asc(criteria_lines), '\n'), '\n\n',
+    '### Client side (Azure Load Testing)\n\n| Request | Requests | Errors | p50 ms | p95 ms | p99 ms |\n|---|---|---|---|---|---|\n',
+    strcat_array(array_sort_asc(client_lines), '\n'), '\n', client_total, '\n\n',
+    '### Server side (Application Insights, same window)\n\n',
+    iff(array_length(server_lines) == 0,
+        'No server-side telemetry for this window yet.\n\n',
+        strcat('| Operation | Requests | Server errors | Denied (401/403) | p95 ms | With injected delay |\n|---|---|---|---|---|---|\n',
+            strcat_array(array_sort_asc(server_lines), '\n'), '\n\n')),
+    'Open the run in the Azure portal for client and server metrics side by side, and its AI insights: resource group `',
+    tostring(run.resourceGroup), '` › the Load Testing resource › Tests › `', tostring(run.testId), '` › `',
+    tostring(run.displayName), '`.'),
+    delayed = delayed,
+    verdict = outcome

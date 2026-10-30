@@ -15,7 +15,7 @@ This repository holds fourteen independent solutions built on one shared app. Th
 
 - **GitHub solutions** show GitHub Copilot and GitHub Enterprise: Copilot custom agents, skills, the cloud agent, code review, Copilot CLI, GitHub Actions, Issues, and environments.
 - **Microsoft solutions** show AI that runs in Azure: Microsoft Foundry agents, knowledge, and evaluations; Copilot in Azure; Azure Load Testing; Defender for Cloud and Azure Policy; Azure SRE Agent. Their orchestration lives in Azure too: Logic Apps, Azure Monitor alerts and action groups, Event Grid, Container Apps jobs, scheduled tests. From GitHub they use only the code, pull requests, Issues, and a thin GitHub Actions trigger where Azure has no native trigger. They ship no Copilot agents, skills, or instructions, and no step of a Microsoft demo depends on GitHub Copilot.
-- When an Azure service needs GitHub access (for example a Logic Apps GitHub connection or Azure SRE Agent's GitHub connector), a person authorizes it once, with the least access that works: this repository only, and only the permissions the demo uses.
+- When an Azure service needs GitHub access (for example a Logic App that opens Issues, or Azure SRE Agent's Code access), a person grants it once, with the least access that works: this repository only, and only the permissions the demo uses. See [GitHub access](#github-access) below.
 
 ## Anatomy of a solution
 
@@ -36,7 +36,7 @@ solutions/<NN>-<phase>-<github|microsoft>/
 
 1. **Self-contained.** Everything the demo needs lives in its folder. The exceptions are the app (`app/`) and the Bicep modules that host it (`app/infra/`). Small helpers are copied into each solution that needs them rather than shared.
 2. **Root `.github/` is a mirror.** GitHub only reads agents, skills, instructions, workflows, and issue templates from the root `.github/` folder. Edit the solution's copy, then run `python tools/sync_solutions.py`. For files generated at the root, such as `gh aw compile` output, copy them back with `python tools/sync_solutions.py --pull <path>`. The *Repository checks* workflow fails if the copies drift.
-3. **Unique names.** Two solutions may only ship a file with the same path if the contents are identical. Name workflows `<phase>-<track>-<what>.yml` (for example `develop-microsoft-eval.yml`) with a display name such as `Develop · Microsoft · evaluate the triage agent`, issue templates `<NN>-<phase>-<track>-<what>.yml`, and agents `<phase>-<track>`.
+3. **Unique names.** Two solutions may only ship a file with the same path if the contents are identical. Name workflows `<phase>-<track>-<what>.yml` (for example `release-github-candidate.yml`) with a display name such as `Release · GitHub · build the release candidate`, issue templates `<NN>-<phase>-<track>-<what>.yml`, and agents `<phase>-<track>`.
 4. **Paths.** Workflows and agents refer to solution files by their repository path (`solutions/03-develop-microsoft/...`). Skills refer to their own files through `.github/skills/<skill>/...`, which works both here and in an adopter's repository.
 5. **Repository-wide files belong to no solution:** `.github/copilot-instructions.md`, `.github/workflows/ci.yml`, `.github/workflows/copilot-setup-steps.yml`, and `.github/workflows/repo-checks.yml`.
 6. **Workflows only act on their own demo.** Every workflow in this repository sees every pull request. A solution's pull-request workflow must recognize its own demo (paths inside its solution folder, a `lab/<phase>-*` base branch, or an Issue labeled `phase:<phase>`) and skip, never fail, everything else. A check that fails on another solution's demo pull request is a defect.
@@ -45,12 +45,20 @@ solutions/<NN>-<phase>-<github|microsoft>/
 
 Each Microsoft solution is its own [azd](https://learn.microsoft.com/azure/developer/azure-developer-cli/) project, deployed from its folder into its own resource group.
 
-- **Names.** azd environment `ai-sdlc-<phase>` (for example `ai-sdlc-develop`), resource group `rg-ai-sdlc-<phase>`, GitHub environment `<phase>-microsoft`.
+- **Names.** azd environment `ai-sdlc-<phase>` (for example `ai-sdlc-develop`), resource group `rg-ai-sdlc-<phase>`.
 - **`infra/main.bicep`** is subscription-scoped. It creates the resource group and deploys the solution's resources into it through modules.
-- **GitHub Actions sign in with OIDC**, never with stored credentials. The solution's Bicep creates a user-assigned identity with a federated credential for its GitHub environment. Repositories that use immutable OIDC subjects (this one does) pass the subject prefix from `gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix`.
-- **The GitHub environment** holds `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` as secrets, and so is every value that names a deployed resource: endpoints, host names, URLs, and resource names with their random suffix. GitHub masks secrets wherever they appear in a log; variables are printed in every step's environment listing, and anyone can read the logs of a public repository. Variables are only for values that identify nothing, such as a model deployment name. An azd `postprovision` hook publishes them from the azd outputs, so `azd up` leaves both Azure and GitHub ready.
-- **Workflows and reports never print tenant details.** Before a step that may print a derived value (a host name without its `https://`, a subscription name), mask it with `echo "::add-mask::$value"`. Job summaries, artifacts, Issues, and comments use names such as "the API" and placeholders instead of host names, resource names, or GUIDs.
+- **Automation and reports never print tenant details.** Issues, comments, run outputs, and logs use names such as "the API" and placeholders instead of host names, resource names, or GUIDs.
 - **Scripts** read settings from environment variables first, then from the solution's azd environment (`azd env get-values`, run in the solution folder). Nobody has to export values by hand after `azd up`.
+
+### GitHub access
+
+The Microsoft solutions run in Azure, and each needs one grant from GitHub that only a person can make.
+
+- **Least access.** A fine-grained personal access token limited to this repository and to the permissions the demo uses, or a private GitHub App installed on this repository only. Never a classic token, and never an OAuth connection that reaches every repository: the Logic Apps GitHub connector asks for `repo`, `workflow`, `read:org`, and `admin:org`, and can't be narrowed, so the Logic Apps call GitHub's REST API instead.
+- **The token stays in Azure.** The person stores it without echoing it, usually in the solution's azd environment: `azd env set <NAME> (Read-Host -MaskInput 'GitHub token')`. Bicep passes it to Logic Apps as a `securestring` workflow parameter, which no read returns, and every action that sends it has secure inputs. Tenant policy can force Key Vault's public network access off, and Consumption Logic Apps can't reach a private vault. 06-release-microsoft keeps its token in the Azure Container Registry build task instead, and 07-operate-microsoft in Azure SRE Agent's Code access.
+- **Webhooks are created by the solution's azd hooks**, with the person's GitHub CLI. A Logic App's trigger URL carries a signature: read it from Azure, pass it to `gh` on standard input, never print or save it, match an existing webhook by host and path, and delete the webhook in the `predown` hook.
+- **Webhook payloads are untrusted.** Take only an identifier, such as a pull request number, and read everything else from GitHub's API. Model output is untrusted too: check it with code before anything reaches GitHub.
+- **No GitHub Actions workflow** runs for a Microsoft demo. If a future solution needs a thin trigger where Azure has none, it signs in to Azure with OIDC through a GitHub environment, never with stored credentials, and keeps every value that names a deployed resource in that environment's secrets.
 
 ### Solutions that run RequestHub
 
@@ -64,10 +72,9 @@ module app '../../../app/infra/requesthub.bicep' = {
     environmentName: environmentName
     location: location
     principalId: principalId
-    githubRepository: githubRepository
-    githubOidcSubjectPrefix: githubOidcSubjectPrefix
-    githubEnvironment: 'develop-microsoft'
-    automationRoleDefinitionIds: []   // extra roles on the resource group, only if the workflows need them
+    automationRoleDefinitionIds: []   // roles on the resource group for the solution's automation identity, if its jobs need any
+    automationCanPushImages: false
+    automationAppRoleNames: []        // RequestHub app roles for that identity, only if it calls the API (a smoke test, for example)
     tags: tags
   }
 }
@@ -92,7 +99,7 @@ services:
 
 `main.bicep` must output the values that [`app/infra/api.parameters.json`](app/infra/api.parameters.json) and [`worker.parameters.json`](app/infra/worker.parameters.json) read: `AZURE_CONTAINER_REGISTRY_ENDPOINT`, `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_ENVIRONMENT_NAME`, `APP_IDENTITY_ID`, `APP_IDENTITY_CLIENT_ID`, `APP_IDENTITY_NAME`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `STORAGE_BLOB_ENDPOINT`, `API_APP_NAME`, `WORKER_APP_NAME`, `API_URL`, `API_CLIENT_ID`, `API_IDENTIFIER_URI`, and `AUTOMATION_CLIENT_ID`. Optional: `FOUNDRY_PROJECT_ENDPOINT`, `TRIAGE_PROVIDER`, `DEMO_INDUSTRY`.
 
-In its cleanup, a solution that runs RequestHub must also delete the Microsoft Entra app registration that `requesthub.bicep` creates for sign-in: `azd down` deletes the resource group, but no resource group contains Microsoft Entra objects. Delete it and empty it from the recycle bin, as [03-develop-microsoft](solutions/03-develop-microsoft/README.md#reset-and-clean-up) does, or the next `azd up` with the same environment name cannot create it again for 30 days.
+In its cleanup, a solution that runs RequestHub must also delete the Microsoft Entra app registration that `requesthub.bicep` creates for sign-in: `azd down` deletes the resource group, but no resource group contains Microsoft Entra objects. Delete it and empty it from the recycle bin, as [06-release-microsoft](solutions/06-release-microsoft/README.md#reset-and-clean-up) does, or the next `azd up` with the same environment name cannot create it again for 30 days.
 
 ## Python scripts
 
