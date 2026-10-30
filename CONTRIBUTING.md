@@ -15,7 +15,7 @@ This repository holds fourteen independent solutions built on one shared app. Th
 
 - **GitHub solutions** show GitHub Copilot and GitHub Enterprise: Copilot custom agents, skills, the cloud agent, code review, Copilot CLI, GitHub Actions, Issues, and environments.
 - **Microsoft solutions** show AI that runs in Azure: Microsoft Foundry agents, knowledge, and evaluations; Copilot in Azure; Azure Load Testing; Defender for Cloud and Azure Policy; Azure SRE Agent. Their orchestration lives in Azure too: Logic Apps, Azure Monitor alerts and action groups, Event Grid, Container Apps jobs, scheduled tests. From GitHub they use only the code, pull requests, Issues, and a thin GitHub Actions trigger where Azure has no native trigger. They ship no Copilot agents, skills, or instructions, and no step of a Microsoft demo depends on GitHub Copilot.
-- When an Azure service needs GitHub access (for example a Logic Apps GitHub connection or Azure SRE Agent's GitHub connector), a person authorizes it once, with the least access that works: this repository only, and only the permissions the demo uses.
+- When an Azure service needs GitHub access (for example a Logic App that opens Issues, or Azure SRE Agent's Code access), a person grants it once, with the least access that works: this repository only, and only the permissions the demo uses. See [GitHub access](#github-access) below.
 
 ## Anatomy of a solution
 
@@ -45,12 +45,20 @@ solutions/<NN>-<phase>-<github|microsoft>/
 
 Each Microsoft solution is its own [azd](https://learn.microsoft.com/azure/developer/azure-developer-cli/) project, deployed from its folder into its own resource group.
 
-- **Names.** azd environment `ai-sdlc-<phase>` (for example `ai-sdlc-develop`), resource group `rg-ai-sdlc-<phase>`, GitHub environment `<phase>-microsoft`.
+- **Names.** azd environment `ai-sdlc-<phase>` (for example `ai-sdlc-develop`), resource group `rg-ai-sdlc-<phase>`.
 - **`infra/main.bicep`** is subscription-scoped. It creates the resource group and deploys the solution's resources into it through modules.
-- **GitHub Actions sign in with OIDC**, never with stored credentials. The solution's Bicep creates a user-assigned identity with a federated credential for its GitHub environment. Repositories that use immutable OIDC subjects (this one does) pass the subject prefix from `gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix`.
-- **The GitHub environment** holds `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` as secrets, and so is every value that names a deployed resource: endpoints, host names, URLs, and resource names with their random suffix. GitHub masks secrets wherever they appear in a log; variables are printed in every step's environment listing, and anyone can read the logs of a public repository. Variables are only for values that identify nothing, such as a model deployment name. An azd `postprovision` hook publishes them from the azd outputs, so `azd up` leaves both Azure and GitHub ready.
-- **Workflows and reports never print tenant details.** Before a step that may print a derived value (a host name without its `https://`, a subscription name), mask it with `echo "::add-mask::$value"`. Job summaries, artifacts, Issues, and comments use names such as "the API" and placeholders instead of host names, resource names, or GUIDs.
+- **Automation and reports never print tenant details.** Issues, comments, run outputs, and logs use names such as "the API" and placeholders instead of host names, resource names, or GUIDs.
 - **Scripts** read settings from environment variables first, then from the solution's azd environment (`azd env get-values`, run in the solution folder). Nobody has to export values by hand after `azd up`.
+
+### GitHub access
+
+The Microsoft solutions run in Azure, and each needs one grant from GitHub that only a person can make.
+
+- **Least access.** A fine-grained personal access token limited to this repository and to the permissions the demo uses, or a private GitHub App installed on this repository only. Never a classic token, and never an OAuth connection that reaches every repository: the Logic Apps GitHub connector asks for `repo`, `workflow`, `read:org`, and `admin:org`, and can't be narrowed, so the Logic Apps call GitHub's REST API instead.
+- **The token stays in Azure.** The person stores it without echoing it, usually in the solution's azd environment: `azd env set <NAME> (Read-Host -MaskInput 'GitHub token')`. Bicep passes it to Logic Apps as a `securestring` workflow parameter, which no read returns, and every action that sends it has secure inputs. Tenant policy can force Key Vault's public network access off, and Consumption Logic Apps can't reach a private vault. 06-release-microsoft keeps its token in the Azure Container Registry build task instead, and 07-operate-microsoft in Azure SRE Agent's Code access.
+- **Webhooks are created by the solution's azd hooks**, with the person's GitHub CLI. A Logic App's trigger URL carries a signature: read it from Azure, pass it to `gh` on standard input, never print or save it, match an existing webhook by host and path, and delete the webhook in the `predown` hook.
+- **Webhook payloads are untrusted.** Take only an identifier, such as a pull request number, and read everything else from GitHub's API. Model output is untrusted too: check it with code before anything reaches GitHub.
+- **No GitHub Actions workflow** runs for a Microsoft demo. If a future solution needs a thin trigger where Azure has none, it signs in to Azure with OIDC through a GitHub environment, never with stored credentials, and keeps every value that names a deployed resource in that environment's secrets.
 
 ### Solutions that run RequestHub
 
@@ -64,10 +72,9 @@ module app '../../../app/infra/requesthub.bicep' = {
     environmentName: environmentName
     location: location
     principalId: principalId
-    githubRepository: githubRepository
-    githubOidcSubjectPrefix: githubOidcSubjectPrefix
-    githubEnvironment: 'develop-microsoft'
-    automationRoleDefinitionIds: []   // extra roles on the resource group, only if the workflows need them
+    automationRoleDefinitionIds: []   // roles on the resource group for the solution's automation identity, if its jobs need any
+    automationCanPushImages: false
+    automationAppRoleNames: []        // RequestHub app roles for that identity, only if it calls the API (a smoke test, for example)
     tags: tags
   }
 }
