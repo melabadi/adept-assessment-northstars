@@ -1,12 +1,13 @@
 # Azure Developer CLI project for the Secure · Microsoft solution. Run `azd up` from this folder.
 # It provisions infra/ (RequestHub's hosting platform from app/infra, a scoped Azure Policy assignment, and the posture
-# automation: Logic Apps, a Foundry project with the remediation agent's model, the what-if Container Apps job, and a
-# Defender for Cloud workflow automation) and deploys the shared app: the api and worker images are built in Azure
-# Container Registry, and each `azd deploy` applies app/infra/api.bicep or worker.bicep so image and configuration ship
-# together. The hooks publish the Foundry agent and connect the repository's pull requests to the what-if preview.
+# automation: the Logic App posture-intake, the posture Function app, a Foundry project with the remediation agent's
+# model, the what-if Container Apps job, and a Defender for Cloud workflow automation) and deploys the shared app and the
+# Function: the api and worker images are built in Azure Container Registry, and each `azd deploy` applies
+# app/infra/api.bicep or worker.bicep so image and configuration ship together. The hooks publish the Foundry agent,
+# connect the repository's pull requests to the what-if preview, and run the offline tests before every deploy.
 name: ai-sdlc-secure-microsoft
 metadata:
-  template: ai-sdlc-secure-microsoft@1.0.0
+  template: ai-sdlc-secure-microsoft@2.0.0
 infra:
   provider: bicep
   path: infra
@@ -29,6 +30,10 @@ services:
       path: ./Dockerfile.worker
       context: .
       remoteBuild: true
+  posture:
+    project: function
+    language: python
+    host: function
 hooks:
   preprovision:
     windows:
@@ -51,3 +56,10 @@ hooks:
     posix:
       shell: sh
       run: python3 configure_github.py remove
+  predeploy:
+    windows:
+      shell: pwsh
+      run: python -m unittest -q test_edit_checks test_function test_policy_names test_whatif_checks
+    posix:
+      shell: sh
+      run: python3 -m unittest -q test_edit_checks test_function test_policy_names test_whatif_checks
