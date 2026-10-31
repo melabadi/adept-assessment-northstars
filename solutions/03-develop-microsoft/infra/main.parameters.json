@@ -9,6 +9,7 @@
     "principalType": { "value": "${AZURE_PRINCIPAL_TYPE=User}" },
     "githubRepository": { "value": "${GITHUB_REPOSITORY}" },
     "githubToken": { "value": "${GITHUB_REVIEW_TOKEN=}" },
+    "githubWebhookSecret": { "value": "${GITHUB_WEBHOOK_SECRET=}" },
     "checkerRef": { "value": "${REVIEW_CHECKER_REF=main}" },
     "reviewLabel": { "value": "${REVIEW_LABEL=review:azure}" }
   }

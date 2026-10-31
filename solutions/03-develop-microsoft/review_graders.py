@@ -8,7 +8,7 @@ Foundry passes every field of an evaluation item in `item` (`sample` is empty). 
   kind               known-good, flagged (a good change that a rule rightly flags for a person), or known-bad
   expected_failures  JSON list of the rule ids that should fail
   expect_mentions    JSON list of word groups the commentary should mention, each group a list of alternatives
-  rules              JSON list of the checker's verdicts, as the Logic App recorded them
+  rules              JSON list of the checker's verdicts, as the reviewer returned them
   review             the review comment the reviewer wrote (Markdown)
   agent              JSON of the agent's answer, or "null" when it gave none
   sandbox            the sandbox's build and test summary (JSON text)
