@@ -50,13 +50,15 @@ sequenceDiagram
   RM->>J: Run now: rollback, if users report a problem
 ```
 
-- **Azure Container Registry** builds each commit of `main` once, with an [ACR task](acr-build.yaml) that GitHub's webhook starts. A person creates the task once, with a fine-grained token limited to this repository.
+- **Azure Container Registry** builds each commit of `main` once, with an [ACR task](acr-build.yaml) that GitHub's webhook starts. A person creates the task once, with a fine-grained token limited to this repository. Only commits to `main` start it, never a pull request: a pull request trigger would build a fork's code too, and every push starts a release. `preflight.py` fails if the task has one.
 - **Event Grid and a Logic App** are the trigger: a push of `requesthub-api:<commit>` reaches the [Logic App](infra/release-trigger.json), which starts the release job with the image's digest. Its managed identity may start that job and nothing else. It checks every event first: from this registry, an image push, the API's repository, and a `sha256` digest. An event that fails a check starts nothing, and the run ends **Failed** in the Logic App's run history with the name of the check.
 - **Container Apps jobs** run [`release.py`](release.py), one job per step, all from one image. They run as the release identity, a managed identity with three roles: Container Apps Contributor and Container Apps Jobs Reader on the resource group, and AcrPull on the registry. One step runs at a time, first come, first served: a release waits for the steps that started before it, and any other step refuses while an earlier one runs. A release whose gate fails removes its own candidate right away, even while another step waits. When the gate passes, it records its verdict on the app (a tag naming the revision, its image digest, and how long it baked). Promote moves traffic only to the candidate and image that verdict names, after the standard 60-second bake, and only within 24 hours.
 - **Azure Container Apps** runs the API in multiple-revision mode. Revisions get **labels** with their own URLs (`https://<app>---candidate.<domain>`), and traffic weights decide which revision users reach. The readiness probe (`/health/ready`) is the platform's verdict on each revision.
 - **Azure Monitor** keeps the evidence. Each step writes its release record to Log Analytics, and the [workbook](infra/release-records.workbook.json) shows the records, who started each step (from the Activity log), and every traffic change (from Azure Resource Graph).
 - **Azure Copilot** (formerly Copilot in Azure) answers the release manager's questions about a failing revision, in the portal, in plain language.
 - **People** merge, read the record, decide go or no-go, and roll back. The gate is deterministic; no AI promotes, aborts, or rolls back.
+
+**Outside contributions reach nothing in Azure.** On a public repository anyone can open an Issue or a pull request, from a fork too, and comment. None of that starts a build or a release: the only thing GitHub sends Azure is the build task's webhook for pushes, and only a push to `main` (a merge by someone with write access) starts a build. The registry, Event Grid, the Logic App, and the jobs are reachable only from Azure. No GitHub Actions workflow takes part.
 
 ## What's in this folder
 
@@ -130,7 +132,7 @@ The app is [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`
       Remove-Variable token
       ```
 
-   3. Run `python preflight.py` again. **Build** now reads `build-api builds every commit to main`.
+   3. Run `python preflight.py` again. **Build** now reads `build-api builds every commit to main`. It fails if the task can be started by a pull request: keep `--pull-request-trigger-enabled false`.
 
    From now on, every commit to `main` is built once and released as a candidate: in our run, a merge became a gated candidate 4 min 26 s later. To pause that, for example on a day with many merges, turn the trigger off and start builds yourself (step 2 of *Run the demo*).
 

@@ -125,9 +125,10 @@
                     },
                     "Verifications": {
                       "type": "Query",
+                      "description": "Only comments from the repository's owner, members, and collaborators count (the Logic Apps' token is a person's): anyone can comment on a public repository.",
                       "inputs": {
                         "from": "@body('Get_comments')",
-                        "where": "@contains(coalesce(item()?['body'], ''), 'posture:verified')"
+                        "where": "@and(contains(coalesce(item()?['body'], ''), 'posture:verified'), contains(createArray('OWNER', 'MEMBER', 'COLLABORATOR'), coalesce(item()?['author_association'], '')))"
                       },
                       "runAfter": { "Get_comments": ["Succeeded"] }
                     },

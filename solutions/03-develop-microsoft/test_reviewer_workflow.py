@@ -84,6 +84,38 @@ class TheJudgeRunsFirst(unittest.TestCase):
                 self.assertRegex(command, r"^cd /mnt/data && python3 (review_rules|format_review)\.py ")
 
 
+class OnlyThisRepositorysBranches(unittest.TestCase):
+    """On a public repository anyone can open a pull request from a fork. Its code must never reach a session or the
+    agent, not even in a dry run. A real review also needs the label, which only people with triage access can apply."""
+
+    gate = BY_NAME["Is_it_ready_for_review"]
+
+    def test_the_branch_must_be_in_this_repository_even_for_a_dry_run(self):
+        expression = self.gate["expression"]
+        same_repository = ("equals(toLower(coalesce(body('Get_the_pull_request')?['head']?['repo']?['full_name'], '')), "
+                           "toLower(parameters('repository')))")
+        self.assertTrue(expression.startswith(f"@and({same_repository}, or(equals(triggerBody()?['dryRun'], true), "),
+                        expression)
+        self.assertIn("contains(body('Label_names'), parameters('reviewLabel'))", expression)  # labels read from GitHub
+
+    def test_anything_else_ends_the_run(self):
+        self.assertEqual([(a["type"], a["inputs"]["runStatus"]) for a in self.gate["else"]["actions"].values()],
+                         [("Terminate", "Cancelled")])
+
+    def test_everything_after_reading_the_pull_request_waits_for_the_gate(self):
+        scope = BY_NAME["Run_the_review"]["actions"]
+
+        def before(name: str) -> set[str]:
+            found = set(scope[name].get("runAfter", {}))
+            for previous in list(found):
+                found |= before(previous)
+            return found
+
+        for name in set(scope) - {"PR_number", "Get_the_pull_request", "Label_names", "Is_it_ready_for_review"}:
+            with self.subTest(name):
+                self.assertIn("Is_it_ready_for_review", before(name))
+
+
 class GitHubAccess(unittest.TestCase):
     def test_reviews_are_comments_only(self):
         posts = [(name, action) for name, _, action in ALL

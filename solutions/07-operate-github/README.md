@@ -40,6 +40,8 @@ flowchart LR
 - **GitHub Actions** runs [`operate-github-regression-proof.yml`](.github/workflows/operate-github-regression-proof.yml) on Copilot's pull request. It runs the tests at the head, then again with the production code put back to where the pull request started (the merge base) and the pull request's tests kept. The proof script comes from the base branch, so the pull request cannot change its rules. The script still runs the pull request's own test code, so its verdict is evidence for the reviewer, not a security boundary. CI runs as usual.
 - **People** report the incident, decide whether the follow-up goes to Copilot, approve the workflow runs on Copilot's pull request, and review it.
 
+**Outside contributions.** On a public repository anyone can file an incident with this solution's form, and the form applies the `incident` label for them. The triage still does not start: before anything else, gh-aw checks that whoever applied the label has write access (the role admin, maintainer, or write), so an outside report costs nothing and reaches no model. To triage one, someone with write access removes the `incident` label and applies it again. Only people with write access can assign the follow-up to Copilot or mention `@copilot`. The regression proof runs a fork's pull request once someone with write access approves the run, with a read-only token and no secrets.
+
 The incident is synthetic, but the defect is real. RequestHub's notification worker does not count a delivery that times out as a failed attempt. One slow notification then stalls the queue and causes duplicate deliveries. The defect stays on `main` on purpose, so the demo can run again.
 
 ## What's in this folder

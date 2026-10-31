@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "description": "posture-preview: starts the posture-whatif Container Apps job for a pull request that changes this solution's infra/. Called by posture-intake right after it opens a pull request, and by a repository webhook (pull_request events) for later pushes. It answers at once (a nested workflow call needs a Response action; asynchronous, because the trigger runs one at a time), takes only the pull request number from the payload, and reads everything else from GitHub's API."
+    "description": "posture-preview: starts the posture-whatif Container Apps job for a pull request that changes this solution's infra/, when its branch is in this repository and its author is the repository's owner, a member, or a collaborator (a fork's pull request never reaches Azure). Called by posture-intake right after it opens a pull request, and by a repository webhook (pull_request events) for later pushes. It answers at once (a nested workflow call needs a Response action; asynchronous, because the trigger runs one at a time), takes only the pull request number from the payload, and reads everything else from GitHub's API."
   },
   "parameters": {
     "name": { "type": "string" },
@@ -40,7 +40,13 @@
             "Pull_request_event": {
               "type": "Request",
               "kind": "Http",
+              "description": "A repository webhook (pull_request events), or {\"number\": <n>} from posture-intake. A webhook event of a pull request from a fork, or by an author outside the repository, starts no run at all. The payload is not signed, so this only saves runs: the gate inside reads the pull request again from GitHub's API.",
               "inputs": { "schema": {} },
+              "conditions": [
+                {
+                  "expression": "@or(equals(triggerBody()?['pull_request'], null), and(equals(toLower(coalesce(triggerBody()?['pull_request']?['head']?['repo']?['full_name'], '')), toLower(parameters('repository'))), contains(createArray('OWNER', 'MEMBER', 'COLLABORATOR'), coalesce(triggerBody()?['pull_request']?['author_association'], ''))))"
+                }
+              ],
               "runtimeConfiguration": { "concurrency": { "runs": 1 } }
             }
           },
@@ -77,44 +83,22 @@
                   "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
                   "runAfter": {}
                 },
-                "Is_open": {
+                "Is_from_this_repository_and_a_trusted_author": {
                   "type": "If",
-                  "expression": "@equals(body('Get_pull_request')?['state'], 'open')",
+                  "description": "Only a pull request whose branch is in this repository, opened by the repository's owner, a member, or a collaborator (author_association, read from GitHub's API) reaches Azure. On a public repository anyone can open a pull request from a fork: its Bicep is never previewed, and nothing is written to it.",
+                  "expression": "@and(equals(toLower(coalesce(body('Get_pull_request')?['head']?['repo']?['full_name'], '')), toLower(parameters('repository'))), contains(createArray('OWNER', 'MEMBER', 'COLLABORATOR'), coalesce(body('Get_pull_request')?['author_association'], '')))",
                   "runAfter": { "Get_pull_request": ["Succeeded"] },
                   "actions": {
-                    "List_files": {
-                      "type": "Http",
-                      "inputs": {
-                        "method": "GET",
-                        "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls/@{int(outputs('Pull_request_number'))}/files?per_page=100",
-                        "headers": {
-                          "Authorization": "Bearer @{parameters('githubToken')}",
-                          "Accept": "application/vnd.github+json",
-                          "X-GitHub-Api-Version": "2022-11-28",
-                          "User-Agent": "posture-preview"
-                        }
-                      },
-                      "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
-                      "runAfter": {}
-                    },
-                    "Infra_files": {
-                      "type": "Query",
-                      "inputs": {
-                        "from": "@body('List_files')",
-                        "where": "@startsWith(item()?['filename'], parameters('infraPrefix'))"
-                      },
-                      "runAfter": { "List_files": ["Succeeded"] }
-                    },
-                    "Touches_infra": {
+                    "Is_open": {
                       "type": "If",
-                      "expression": "@or(greater(length(body('Infra_files')), 0), greater(int(coalesce(body('Get_pull_request')?['changed_files'], 0)), 100))",
-                      "runAfter": { "Infra_files": ["Succeeded"] },
+                      "expression": "@equals(body('Get_pull_request')?['state'], 'open')",
+                      "runAfter": {},
                       "actions": {
-                        "Get_statuses": {
+                        "List_files": {
                           "type": "Http",
                           "inputs": {
                             "method": "GET",
-                            "uri": "https://api.github.com/repos/@{parameters('repository')}/commits/@{body('Get_pull_request')?['head']?['sha']}/statuses?per_page=100",
+                            "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls/@{int(outputs('Pull_request_number'))}/files?per_page=100",
                             "headers": {
                               "Authorization": "Bearer @{parameters('githubToken')}",
                               "Accept": "application/vnd.github+json",
@@ -125,105 +109,136 @@
                           "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
                           "runAfter": {}
                         },
-                        "Previews_of_this_commit": {
+                        "Infra_files": {
                           "type": "Query",
                           "inputs": {
-                            "from": "@body('Get_statuses')",
-                            "where": "@equals(item()?['context'], 'posture/what-if')"
+                            "from": "@body('List_files')",
+                            "where": "@startsWith(item()?['filename'], parameters('infraPrefix'))"
                           },
-                          "runAfter": { "Get_statuses": ["Succeeded"] }
+                          "runAfter": { "List_files": ["Succeeded"] }
                         },
-                        "Not_previewed_yet": {
+                        "Touches_infra": {
                           "type": "If",
-                          "expression": "@or(equals(length(body('Previews_of_this_commit')), 0), equals(first(body('Previews_of_this_commit'))?['state'], 'error'))",
-                          "runAfter": { "Previews_of_this_commit": ["Succeeded"] },
+                          "expression": "@or(greater(length(body('Infra_files')), 0), greater(int(coalesce(body('Get_pull_request')?['changed_files'], 0)), 100))",
+                          "runAfter": { "Infra_files": ["Succeeded"] },
                           "actions": {
-                            "Set_pending_status": {
+                            "Get_statuses": {
                               "type": "Http",
                               "inputs": {
-                                "method": "POST",
-                                "uri": "https://api.github.com/repos/@{parameters('repository')}/statuses/@{body('Get_pull_request')?['head']?['sha']}",
+                                "method": "GET",
+                                "uri": "https://api.github.com/repos/@{parameters('repository')}/commits/@{body('Get_pull_request')?['head']?['sha']}/statuses?per_page=100",
                                 "headers": {
                                   "Authorization": "Bearer @{parameters('githubToken')}",
                                   "Accept": "application/vnd.github+json",
                                   "X-GitHub-Api-Version": "2022-11-28",
                                   "User-Agent": "posture-preview"
-                                },
-                                "body": {
-                                  "state": "pending",
-                                  "context": "posture/what-if",
-                                  "description": "Azure what-if preview is running in Azure (posture-whatif job)"
                                 }
                               },
                               "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
                               "runAfter": {}
                             },
-                            "Get_job": {
-                              "type": "Http",
+                            "Previews_of_this_commit": {
+                              "type": "Query",
                               "inputs": {
-                                "method": "GET",
-                                "uri": "https://management.azure.com@{parameters('jobId')}?api-version=2025-07-01",
-                                "authentication": {
-                                  "type": "ManagedServiceIdentity",
-                                  "identity": "[parameters('identityId')]",
-                                  "audience": "https://management.azure.com/"
-                                }
+                                "from": "@body('Get_statuses')",
+                                "where": "@equals(item()?['context'], 'posture/what-if')"
                               },
-                              "runAfter": { "Set_pending_status": ["Succeeded"] }
+                              "runAfter": { "Get_statuses": ["Succeeded"] }
                             },
-                            "Job_container": {
-                              "type": "Compose",
-                              "inputs": "@first(body('Get_job')?['properties']?['template']?['containers'])",
-                              "runAfter": { "Get_job": ["Succeeded"] }
-                            },
-                            "Start_job": {
-                              "type": "Http",
-                              "inputs": {
-                                "method": "POST",
-                                "uri": "https://management.azure.com@{parameters('jobId')}/start?api-version=2025-07-01",
-                                "authentication": {
-                                  "type": "ManagedServiceIdentity",
-                                  "identity": "[parameters('identityId')]",
-                                  "audience": "https://management.azure.com/"
-                                },
-                                "body": {
-                                  "containers": [
-                                    {
-                                      "name": "@{outputs('Job_container')?['name']}",
-                                      "image": "@{outputs('Job_container')?['image']}",
-                                      "command": "@outputs('Job_container')?['command']",
-                                      "args": ["--pull-request", "@{outputs('Pull_request_number')}"],
-                                      "env": "@outputs('Job_container')?['env']",
-                                      "resources": {
-                                        "cpu": "@outputs('Job_container')?['resources']?['cpu']",
-                                        "memory": "@{outputs('Job_container')?['resources']?['memory']}"
-                                      }
+                            "Not_previewed_yet": {
+                              "type": "If",
+                              "expression": "@or(equals(length(body('Previews_of_this_commit')), 0), equals(first(body('Previews_of_this_commit'))?['state'], 'error'))",
+                              "runAfter": { "Previews_of_this_commit": ["Succeeded"] },
+                              "actions": {
+                                "Set_pending_status": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "POST",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/statuses/@{body('Get_pull_request')?['head']?['sha']}",
+                                    "headers": {
+                                      "Authorization": "Bearer @{parameters('githubToken')}",
+                                      "Accept": "application/vnd.github+json",
+                                      "X-GitHub-Api-Version": "2022-11-28",
+                                      "User-Agent": "posture-preview"
+                                    },
+                                    "body": {
+                                      "state": "pending",
+                                      "context": "posture/what-if",
+                                      "description": "Azure what-if preview is running in Azure (posture-whatif job)"
                                     }
-                                  ]
-                                }
-                              },
-                              "operationOptions": "DisableAsyncPattern",
-                              "runAfter": { "Job_container": ["Succeeded"] }
-                            },
-                            "Report_start_failure": {
-                              "type": "Http",
-                              "inputs": {
-                                "method": "POST",
-                                "uri": "https://api.github.com/repos/@{parameters('repository')}/statuses/@{body('Get_pull_request')?['head']?['sha']}",
-                                "headers": {
-                                  "Authorization": "Bearer @{parameters('githubToken')}",
-                                  "Accept": "application/vnd.github+json",
-                                  "X-GitHub-Api-Version": "2022-11-28",
-                                  "User-Agent": "posture-preview"
+                                  },
+                                  "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+                                  "runAfter": {}
                                 },
-                                "body": {
-                                  "state": "error",
-                                  "context": "posture/what-if",
-                                  "description": "The preview could not start in Azure; see the Logic App posture-preview's run history"
+                                "Get_job": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "GET",
+                                    "uri": "https://management.azure.com@{parameters('jobId')}?api-version=2025-07-01",
+                                    "authentication": {
+                                      "type": "ManagedServiceIdentity",
+                                      "identity": "[parameters('identityId')]",
+                                      "audience": "https://management.azure.com/"
+                                    }
+                                  },
+                                  "runAfter": { "Set_pending_status": ["Succeeded"] }
+                                },
+                                "Job_container": {
+                                  "type": "Compose",
+                                  "inputs": "@first(body('Get_job')?['properties']?['template']?['containers'])",
+                                  "runAfter": { "Get_job": ["Succeeded"] }
+                                },
+                                "Start_job": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "POST",
+                                    "uri": "https://management.azure.com@{parameters('jobId')}/start?api-version=2025-07-01",
+                                    "authentication": {
+                                      "type": "ManagedServiceIdentity",
+                                      "identity": "[parameters('identityId')]",
+                                      "audience": "https://management.azure.com/"
+                                    },
+                                    "body": {
+                                      "containers": [
+                                        {
+                                          "name": "@{outputs('Job_container')?['name']}",
+                                          "image": "@{outputs('Job_container')?['image']}",
+                                          "command": "@outputs('Job_container')?['command']",
+                                          "args": ["--pull-request", "@{outputs('Pull_request_number')}"],
+                                          "env": "@outputs('Job_container')?['env']",
+                                          "resources": {
+                                            "cpu": "@outputs('Job_container')?['resources']?['cpu']",
+                                            "memory": "@{outputs('Job_container')?['resources']?['memory']}"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "operationOptions": "DisableAsyncPattern",
+                                  "runAfter": { "Job_container": ["Succeeded"] }
+                                },
+                                "Report_start_failure": {
+                                  "type": "Http",
+                                  "inputs": {
+                                    "method": "POST",
+                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/statuses/@{body('Get_pull_request')?['head']?['sha']}",
+                                    "headers": {
+                                      "Authorization": "Bearer @{parameters('githubToken')}",
+                                      "Accept": "application/vnd.github+json",
+                                      "X-GitHub-Api-Version": "2022-11-28",
+                                      "User-Agent": "posture-preview"
+                                    },
+                                    "body": {
+                                      "state": "error",
+                                      "context": "posture/what-if",
+                                      "description": "The preview could not start in Azure; see the Logic App posture-preview's run history"
+                                    }
+                                  },
+                                  "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
+                                  "runAfter": { "Start_job": ["Failed", "TimedOut", "Skipped"] }
                                 }
                               },
-                              "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } },
-                              "runAfter": { "Start_job": ["Failed", "TimedOut", "Skipped"] }
+                              "else": { "actions": {} }
                             }
                           },
                           "else": { "actions": {} }
@@ -232,7 +247,15 @@
                       "else": { "actions": {} }
                     }
                   },
-                  "else": { "actions": {} }
+                  "else": {
+                    "actions": {
+                      "Not_previewed": {
+                        "type": "Compose",
+                        "inputs": "Not previewed: the pull request's branch is in a fork, or its author is not the repository's owner, a member, or a collaborator. Nothing was started in Azure or written to GitHub.",
+                        "runAfter": {}
+                      }
+                    }
+                  }
                 }
               },
               "else": { "actions": {} }
