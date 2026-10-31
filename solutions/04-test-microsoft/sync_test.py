@@ -4,7 +4,8 @@
 The journey lives in this repository, where people change it through pull requests: loadtest/locustfile.py (requester
 and approver virtual users) and loadtest/requesthub-journey.yaml (workload settings and pass/fail criteria). Azure does
 the rest. Azure Load Testing holds the test, runs it on demand or on a schedule, and judges each run with the criteria.
-A notification rule sends every finished run to a Logic App that reports it to GitHub (infra/reporting.bicep).
+A notification rule sends every finished run to an Azure Function that reports it to GitHub (function/, deployed by
+infra/reporting.bicep).
 
 This script is the bridge, and `azd provision` runs it (azure.yaml hooks):
 
@@ -13,8 +14,11 @@ This script is the bridge, and `azd provision` runs it (azure.yaml hooks):
                                to loadtest/, run `azd provision` (or this command) to apply it.
   python sync_test.py check    only check the scenario against the guardrails below
   python sync_test.py config   only write out/loadtest.yaml: the committed configuration plus this deployment's values
-  python sync_test.py prepare  record the GitHub repository for the Logic App's Issues in the azd environment, from
-                               this clone's origin remote (preprovision hook)
+  python sync_test.py prepare  record the GitHub repository for the reporting function's Issues in the azd
+                               environment, from this clone's origin remote (preprovision hook)
+  python sync_test.py report <test-run-id>
+                               send a finished run to the reporting function again, as the notification rule does,
+                               and print its answer. It accepts only this test's runs that ended in the last 60 minutes.
 
 What `config` adds to requesthub-journey.yaml
   - LOCUST_HOST (the API URL), API_SCOPE (RequestHub's application ID URI), and the client ids of the two identities;
@@ -41,7 +45,8 @@ The schedule
 
 Settings come from environment variables, else from this solution's azd environment (after `azd up`):
   AZURE_RESOURCE_GROUP, LOAD_TEST_NAME, LOAD_TEST_REQUESTER_IDENTITY, LOAD_TEST_APPROVER_IDENTITY, API_URL,
-  API_IDENTIFIER_URI, API_APP_NAME, APPLICATIONINSIGHTS_NAME, POSTGRES_HOST, and ACTION_GROUP_ID.
+  API_IDENTIFIER_URI, API_APP_NAME, APPLICATIONINSIGHTS_NAME, POSTGRES_HOST, ACTION_GROUP_ID, and (for `report`)
+  FUNCTION_APP_NAME.
 
 Needs the Azure CLI with the `load` extension, signed in with Load Test Contributor on the Load Testing resource
 (`azd up` grants it to you).
@@ -298,9 +303,9 @@ def setup() -> int:
     az("load", "test", verb, *common, "--test-id", test_id, "--load-test-config-file", str(path), parse=False)
     print(f"Test '{test_id}': {verb}d from loadtest/ (rendered to {path.relative_to(HERE).as_posix()}).")
 
-    # Every finished run (passed, failed, or stopped) goes to the action group, which calls the Logic App.
+    # Every finished run (passed, failed, or stopped) goes to the action group, which calls the reporting function.
     event = ["event-id=run-ended", "type=TestRunEnded", "status=DONE,FAILED,CANCELLED", "result=PASSED,FAILED,NOT_APPLICABLE"]
-    rule = ["--notification-rule-id", RULE_ID, "--display-name", "Send finished runs to the Logic App",
+    rule = ["--notification-rule-id", RULE_ID, "--display-name", "Report finished runs to GitHub",
             "--action-groups", setting("ACTION_GROUP_ID"), "--test-ids", test_id]
     if exists("load", "notification-rule", "show", *common, "--notification-rule-id", RULE_ID):
         verb = "update"
@@ -308,7 +313,8 @@ def setup() -> int:
     else:
         verb = "create"
         az("load", "notification-rule", "create", *common, *rule, "--event", *event, parse=False)
-    print(f"Notification rule '{RULE_ID}': {verb}d; every finished run goes to the Logic App, which reports it to GitHub.")
+    print(f"Notification rule '{RULE_ID}': {verb}d; every finished run goes to the reporting function, which reports "
+          "it to GitHub.")
 
     if exists("load", "trigger", "schedule", "show", *common, "--trigger-id", SCHEDULE_ID):
         state = az("load", "trigger", "schedule", "show", *common, "--trigger-id", SCHEDULE_ID, "--query", "state")
@@ -336,11 +342,40 @@ def prepare() -> int:
     match = re.search(r"github\.com[:/](?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?/?$", proc.stdout.strip())
     if not match:
         print("warning: no GitHub origin remote found; set GITHUB_REPOSITORY (owner/name) with `azd env set` so the "
-              "Logic App can open Issues.", file=sys.stderr)
+              "reporting function can open Issues.", file=sys.stderr)
         return 0
     subprocess.run(["azd", "env", "set", "GITHUB_REPOSITORY", match["repo"]], cwd=HERE, check=True)
-    print(f"GITHUB_REPOSITORY: {match['repo']} (from the origin remote); the Logic App opens its Issues there.")
+    print(f"GITHUB_REPOSITORY: {match['repo']} (from the origin remote); the reporting function opens its Issues there.")
     return 0
+
+
+# ---------- report ----------
+
+def report(test_run_id: str) -> int:
+    """Send one finished run to the reporting function, as the notification rule does, and print its answer."""
+    import urllib.error
+    import urllib.request
+
+    app = ["--resource-group", setting("AZURE_RESOURCE_GROUP"), "--name", setting("FUNCTION_APP_NAME")]
+    host = az("functionapp", "show", *app, "--query", "properties.defaultHostName || defaultHostName")
+    keys = az("functionapp", "keys", "list", *app).get("functionKeys") or {}
+    key = keys.get("actiongroup") or keys.get("default")  # never printed
+    if not key:
+        raise AzError("the function app has no function key yet; deploy it with `azd deploy reporter`")
+    body = json.dumps({"data": {"alertContext": {"testRunId": test_run_id}}}).encode("utf-8")
+    request = urllib.request.Request(f"https://{host}/api/test-run-ended", data=body, method="POST",
+                                     headers={"Content-Type": "application/json", "x-functions-key": key})
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            status, text = response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        status, text = exc.code, exc.read().decode("utf-8", "replace")
+    try:
+        message = json.loads(text).get("message", text)
+    except (json.JSONDecodeError, AttributeError):
+        message = text
+    print(f"{status}: {str(message).strip()}")
+    return 0 if status == 202 else 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -350,7 +385,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup", help="check the scenario, then create or update the test, notification rule, and schedule")
     sub.add_parser("check", help="only check the scenario against the guardrails")
     sub.add_parser("config", help="only write out/loadtest.yaml for this deployment")
-    sub.add_parser("prepare", help="record the GitHub repository for the Logic App's Issues (preprovision hook)")
+    sub.add_parser("prepare", help="record the GitHub repository for the reporting function's Issues (preprovision hook)")
+    resend = sub.add_parser("report", help="send a finished run to the reporting function again")
+    resend.add_argument("test_run_id", help="the run's id, for example from `az load test-run list`")
     args = parser.parse_args(argv)
     utf8_stdout()
     try:
@@ -361,6 +398,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "prepare":
             return prepare()
+        if args.command == "report":
+            return report(args.test_run_id)
         return setup()
     except AzError as exc:
         print(f"error: {exc}", file=sys.stderr)
