@@ -35,6 +35,8 @@ flowchart LR
 - **Copilot code review** follows [`design-github-adr-review.instructions.md`](.github/instructions/design-github-adr-review.instructions.md): unstated assumptions, standards the ADR missed, the API impact, and the threat model.
 - **A person** reviews the ADR, asks Copilot for changes, settles the conflicts and open questions, and accepts or rejects it.
 
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. A Copilot code review that someone else requests on their own pull request uses their Copilot plan, not yours. A fork's pull request that changes an ADR gets the ADR checks, with a read-only token and no secrets, once someone with write access approves the run; the checker comes from the base branch.
+
 ## What's in this folder
 
 ```text

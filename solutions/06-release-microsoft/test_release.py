@@ -9,7 +9,8 @@ They cover what a reviewer must be able to trust without a live run:
   - a release that fails removes its own candidate, even while another step waits for its turn;
   - steps take turns first come, first served, and any execution that has not finished counts as running;
   - a build without a known commit is never released;
-  - rollback goes only to the revision that served users just before: never a drill revision or the candidate.
+  - rollback goes only to the revision that served users just before: never a drill revision or the candidate;
+  - the preflight fails when a pull request, from a fork too, could start the build task, whose pushes start releases.
 
 Run them from this folder (Python 3.12+, standard library only):
 
@@ -603,6 +604,32 @@ class TriggerDefinition(unittest.TestCase):
         note, note_ancestors = self.actions["Note_the_rejection"]
         self.assertEqual(note["type"], "AppendToArrayVariable")
         self.assertEqual(note_ancestors[-1], ("Is_a_push_of_the_API_to_this_registry", "If:else"))
+
+
+class BuildTrigger(unittest.TestCase):
+    """Only commits to main start the build task (preflight.py, check Build). A pull request, from a fork too, would
+    build its own code and push it, and every push starts a release into Azure."""
+
+    def build_check(self, *triggers: dict) -> list[tuple[str, str]]:
+        import preflight
+        reports: list[tuple[str, str]] = []
+        task = {"trigger": {"sourceTriggers": list(triggers)}}
+        with mock.patch.object(preflight, "run", return_value=(0, json.dumps(task))), \
+                mock.patch.object(preflight, "report", side_effect=lambda level, area, message, fix="": reports.append((level, message))):
+            preflight.check_build({"registry": "crexample"})
+        return reports
+
+    def test_a_pull_request_trigger_fails_on_or_off(self):
+        for status in ("Enabled", "Disabled"):
+            for events in (["commit", "pullrequest"], ["pullrequest"], ["commit", "PullRequest"]):
+                with self.subTest(status=status, events=events):
+                    trigger = {"name": "defaultSourceTriggerName", "status": status, "sourceTriggerEvents": events}
+                    self.assertEqual(self.build_check(trigger), [("FAIL", "build-api can be started by a pull request")])
+
+    def test_commits_to_main_only(self):
+        trigger = {"name": "defaultSourceTriggerName", "status": "Enabled", "sourceTriggerEvents": ["commit"]}
+        self.assertEqual(self.build_check(trigger), [("PASS", "build-api builds every commit to main")])
+        self.assertEqual(self.build_check(dict(trigger, status="Disabled"))[0][0], "WARN")
 
 
 if __name__ == "__main__":

@@ -280,9 +280,10 @@
                         },
                         "Fixes_for_this_issue": {
                           "type": "Query",
+                          "description": "Only this repository's branches: a fork can name its branch posture/issue-N-..., and must not pass for the fix.",
                           "inputs": {
                             "from": "@body('Find_open_pull_requests')",
-                            "where": "@startsWith(coalesce(item()?['head']?['ref'], ''), concat('posture/issue-', string(variables('issueNumber')), '-'))"
+                            "where": "@and(startsWith(coalesce(item()?['head']?['ref'], ''), concat('posture/issue-', string(variables('issueNumber')), '-')), equals(toLower(coalesce(item()?['head']?['repo']?['full_name'], '')), toLower(parameters('repository'))))"
                           },
                           "runAfter": { "Find_open_pull_requests": ["Succeeded"] }
                         },
@@ -621,9 +622,10 @@
                             },
                             "Confirmations": {
                               "type": "Query",
+                              "description": "Only comments from the repository's owner, members, and collaborators count (the Logic Apps' token is a person's): anyone can comment on a public repository.",
                               "inputs": {
                                 "from": "@body('Get_comments')",
-                                "where": "@contains(coalesce(item()?['body'], ''), 'posture:defender-confirmed')"
+                                "where": "@and(contains(coalesce(item()?['body'], ''), 'posture:defender-confirmed'), contains(createArray('OWNER', 'MEMBER', 'COLLABORATOR'), coalesce(item()?['author_association'], '')))"
                               },
                               "runAfter": { "Get_comments": ["Succeeded"] }
                             },

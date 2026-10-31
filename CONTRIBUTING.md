@@ -40,6 +40,7 @@ solutions/<NN>-<phase>-<github|microsoft>/
 4. **Paths.** Workflows and agents refer to solution files by their repository path (`solutions/03-develop-microsoft/...`). Skills refer to their own files through `.github/skills/<skill>/...`, which works both here and in an adopter's repository.
 5. **Repository-wide files belong to no solution:** `.github/copilot-instructions.md`, `.github/workflows/ci.yml`, `.github/workflows/copilot-setup-steps.yml`, and `.github/workflows/repo-checks.yml`.
 6. **Workflows only act on their own demo.** Every workflow in this repository sees every pull request. A solution's pull-request workflow must recognize its own demo (paths inside its solution folder, a `lab/<phase>-*` base branch, or an Issue labeled `phase:<phase>`) and skip, never fail, everything else. A check that fails on another solution's demo pull request is a defect.
+7. **Outsiders start nothing that costs money, uses a credential, or writes.** The repository is public: see [Outside contributions](#outside-contributions).
 
 ## Microsoft solutions on Azure
 
@@ -100,6 +101,30 @@ services:
 `main.bicep` must output the values that [`app/infra/api.parameters.json`](app/infra/api.parameters.json) and [`worker.parameters.json`](app/infra/worker.parameters.json) read: `AZURE_CONTAINER_REGISTRY_ENDPOINT`, `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_ENVIRONMENT_NAME`, `APP_IDENTITY_ID`, `APP_IDENTITY_CLIENT_ID`, `APP_IDENTITY_NAME`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `STORAGE_BLOB_ENDPOINT`, `API_APP_NAME`, `WORKER_APP_NAME`, `API_URL`, `API_CLIENT_ID`, `API_IDENTIFIER_URI`, and `AUTOMATION_CLIENT_ID`. Optional: `FOUNDRY_PROJECT_ENDPOINT`, `TRIAGE_PROVIDER`, `DEMO_INDUSTRY`.
 
 In its cleanup, a solution that runs RequestHub must also delete the Microsoft Entra app registration that `requesthub.bicep` creates for sign-in: `azd down` deletes the resource group, but no resource group contains Microsoft Entra objects. Delete it and empty it from the recycle bin, as [06-release-microsoft](solutions/06-release-microsoft/README.md#reset-and-clean-up) does, or the next `azd up` with the same environment name cannot create it again for 30 days.
+
+## Outside contributions
+
+On a public repository anyone can open Issues, comment, and open pull requests from forks. None of that may spend your money, use your credentials, or write to the repository.
+
+- **Only the owner, members, and collaborators start automation.** Anything that runs code, calls a model, or uses a token or an Azure identity starts only for them. Check it where the automation runs, from what GitHub vouches for: the Issue's or pull request's `author_association` (`OWNER`, `MEMBER`, or `COLLABORATOR`), read from GitHub's API or from a webhook delivery whose signature you verified, or the actor's permission. A label proves nothing on its own: an issue form applies its labels for whoever files it. A label applied later does, because only people with triage access can apply one.
+- **A fork's pull request never reaches Azure or a secret.** A Logic App or Function that receives `pull_request` events takes only the number from the payload, reads the pull request from GitHub's API, and stops unless its branch is in this repository (`head.repo.full_name`). A GitHub Actions workflow that runs a pull request's code uses `pull_request`, never `pull_request_target`, and checks out with `persist-credentials: false`. GitHub gives a fork's run a read-only token and no secrets.
+- **Comments and branch names are data.** Automation that looks for its own marker comment or branch counts only comments from the owner, members, and collaborators, and only this repository's branches.
+- **Agentic workflows keep gh-aw's role check** (admin, maintainer, or write, the default), and on `workflow_run` accept only a run that a person dispatched in this repository: a fork's pull request can add a workflow with the same name.
+- **Copilot needs nothing extra.** Only people with write access can assign an Issue to the cloud agent or mention `@copilot`, and workflows on its pull requests wait for approval. A Copilot code review that someone else requests uses their Copilot plan.
+
+Each solution's README says what an outside contribution can and cannot trigger, under *How it works*.
+
+### Settings for a public copy
+
+Change these yourself when you make a copy public. Nothing in the repository changes them.
+
+| Setting | Where | Choose |
+| --- | --- | --- |
+| Approval for running fork pull request workflows from contributors | **Settings** → **Actions** → **General** | **Require approval for all external contributors**. A fork's runs get a read-only token and no secrets either way; this keeps strangers from running code on GitHub's runners at will. |
+| Workflow permissions | **Settings** → **Actions** → **General** | **Read repository contents and packages permissions**, with **Allow GitHub Actions to create and approve pull requests** off. |
+| Only allow Copilot code review to be triggered by authorized users | **Settings** → **Copilot** → **Code review** | On: in a personal repository, only you and direct collaborators can request a review. |
+| Required reviewers on the `release-github` environment | **Settings** → **Environments** | Yourself, or a team. Free on public repositories. |
+| Private vulnerability reporting | **Settings** → **Advanced Security** | **Enable**, so a finding reaches you before it reaches an Issue. |
 
 ## Python scripts
 

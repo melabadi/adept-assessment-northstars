@@ -162,14 +162,17 @@ class PullRequestStatus(unittest.TestCase):
     """The commit status posture/what-if never stays pending, and says what to do when it can. GitHub and Azure are fakes."""
 
     class FakeGitHub:
-        def __init__(self, fail_on: str | None = None) -> None:
-            self.fail_on, self.statuses, self.comments = fail_on, [], []
+        def __init__(self, fail_on: str | None = None, **pull) -> None:
+            self.fail_on, self.statuses, self.comments, self.calls = fail_on, [], [], []
+            self.pull = {"state": "open", "head": {"sha": "a" * 40, "repo": {"full_name": "o/r"}},
+                         "author_association": "OWNER", **pull}
 
         def call(self, method, path, body=None):
+            self.calls.append((method, path))
             if self.fail_on and self.fail_on in path:
                 raise KeyError("unexpected response shape")
             if path.startswith("pulls/") and "/files" not in path:
-                return {"state": "open", "head": {"sha": "a" * 40}}
+                return self.pull
             if path.startswith("statuses/"):
                 self.statuses.append((body["state"], body["description"]))
                 return {}
@@ -224,6 +227,40 @@ class PullRequestStatus(unittest.TestCase):
         github = self.FakeGitHub(fail_on="issues/")
         self.assertEqual(self.run_preview(github, lambda *a, **k: self.PASS), 2)
         self.assertEqual(github.statuses[-1][0], "error")
+
+
+class PullRequestGate(unittest.TestCase):
+    """Only this repository's branches, opened by its owner, members, or collaborators, reach Azure. On a public repository
+    anyone can open a pull request, from a fork or from one of this repository's branches."""
+
+    FakeGitHub, PASS, run_preview = PullRequestStatus.FakeGitHub, PullRequestStatus.PASS, PullRequestStatus.run_preview
+
+    def assertRefused(self, github) -> None:
+        def reached_azure(*args, **kwargs):
+            raise AssertionError("a refused pull request reached Azure")
+        self.assertEqual(self.run_preview(github, reached_azure), 1)
+        self.assertEqual(github.calls, [("GET", "pulls/7")])  # nothing else read, nothing written
+        self.assertEqual((github.statuses, github.comments), ([], []))
+
+    def test_a_fork_is_refused_before_anything_is_read_or_written(self):
+        self.assertRefused(self.FakeGitHub(head={"sha": "a" * 40, "repo": {"full_name": "someone/r"}}))
+
+    def test_a_deleted_fork_is_refused(self):
+        self.assertRefused(self.FakeGitHub(head={"sha": "a" * 40, "repo": None}))
+        self.assertRefused(self.FakeGitHub(head={"sha": "a" * 40}))
+
+    def test_an_outside_author_is_refused_even_on_a_branch_of_this_repository(self):
+        for association in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "", None):
+            with self.subTest(association=association):
+                self.assertRefused(self.FakeGitHub(author_association=association))
+
+    def test_the_owner_members_and_collaborators_are_previewed(self):
+        for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+            with self.subTest(association=association):
+                github = self.FakeGitHub(author_association=association,
+                                         head={"sha": "a" * 40, "repo": {"full_name": "O/R"}})
+                self.assertEqual(self.run_preview(github, lambda *a, **k: self.PASS), 0)
+                self.assertEqual(github.statuses[-1][0], "success")
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the job runs on Linux; /proc is Linux-only")

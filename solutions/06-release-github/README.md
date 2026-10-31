@@ -41,6 +41,8 @@ flowchart LR
 - **A person** chooses the version, reviews the draft, and approves by starting the approval workflow.
 - **The `release-github` environment** only accepts runs from `main`. With required reviewers on it, a reviewer must also approve before anything is published.
 
+**Outside contributions start nothing here.** The candidate and approval workflows run only when someone with write access starts them (`workflow_dispatch`). The AI summary runs with `COPILOT_GITHUB_TOKEN` and can append to a release, so it starts only after a candidate run that a person dispatched in this repository: a fork's pull request can add a workflow with the candidate's name on a branch named `main`, and its runs start no job of the summary. gh-aw also checks that the actor has write access. The checks in [`release-github-checks.yml`](.github/workflows/release-github-checks.yml) run on pull requests that change this solution, forks included, with a read-only token and no secrets.
+
 ### What the gate checks
 
 | When | Check |

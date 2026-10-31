@@ -409,7 +409,7 @@ class WebhookTests(unittest.TestCase):
         body = "### Operating profile\n\nsmall-team\n\n### Question\n\nShould triage run in-process?"
         return {"action": "opened", "repository": {"full_name": self.repo, "default_branch": "main"},
                 "issue": {"number": 7, "title": "Architecture question", "state": "open", "body": body,
-                          "labels": [{"name": "design-advisor"}], **issue}}
+                          "labels": [{"name": "design-advisor"}], "author_association": "OWNER", **issue}}
 
     def test_signature(self):
         body = b'{"zen": "Keep it logically awesome."}'
@@ -437,6 +437,24 @@ class WebhookTests(unittest.TestCase):
                 ("comment", "issue_comment", self.payload())):
             with self.subTest(name):
                 self.assertEqual(webhook.classify(event, payload, self.repo)["route"], "ignore")
+
+    def test_only_the_owner_members_and_collaborators_start_the_advisor(self):
+        # On a public repository anyone can use the issue form, which applies the label for them: the author decides.
+        for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+            for action in ("opened", "labeled"):
+                with self.subTest(association=association, action=action):
+                    payload = dict(self.payload(author_association=association), action=action, label={"name": "design-advisor"})
+                    self.assertEqual(webhook.classify("issues", payload, self.repo)["route"], "advisor")
+        for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE", "", None, "owner"):
+            for action in ("opened", "labeled"):
+                with self.subTest(association=association, action=action):
+                    payload = dict(self.payload(author_association=association), action=action, label={"name": "design-advisor"})
+                    decision = webhook.classify("issues", payload, self.repo)
+                    self.assertEqual(decision["route"], "ignore")
+                    self.assertIn("outside contributor", decision["reason"])
+        missing = self.payload()
+        del missing["issue"]["author_association"]
+        self.assertEqual(webhook.classify("issues", missing, self.repo)["route"], "ignore")
 
     def test_push_routes_only_merged_standards(self):
         push = {"ref": "refs/heads/main", "after": "a" * 40, "repository": {"full_name": self.repo, "default_branch": "main"},
@@ -669,6 +687,16 @@ class FunctionRouteTests(unittest.TestCase):
         self.assertEqual(len(self.started), 1)
         self.assertEqual(self.started[0][1], {"issue": 7, "title": "Architecture question", "profile": "small-team",
                                               "question": "Should triage run in-process?"})
+
+    def test_an_issue_from_an_outside_contributor_starts_nothing(self):
+        payload = WebhookTests().payload(author_association="NONE")
+        opened = self.deliver(payload, "55555555-5555-5555-5555-555555555555")
+        labeled = self.deliver(dict(payload, action="labeled", label={"name": "design-advisor"}), "66666666-6666-6666-6666-666666666666")
+        self.assertEqual([opened.status_code, labeled.status_code], [200, 200])
+        self.assertEqual(json.loads(opened.get_body())["result"], "ignored")
+        self.assertIn("outside contributor", json.loads(labeled.get_body())["reason"])
+        self.assertEqual(self.started, [])
+        self.assertNotIn("issues/7.json", self.markers)
 
     def test_a_bad_signature_is_refused(self):
         response = self.call("github_webhook", body=b"{}", headers={"X-Hub-Signature-256": "sha256=00", "X-GitHub-Event": "ping",

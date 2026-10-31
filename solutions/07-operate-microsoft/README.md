@@ -81,6 +81,11 @@ sequenceDiagram
 - **azd** deploys everything. Its `postprovision` hook, [`configure_sre_agent.py`](configure_sre_agent.py), applies
   the agent's configuration from [`sre-agent/`](sre-agent/) through the agent's own API and reads it back.
 
+**Outside contributions.** Nothing here listens to GitHub. Azure Monitor alerts start the investigations, and the agent's
+GitHub access is a read-only token for this repository's code. On a public repository, nobody outside it can start an
+investigation; an Issue or a comment from outside reaches the agent only if a person asks it to read one, and every Issue
+tool asks a person first.
+
 ## What's in this folder
 
 ```text

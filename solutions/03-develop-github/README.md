@@ -35,6 +35,8 @@ flowchart LR
 - **GitHub Actions** runs the app's [CI](../../.github/workflows/ci.yml) (API integration tests on PostgreSQL with the contract check, web typecheck, unit tests and build, browser tests) and this solution's [`develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml). The bounds check runs the checker from the base branch, so a pull request cannot change the rules it is judged by.
 - **A person** writes the Issue, approves the workflow runs on Copilot's pull request, reviews, sends findings back with an `@copilot` comment, and decides. In RequestHub itself, only an approver ever approves a request, and the feature cannot change that.
 
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot, and Copilot ignores `@copilot` comments from anyone else. The bounds check runs on every pull request, forks included, with a read-only token: it reads the commits as data and never runs them. CI runs a fork's code with a read-only token and no secrets, once someone with write access approves the run.
+
 ## What's in this folder
 
 ```text
