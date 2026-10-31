@@ -41,6 +41,10 @@ param githubRepository string
 @description('Fine-grained GitHub token for that repository only, with Issues read and write. Empty: nothing is posted.')
 param githubToken string
 
+@secure()
+@description('Function key the action group calls the route with. Leave the default: every deployment writes a new random key to the function and to the action group together.')
+param routeKey string = '${replace(newGuid(), '-', '')}${replace(newGuid(), '-', '')}'
+
 // Same token as app/infra/requesthub.bicep, so every resource in the group shares one suffix.
 var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, environmentName))
 var queueName = 'test-runs'
@@ -333,12 +337,18 @@ resource readGitHubToken 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 }
 
 // ---------- The action group calls the function's route with its own function key ----------
+// The same value goes to the function and to the action group in one deployment. Reading the key back with listKeys
+// right after writing it returned the previous value live, which left the action group with a key the function no
+// longer accepted (401 on every notification, never logged by the function).
 // Bicep publishes no types for function keys; Azure Resource Manager creates the key all the same.
 #disable-next-line BCP081
 resource actionGroupKey 'Microsoft.Web/sites/host/functionKeys@2023-12-01' = {
   #disable-next-line use-parent-property
   name: '${functionApp.name}/default/actiongroup'
-  properties: { name: 'actiongroup' }
+  properties: {
+    name: 'actiongroup'
+    value: routeKey
+  }
   dependsOn: [storageRoles]
 }
 
@@ -354,7 +364,7 @@ resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
         name: 'report-to-github'
         functionAppResourceId: functionApp.id
         functionName: 'test_run_ended'
-        httpTriggerUrl: 'https://${functionApp.properties.defaultHostName}/api/test-run-ended?code=${listKeys('${functionApp.id}/host/default', '2023-12-01').functionKeys.actiongroup}'
+        httpTriggerUrl: 'https://${functionApp.properties.defaultHostName}/api/test-run-ended?code=${routeKey}'
         useCommonAlertSchema: false
       }
     ]

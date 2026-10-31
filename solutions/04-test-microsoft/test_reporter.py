@@ -10,8 +10,9 @@ They port the checks that proved the Logic App this function replaces, and add t
   - GitHub: only this test's open Issue counts (full title prefix, pull requests skipped); a failing run opens or
     comments; only an accepted run that started after the Issue opened closes it; a repeated delivery changes nothing;
     one report posts at a time; and the token never appears in a log or an error;
-  - the Function's bindings: a function key on the HTTP route, the queue name Bicep creates, and a GitHub token that
-    only Key Vault holds (read with the function's identity, and never by the HTTP route).
+  - the Function's bindings: a function key on the HTTP route, written with the action group's copy in one deployment,
+    the queue name Bicep creates, and a GitHub token that only Key Vault holds (read with the function's identity, and
+    never by the HTTP route).
 The runs and Issues below are fixtures (numbers from the live run of 2026-10-30); the live demo never uses them.
 
 Run from this folder (azd runs them before every deploy):
@@ -784,6 +785,15 @@ class BindingTests(unittest.TestCase):
         self.assertIn("functionName: 'test_run_ended'", self.bicep)
         self.assertIn("/api/test-run-ended?code=", self.bicep)
         self.assertNotIn("Microsoft.Logic/workflows", self.bicep)
+
+    def test_the_function_and_the_action_group_get_the_same_key_in_one_deployment(self):
+        # Live, listKeys right after writing the key returned the previous value: a second `azd provision` left the
+        # action group with a key the function rejected (401), and Azure's notifications never reached the function.
+        self.assertNotIn("listKeys(", self.bicep)
+        self.assertRegex(self.bicep, r"@secure\(\)\s*@description\([^\n]*\)\s*param routeKey string = '[^\n]*newGuid\(\)")
+        self.assertRegex(self.bicep, r"functionKeys@[\d-]+' = \{[\s\S]*?properties: \{\s*name: 'actiongroup'\s*value: routeKey\s*\}")
+        self.assertIn("/api/test-run-ended?code=${routeKey}'", self.bicep)
+        self.assertEqual(len(re.findall(r"\brouteKey\b", self.bicep)), 3)  # the parameter, the key, the URL
 
     def test_the_github_token_is_secure_and_never_an_output(self):
         self.assertRegex(self.bicep, r"@secure\(\)\s*(@description\([^)]*\)\s*)?param githubToken string")
