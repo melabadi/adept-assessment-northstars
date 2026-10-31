@@ -7,9 +7,10 @@ They port the checks that proved the Logic App this function replaces, and add t
     than an hour ago never reach the queue;
   - the waits: a run without a verdict and incomplete telemetry come back later through the queue, with a delay, and
     stop after a bounded number of checks;
-  - GitHub: only this test's open Issue counts (full title prefix, pull requests skipped); a failing run opens or
-    comments; only an accepted run that started after the Issue opened closes it; a repeated delivery changes nothing;
-    one report posts at a time; and the token never appears in a log or an error;
+  - GitHub: only this test's open Issue counts (full title prefix, pull requests skipped, opened by the owner, a member,
+    or a collaborator); a failing run opens or comments; only an accepted run that started after the Issue opened closes
+    it; a repeated delivery changes nothing, and only those authors' markers count, so an outsider's comment can't make
+    a run look reported; one report posts at a time; and the token never appears in a log or an error;
   - the Function's bindings: a function key on the HTTP route, written with the action group's copy in one deployment,
     the queue name Bicep creates, and a GitHub token that only Key Vault holds (read with the function's identity, and
     never by the HTTP route).
@@ -22,7 +23,6 @@ from __future__ import annotations
 
 import ast
 import json
-import logging
 import re
 import sys
 import threading
@@ -230,15 +230,16 @@ class FakeGitHub:
 
     def create_issue(self, title, body, labels):
         self.calls.append(("create", title, body, labels))
+        # The function posts with a person's token: GitHub reports the owner, a member, or a collaborator as author.
         issue = {"number": self.next_number, "title": title, "body": body, "created_at": "2026-10-30T18:44:19Z",
-                 "labels": labels, "state": "open"}
+                 "labels": labels, "state": "open", "author_association": "OWNER"}
         self.issues.append(issue)
         self.next_number += 1
         return issue
 
     def comment(self, number, body):
         self.calls.append(("comment", number, body))
-        self.comments_by_issue.setdefault(number, []).append({"body": body})
+        self.comments_by_issue.setdefault(number, []).append({"body": body, "author_association": "OWNER"})
         return {"body": body}
 
     def close(self, number):
@@ -478,9 +479,14 @@ class StepTests(unittest.TestCase):
 
 # ---------- GitHub ----------
 
+TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
+OUTSIDE = ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE", None)
+
+
 def issue(number=180, title="[load-test requesthub-journey] RequestHub journey missed its performance criteria",
-          created_at="2026-10-30T18:44:19Z", body="", **extra):
-    return {"number": number, "title": title, "created_at": created_at, "body": body, "state": "open", **extra}
+          created_at="2026-10-30T18:44:19Z", body="", author_association="OWNER", **extra):
+    return {"number": number, "title": title, "created_at": created_at, "body": body, "state": "open",
+            "author_association": author_association, **extra}
 
 
 class GitHubTests(unittest.TestCase):
@@ -566,7 +572,7 @@ class GitHubTests(unittest.TestCase):
         self.assertEqual(self.post(slowdown_run(), github)[0], "no-change")
 
     def test_a_close_that_failed_after_its_comment_is_retried_without_a_second_comment(self):
-        closing = {"body": "earlier\n\n" + issues.marker("fix-20261030-185145", "accepted")}
+        closing = {"body": "earlier\n\n" + issues.marker("fix-20261030-185145", "accepted"), "author_association": "OWNER"}
         github = FakeGitHub([issue()], comments={180: [closing]})
         self.assertEqual(self.post(fix_run(), github)[0], "closed #180")
         self.assertEqual(github.writes(), [("close", 180)])
@@ -575,6 +581,60 @@ class GitHubTests(unittest.TestCase):
         github = FakeGitHub([issue(created_at="2026-10-30T10:00:00Z")])
         self.post(slowdown_run(), github)
         self.assertIn(("comments", 180, "2026-10-30T18:36:00Z"), github.calls)
+
+    # On a public repository anyone can comment, and run ids are timestamps, so a marker is easy to forge. Only the
+    # owner, members, and collaborators (the function posts with a person's token) can make a run look reported.
+
+    def test_an_outsiders_marker_comment_does_not_suppress_a_failing_runs_report(self):
+        forged = issues.marker("slowdown-20261030-183250", "expected-failure")
+        for association in OUTSIDE:
+            with self.subTest(association=association):
+                github = FakeGitHub([issue(created_at="2026-10-30T10:00:00Z")],
+                                    comments={180: [{"body": f"Seen it.\n{forged}", "author_association": association}]})
+                self.assertEqual(self.post(slowdown_run(), github)[0], "commented #180")
+                (kind, number, body), = github.writes()
+                self.assertTrue(body.startswith("`After the slowdown` also missed its performance criteria.\n\n"))
+                self.assertTrue(body.endswith(forged))
+        for association in TRUSTED:
+            with self.subTest(association=association):
+                github = FakeGitHub([issue(created_at="2026-10-30T10:00:00Z")],
+                                    comments={180: [{"body": f"Seen it.\n{forged}", "author_association": association}]})
+                self.assertEqual(self.post(slowdown_run(), github)[0], "no-change")
+                self.assertEqual(github.writes(), [])
+
+    def test_an_outsiders_marker_comment_does_not_skip_the_closing_report(self):
+        forged = issues.marker("fix-20261030-185145", "accepted")
+        for association in OUTSIDE:
+            with self.subTest(association=association):
+                github = FakeGitHub([issue()], comments={180: [{"body": forged, "author_association": association}]})
+                self.assertEqual(self.post(fix_run(), github)[0], "closed #180")
+                self.assertEqual([call[0] for call in github.writes()], ["comment", "close"])
+                self.assertTrue(github.writes()[0][2].startswith("`After the fix` passed every criterion. Closing.\n\n"))
+
+    def test_an_outsiders_earlier_marker_does_not_change_the_comments_lead(self):
+        other_verdict = issues.marker("slowdown-20261030-183250", "no-telemetry")
+        github = FakeGitHub([issue(created_at="2026-10-30T10:00:00Z")],
+                            comments={180: [{"body": other_verdict, "author_association": "NONE"}]})
+        self.assertEqual(self.post(slowdown_run(), github)[0], "commented #180")
+        self.assertTrue(github.writes()[0][2].startswith("`After the slowdown` also missed its performance criteria."))
+
+    def test_an_outsiders_issue_with_the_prefix_is_never_chosen(self):
+        for association in OUTSIDE:
+            with self.subTest(association=association):
+                theirs = issue(number=181, author_association=association, labels=[{"name": "load-test"}])
+                self.assertIsNone(issues.choose([theirs], TEST_ID))
+                self.assertEqual(issues.choose([theirs, issue()], TEST_ID)["number"], 180)
+                # A failing run opens the test's own Issue instead of commenting on theirs, whatever its body says.
+                github = FakeGitHub([dict(theirs, body=issues.marker("slowdown-20261030-183250", "expected-failure"))])
+                self.assertEqual(self.post(slowdown_run(), github)[0], "opened #200")
+                self.assertEqual([call[0] for call in github.writes()], ["create"])
+                # A passing run never closes theirs.
+                github = FakeGitHub([theirs])
+                self.assertEqual(self.post(fix_run(), github)[0], "no-change")
+                self.assertEqual(github.writes(), [])
+        for association in TRUSTED:
+            with self.subTest(association=association):
+                self.assertEqual(issues.choose([issue(author_association=association)], TEST_ID)["number"], 180)
 
 
 # ---------- the real clients, with a fake HTTP session ----------
