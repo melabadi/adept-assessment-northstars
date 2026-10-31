@@ -37,6 +37,8 @@ flowchart LR
 - **Copilot code review** comments on the change. The `review-evidence` skill reports those comments apart from the checks.
 - **A person** approves the workflow runs, reads the tests, and approves or requests changes.
 
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. The proof runs a fork's pull request into a `lab/test-*` branch once someone with write access approves the run: it runs that pull request's tests with a read-only token, no secrets, and no credentials left in the checkout, and takes the proof script from the base branch.
+
 ## What's in this folder
 
 ```text

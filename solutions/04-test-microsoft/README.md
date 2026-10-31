@@ -44,6 +44,8 @@ flowchart LR
 - **GitHub** holds the code, the pull requests that change the test, and the Issues. No workflow, Copilot agent, or skill is involved.
 - **People** decide what a failure means, check what the AI says against the evidence, and decide whether a release ships.
 
+**Outside contributions.** Nothing here listens to GitHub. Azure Load Testing and its action group start the Logic App, which acts only on its own Issue: open, labeled `load-test` (a label only people with triage access can apply), and titled with the test's id. On a public repository, nobody outside it can start a test run or the Logic App, and the Logic App never comments on or closes an Issue they open.
+
 ## What's in this folder
 
 ```text
