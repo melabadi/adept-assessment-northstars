@@ -362,6 +362,36 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("must be higher", out)
 
 
+class AiSummaryTriggerTests(unittest.TestCase):
+    """The AI release summary runs with COPILOT_GITHUB_TOKEN and can append to a release. Its workflow_run trigger matches
+    any run named like the candidate workflow on a branch named main, which a fork's pull request can add. So the
+    compiled workflow starts no job unless the run was dispatched in this repository, and gh-aw checks the actor's role."""
+
+    LOCK = SOLUTION / ".github" / "workflows" / "release-github-summary.lock.yml"
+    DISPATCHED = ("github.event.workflow_run.event == 'workflow_dispatch'",
+                  "github.event.workflow_run.head_repository.full_name == github.repository")
+
+    def job_condition(self, text: str, job: str) -> str:
+        start = text.index(f"\n  {job}:\n")
+        block = text[start:text.index("\n    runs-on:", start)]
+        return " ".join(block.split("    if:", 1)[1].split())
+
+    def test_only_a_dispatched_candidate_run_of_this_repository_starts_a_job(self):
+        text = self.LOCK.read_text(encoding="utf-8")
+        for job in ("pre_activation", "activation"):
+            with self.subTest(job=job):
+                condition = self.job_condition(text, job)
+                for clause in self.DISPATCHED:
+                    self.assertIn(clause, condition)
+        source = (SOLUTION / ".github" / "workflows" / "release-github-summary.md").read_text(encoding="utf-8")
+        self.assertIn("workflows: [\"Release · GitHub · build the release candidate\"]", source)
+
+    def test_the_actor_needs_write_access(self):
+        text = self.LOCK.read_text(encoding="utf-8")
+        self.assertIn('GH_AW_REQUIRED_ROLES: "admin,maintainer,write"', text)
+        self.assertIn("activated: ${{ steps.check_membership.outputs.is_team_member == 'true' }}", text)
+
+
 class InvestigateTests(unittest.TestCase):
     LOG = "\n".join([
         "Verify the evidence\tVerify\t2026-10-27T12:00:00.0000000Z ##[group]Run python verify",
