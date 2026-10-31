@@ -118,5 +118,54 @@ class ReportingTests(unittest.TestCase):
                 self.assertNotIn(word, source.replace("re.compile(", ""), f"{word} in {name}")
 
 
+class FoundryRunTests(unittest.TestCase):
+    """What eval_reviewer.py makes of a finished Foundry evaluation run."""
+    items = eval_reviewer.score([good_item(c) for c in CASES])
+
+    def run_with(self, passed: dict[str, int] | None = None, failed: dict[str, int] | None = None, drop: str = "",
+                 errored: int = 0, total: int | None = None):
+        from types import SimpleNamespace
+        n = len(self.items)
+        criteria = [SimpleNamespace(testing_criteria=name, passed=(passed or {}).get(name, n), failed=(failed or {}).get(name, 0))
+                    for name in review_graders.GRADERS if name != drop]
+        counts = SimpleNamespace(total=n if total is None else total, errored=errored, passed=n - errored, failed=0)
+        return SimpleNamespace(status="completed", result_counts=counts, per_testing_criteria_results=criteria)
+
+    def test_a_complete_run_that_agrees_is_trusted(self):
+        self.assertIsNone(eval_reviewer.foundry_verdict(self.run_with(), self.items))
+
+    def test_a_check_foundry_could_not_grade_is_could_not_grade(self):
+        # Seen live: every item of one check said "An error occurred during grading", yet the run counted 10 passed
+        # and 0 errored, and the check itself passed 0 and failed 0.
+        problem = eval_reviewer.foundry_verdict(self.run_with(passed={"pr_review_rule_verdicts": 0}), self.items)
+        self.assertIn("COULD NOT GRADE", problem)
+        self.assertIn(f"pr_review_rule_verdicts on 0 of {len(self.items)}", problem)
+
+    def test_a_check_missing_from_the_run_is_could_not_grade(self):
+        problem = eval_reviewer.foundry_verdict(self.run_with(drop="pr_review_sandbox_ran"), self.items)
+        self.assertIn("COULD NOT GRADE", problem)
+        self.assertIn("pr_review_sandbox_ran", problem)
+
+    def test_errored_items_or_too_few_results_are_not_trusted(self):
+        self.assertIn("COULD NOT GRADE 2 of", eval_reviewer.foundry_verdict(self.run_with(errored=2), self.items))
+        self.assertIn("results for", eval_reviewer.foundry_verdict(self.run_with(total=9), self.items))
+
+    def test_a_run_that_disagrees_with_the_local_scores_is_not_trusted(self):
+        n = len(self.items)
+        problem = eval_reviewer.foundry_verdict(
+            self.run_with(passed={"pr_review_useful_commentary": n - 1}, failed={"pr_review_useful_commentary": 1}), self.items)
+        self.assertIn("differ from the local ones", problem)
+
+    def test_only_a_grading_failure_is_graded_again(self):
+        n = len(self.items)
+        self.assertTrue(eval_reviewer.grade_again(eval_reviewer.foundry_verdict(
+            self.run_with(passed={"pr_review_verdicts_verbatim": 0}), self.items)))
+        self.assertTrue(eval_reviewer.grade_again(eval_reviewer.foundry_verdict(self.run_with(errored=1), self.items)))
+        self.assertFalse(eval_reviewer.grade_again(None))
+        self.assertFalse(eval_reviewer.grade_again(eval_reviewer.foundry_verdict(
+            self.run_with(passed={"pr_review_useful_commentary": n - 1}, failed={"pr_review_useful_commentary": 1}), self.items)))
+        self.assertFalse(eval_reviewer.grade_again(eval_reviewer.foundry_verdict(self.run_with(total=n - 1), self.items)))
+
+
 if __name__ == "__main__":
     unittest.main()
