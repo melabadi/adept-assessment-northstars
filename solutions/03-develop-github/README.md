@@ -88,9 +88,9 @@ Check them with `gh label list --search phase:develop`: the first line reads `ph
      }'
    ```
 
-   ![The starting-state checks: the feature is not on main, no demo Issue is open, the custom agent is on main, and copilot-swe-agent can be assigned](images/00-starting-state.png)
+   ![The starting-state checks: the feature is not on main, the only open demo Issue is #2, the fallback kept on purpose, the custom agent is on main, and copilot-swe-agent can be assigned](images/00-starting-state.png)
 
-   If `git grep` finds the feature, someone merged a demo pull request: revert it before the session.
+   This repository keeps Issue #2 open on purpose, with its draft pull request #3 from an earlier run as the fallback, so `gh issue list` prints that one line. Any other open `phase:develop` Issue is left over from an earlier session: follow [Reset and clean up](#reset-and-clean-up). If `git grep` finds the feature, someone merged a demo pull request: revert it before the session.
 2. **Start Copilot early.** Run steps 2 and 3 at least 30 minutes before you present. Copilot needs 20 to 30 minutes for its first session (19 and 28 minutes in our runs). In the session, start from step 1 and switch to the pull request when you reach step 3.
 3. **Open in advance:**
    - the issue form (**Issues → New issue → Develop: bounded feature for Copilot**), the repository's **Pull requests** and **Actions** tabs, and Copilot's draft pull request once it exists;
