@@ -1,7 +1,8 @@
 // Develop · Microsoft: an Azure-hosted pull request reviewer, in this solution's own resource group.
-// A GitHub webhook starts a Logic App. It checks the pull request against the team's rules in one Azure Container Apps
-// sandbox session, builds and tests it in another, asks a Microsoft Foundry agent for commentary, and posts one COMMENT
-// review. Deploy from this folder with `azd up`; remove everything with `azd down --purge`.
+// A GitHub webhook calls a Python Azure Function, which queues the review and runs it: it checks the pull request against
+// the team's rules in one Azure Container Apps sandbox session, builds and tests it in another, asks a Microsoft Foundry
+// agent for commentary, and posts one COMMENT review. Deploy from this folder with `azd up`; remove everything with
+// `azd down --purge`.
 targetScope = 'subscription'
 
 @minLength(1)
@@ -12,7 +13,7 @@ param environmentName string
 @description('Region for the resource group and monitoring.')
 param location string
 
-@description('Region for Microsoft Foundry, the sandbox session pools, and the Logic App. The model below must be available there.')
+@description('Region for Microsoft Foundry, the sandbox session pools, and the Function with its storage and network. The model below must be available there.')
 param aiLocation string = 'eastus2'
 
 @description('Object id of the person running azd. Receives the Foundry User role and may run sandbox sessions.')
@@ -26,8 +27,12 @@ param principalType string = 'User'
 param githubRepository string
 
 @secure()
-@description('Fine-grained GitHub token for that repository only: Contents read, Pull requests read and write. Empty until you set GITHUB_REVIEW_TOKEN.')
+@description('Fine-grained GitHub token for that repository only: Contents read, Pull requests read and write. Empty until you set GITHUB_REVIEW_TOKEN. Stored only in Key Vault.')
 param githubToken string = ''
+
+@secure()
+@description('Secret GitHub signs every webhook delivery with. The preprovision hook generates it once (GITHUB_WEBHOOK_SECRET). Stored only in Key Vault.')
+param githubWebhookSecret string = ''
 
 @description('Git ref the rule checker, the sandbox runner, and the review formatter are read from. Never the pull request itself.')
 param checkerRef string = 'main'
@@ -42,7 +47,7 @@ param modelVersion string = '2026-03-17'
 @description('Model capacity in thousands of tokens per minute.')
 param modelCapacity int = 150
 
-@description('Name of the Foundry agent the Logic App calls. publish_reviewer_agent.py publishes it after each provision.')
+@description('Name of the Foundry agent the Function calls. publish_reviewer_agent.py publishes it after each provision.')
 param reviewerAgentName string = 'requesthub-pr-reviewer'
 
 var tags = {
@@ -67,6 +72,7 @@ module reviewer 'resources.bicep' = {
     principalType: principalType
     githubRepository: githubRepository
     githubToken: githubToken
+    githubWebhookSecret: githubWebhookSecret
     checkerRef: checkerRef
     reviewLabel: reviewLabel
     modelName: modelName
@@ -87,7 +93,9 @@ output FOUNDRY_ACCOUNT_NAME string = reviewer.outputs.foundryAccountName
 output FOUNDRY_PROJECT_ENDPOINT string = reviewer.outputs.projectEndpoint
 output FOUNDRY_MODEL_DEPLOYMENT string = reviewer.outputs.modelDeployment
 output REVIEWER_AGENT_NAME string = reviewerAgentName
-output REVIEWER_LOGIC_APP string = reviewer.outputs.logicAppName
+output REVIEWER_FUNCTION_APP string = reviewer.outputs.functionAppName
+output REVIEWER_FUNCTION_HOST string = reviewer.outputs.functionHostName
+output KEY_VAULT_NAME string = reviewer.outputs.keyVaultName
 output JUDGE_POOL_ENDPOINT string = reviewer.outputs.judgePoolEndpoint
 output RUN_POOL_ENDPOINT string = reviewer.outputs.runPoolEndpoint
 output SANDBOX_CONNECTION_ID string = reviewer.outputs.sandboxConnectionId

@@ -1,14 +1,24 @@
 # Azure Developer CLI project for the Develop · Microsoft solution: the Azure pull request reviewer.
-# `azd up` from this folder provisions infra/ (Microsoft Foundry, two Azure Container Apps session pools, and the Logic
-# App that runs each review). Its hooks then publish the reviewer agent to Foundry and connect the repository: the
-# review:azure label, and, once GITHUB_REVIEW_TOKEN is set, a webhook that sends pull_request events to the Logic App.
-# There is no app to deploy: the reviewer reviews RequestHub's pull requests on GitHub.
+# `azd up` from this folder provisions infra/ (Microsoft Foundry, two Azure Container Apps session pools, and the Azure
+# Function that runs each review, with its storage, Key Vault, and network) and deploys the Function's code from
+# function/.
+#   preprovision   find the GitHub repository; generate the webhook secret once
+#   postprovision  publish the reviewer agent to Foundry
+#   predeploy      run the offline tests: a Function that breaks a rule of the review never reaches Azure
+#   postdeploy     connect the repository: the review:azure label, a check of GITHUB_REVIEW_TOKEN, and, once the token
+#                  is set, a webhook that sends pull_request events to the Function
+#   predown        delete that webhook
 name: ai-sdlc-develop-microsoft
 metadata:
   template: ai-sdlc-develop-microsoft@2.0.0
 infra:
   provider: bicep
   path: infra
+services:
+  reviewer:
+    project: function
+    language: python
+    host: function
 hooks:
   preprovision:
     windows:
@@ -20,10 +30,24 @@ hooks:
   postprovision:
     windows:
       shell: pwsh
-      run: python publish_reviewer_agent.py; if ($LASTEXITCODE -eq 0) { python configure_github.py publish }; exit $LASTEXITCODE
+      run: python publish_reviewer_agent.py
     posix:
       shell: sh
-      run: python3 publish_reviewer_agent.py && python3 configure_github.py publish
+      run: python3 publish_reviewer_agent.py
+  predeploy:
+    windows:
+      shell: pwsh
+      run: python -m unittest -q test_reviewer_function
+    posix:
+      shell: sh
+      run: python3 -m unittest -q test_reviewer_function
+  postdeploy:
+    windows:
+      shell: pwsh
+      run: python configure_github.py publish
+    posix:
+      shell: sh
+      run: python3 configure_github.py publish
   predown:
     windows:
       shell: pwsh

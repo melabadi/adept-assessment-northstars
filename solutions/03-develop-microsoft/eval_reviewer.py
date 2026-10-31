@@ -5,21 +5,23 @@ What this script does:
   1. Reads eval_cases.jsonl: real pull requests of this repository, each labelled known-good, flagged (a good change that
      a rule rightly flags for a person), or known-bad, with the rules that should fail and what the commentary should
      mention.
-  2. Runs the deployed reviewer on each one in dry-run mode: it posts {"dryRun": true, "pr": <number>} to the Logic App's
-     trigger. The Logic App does everything it does for a real review (rule checker, sandbox build and tests, agent,
-     review formatter) but posts nothing to GitHub. The script reads each run's Result step from the run history.
+  2. Runs the deployed reviewer on each one in dry-run mode: it posts {"pr": <number>} to the Function's dry-runs route,
+     which queues a review that does everything a real review does (rule checker, sandbox build and tests, agent,
+     review formatter) but posts nothing to GitHub. The script polls the route until the review's result is ready.
   3. Scores every result on this machine with the five checks in review_graders.py.
   4. Registers the same checks in Microsoft Foundry as code-based evaluators (preview) and runs a Foundry evaluation over
-     the same results, so they appear in the project's Evaluation view. --local skips this step; the local scores in
+     the same results, so they appear in the project's Evaluation view. Foundry sometimes fails every item of one check
+     ("An error occurred during grading"); such a run is graded once more. --local skips this step; the local scores in
      step 3 are the fallback.
 
-The trigger URL carries a signature, so the script fetches it from Azure Resource Manager each time and never prints or
-saves it. Results go to out/eval/ (results.jsonl and report.md), which git ignores.
+The dry-runs route needs the Function's key, so the script reads it from Azure Resource Manager each time, sends it in a
+header, and never prints or saves it. Results go to out/eval/ (results.jsonl and report.md), which git ignores.
 
 Configuration: this solution's azd environment (after `azd up`) or environment variables: AZURE_SUBSCRIPTION_ID,
-AZURE_RESOURCE_GROUP, REVIEWER_LOGIC_APP, FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL_DEPLOYMENT. You need Logic App
-Contributor (or Contributor) on the resource group and the Foundry User role on the Foundry account; `azd up` gives you
-both as the person who runs it. The Logic App needs GITHUB_REVIEW_TOKEN, as for a real review.
+AZURE_RESOURCE_GROUP, REVIEWER_FUNCTION_APP, REVIEWER_FUNCTION_HOST, FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL_DEPLOYMENT.
+You need Contributor (or Website Contributor) on the resource group, to read the Function's key, and the Foundry User
+role on the Foundry account; `azd up` gives you both as the person who runs it. The Function needs GITHUB_REVIEW_TOKEN,
+as for a real review.
 
 Usage
   python eval_reviewer.py                    # every case: dry runs, local scores, then a Foundry evaluation
@@ -31,7 +33,8 @@ Usage
 
 Exit codes: 0 every check passed for every pull request; 1 at least one check failed (a pull request without a result
 fails every check); 2 configuration or service error, a check that COULD NOT GRADE, or a Foundry evaluation that is
-incomplete, has errored items, or disagrees with the local scores.
+incomplete, has errored items, has a check that didn't grade every item (even when graded once more), or disagrees
+with the local scores.
 """
 from __future__ import annotations
 
@@ -54,9 +57,9 @@ from azd_env import setting, utf8_stdout  # noqa: E402
 from review_graders import GRADERS  # noqa: E402
 
 OUT = HERE / "out" / "eval"
-TRIGGER = "When_a_pull_request_event_arrives"
 ARM = "https://management.azure.com"
-LOGIC_API = "api-version=2019-05-01"
+WEB_API = "api-version=2024-04-01"
+FINISHED = {"done": "Succeeded", "skipped": "Skipped", "failed": "Failed"}
 EVAL_NAME = "Azure pull request reviewer: labelled pull requests"
 # Custom evaluators are a preview feature of Foundry: their calls must opt in.
 PREVIEW = {"Foundry-Features": "Evaluations=V1Preview"}
@@ -71,79 +74,80 @@ ITEM_SCHEMA = {
 }
 
 
-class Arm:
-    """The few Azure Resource Manager calls the script needs, with the caller's Azure CLI or developer sign-in."""
+class Reviewer:
+    """The deployed Function's dry-runs route, called with the Function's key, which Azure Resource Manager hands to
+    the caller's Azure CLI or developer sign-in. The key lives only in this object and in a request header."""
 
     def __init__(self, credential: DefaultAzureCredential):
         self.credential = credential
-        self.workflow = (f"{ARM}/subscriptions/{setting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/"
-                         f"{setting('AZURE_RESOURCE_GROUP')}/providers/Microsoft.Logic/workflows/{setting('REVIEWER_LOGIC_APP')}")
+        self.base = f"https://{setting('REVIEWER_FUNCTION_HOST')}/api/dry-runs"
+        self._key: str | None = None
 
-    def call(self, method: str, url: str, body: object = None, signed: bool = False) -> tuple[int, dict, object]:
-        headers = {"Content-Type": "application/json"}
-        if not signed:
-            headers["Authorization"] = "Bearer " + self.credential.get_token(f"{ARM}/.default").token
-        request = urllib.request.Request(url, method=method, headers=headers,
+    def call(self, method: str, url: str, body: object = None, headers: dict | None = None) -> tuple[int, object]:
+        request = urllib.request.Request(url, method=method, headers={"Content-Type": "application/json", **(headers or {})},
                                          data=json.dumps(body).encode() if body is not None else None)
         try:
             with urllib.request.urlopen(request, timeout=120) as response:
                 data = response.read()
-                return response.status, dict(response.headers), json.loads(data) if data else None
+                return response.status, json.loads(data) if data else None
         except urllib.error.HTTPError as exc:
             data = exc.read()
             try:
-                return exc.code, dict(exc.headers), json.loads(data)
+                return exc.code, json.loads(data)
             except ValueError:
-                return exc.code, dict(exc.headers), None
+                return exc.code, None
+
+    def key(self) -> str:
+        if self._key is None:
+            site = (f"{ARM}/subscriptions/{setting('AZURE_SUBSCRIPTION_ID')}/resourceGroups/{setting('AZURE_RESOURCE_GROUP')}"
+                    f"/providers/Microsoft.Web/sites/{setting('REVIEWER_FUNCTION_APP')}")
+            token = self.credential.get_token(f"{ARM}/.default").token
+            status, keys = self.call("POST", f"{site}/host/default/listKeys?{WEB_API}", headers={"Authorization": f"Bearer {token}"})
+            key = ((keys or {}).get("functionKeys") or {}).get("default") if isinstance(keys, dict) else None
+            if status != 200 or not key:
+                raise RuntimeError(f"couldn't read the Function's key (HTTP {status})")
+            self._key = key
+        return self._key
 
     def start_dry_run(self, pr: int) -> str:
-        """Start one dry run and return its run id. The signed trigger URL lives only in this function."""
-        status, _, callback = self.call("POST", f"{self.workflow}/triggers/{TRIGGER}/listCallbackUrl?{LOGIC_API}")
-        if status != 200 or not isinstance(callback, dict) or "value" not in callback:
-            raise RuntimeError(f"couldn't get the Logic App's trigger URL (HTTP {status})")
-        status, headers, _ = self.call("POST", callback["value"], {"dryRun": True, "pr": pr}, signed=True)
-        run = headers.get("x-ms-workflow-run-id")
-        if status != 202 or not run:
-            raise RuntimeError(f"the Logic App didn't start a run for #{pr} (HTTP {status})")
-        return run
+        """Queue one dry run and return its id."""
+        status, answer = self.call("POST", self.base, {"pr": pr}, {"x-functions-key": self.key()})
+        if status != 202 or not isinstance(answer, dict) or not answer.get("id"):
+            raise RuntimeError(f"the Function didn't queue a dry run of #{pr} (HTTP {status})")
+        return str(answer["id"])
 
-    def wait(self, run: str, timeout: int = 1800) -> str:
+    def wait(self, review_id: str, timeout: int = 2700) -> dict:
+        """The dry run's final state: {"state": "done" | "skipped" | "failed", ...}, or {"state": "TimedOut"}."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            _, _, body = self.call("GET", f"{self.workflow}/runs/{run}?{LOGIC_API}")
-            state = (body or {}).get("properties", {}).get("status", "Unknown")
-            if state not in ("Running", "Waiting"):
-                return state
             time.sleep(15)
-        return "TimedOut"
-
-    def result(self, run: str) -> dict:
-        """The Result step's output: what the reviewer produced for this pull request."""
-        _, _, action = self.call("GET", f"{self.workflow}/runs/{run}/actions/Result?{LOGIC_API}")
-        link = (action or {}).get("properties", {}).get("outputsLink", {}).get("uri")
-        if not link:
-            raise RuntimeError("the run history doesn't show the Result step's output")
-        _, _, outputs = self.call("GET", link, signed=True)  # a short-lived signed link to the run's stored output
-        value = outputs.get("body", outputs) if isinstance(outputs, dict) else {}
-        return value if isinstance(value, dict) else {}
+            status, answer = self.call("GET", f"{self.base}/{review_id}", headers={"x-functions-key": self.key()})
+            if status == 200 and isinstance(answer, dict) and answer.get("state") in FINISHED:
+                return answer
+            if status not in (200, 404):  # 404: the review hasn't saved its state yet
+                raise RuntimeError(f"the Function didn't return dry run {review_id} (HTTP {status})")
+        return {"state": "TimedOut"}
 
 
-def review_case(arm: Arm, case: dict) -> dict:
+def review_case(reviewer: Reviewer, case: dict) -> dict:
     pr = case["pr"]
     started = time.time()
     try:
-        run = arm.start_dry_run(pr)
-        state = arm.wait(run)
-        result = arm.result(run) if state == "Succeeded" else {}
+        review_id = reviewer.start_dry_run(pr)
+        result = reviewer.wait(review_id)
+        state = FINISHED.get(result.get("state"), str(result.get("state")))
+        if state == "Failed":
+            state = f"Failed at {result.get('step')}: {result.get('error')}"
+        result = result if result.get("state") == "done" else {}
     except (RuntimeError, OSError) as exc:
-        run, state, result = None, f"error: {exc}", {}
+        review_id, state, result = None, f"error: {exc}", {}
     print(f"  #{pr:<4} {state:<10} {int(time.time() - started):>4} s", flush=True)
     return {
         "pr": pr, "kind": case["kind"], "why": case["why"],
         "expected_failures": json.dumps(case["expected_failures"]), "expect_mentions": json.dumps(case["expect_mentions"]),
         "rules": json.dumps(result.get("rules") or []), "review": result.get("review") or "",
         "agent": json.dumps(result.get("agent")), "sandbox": result.get("sandbox") or "",
-        "_run": run, "_status": state,
+        "_run": review_id, "_status": state,
     }
 
 
@@ -243,23 +247,40 @@ def foundry_evaluation(items: list[dict], show_url: bool) -> str | None:
         name=EVAL_NAME, data_source_config={"type": "custom", "item_schema": ITEM_SCHEMA, "include_sample_schema": False},
         testing_criteria=criteria)
     versions = sorted({m.group(1) for i in items for m in [re.search(r"`requesthub-pr-reviewer` v(\d+)", i["review"])] if m})
-    run = client.evals.runs.create(
-        eval_id=evaluation.id,
-        name=f"{len(items)} labelled pull request{'s' if len(items) != 1 else ''} · agent v{', v'.join(versions) or '?'} · "
-             f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC",
-        data_source={"type": "jsonl", "source": {"type": "file_content", "content": [
-            {"item": {k: v for k, v in item.items() if not k.startswith("_")}} for item in items]}})
-    print(f"  Foundry evaluation run started: {run.name}")
-    while run.status not in ("completed", "failed", "canceled"):
-        time.sleep(10)
-        run = client.evals.runs.retrieve(run_id=run.id, eval_id=evaluation.id)
-    print(f"  Foundry evaluation run {run.status}.")
-    for result in run.per_testing_criteria_results or []:
-        print(f"    {result.testing_criteria:<40} passed {result.passed}, failed {result.failed}")
+    content = [{"item": {k: v for k, v in item.items() if not k.startswith("_")}} for item in items]
+    for attempt in (1, 2):
+        run = client.evals.runs.create(
+            eval_id=evaluation.id,
+            name=f"{len(items)} labelled pull request{'s' if len(items) != 1 else ''} · agent v{', v'.join(versions) or '?'} · "
+                 f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC",
+            data_source={"type": "jsonl", "source": {"type": "file_content", "content": content}})
+        print(f"  Foundry evaluation run started: {run.name}")
+        while run.status not in ("completed", "failed", "canceled"):
+            time.sleep(10)
+            run = client.evals.runs.retrieve(run_id=run.id, eval_id=evaluation.id)
+        print(f"  Foundry evaluation run {run.status}.")
+        for result in run.per_testing_criteria_results or []:
+            print(f"    {result.testing_criteria:<40} passed {result.passed}, failed {result.failed}")
+        problem = foundry_verdict(run, items)
+        if attempt == 2 or not grade_again(problem):
+            break
+        print(f"  {problem}. Grading the same results in Foundry once more.")
     if show_url and run.report_url:
         print(f"  Report: {run.report_url}")
     else:
         print(f"  See it in the Foundry portal: your project > Evaluation > \"{EVAL_NAME}\".")
+    return problem
+
+
+def grade_again(problem: str | None) -> bool:
+    """Foundry's code-based evaluators sometimes fail every item of one check ("An error occurred during grading"),
+    a different check each time. Such a run is graded once more; a run that disagrees with the local scores isn't."""
+    return bool(problem) and problem.startswith("COULD NOT GRADE")
+
+
+def foundry_verdict(run, items: list[dict]) -> str | None:
+    """None when a finished Foundry run graded every item with every check and agrees with the local scores,
+    otherwise why it can't be trusted."""
     counts = run.result_counts
     if run.status != "completed":
         return f"the run ended {run.status}"
@@ -267,6 +288,12 @@ def foundry_evaluation(items: list[dict], show_url: bool) -> str | None:
         return f"it returned {getattr(counts, 'total', 0)} results for {len(items)} pull requests"
     if counts.errored:
         return f"COULD NOT GRADE {counts.errored} of {len(items)} items"
+    # An item can count as passed while one of its checks errored ("An error occurred during grading"): that check
+    # then neither passes nor fails it. Every check must have graded every item.
+    graded = {r.testing_criteria: (r.passed or 0) + (r.failed or 0) for r in run.per_testing_criteria_results or []}
+    short = [f"{name} on {graded.get(name, 0)} of {len(items)}" for name in GRADERS if graded.get(name, 0) != len(items)]
+    if short:
+        return f"COULD NOT GRADE: Foundry graded {', '.join(short)} items"
     local = {n: sum(1 for i in items if (i["_scores"][n] or 0) >= 1) for n in GRADERS}
     foundry = {r.testing_criteria: r.passed for r in run.per_testing_criteria_results or []}
     if any(foundry.get(n) != local[n] for n in GRADERS):
@@ -293,9 +320,9 @@ def main(argv: list[str] | None = None) -> int:
         items = [stored.get(c["pr"]) or missing_result(c, "no stored result") for c in cases]
     else:
         print(f"Dry-running the reviewer on {len(cases)} labelled pull requests, {args.parallel} at a time:")
-        arm = Arm(DefaultAzureCredential())
+        reviewer = Reviewer(DefaultAzureCredential())
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.parallel)) as pool:
-            items = list(pool.map(lambda case: review_case(arm, case), cases))
+            items = list(pool.map(lambda case: review_case(reviewer, case), cases))
         results.write_text("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items), encoding="utf-8")
     if not cases or len(items) != len(cases):
         print(f"error: {len(items)} results for {len(cases)} labelled pull requests", file=sys.stderr)
@@ -313,8 +340,8 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # preview service: keep the local scores, explain, and fail clearly
             problem = f"it didn't run ({type(exc).__name__}: {str(exc)[:300]})"
         if problem:
-            print(f"error: the Foundry evaluation can't be trusted: {problem}. The local scores above stand; "
-                  "run with --local to skip Foundry.", file=sys.stderr)
+            print(f"error: the Foundry evaluation can't be trusted: {problem}. The local scores above stand; run with "
+                  "--reuse to grade the same results in Foundry again, or --local to skip Foundry.", file=sys.stderr)
             return 2
     return 0 if all(s is not None and s >= 1 for i in items for s in i["_scores"].values()) else 1
 
