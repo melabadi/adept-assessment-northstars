@@ -255,7 +255,7 @@ def init(args) -> None:
 
 
 OCR_SCRIPT = r"""
-param([string[]]$Paths)
+param([string]$ListFile)
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
@@ -264,15 +264,21 @@ $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics, ContentType =
 $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
 function Await($op, [Type]$type) { $task = $asTask.MakeGenericMethod($type).Invoke($null, @($op)); $null = $task.Wait(-1); $task.Result }
 $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-foreach ($p in $Paths) {
-  "=== $p"
-  $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($p)) ([Windows.Storage.StorageFile])
-  $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
-  $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
-  $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
-  $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-  $result.Lines | ForEach-Object { $_.Text }
-  $stream.Dispose()
+foreach ($p in (Get-Content -LiteralPath $ListFile -Encoding UTF8 | Where-Object { $_ })) {
+  $stream = $null
+  try {
+    $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($p)) ([Windows.Storage.StorageFile])
+    $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+    $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+    $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+    "=== $p"
+    $result.Lines | ForEach-Object { $_.Text }
+  } catch {
+    "!!! $p"
+  } finally {
+    if ($stream) { $stream.Dispose() }
+  }
 }
 """
 
@@ -307,14 +313,25 @@ def ocr(images: list[Path]) -> dict[Path, str]:
         Path(script).write_text(OCR_SCRIPT, encoding="utf-8-sig")
         for start in range(0, len(tiles), 40):
             batch = tiles[start:start + 40]
-            out = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-Paths",
-                                  *[t[1] for t in batch]], capture_output=True, text=True, encoding="utf-8")
+            # `powershell -File` binds only the first of several values to a [string[]] parameter, so the tile paths
+            # go through a list file.
+            listing = os.path.join(tmp, f"tiles-{start}.txt")
+            Path(listing).write_text("\n".join(t[1] for t in batch), encoding="utf-8")
+            out = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script,
+                                  "-ListFile", listing], capture_output=True, text=True, encoding="utf-8")
             if out.returncode != 0:
                 sys.exit("OCR failed: " + out.stderr.strip()[:300])
             current = None
             names = {t[1]: t[0] for t in batch}
+            read = {line[4:].strip() for line in out.stdout.splitlines() if line.startswith("=== ")}
+            unread = set(names) - read
+            if unread:
+                sys.exit(f"OCR failed: no text read from {len(unread)} of {len(names)} image tiles, in: "
+                         + ", ".join(sorted({str(names[n]) for n in unread})[:5]))
             for line in out.stdout.splitlines():
-                if line.startswith("=== "):
+                if line.startswith("!!! "):
+                    current = None
+                elif line.startswith("=== "):
                     current = names.get(line[4:].strip())
                 elif current is not None:
                     texts[current] = texts.get(current, "") + line + "\n"
