@@ -15,7 +15,7 @@ when any check fails. It changes nothing.
   Identity    the release identity holds what a release needs and no more: Container Apps Contributor and Container
               Apps Jobs Reader on the resource group, and AcrPull on the registry
   Trigger     the Logic App is enabled and may start the release job, and Event Grid delivers pushed builds to it
-  Build       the ACR task that builds main exists, and whether its commit trigger is on
+  Build       the ACR task that builds main exists, no pull request can start it, and whether its commit trigger is on
   Workbook    the release-records workbook exists
 
 Settings come from the options, then environment variables, then this solution's azd environment:
@@ -228,6 +228,13 @@ def check_build(s: dict) -> None:
         return
     task = json.loads(out)
     triggers = (task.get("trigger") or {}).get("sourceTriggers") or []
+    if any("pullrequest" in [e.lower() for e in t.get("sourceTriggerEvents") or []] for t in triggers):
+        report("FAIL", "Build", "build-api can be started by a pull request",
+               "A pull request, from a fork too, would build its own code and push it, and every push starts a release "
+               "into Azure. Keep only commits to main: define Update-BuildTask (README, Set up, step 3), then run "
+               "Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; "
+               "sourceTriggerEvents = @('commit') }) } }")
+        return
     enabled = any(t.get("status") == "Enabled" and "commit" in (t.get("sourceTriggerEvents") or []) for t in triggers)
     report("PASS" if enabled else "WARN", "Build",
            "build-api builds every commit to main" if enabled else "build-api exists; its commit trigger is off",
