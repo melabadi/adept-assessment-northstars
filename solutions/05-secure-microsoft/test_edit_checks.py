@@ -1,21 +1,26 @@
-"""Tests for the checks posture-intake applies to the remediation agent's proposal, run offline.
+"""Tests for the checks the posture Function applies to the remediation agent's proposal, run offline.
 
-remediation_agent.edit_problems mirrors the Logic App's Edit_problems (infra/logic/intake.json): both apply one exact
-replacement to infra/resources.bicep, then require everything outside the posture:editable markers to stay byte-identical
-and every line between them (split at LF and CR, as Bicep's lexer does) to be a // comment or exactly
-storagePrivateEndpoint: true or false. These cases include edits that a check on the agent's texts alone would let
-through.
+posture.checks.edit_problems (function/posture/checks.py) applies one exact replacement to infra/resources.bicep, then
+requires everything outside the posture:editable markers to stay byte-identical and every line between them (split at
+LF and CR, as Bicep's lexer does) to be a // comment or exactly storagePrivateEndpoint: true or false. The Function and
+`python remediation_agent.py try` both run this code. These cases include edits that a check on the agent's texts alone
+would let through.
 
   python -m unittest test_edit_checks.py      (from this folder; no Azure access needed)
 """
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
 
-import remediation_agent as ra
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE / "function"))
 
-CONTENT = (Path(__file__).resolve().parent / "infra" / "resources.bicep").read_text(encoding="utf-8")
+from posture import checks  # noqa: E402
+
+EDITABLE = "solutions/05-secure-microsoft/infra/resources.bicep"
+CONTENT = (HERE / "infra" / "resources.bicep").read_text(encoding="utf-8")
 SETTING = "storagePrivateEndpoint: false"
 INSIDE = CONTENT[CONTENT.index("    // Without a private endpoint"):CONTENT.index(SETTING) + len(SETTING)]
 BEGIN_LINE = CONTENT[CONTENT.index("    // posture:editable-begin"):CONTENT.index("\n", CONTENT.index("// posture:editable-begin")) + 1]
@@ -23,7 +28,8 @@ GOOD = "    // Reach Blob storage through a private endpoint in the app's virtua
 
 
 def problems(find: str, replace: str) -> list[str]:
-    return ra.edit_problems(CONTENT, {"decision": "change", "path": ra.EDITABLE, "find": find, "replace": replace})
+    return checks.edit_problems(CONTENT, {"decision": "change", "path": EDITABLE, "find": find, "replace": replace},
+                                EDITABLE)
 
 
 class Accepted(unittest.TestCase):
@@ -98,8 +104,8 @@ class Rejected(unittest.TestCase):
         self.assertRejected(": false", ": true", "exactly once in the file")
 
     def test_other_file(self):
-        found = ra.edit_problems(CONTENT, {"decision": "change", "path": "app/infra/requesthub.bicep", "find": INSIDE,
-                                           "replace": GOOD})
+        found = checks.edit_problems(CONTENT, {"decision": "change", "path": "app/infra/requesthub.bicep", "find": INSIDE,
+                                               "replace": GOOD}, EDITABLE)
         self.assertTrue(any("other than" in p for p in found), found)
 
 

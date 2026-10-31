@@ -3,14 +3,15 @@
   python remediation_agent.py publish        (azd postprovision hook)
       Creates a new version of the prompt agent posture-remediator in this solution's Foundry project when its definition
       changed: the instructions in posture-remediator.md, the model deployment, the reasoning effort, or the output schema.
-      The Logic App posture-intake calls the latest version.
+      The Azure Function intake calls the latest version.
 
   python remediation_agent.py try
-      Sends the agent the input posture-intake sends: the live finding (Defender for Cloud and Azure Policy, read with the
-      Azure CLI), this checkout's infra/resources.bicep as the editable file, and app/infra/requesthub.bicep as a read-only
-      module. It calls the REST endpoint the Logic App calls, checks the proposal the way the Logic App does (one edit of
-      at most 2,000 characters to text that occurs exactly once, inside the lines marked posture:editable, naming no
-      protected setting), and prints it as a diff. Nothing is changed.
+      Sends the agent the document the Function intake sends: the live finding (Defender for Cloud, Azure Policy, and the
+      storage account, read from Azure Resource Manager with the Azure CLI), this checkout's infra/resources.bicep as the
+      editable file, and app/infra/requesthub.bicep as a read-only module. It calls the REST endpoint the Function calls,
+      checks the proposal with the Function's own code (function/posture/checks.py: one edit of at most 2,000 characters
+      to text that occurs exactly once, inside the lines marked posture:editable, naming no protected setting), and
+      prints it as a diff. Nothing is changed.
 
 Settings come from environment variables or this solution's azd environment: FOUNDRY_PROJECT_ENDPOINT,
 FOUNDRY_MODEL_DEPLOYMENT, REMEDIATION_AGENT_NAME, AZURE_RESOURCE_GROUP, and STORAGE_ACCOUNT_NAME.
@@ -32,20 +33,13 @@ import urllib.request
 
 from azd_env import REPO, SOLUTION, setting, utf8_stdout
 
+sys.path.insert(0, str(SOLUTION / "function"))
+from posture import checks, messages  # noqa: E402  (the Function's own checks and the document it sends)
+
 INSTRUCTIONS = SOLUTION / "posture-remediator.md"
 EDITABLE = "solutions/05-secure-microsoft/infra/resources.bicep"
 READ_ONLY = ["app/infra/requesthub.bicep"]
 REASONING_EFFORT = "low"
-# The checks posture-intake applies to a proposal before it opens a pull request (infra/logic/intake.json, Edit_problems).
-# Logic Apps' indexOf ignores case, so the region and uniqueness checks do too; its equals and replace do not. The guard
-# is the result: everything outside the editable region stays byte-identical, and between the markers the edited file
-# holds only // comments and one ALLOWED_LINES line, with lines split at LF and CR as Bicep's lexer splits them. The
-# protected names are a second check on the agent's texts.
-REGION = ("// posture:editable-begin", "// posture:editable-end")
-ALLOWED_LINES = ("storageprivateendpoint: true", "storageprivateendpoint: false")
-PROTECTED = ("automationRoleDefinitionIds", "automationAppRoleNames", "automationCanPushImages",
-             "storageAllowSharedKeyAccess", "storagePrivateLinkPolicy", "effect:", "Microsoft.Authorization")
-MAX_TEXT = 2000
 # The Defender for Cloud recommendation and the built-in policy the agent is asked about (see infra/automation.bicep).
 ASSESSMENT = "cdc78c07-02b0-4af0-1cb2-cb7c672a8b0a"
 POLICY_DEFINITION = "6edd7eda-6dd8-40f7-810d-67160c639cd9"
@@ -105,101 +99,37 @@ def publish() -> int:
     created = project.agents.create_version(
         agent_name=name,
         definition=definition,
-        description="Drafts the smallest Bicep fix for a cloud posture finding; posture-intake opens it as a pull request.",
+        description="Drafts the smallest Bicep fix for a cloud posture finding; the Function intake opens it as a pull request.",
         metadata={"definitionHash": digest, "source": "solutions/05-secure-microsoft/posture-remediator.md"},
     )
     print(f"Foundry agent {name}: published version {created.version}.")
     return 0
 
 
-def assignment_label(state: dict, resource_group_id: str) -> str:
-    """How posture-intake and posture-verify name a policy assignment (Policy_rows and Policy_summary in infra/logic).
-
-    Only assignments in this solution's resource group, or below it, are named. One inherited from a management group or
-    the subscription belongs to the tenant's governance, so it appears only as the kind of scope it comes from.
-    """
-    scope = (state.get("policyAssignmentScope") or "").lower()
-    if (scope + "/").startswith(resource_group_id.lower() + "/"):
-        return state.get("policyAssignmentName") or ""
-    return "management group assignment" if "/managementgroups/" in scope else "subscription assignment"
+def arm(method: str, path: str, query: dict) -> dict:
+    """One Azure Resource Manager call with the Azure CLI's sign-in: the same request the Function makes. The query goes
+    in --url-parameters, because on Windows `az` is a batch file and cmd.exe would split a URL at its `&`."""
+    return az_json("rest", "--method", method, "--url", f"https://management.azure.com{path}",
+                   "--url-parameters", *[f"{key}={value}" for key, value in query.items()]) or {}
 
 
-def live_finding(resource_group: str, account: str) -> tuple[dict, str]:
-    """The finding as posture-intake builds it, read from Azure with the CLI, and the storage account's id."""
-    storage = az_json("storage", "account", "show", "--resource-group", resource_group, "--name", account)
-    query = (f"securityresources | where type == 'microsoft.security/assessments' and name == '{ASSESSMENT}' "
-             f"and tolower(tostring(properties.resourceDetails.Id)) == '{storage['id'].lower()}' | project properties")
-    rows = (az_json("graph", "query", "-q", query) or {}).get("data") or [{}]
-    defender = rows[0].get("properties") or {}
-    policy = az_json("policy", "state", "list", "--resource", storage["id"],
-                     "--filter", f"policyDefinitionName eq '{POLICY_DEFINITION}'") or []
-    approved = [c for c in storage.get("privateEndpointConnections") or []
-                if (c.get("privateLinkServiceConnectionState") or {}).get("status") == "Approved"]
-    finding = {
-        "recommendation": defender.get("displayName", "Storage account should use a private link connection"),
-        "severity": (defender.get("metadata") or {}).get("severity", ""),
-        "description": (defender.get("metadata") or {}).get("description", ""),
-        "remediation": (defender.get("metadata") or {}).get("remediationDescription", ""),
-        "resourceType": "Microsoft.Storage/storageAccounts",
-        "resourceGroup": resource_group,
-        "azurePolicy": [{"assignment": assignment_label(s, storage["id"].split("/providers/")[0]),
-                         "state": s.get("complianceState")} for s in policy],
-        "liveConfiguration": {"approvedPrivateEndpoints": len(approved),
-                              "publicNetworkAccess": storage.get("publicNetworkAccess")},
-    }
-    return finding, storage["id"]
-
-
-def region(text: str) -> dict[str, int]:
-    """Where the editable region is: its begin marker, the start of the line after it, and the end marker."""
-    lower = text.lower()
-    begin = lower.find(REGION[0].lower())
-    anchor = max(begin, 0)
-    return {"begin": begin, "beginLast": lower.rfind(REGION[0].lower()),
-            "start": anchor + lower[anchor:].find("\n") + 1,
-            "end": lower.find(REGION[1].lower()), "endLast": lower.rfind(REGION[1].lower())}
-
-
-def edit_problems(content: str, proposal: dict) -> list[str]:
-    """Why posture-intake would refuse to apply this proposal to `content`; an empty list means it would apply it."""
-    find, replace = proposal.get("find") or "", proposal.get("replace") or ""
-    lower, needle = content.lower(), find.lower()
-    position = lower.find(needle) if find else -1
-    before = region(content)
-    result = content.replace(find, replace) if find else content
-    after = region(result)
-    code = [line.strip() for line in result[after["start"]:max(after["end"], 0)].replace("\r", "\n").split("\n")
-            if line.strip() and not line.strip().startswith("//")]
-    problems = []
-    if proposal.get("path") != EDITABLE:
-        problems.append("it targets a file other than the solution's own Bicep file")
-    if not find or find not in content or position != lower.rfind(needle):
-        problems.append("its search text does not occur exactly once in the file")
-    if not replace.strip():
-        problems.append("its replacement is empty")
-    if "\r" in replace:
-        # Bicep ends a line, and a // comment, at a bare carriage return.
-        problems.append("its replacement contains a carriage return, which Bicep reads as a line break")
-    if find == replace:
-        problems.append("it changes nothing")
-    if len(find) > MAX_TEXT or len(replace) > MAX_TEXT:
-        problems.append(f"its search or replacement text is longer than {MAX_TEXT:,} characters")
-    if not (before["begin"] >= 0 and before["start"] > before["begin"] and before["end"] > before["start"]
-            and content[:before["start"]] == result[:after["start"]]
-            and content[max(before["end"], 0):] == result[max(after["end"], 0):]):
-        problems.append("it changes text outside the lines between the posture:editable markers")
-    if not (after["begin"] >= 0 and after["begin"] == after["beginLast"] and after["start"] > after["begin"]
-            and after["end"] > after["start"] and after["end"] == after["endLast"]):
-        problems.append("the result does not keep exactly one pair of posture:editable markers")
-    if any(line.lower() not in ALLOWED_LINES for line in code):
-        problems.append("between the markers, the result has a line that is neither a // comment nor "
-                        "storagePrivateEndpoint: true or false")
-    if len(code) != 1:
-        problems.append("between the markers, the result must set storagePrivateEndpoint exactly once")
-    if any(name.lower() in f"{find}\n{replace}".lower() for name in PROTECTED):
-        problems.append("its text names a protected setting (roles, app roles, registry push, shared key access, or the "
-                        "policy assignment or its effect)")
-    return problems
+def live_document(resource_group: str, account: str, editable: str) -> dict:
+    """The document the Function intake sends the agent, built by the Function's own code from the live finding."""
+    storage_id = az_json("storage", "account", "show", "--resource-group", resource_group, "--name", account,
+                         "--query", "id")
+    resource_group_id = storage_id.split("/providers/")[0]
+    storage = arm("get", storage_id, {"api-version": "2023-05-01"})
+    try:
+        assessment = arm("get", f"{storage_id}/providers/Microsoft.Security/assessments/{ASSESSMENT}",
+                         {"api-version": "2021-06-01", "$expand": "metadata"})
+    except SystemExit:  # Defender for Cloud has not assessed the account yet
+        assessment = {}
+    states = arm("post", f"{resource_group_id}/providers/Microsoft.PolicyInsights/policyStates/latest/queryResults",
+                 {"api-version": "2019-10-01",
+                  "$filter": f"resourceId eq '{storage_id}' and policyDefinitionName eq '{POLICY_DEFINITION}'"})
+    read_only = [(path, (REPO / path).read_text(encoding="utf-8")) for path in READ_ONLY]
+    return messages.agent_document(assessment, storage, states.get("value") or [], resource_group, resource_group_id,
+                                   (EDITABLE, editable), read_only)
 
 
 def try_agent() -> int:
@@ -207,15 +137,10 @@ def try_agent() -> int:
 
     endpoint = setting("FOUNDRY_PROJECT_ENDPOINT")
     name = setting("REMEDIATION_AGENT_NAME", "posture-remediator")
-    finding, _ = live_finding(setting("AZURE_RESOURCE_GROUP"), setting("STORAGE_ACCOUNT_NAME"))
     editable = (REPO / EDITABLE).read_text(encoding="utf-8")
-    document = {
-        "finding": finding,
-        "editableFile": {"path": EDITABLE, "content": editable},
-        "readOnlyFiles": [{"path": p, "content": (REPO / p).read_text(encoding="utf-8")} for p in READ_ONLY],
-    }
+    document = live_document(setting("AZURE_RESOURCE_GROUP"), setting("STORAGE_ACCOUNT_NAME"), editable)
     token = DefaultAzureCredential().get_token("https://ai.azure.com/.default").token
-    # The same request the Logic App sends: the Responses API of the project, with a reference to the agent.
+    # The same request the Function sends: the Responses API of the project, with a reference to the agent.
     request = urllib.request.Request(
         f"{endpoint}/openai/v1/responses",
         data=json.dumps({"agent_reference": {"name": name, "type": "agent_reference"},
@@ -234,8 +159,10 @@ def try_agent() -> int:
     print(f"agent {name} answered in {seconds:.0f} s ({usage.get('input_tokens', '?')} input and "
           f"{usage.get('output_tokens', '?')} output tokens): decision {proposal['decision']}")
 
-    problems = [] if proposal["decision"] == "change" else ["the agent found no safe change"]
-    problems += edit_problems(editable, proposal)
+    if proposal["decision"] == "change":
+        problems = checks.edit_problems(editable, proposal, EDITABLE)
+    else:
+        problems = ["the agent found no safe change"]
     print(f"\ntitle: {proposal['title']}\n\n{proposal['summary']}\n")
     print("expected changes:\n" + "\n".join(f"  - {c}" for c in proposal["expectedChanges"]))
     print(f"risks: {proposal['risks']}\n")
@@ -243,9 +170,9 @@ def try_agent() -> int:
         fixed = editable.replace(proposal["find"], proposal["replace"])
         sys.stdout.writelines(difflib.unified_diff(editable.splitlines(True), fixed.splitlines(True),
                                                    f"a/{EDITABLE}", f"b/{EDITABLE}"))
-        print("\nOK: posture-intake would apply this change and open it as a draft pull request.")
+        print("\nOK: the Function intake would apply this change and open it as a draft pull request.")
         return 0
-    print("REJECTED: posture-intake would not apply it: " + "; ".join(problems) + ".")
+    print("REJECTED: the Function intake would not apply it: " + "; ".join(problems) + ".")
     return 1
 
 

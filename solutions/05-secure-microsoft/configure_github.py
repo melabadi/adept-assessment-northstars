@@ -1,13 +1,15 @@
 """Connect this solution's Azure automation to its GitHub repository. azd runs it as hooks; you rarely call it yourself.
 
   python configure_github.py prepare    (azd preprovision hook)
-      Finds the GitHub repository (`gh repo view`) and stores it in the azd environment as GITHUB_REPOSITORY, so the Logic
-      Apps and the what-if job know where to file Issues and pull requests. Warns when POSTURE_GITHUB_TOKEN is not set.
+      Finds the GitHub repository (`gh repo view`) and stores it in the azd environment as GITHUB_REPOSITORY, so the
+      Function app and the what-if job know where to file Issues and pull requests. Generates POSTURE_WEBHOOK_SECRET once,
+      the secret GitHub signs the webhook's deliveries with (Key Vault gets it at provision). Warns when
+      POSTURE_GITHUB_TOKEN is not set.
 
   python configure_github.py publish    (azd postprovision hook)
-      Creates or updates one repository webhook that sends pull_request events to the Logic App posture-preview, so a push
-      to a pull request that changes this solution's infra/ gets a new Azure what-if preview. The webhook's URL is the
-      Logic App's trigger URL, which carries a signature: it is read from Azure each time and never printed or saved.
+      Creates or updates one repository webhook that sends pull_request events, signed with that secret, to the Function's
+      preview route, so a push to a pull request that changes this solution's infra/ gets a new Azure what-if preview.
+      The secret goes to `gh` on standard input; the URL and the secret are never printed.
 
   python configure_github.py remove     (azd predown hook)
       Deletes that webhook.
@@ -20,18 +22,19 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
 from urllib.parse import urlsplit
 
-TRIGGER = "Pull_request_event"
+ROUTE = "/api/preview"
 
 
 def run(*args: str, stdin: str | None = None) -> str:
     proc = subprocess.run(args, input=stdin, capture_output=True, text=True)
     if proc.returncode != 0:
-        # Never echo the command line: for webhooks it can contain the trigger URL.
+        # Never echo the command line or the input: they can contain the webhook secret.
         raise SystemExit(f"error: {' '.join(args[:3])} failed: {(proc.stderr or proc.stdout).strip()[:400]}")
     return proc.stdout.strip()
 
@@ -45,22 +48,22 @@ def prepare() -> None:
     repo = values.get("GITHUB_REPOSITORY") or run("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner")
     run("azd", "env", "set", "GITHUB_REPOSITORY", repo)
     print(f"GitHub repository: {repo}")
+    if not values.get("POSTURE_WEBHOOK_SECRET"):
+        run("azd", "env", "set", "POSTURE_WEBHOOK_SECRET", secrets.token_hex(32))
+        print("Generated the webhook secret (POSTURE_WEBHOOK_SECRET in the azd environment).")
     if not values.get("POSTURE_GITHUB_TOKEN"):
-        print("warning: POSTURE_GITHUB_TOKEN is not set. The Logic Apps and the what-if job cannot reach GitHub until you "
+        print("warning: POSTURE_GITHUB_TOKEN is not set. The Function and the what-if job cannot reach GitHub until you "
               "create the fine-grained token (see the README, Set up) and run `azd provision` again.")
 
 
-def trigger_url(values: dict[str, str]) -> str:
-    az = shutil.which("az") or "az"
-    workflow = values.get("PREVIEW_WORKFLOW_NAME", "posture-preview")
-    subscription = values.get("AZURE_SUBSCRIPTION_ID") or run(az, "account", "show", "--query", "id", "-o", "tsv")
-    url = (f"https://management.azure.com/subscriptions/{subscription}/resourceGroups/{values['AZURE_RESOURCE_GROUP']}"
-           f"/providers/Microsoft.Logic/workflows/{workflow}/triggers/{TRIGGER}/listCallbackUrl?api-version=2019-05-01")
-    return run(az, "rest", "--method", "post", "--url", url, "--query", "value", "-o", "tsv")
+def webhook_url(values: dict[str, str]) -> str:
+    host = values.get("POSTURE_FUNCTION_HOST")
+    if not host:
+        raise SystemExit("error: POSTURE_FUNCTION_HOST is not set. Did `azd provision` succeed?")
+    return f"https://{host}{ROUTE}"
 
 
 def same_endpoint(a: str, b: str) -> bool:
-    """Two trigger URLs for the same Logic App trigger, whatever their signature."""
     left, right = urlsplit(a), urlsplit(b)
     return (left.hostname, left.path.rstrip("/")) == (right.hostname, right.path.rstrip("/"))
 
@@ -72,41 +75,35 @@ def existing_hook(repo: str, url: str) -> dict | None:
 
 def publish() -> None:
     values = azd_values()
-    repo = values.get("GITHUB_REPOSITORY")
-    if not repo or not values.get("AZURE_RESOURCE_GROUP"):
-        raise SystemExit("error: GITHUB_REPOSITORY or AZURE_RESOURCE_GROUP is not set. Did `azd provision` succeed?")
-    url = trigger_url(values)
-    config = {"url": url, "content_type": "json", "insecure_ssl": "0"}
+    repo, secret = values.get("GITHUB_REPOSITORY"), values.get("POSTURE_WEBHOOK_SECRET")
+    if not repo or not secret:
+        raise SystemExit("error: GITHUB_REPOSITORY or POSTURE_WEBHOOK_SECRET is not set. Run `azd provision` again.")
+    url = webhook_url(values)
+    config = {"url": url, "content_type": "json", "insecure_ssl": "0", "secret": secret}
     hook = existing_hook(repo, url)
     if hook:
         run("gh", "api", "-X", "PATCH", f"repos/{repo}/hooks/{hook['id']}", "--input", "-",
             stdin=json.dumps({"active": True, "events": ["pull_request"], "config": config}))
-        print(f"Webhook {hook['id']} in {repo}: pull_request events → Logic App posture-preview (updated).")
+        print(f"Webhook {hook['id']} in {repo}: pull_request events → the Function's preview route (updated).")
     else:
         created = json.loads(run("gh", "api", "-X", "POST", f"repos/{repo}/hooks", "--input", "-",
                                  stdin=json.dumps({"name": "web", "active": True, "events": ["pull_request"],
                                                    "config": config})))
-        print(f"Webhook {created['id']} in {repo}: pull_request events → Logic App posture-preview (created).")
+        print(f"Webhook {created['id']} in {repo}: pull_request events → the Function's preview route (created).")
 
 
 def remove() -> None:
     values = azd_values()
     repo = values.get("GITHUB_REPOSITORY")
-    if not repo or not values.get("AZURE_RESOURCE_GROUP"):
-        print("No GitHub repository or resource group in the azd environment: nothing to remove.")
+    if not repo or not values.get("POSTURE_FUNCTION_HOST"):
+        print("No GitHub repository or Function in the azd environment: nothing to remove.")
         return
-    try:
-        url = trigger_url(values)
-    except SystemExit:
-        print("The Logic App posture-preview no longer exists; delete the webhook by hand if it remains "
-              "(repository Settings > Webhooks).")
-        return
-    hook = existing_hook(repo, url)
+    hook = existing_hook(repo, webhook_url(values))
     if hook:
         run("gh", "api", "-X", "DELETE", f"repos/{repo}/hooks/{hook['id']}")
         print(f"Webhook {hook['id']} deleted from {repo}.")
     else:
-        print("No posture-preview webhook found: nothing to remove.")
+        print("No webhook for the Function's preview route: nothing to remove.")
 
 
 def main() -> int:

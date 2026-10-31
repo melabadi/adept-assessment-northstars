@@ -1,0 +1,5 @@
+# Python packages of the posture Function app (Flex Consumption, Python 3.12). Flex installs them with a remote build.
+# azure-functions 2.x needs Python 3.13; 1.25.0 is the newest release for 3.12.
+azure-functions==1.25.0
+azure-identity==1.26.0
+PyJWT[crypto]==2.15.1
