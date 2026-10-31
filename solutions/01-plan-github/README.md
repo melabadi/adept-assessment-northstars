@@ -31,6 +31,8 @@ flowchart LR
 - **GitHub Actions** runs [`plan-github-brief.yml`](.github/workflows/plan-github-brief.yml). It validates every change to the brief. After approval it publishes the Issues, using scripts from the base branch and only the data from the pull request.
 - **A person** approves the workflow runs on Copilot's pull requests, reviews the brief, owns the unresolved decisions, and applies the `brief-approved` label.
 
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. A fork's pull request that changes `brief/` gets the validation, with a read-only token and no secrets, once someone with write access approves the run. Publishing needs the `brief-approved` label, which only people with triage access can apply, and a fork's pull request never gets a token that can write, so nothing is published from it.
+
 ## What's in this folder
 
 ```text
