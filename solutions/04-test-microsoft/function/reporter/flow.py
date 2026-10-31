@@ -189,10 +189,8 @@ def _again(services, test_run_id: str, phase: str, checks: int, delay: int) -> N
 def _post(run: dict, verdict: str, markdown: str, github, settings: Settings) -> str:
     name = run.get("displayName") or run["testRunId"]
     issue = issues.choose(github.open_issues(issues.LABEL), settings.test_id)
-    earlier = []
-    if issue is not None:
-        comments = github.comments(issue["number"], since=run.get("startDateTime"))
-        earlier = [issue.get("body") or ""] + [comment.get("body") or "" for comment in comments]
+    comments = github.comments(issue["number"], since=run.get("startDateTime")) if issue is not None else []
+    earlier = issues.earlier_texts(issue, comments)
     action = issues.decide(run, verdict, markdown, issue, earlier, settings.test_id, settings.resource_group)
     if action.kind == "open":
         created = github.create_issue(action.title, action.body, [issues.LABEL])

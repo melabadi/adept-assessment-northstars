@@ -47,7 +47,7 @@ flowchart LR
 - **GitHub** holds the code, the pull requests that change the test, and the Issues. No workflow, Copilot agent, or skill is involved.
 - **People** decide what a failure means, check what the AI says against the evidence, and decide whether a release ships.
 
-**Outside contributions.** Nothing here listens to GitHub. Azure Load Testing's action group calls the function, which acts only on its own Issue: open, labeled `load-test` (a label only people with triage access can apply), and titled with the test's id. On a public repository, nobody outside it can start a test run or get a run reported, and the function never comments on or closes an Issue they open.
+**Outside contributions.** Nothing here listens to GitHub. Azure Load Testing's action group calls the function, which acts only on its own Issue: open, labeled `load-test` (a label only people with triage access can apply), titled with the test's id, and opened by the owner, a member, or a collaborator. It reads its hidden run markers only in that Issue's body and in comments from those people, so an outsider's comment can't make a run look already reported. On a public repository, nobody outside it can start a test run or get a run reported, nobody outside it can stop a report, and the function never comments on or closes an Issue they open. `test_reporter.py` covers these checks.
 
 ## What's in this folder
 
@@ -140,7 +140,7 @@ The function posts with a token that you create, for this repository only:
    azd provision
    ```
 
-`azd provision` writes the token into the solution's Key Vault as the secret `github-token`, through Azure Resource Manager. The vault has no public network access, no app setting or deployment output carries the token, and only the function's identity can read it, through the vault's private endpoint. Issues it opens show you as the author, and their text says that Azure wrote them. Until a token is set, the function still builds every report, and its log says *No GitHub token configured*. To replace the token, run the same two commands; the next report reads the new secret.
+`azd provision` writes the token into the solution's Key Vault as the secret `github-token`, through Azure Resource Manager. The vault has no public network access, no app setting or deployment output carries the token, and only the function's identity can read it, through the vault's private endpoint. Issues it opens show you as the author, and their text says that Azure wrote them. Use a person's token, as here, not a GitHub App's: the function trusts only Issues and comments from the owner, members, and collaborators, and GitHub reports a bot as none of them. Until a token is set, the function still builds every report, and its log says *No GitHub token configured*. To replace the token, run the same two commands; the next report reads the new secret.
 
 ## Before each session
 

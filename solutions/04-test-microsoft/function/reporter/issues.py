@@ -5,6 +5,10 @@ One Issue per test tracks a failing journey. Its title starts with `[load-test <
 the run started after the Issue opened and the report accepts the run (no injected delay, telemetry present);
 otherwise it says why the Issue stays open. A replayed or repeated delivery of a run changes nothing: every post ends
 with a hidden marker naming the run (by a short hash, never its id) and the verdict, and the function looks for it first.
+
+On a public repository anyone can open an Issue or comment, and run ids are easy to guess, so only the owner, members,
+and collaborators count: the function takes only an Issue they opened, and reads markers only in that Issue's body and
+in their comments. It posts with a person's token, so its own Issues and comments count.
 """
 from __future__ import annotations
 
@@ -15,6 +19,14 @@ from .report import parse_time
 
 LABEL = "load-test"
 TITLE = "[load-test {test_id}] RequestHub journey missed its performance criteria"
+# GitHub's author_association values for people the repository trusts. CONTRIBUTOR (someone whose pull request was
+# merged), FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, MANNEQUIN, and NONE (bots included) are outside contributors.
+TRUSTED_AUTHORS = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
+def trusted(item: dict | None) -> bool:
+    """Whether GitHub says this Issue or comment comes from the owner, a member, or a collaborator."""
+    return (item or {}).get("author_association") in TRUSTED_AUTHORS
 
 
 def title_prefix(test_id: str) -> str:
@@ -22,12 +34,22 @@ def title_prefix(test_id: str) -> str:
 
 
 def choose(issues: list[dict], test_id: str) -> dict | None:
-    """The open Issue for this test: the first whose title starts with the full prefix. Pull requests don't count."""
+    """The open Issue for this test: the first whose title starts with the full prefix, opened by the owner, a member,
+    or a collaborator. Pull requests don't count."""
     prefix = title_prefix(test_id)
     for issue in issues or []:
-        if issue.get("pull_request") is None and str(issue.get("title") or "").startswith(prefix):
+        if (issue.get("pull_request") is None and str(issue.get("title") or "").startswith(prefix)
+                and trusted(issue)):
             return issue
     return None
+
+
+def earlier_texts(issue: dict | None, comments: list[dict]) -> list[str]:
+    """Where the function looks for its markers: the open Issue's body and its comments since the run started, from
+    the owner, members, and collaborators only, so an outsider's comment can't make a run look reported."""
+    if issue is None or not trusted(issue):
+        return []
+    return [issue.get("body") or ""] + [comment.get("body") or "" for comment in comments or [] if trusted(comment)]
 
 
 def run_key(test_run_id: str) -> str:
