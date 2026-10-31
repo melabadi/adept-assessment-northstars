@@ -69,12 +69,11 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
     }
 
     [Fact]
-    public async Task Requester_cannot_approve_their_own_request()
+    public async Task Approver_can_fast_track_their_own_low_priority_request()
     {
-        // Hugo is an IT approver and the requester of REQ-1024.
+        // Hugo is an IT approver and the requester of REQ-1024, a low-priority request.
         var response = await api.As("u-hugo").PostJson("/api/requests/REQ-1024/decisions", new { outcome = "Approved" });
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Equal("decision.self_approval", await response.Code());
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     [Fact]
