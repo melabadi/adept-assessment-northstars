@@ -7,6 +7,7 @@
     "principalId": { "value": "${AZURE_PRINCIPAL_ID}" },
     "principalType": { "value": "${AZURE_PRINCIPAL_TYPE=User}" },
     "githubRepository": { "value": "${GITHUB_REPOSITORY=}" },
-    "postureGithubToken": { "value": "${POSTURE_GITHUB_TOKEN=}" }
+    "postureGithubToken": { "value": "${POSTURE_GITHUB_TOKEN=}" },
+    "postureWebhookSecret": { "value": "${POSTURE_WEBHOOK_SECRET=}" }
   }
 }

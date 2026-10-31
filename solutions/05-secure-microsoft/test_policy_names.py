@@ -1,45 +1,43 @@
 """Tests that what the automation posts names only this solution's policy assignments, run offline.
 
-The Issue (posture-intake), the agent's input (and so its pull request), and the evidence comment (posture-verify) list
-every policy assignment that evaluates the storage account. An assignment inherited from a management group or the
-subscription belongs to the tenant's governance: its name must not reach GitHub, so it appears only as the kind of scope
-it comes from. remediation_agent.assignment_label applies the rule in Python; these tests also pin the Logic Apps'
-expressions to the same rule, with the name only in the branch for this resource group.
+The Issue and the agent's input (and so its pull request), filed by the Function intake, and the evidence comment of the
+Function verify list every policy assignment that evaluates the storage account. An assignment inherited from a
+management group or the subscription belongs to the tenant's governance: its name must not reach GitHub, so it appears
+only as the kind of scope it comes from. function/posture/checks.py (assignment_label) applies the rule, and
+function/posture/messages.py builds every row and summary from it.
 
   python -m unittest test_policy_names.py      (from this folder; no Azure or GitHub access needed)
 """
 from __future__ import annotations
 
-import json
+import sys
 import unittest
 from pathlib import Path
 
-from remediation_agent import assignment_label
+sys.path.insert(0, str(Path(__file__).resolve().parent / "function"))
 
-LOGIC = Path(__file__).resolve().parent / "infra" / "logic"
+from posture import messages  # noqa: E402
+from posture.checks import assignment_label  # noqa: E402
+
 RG = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai-sdlc-secure"
-SCOPE = "toLower(coalesce(item()?['policyAssignmentScope'], ''))"
-IN_THIS_RESOURCE_GROUP = f"startsWith(concat({SCOPE}, '/'), concat(toLower(parameters('resourceGroupId')), '/'))"
-NAME_OR_SCOPE = (f"if({IN_THIS_RESOURCE_GROUP}, item()?['policyAssignmentName'], if(contains({SCOPE}, '/managementgroups/'), "
-                 "'management group assignment', 'subscription assignment'))")
+MANAGEMENT_GROUP = "/providers/Microsoft.Management/managementGroups/contoso-root"
+SUBSCRIPTION = "/subscriptions/00000000-0000-0000-0000-000000000000"
 
 
 def label(scope: str | None, name: str = "some-assignment") -> str:
     return assignment_label({"policyAssignmentName": name, "policyAssignmentScope": scope}, RG)
 
 
-def find_action(actions: dict, name: str) -> dict | None:
-    for key, action in actions.items():
-        if key == name:
-            return action
-        for nested in (action.get("actions"), (action.get("else") or {}).get("actions"),
-                       *[(c or {}).get("actions") for c in (action.get("cases") or {}).values()]):
-            if isinstance(nested, dict) and (found := find_action(nested, name)) is not None:
-                return found
-    return None
+def state(name: str, scope: str, compliance: str = "NonCompliant") -> dict:
+    return {"policyAssignmentName": name, "policyAssignmentScope": scope, "complianceState": compliance,
+            "timestamp": "2026-10-30T19:12:00Z"}
 
 
-class Python(unittest.TestCase):
+STATES = [state("Org_Baseline", MANAGEMENT_GROUP), state("Sub_Baseline", SUBSCRIPTION),
+          state("requesthub-storage-private-link", RG)]
+
+
+class Rule(unittest.TestCase):
     def test_this_resource_group_is_named(self):
         self.assertEqual(label(RG, "requesthub-storage-private-link"), "requesthub-storage-private-link")
 
@@ -53,38 +51,41 @@ class Python(unittest.TestCase):
         self.assertEqual(label(RG + "2", "theirs"), "subscription assignment")
 
     def test_management_group_assignment_is_not_named(self):
-        scope = "/providers/Microsoft.Management/managementGroups/contoso-root"
-        self.assertEqual(label(scope, "Org_Baseline"), "management group assignment")
+        self.assertEqual(label(MANAGEMENT_GROUP, "Org_Baseline"), "management group assignment")
 
     def test_subscription_assignment_is_not_named(self):
-        self.assertEqual(label("/subscriptions/00000000-0000-0000-0000-000000000000", "Sub_Baseline"),
-                         "subscription assignment")
+        self.assertEqual(label(SUBSCRIPTION, "Sub_Baseline"), "subscription assignment")
 
     def test_missing_scope_is_not_named(self):
         self.assertEqual(label(None, "Unknown"), "subscription assignment")
 
 
-class LogicApps(unittest.TestCase):
-    def expression(self, workflow: str, action: str, field: str | None = None) -> str:
-        template = json.loads((LOGIC / workflow).read_text(encoding="utf-8"))
-        definition = template["resources"][0]["properties"]["definition"]
-        select = find_action(definition["actions"], action)["inputs"]["select"]
-        return select[field] if field else select
+class Posted(unittest.TestCase):
+    """Everything built from the Policy states: the Issue, the agent's input, and the evidence."""
 
-    def assertNamesOnlyThisResourceGroup(self, expression: str):
-        self.assertIn(NAME_OR_SCOPE, expression)
-        self.assertEqual(expression.count("policyAssignmentName"), 1, "the name appears outside the resource group check")
+    def assertOnlyOurs(self, text: str):
+        self.assertIn("requesthub-storage-private-link", text)
+        self.assertNotIn("Org_Baseline", text)
+        self.assertNotIn("Sub_Baseline", text)
 
-    def test_issue_rows(self):
-        rows = self.expression("intake.json", "Policy_rows")
-        self.assertNamesOnlyThisResourceGroup(rows)
-        self.assertIn(f"if({IN_THIS_RESOURCE_GROUP}, 'this resource group', 'inherited')", rows)
+    def test_rows(self):
+        rows = messages.policy_rows(STATES, RG)
+        self.assertEqual(rows[0], "| Azure Policy · `management group assignment` (inherited) | NonCompliant ❌ | "
+                                  "evaluated 2026-10-30 19:12 UTC |")
+        self.assertIn("`subscription assignment` (inherited)", rows[1])
+        self.assertIn("`requesthub-storage-private-link` (this resource group)", rows[2])
+        self.assertOnlyOurs("\n".join(rows))
 
     def test_agent_input(self):
-        self.assertNamesOnlyThisResourceGroup(self.expression("intake.json", "Policy_summary", "assignment"))
+        summary = messages.policy_summary(STATES, RG)
+        self.assertEqual([s["assignment"] for s in summary],
+                         ["management group assignment", "subscription assignment", "requesthub-storage-private-link"])
 
-    def test_evidence_rows_match_the_issue(self):
-        self.assertEqual(self.expression("verify.json", "Policy_rows"), self.expression("intake.json", "Policy_rows"))
+    def test_issue_and_evidence(self):
+        storage = {"properties": {"publicNetworkAccess": "Disabled", "privateEndpointConnections": []}}
+        assessment = {"properties": {"status": {"code": "Unhealthy"}, "metadata": {"severity": "Medium"}}}
+        self.assertOnlyOurs(messages.issue_body("rg-ai-sdlc-secure", RG, assessment, storage, STATES, "m", "now"))
+        self.assertOnlyOurs(messages.evidence_comment("rg-ai-sdlc-secure", RG, storage, STATES, None, "now"))
 
 
 if __name__ == "__main__":

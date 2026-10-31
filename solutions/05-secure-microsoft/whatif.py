@@ -6,9 +6,9 @@ Two ways to run it
     python whatif.py
     python whatif.py --expect Microsoft.Storage/storageAccounts --expect "Microsoft.Network/private*"
   In Azure, for a pull request. The posture-whatif Container Apps job runs it for every open pull request that changes
-  solutions/05-secure-microsoft/infra/ (the Logic App posture-preview starts the job), when the pull request's branch
-  is in this repository and its author is the repository's owner, a member, or a collaborator. A fork's pull request,
-  or one opened by anyone else, is refused before anything is read from it or written to it:
+  solutions/05-secure-microsoft/infra/ (the posture Function app's preview function starts the job), when the pull
+  request's branch is in this repository and its author is the repository's owner, a member, or a collaborator. A fork's
+  pull request, or one opened by anyone else, is refused before anything is read from it or written to it:
     python whatif.py --pull-request 123
 
 What it does
@@ -622,8 +622,9 @@ def sign_in() -> None:
 def outside_pull_request(pull: dict, repository: str) -> str | None:
     """Why a pull request must not reach Azure, or None. Its branch must be in this repository (only people with write
     access push there), and its author must be the repository's owner, a member, or a collaborator: on a public
-    repository anyone can open a pull request, from a fork or from one of this repository's branches. posture-preview
-    checks the same before it starts this job; this check holds when someone starts the job by hand."""
+    repository anyone can open a pull request, from a fork or from one of this repository's branches. The Function's
+    preview checks the same before it starts this job (function/posture/checks.py); this check holds when someone starts
+    the job by hand."""
     head = (((pull.get("head") or {}).get("repo") or {}).get("full_name") or "").lower()
     if not head or head != repository.lower():
         return "its branch is in a fork"

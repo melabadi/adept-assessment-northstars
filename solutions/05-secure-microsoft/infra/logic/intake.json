@@ -2,47 +2,19 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "description": "posture-intake: runs when a person selects Trigger logic app on the Defender for Cloud recommendation, or when workflow automation reports the recommendation Healthy, one run at a time. It takes only the storage account and the recommendation's name from the event and reads the recommendation's status and text from Azure, re-reading for up to 10 minutes when the event reports Healthy before Azure does. Unhealthy, with no approved private endpoint yet: files one GitHub Issue with each source's evidence, asks the Foundry agent posture-remediator for the smallest Bicep fix, checks the edited file (between the posture:editable markers, only comments and storagePrivateEndpoint: true or false), opens it as a draft pull request, and starts the what-if preview. Healthy: records Defender's confirmation on the Issue."
+    "description": "posture-intake: Defender for Cloud sends a recommendation only to a Logic App, so this one receives it, from Trigger logic app on the recommendation or from the workflow automation posture-defender-healthy, one run at a time. It keeps only the resource, the recommendation, its status, and the time, and sends them to the posture Function's intake route with its managed identity, which has no role anywhere. It has no other logic: the Function reads everything else from Azure and decides. When the Function answers 503 (not yet, or another intake is running), the retry policy sends it again every minute, up to 12 times."
   },
   "parameters": {
     "name": { "type": "string" },
     "location": { "type": "string" },
     "tags": { "type": "object" },
     "identityId": { "type": "string" },
-    "githubRepository": { "type": "string" },
-    "githubToken": { "type": "securestring" },
     "connectionId": { "type": "string" },
     "managedApiId": { "type": "string" },
-    "resourceGroupName": { "type": "string" },
+    "functionUrl": { "type": "string" },
+    "functionAudience": { "type": "string" },
     "resourceGroupId": { "type": "string" },
-    "storageAccountId": { "type": "string" },
-    "assessmentKey": { "type": "string" },
-    "policyDefinitionName": { "type": "string" },
-    "foundryProjectEndpoint": { "type": "string" },
-    "agentName": { "type": "string" },
-    "editablePath": { "type": "string" },
-    "modulePath": { "type": "string" },
-    "previewWorkflowId": { "type": "string" },
-    "marker": { "type": "string" }
-  },
-  "variables": {
-    "github": {
-      "Authorization": "Bearer @{parameters('githubToken')}",
-      "Accept": "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "posture-intake"
-    },
-    "arm": {
-      "type": "ManagedServiceIdentity",
-      "identity": "[parameters('identityId')]",
-      "audience": "https://management.azure.com/"
-    },
-    "foundry": {
-      "type": "ManagedServiceIdentity",
-      "identity": "[parameters('identityId')]",
-      "audience": "https://ai.azure.com"
-    },
-    "secure": { "secureData": { "properties": ["inputs"] } }
+    "assessmentKey": { "type": "string" }
   },
   "resources": [
     {
@@ -61,20 +33,7 @@
           "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
           "contentVersion": "1.0.0.0",
           "parameters": {
-            "$connections": { "type": "Object", "defaultValue": {} },
-            "githubToken": { "type": "securestring" },
-            "repository": { "type": "string" },
-            "resourceGroupName": { "type": "string" },
-            "resourceGroupId": { "type": "string" },
-            "storageAccountId": { "type": "string" },
-            "assessmentKey": { "type": "string" },
-            "policyDefinitionName": { "type": "string" },
-            "foundryProjectEndpoint": { "type": "string" },
-            "agentName": { "type": "string" },
-            "editablePath": { "type": "string" },
-            "modulePath": { "type": "string" },
-            "previewWorkflowId": { "type": "string" },
-            "marker": { "type": "string" }
+            "$connections": { "type": "Object", "defaultValue": {} }
           },
           "triggers": {
             "Defender_recommendation": {
@@ -88,588 +47,30 @@
             }
           },
           "actions": {
-            "Issue_number": {
-              "type": "InitializeVariable",
-              "inputs": { "variables": [ { "name": "issueNumber", "type": "integer", "value": 0 } ] },
+            "Keep_only_the_recommendation": {
+              "type": "Compose",
+              "inputs": {
+                "resourceId": "@coalesce(triggerBody()?['properties']?['resourceDetails']?['Id'], triggerBody()?['properties']?['resourceDetails']?['id'], '')",
+                "assessment": "@coalesce(triggerBody()?['name'], '')",
+                "status": "@coalesce(triggerBody()?['properties']?['status']?['code'], '')",
+                "triggeredAt": "@trigger()?['startTime']"
+              },
               "runAfter": {}
             },
-            "Resource_id": {
-              "type": "Compose",
-              "inputs": "@coalesce(triggerBody()?['properties']?['resourceDetails']?['Id'], triggerBody()?['properties']?['resourceDetails']?['id'], '')",
-              "runAfter": { "Issue_number": ["Succeeded"] }
-            },
-            "Is_this_solutions_control": {
-              "type": "If",
-              "expression": "@and(equals(toLower(outputs('Resource_id')), toLower(parameters('storageAccountId'))), equals(toLower(coalesce(triggerBody()?['name'], '')), toLower(parameters('assessmentKey'))))",
-              "runAfter": { "Resource_id": ["Succeeded"] },
-              "actions": {
-                "Read_assessment": {
-                  "type": "Until",
-                  "expression": "@or(not(equals(coalesce(triggerBody()?['properties']?['status']?['code'], ''), 'Healthy')), equals(coalesce(body('Get_assessment')?['properties']?['status']?['code'], ''), 'Healthy'))",
-                  "limit": { "count": 11, "timeout": "PT12M" },
-                  "actions": {
-                    "Get_assessment": {
-                      "type": "Http",
-                      "inputs": {
-                        "method": "GET",
-                        "uri": "https://management.azure.com@{parameters('storageAccountId')}/providers/Microsoft.Security/assessments/@{parameters('assessmentKey')}?api-version=2021-06-01&$expand=metadata",
-                        "authentication": "[variables('arm')]"
-                      },
-                      "runAfter": {}
-                    },
-                    "Healthy_not_visible_yet": {
-                      "type": "If",
-                      "expression": "@and(equals(coalesce(triggerBody()?['properties']?['status']?['code'], ''), 'Healthy'), not(equals(coalesce(body('Get_assessment')?['properties']?['status']?['code'], ''), 'Healthy')))",
-                      "runAfter": { "Get_assessment": ["Succeeded"] },
-                      "actions": {
-                        "Wait_a_minute": {
-                          "type": "Wait",
-                          "inputs": { "interval": { "count": 1, "unit": "Minute" } },
-                          "runAfter": {}
-                        }
-                      },
-                      "else": { "actions": {} }
-                    }
-                  },
-                  "runAfter": {}
+            "Send_it_to_the_posture_Function": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "[parameters('functionUrl')]",
+                "body": "@outputs('Keep_only_the_recommendation')",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "identity": "[parameters('identityId')]",
+                  "audience": "[parameters('functionAudience')]"
                 },
-                "Recommendation_status": {
-                  "type": "Switch",
-                  "expression": "@coalesce(body('Get_assessment')?['properties']?['status']?['code'], '')",
-                  "runAfter": { "Read_assessment": ["Succeeded", "TimedOut"] },
-                  "cases": {
-                    "Unhealthy": {
-                      "case": "Unhealthy",
-                      "actions": {
-                        "Get_storage_account": {
-                          "type": "Http",
-                          "inputs": {
-                            "method": "GET",
-                            "uri": "https://management.azure.com@{parameters('storageAccountId')}?api-version=2023-05-01",
-                            "authentication": "[variables('arm')]"
-                          },
-                          "runAfter": {}
-                        },
-                        "Approved_private_endpoints": {
-                          "type": "Query",
-                          "inputs": {
-                            "from": "@coalesce(body('Get_storage_account')?['properties']?['privateEndpointConnections'], json('[]'))",
-                            "where": "@equals(item()?['properties']?['privateLinkServiceConnectionState']?['status'], 'Approved')"
-                          },
-                          "runAfter": { "Get_storage_account": ["Succeeded"] }
-                        },
-                        "Fix_already_deployed": {
-                          "type": "If",
-                          "expression": "@greater(length(body('Approved_private_endpoints')), 0)",
-                          "runAfter": { "Approved_private_endpoints": ["Succeeded"] },
-                          "actions": {
-                            "Defender_lags_behind_the_fix": {
-                              "type": "Compose",
-                              "inputs": "The storage account already has an approved private endpoint: Defender for Cloud has not reassessed it since the fix. Nothing to file.",
-                              "runAfter": {}
-                            },
-                            "Stop": {
-                              "type": "Terminate",
-                              "inputs": { "runStatus": "Succeeded" },
-                              "runAfter": { "Defender_lags_behind_the_fix": ["Succeeded"] }
-                            }
-                          },
-                          "else": { "actions": {} }
-                        },
-                        "Get_policy_states": {
-                          "type": "Http",
-                          "inputs": {
-                            "method": "POST",
-                            "uri": "https://management.azure.com@{parameters('resourceGroupId')}/providers/Microsoft.PolicyInsights/policyStates/latest/queryResults?api-version=2019-10-01&$filter=@{encodeUriComponent(concat('resourceId eq ''', parameters('storageAccountId'), ''' and policyDefinitionName eq ''', parameters('policyDefinitionName'), ''''))}",
-                            "authentication": "[variables('arm')]"
-                          },
-                          "runAfter": {}
-                        },
-                        "Policy_rows": {
-                          "type": "Select",
-                          "inputs": {
-                            "from": "@body('Get_policy_states')?['value']",
-                            "select": "@concat('| Azure Policy · `', if(startsWith(concat(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/'), concat(toLower(parameters('resourceGroupId')), '/')), item()?['policyAssignmentName'], if(contains(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/managementgroups/'), 'management group assignment', 'subscription assignment')), '` (', if(startsWith(concat(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/'), concat(toLower(parameters('resourceGroupId')), '/')), 'this resource group', 'inherited'), ') | ', item()?['complianceState'], if(equals(item()?['complianceState'], 'Compliant'), ' ✅', ' ❌'), ' | evaluated ', formatDateTime(item()?['timestamp'], 'yyyy-MM-dd HH:mm'), ' UTC |')"
-                          },
-                          "runAfter": { "Get_policy_states": ["Succeeded"] }
-                        },
-                        "Policy_summary": {
-                          "type": "Select",
-                          "inputs": {
-                            "from": "@body('Get_policy_states')?['value']",
-                            "select": {
-                              "assignment": "@if(startsWith(concat(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/'), concat(toLower(parameters('resourceGroupId')), '/')), item()?['policyAssignmentName'], if(contains(toLower(coalesce(item()?['policyAssignmentScope'], '')), '/managementgroups/'), 'management group assignment', 'subscription assignment'))",
-                              "state": "@item()?['complianceState']"
-                            }
-                          },
-                          "runAfter": { "Get_policy_states": ["Succeeded"] }
-                        },
-                        "Find_open_issues": {
-                          "type": "Http",
-                          "inputs": {
-                            "method": "GET",
-                            "uri": "https://api.github.com/repos/@{parameters('repository')}/issues?labels=posture&state=open&per_page=50",
-                            "headers": "[variables('github')]"
-                          },
-                          "runtimeConfiguration": "[variables('secure')]",
-                          "runAfter": { "Fix_already_deployed": ["Succeeded"] }
-                        },
-                        "Open_issues_for_this_finding": {
-                          "type": "Query",
-                          "inputs": {
-                            "from": "@body('Find_open_issues')",
-                            "where": "@and(contains(coalesce(item()?['body'], ''), concat('<!-- ', parameters('marker'), ' -->')), equals(item()?['pull_request'], null))"
-                          },
-                          "runAfter": { "Find_open_issues": ["Succeeded"] }
-                        },
-                        "Has_open_issue": {
-                          "type": "If",
-                          "expression": "@greater(length(body('Open_issues_for_this_finding')), 0)",
-                          "runAfter": {
-                            "Open_issues_for_this_finding": ["Succeeded"],
-                            "Approved_private_endpoints": ["Succeeded"],
-                            "Policy_rows": ["Succeeded"],
-                            "Policy_summary": ["Succeeded"]
-                          },
-                          "actions": {
-                            "Use_open_issue": {
-                              "type": "SetVariable",
-                              "inputs": { "name": "issueNumber", "value": "@first(body('Open_issues_for_this_finding'))?['number']" },
-                              "runAfter": {}
-                            }
-                          },
-                          "else": {
-                            "actions": {
-                              "Issue_body": {
-                                "type": "Compose",
-                                "inputs": "**Storage accounts should use private link** · RequestHub's attachment storage account in resource group `@{parameters('resourceGroupName')}`\n\nRequestHub keeps every attachment in this account. It has no approved private endpoint, @{if(equals(coalesce(body('Get_storage_account')?['properties']?['publicNetworkAccess'], 'Enabled'), 'Disabled'), 'and its public endpoint is closed, so RequestHub cannot reach it: attachment uploads fail.', 'and its public endpoint is open, so the account is reachable from the internet and only authentication protects the attachments.')}\n\n| Source | Result | Evidence |\n| --- | --- | --- |\n| Resource configuration | @{if(greater(length(body('Approved_private_endpoints')), 0), concat(string(length(body('Approved_private_endpoints'))), ' approved private endpoint ✅'), 'no private endpoint ❌')} | public network access @{coalesce(body('Get_storage_account')?['properties']?['publicNetworkAccess'], 'Enabled')}; read from Azure Resource Manager at @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm')} UTC |\n@{join(body('Policy_rows'), decodeUriComponent('%0A'))}\n| Microsoft Defender for Cloud · @{body('Get_assessment')?['properties']?['displayName']} | @{body('Get_assessment')?['properties']?['status']?['code']} ❌ | @{coalesce(body('Get_assessment')?['properties']?['metadata']?['severity'], '-')} severity, status since @{formatDateTime(coalesce(body('Get_assessment')?['properties']?['status']?['statusChangeDate'], utcNow()), 'yyyy-MM-dd HH:mm')} UTC (Defender for Cloud > Recommendations) |\n\nAzure Policy and Defender for Cloud evaluate the same built-in policy definition, *Storage accounts should use private link*, on separate schedules, so their results can differ for a while. Neither proves on its own that the configuration changed: the resource configuration does.\n\n### Where to fix it\n\nIn this repository's Bicep for the solution, `solutions/05-secure-microsoft/infra/`, not in the portal, so the next deployment keeps the fix. The Foundry agent `posture-remediator` drafts the change as a pull request; a person reviews and merges it.\n\n### Done when\n\n- [ ] A pull request changes the Bicep, and its Azure what-if preview (commit status `posture/what-if`) shows only storage networking changes.\n- [ ] A person reviews and merges it, then applies it with `azd provision`.\n- [ ] The Azure Logic App `posture-verify` records the private endpoint in place and Azure Policy compliant on this Issue, and closes it. Defender for Cloud confirms on its own schedule.\n\nDo not add a policy exemption, change the assignment's effect, or open the public endpoint to make the finding disappear.\n\nFiled by the Azure Logic App `posture-intake` from the Defender for Cloud recommendation at @{formatDateTime(utcNow(), 'yyyy-MM-dd HH:mm')} UTC.\n<!-- @{parameters('marker')} -->",
-                                "runAfter": {}
-                              },
-                              "Create_issue": {
-                                "type": "Http",
-                                "inputs": {
-                                  "method": "POST",
-                                  "uri": "https://api.github.com/repos/@{parameters('repository')}/issues",
-                                  "headers": "[variables('github')]",
-                                  "body": {
-                                    "title": "Posture: attachment storage in @{parameters('resourceGroupName')} has no private endpoint",
-                                    "body": "@{outputs('Issue_body')}",
-                                    "labels": ["posture"]
-                                  }
-                                },
-                                "runtimeConfiguration": "[variables('secure')]",
-                                "runAfter": { "Issue_body": ["Succeeded"] }
-                              },
-                              "Use_new_issue": {
-                                "type": "SetVariable",
-                                "inputs": { "name": "issueNumber", "value": "@body('Create_issue')?['number']" },
-                                "runAfter": { "Create_issue": ["Succeeded"] }
-                              }
-                            }
-                          }
-                        },
-                        "Find_open_pull_requests": {
-                          "type": "Http",
-                          "inputs": {
-                            "method": "GET",
-                            "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls?state=open&per_page=50",
-                            "headers": "[variables('github')]"
-                          },
-                          "runtimeConfiguration": "[variables('secure')]",
-                          "runAfter": { "Has_open_issue": ["Succeeded"] }
-                        },
-                        "Fixes_for_this_issue": {
-                          "type": "Query",
-                          "description": "Only this repository's branches: a fork can name its branch posture/issue-N-..., and must not pass for the fix.",
-                          "inputs": {
-                            "from": "@body('Find_open_pull_requests')",
-                            "where": "@and(startsWith(coalesce(item()?['head']?['ref'], ''), concat('posture/issue-', string(variables('issueNumber')), '-')), equals(toLower(coalesce(item()?['head']?['repo']?['full_name'], '')), toLower(parameters('repository'))))"
-                          },
-                          "runAfter": { "Find_open_pull_requests": ["Succeeded"] }
-                        },
-                        "No_fix_yet": {
-                          "type": "If",
-                          "expression": "@equals(length(body('Fixes_for_this_issue')), 0)",
-                          "runAfter": { "Fixes_for_this_issue": ["Succeeded"] },
-                          "actions": {
-                            "Get_editable_file": {
-                              "type": "Http",
-                              "inputs": {
-                                "method": "GET",
-                                "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('editablePath')}?ref=main",
-                                "headers": "[variables('github')]"
-                              },
-                              "runtimeConfiguration": "[variables('secure')]",
-                              "runAfter": {}
-                            },
-                            "Get_module_file": {
-                              "type": "Http",
-                              "inputs": {
-                                "method": "GET",
-                                "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('modulePath')}?ref=main",
-                                "headers": "[variables('github')]"
-                              },
-                              "runtimeConfiguration": "[variables('secure')]",
-                              "runAfter": {}
-                            },
-                            "Editable_content": {
-                              "type": "Compose",
-                              "inputs": "@base64ToString(replace(body('Get_editable_file')?['content'], decodeUriComponent('%0A'), ''))",
-                              "runAfter": { "Get_editable_file": ["Succeeded"] }
-                            },
-                            "Module_content": {
-                              "type": "Compose",
-                              "inputs": "@base64ToString(replace(body('Get_module_file')?['content'], decodeUriComponent('%0A'), ''))",
-                              "runAfter": { "Get_module_file": ["Succeeded"] }
-                            },
-                            "Agent_input": {
-                              "type": "Compose",
-                              "inputs": {
-                                "finding": {
-                                  "recommendation": "@{body('Get_assessment')?['properties']?['displayName']}",
-                                  "severity": "@{body('Get_assessment')?['properties']?['metadata']?['severity']}",
-                                  "description": "@{body('Get_assessment')?['properties']?['metadata']?['description']}",
-                                  "remediation": "@{body('Get_assessment')?['properties']?['metadata']?['remediationDescription']}",
-                                  "resourceType": "Microsoft.Storage/storageAccounts",
-                                  "resourceGroup": "@{parameters('resourceGroupName')}",
-                                  "azurePolicy": "@body('Policy_summary')",
-                                  "liveConfiguration": {
-                                    "approvedPrivateEndpoints": "@length(body('Approved_private_endpoints'))",
-                                    "publicNetworkAccess": "@{body('Get_storage_account')?['properties']?['publicNetworkAccess']}"
-                                  }
-                                },
-                                "editableFile": { "path": "@{parameters('editablePath')}", "content": "@{outputs('Editable_content')}" },
-                                "readOnlyFiles": [ { "path": "@{parameters('modulePath')}", "content": "@{outputs('Module_content')}" } ]
-                              },
-                              "runAfter": {
-                                "Editable_content": ["Succeeded"],
-                                "Module_content": ["Succeeded"]
-                              }
-                            },
-                            "Ask_the_remediation_agent": {
-                              "type": "Http",
-                              "inputs": {
-                                "method": "POST",
-                                "uri": "@{parameters('foundryProjectEndpoint')}/openai/v1/responses",
-                                "authentication": "[variables('foundry')]",
-                                "body": {
-                                  "agent_reference": { "name": "@{parameters('agentName')}", "type": "agent_reference" },
-                                  "input": "@{string(outputs('Agent_input'))}"
-                                }
-                              },
-                              "limit": { "timeout": "PT2M" },
-                              "runAfter": { "Agent_input": ["Succeeded"] }
-                            },
-                            "Agent_messages": {
-                              "type": "Query",
-                              "inputs": {
-                                "from": "@body('Ask_the_remediation_agent')?['output']",
-                                "where": "@equals(item()?['type'], 'message')"
-                              },
-                              "runAfter": { "Ask_the_remediation_agent": ["Succeeded"] }
-                            },
-                            "Proposal": {
-                              "type": "Compose",
-                              "inputs": "@json(first(first(body('Agent_messages'))?['content'])?['text'])",
-                              "runAfter": { "Agent_messages": ["Succeeded"] }
-                            },
-                            "Find_text": {
-                              "type": "Compose",
-                              "inputs": "@if(empty(coalesce(outputs('Proposal')?['find'], '')), concat(guid(), '-no-text'), outputs('Proposal')?['find'])",
-                              "runAfter": { "Proposal": ["Succeeded"] }
-                            },
-                            "Edit_text": {
-                              "type": "Compose",
-                              "inputs": "@concat(outputs('Find_text'), decodeUriComponent('%0A'), coalesce(outputs('Proposal')?['replace'], ''))",
-                              "runAfter": { "Find_text": ["Succeeded"] }
-                            },
-                            "Candidate_content": {
-                              "type": "Compose",
-                              "inputs": "@replace(outputs('Editable_content'), outputs('Find_text'), coalesce(outputs('Proposal')?['replace'], ''))",
-                              "runAfter": { "Find_text": ["Succeeded"] }
-                            },
-                            "Edit_position": {
-                              "type": "Compose",
-                              "inputs": {
-                                "regionBegin": "@indexOf(outputs('Editable_content'), '// posture:editable-begin')",
-                                "regionStart": "@add(max(indexOf(outputs('Editable_content'), '// posture:editable-begin'), 0), add(indexOf(slice(outputs('Editable_content'), max(indexOf(outputs('Editable_content'), '// posture:editable-begin'), 0)), decodeUriComponent('%0A')), 1))",
-                                "regionEnd": "@indexOf(outputs('Editable_content'), '// posture:editable-end')",
-                                "find": "@indexOf(outputs('Editable_content'), outputs('Find_text'))",
-                                "resultBegin": "@indexOf(outputs('Candidate_content'), '// posture:editable-begin')",
-                                "resultBeginLast": "@lastIndexOf(outputs('Candidate_content'), '// posture:editable-begin')",
-                                "resultStart": "@add(max(indexOf(outputs('Candidate_content'), '// posture:editable-begin'), 0), add(indexOf(slice(outputs('Candidate_content'), max(indexOf(outputs('Candidate_content'), '// posture:editable-begin'), 0)), decodeUriComponent('%0A')), 1))",
-                                "resultEnd": "@indexOf(outputs('Candidate_content'), '// posture:editable-end')",
-                                "resultEndLast": "@lastIndexOf(outputs('Candidate_content'), '// posture:editable-end')"
-                              },
-                              "runAfter": { "Candidate_content": ["Succeeded"] }
-                            },
-                            "Result_region_code": {
-                              "type": "Query",
-                              "inputs": {
-                                "from": "@split(replace(slice(outputs('Candidate_content'), outputs('Edit_position')?['resultStart'], max(outputs('Edit_position')?['resultEnd'], 0)), decodeUriComponent('%0D'), decodeUriComponent('%0A')), decodeUriComponent('%0A'))",
-                                "where": "@not(or(empty(trim(item())), startsWith(trim(item()), '//')))"
-                              },
-                              "runAfter": { "Edit_position": ["Succeeded"] }
-                            },
-                            "Result_region_not_allowed": {
-                              "type": "Query",
-                              "inputs": {
-                                "from": "@body('Result_region_code')",
-                                "where": "@not(or(equals(toLower(trim(item())), 'storageprivateendpoint: true'), equals(toLower(trim(item())), 'storageprivateendpoint: false')))"
-                              },
-                              "runAfter": { "Result_region_code": ["Succeeded"] }
-                            },
-                            "Edit_problems": {
-                              "type": "Query",
-                              "inputs": {
-                                "from": "@createArray(if(equals(outputs('Proposal')?['path'], parameters('editablePath')), '', 'it targets a file other than the solution''s own Bicep file'), if(and(not(equals(replace(outputs('Editable_content'), outputs('Find_text'), ''), outputs('Editable_content'))), equals(outputs('Edit_position')?['find'], lastIndexOf(outputs('Editable_content'), outputs('Find_text')))), '', 'its search text does not occur exactly once in the file'), if(empty(trim(coalesce(outputs('Proposal')?['replace'], ''))), 'its replacement is empty', ''), if(greaterOrEquals(indexOf(coalesce(outputs('Proposal')?['replace'], ''), decodeUriComponent('%0D')), 0), 'its replacement contains a carriage return, which Bicep reads as a line break', ''), if(equals(outputs('Find_text'), coalesce(outputs('Proposal')?['replace'], '')), 'it changes nothing', ''), if(or(greater(length(outputs('Find_text')), 2000), greater(length(coalesce(outputs('Proposal')?['replace'], '')), 2000)), 'its search or replacement text is longer than 2,000 characters', ''), if(and(greaterOrEquals(outputs('Edit_position')?['regionBegin'], 0), greater(outputs('Edit_position')?['regionStart'], outputs('Edit_position')?['regionBegin']), greater(outputs('Edit_position')?['regionEnd'], outputs('Edit_position')?['regionStart']), equals(base64(slice(outputs('Editable_content'), 0, outputs('Edit_position')?['regionStart'])), base64(slice(outputs('Candidate_content'), 0, outputs('Edit_position')?['resultStart']))), equals(base64(slice(outputs('Editable_content'), max(outputs('Edit_position')?['regionEnd'], 0))), base64(slice(outputs('Candidate_content'), max(outputs('Edit_position')?['resultEnd'], 0))))), '', 'it changes text outside the lines between the posture:editable markers'), if(and(greaterOrEquals(outputs('Edit_position')?['resultBegin'], 0), equals(outputs('Edit_position')?['resultBegin'], outputs('Edit_position')?['resultBeginLast']), greater(outputs('Edit_position')?['resultStart'], outputs('Edit_position')?['resultBegin']), greater(outputs('Edit_position')?['resultEnd'], outputs('Edit_position')?['resultStart']), equals(outputs('Edit_position')?['resultEnd'], outputs('Edit_position')?['resultEndLast'])), '', 'the result does not keep exactly one pair of posture:editable markers'), if(greater(length(body('Result_region_not_allowed')), 0), 'between the markers, the result has a line that is neither a // comment nor storagePrivateEndpoint: true or false', ''), if(equals(length(body('Result_region_code')), 1), '', 'between the markers, the result must set storagePrivateEndpoint exactly once'), if(or(greaterOrEquals(indexOf(outputs('Edit_text'), 'automationRoleDefinitionIds'), 0), greaterOrEquals(indexOf(outputs('Edit_text'), 'automationAppRoleNames'), 0), greaterOrEquals(indexOf(outputs('Edit_text'), 'automationCanPushImages'), 0), greaterOrEquals(indexOf(outputs('Edit_text'), 'storageAllowSharedKeyAccess'), 0), greaterOrEquals(indexOf(outputs('Edit_text'), 'storagePrivateLinkPolicy'), 0), greaterOrEquals(indexOf(outputs('Edit_text'), 'effect:'), 0), greaterOrEquals(indexOf(outputs('Edit_text'), 'Microsoft.Authorization'), 0)), 'its text names a protected setting (roles, app roles, registry push, shared key access, or the policy assignment or its effect)', ''))",
-                                "where": "@not(empty(item()))"
-                              },
-                              "runAfter": { "Edit_text": ["Succeeded"], "Result_region_not_allowed": ["Succeeded"] }
-                            },
-                            "Proposal_applies_cleanly": {
-                              "type": "If",
-                              "expression": "@and(equals(outputs('Proposal')?['decision'], 'change'), equals(length(body('Edit_problems')), 0))",
-                              "runAfter": { "Edit_problems": ["Succeeded"] },
-                              "actions": {
-                                "Fixed_content": {
-                                  "type": "Compose",
-                                  "inputs": "@outputs('Candidate_content')",
-                                  "runAfter": {}
-                                },
-                                "Branch_name": {
-                                  "type": "Compose",
-                                  "inputs": "posture/issue-@{variables('issueNumber')}-@{formatDateTime(utcNow(), 'MMddHHmm')}",
-                                  "runAfter": {}
-                                },
-                                "Get_main": {
-                                  "type": "Http",
-                                  "inputs": {
-                                    "method": "GET",
-                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/git/ref/heads/main",
-                                    "headers": "[variables('github')]"
-                                  },
-                                  "runtimeConfiguration": "[variables('secure')]",
-                                  "runAfter": {}
-                                },
-                                "Create_branch": {
-                                  "type": "Http",
-                                  "inputs": {
-                                    "method": "POST",
-                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/git/refs",
-                                    "headers": "[variables('github')]",
-                                    "body": {
-                                      "ref": "refs/heads/@{outputs('Branch_name')}",
-                                      "sha": "@{body('Get_main')?['object']?['sha']}"
-                                    }
-                                  },
-                                  "runtimeConfiguration": "[variables('secure')]",
-                                  "runAfter": { "Get_main": ["Succeeded"], "Branch_name": ["Succeeded"] }
-                                },
-                                "Commit_the_fix": {
-                                  "type": "Http",
-                                  "inputs": {
-                                    "method": "PUT",
-                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/contents/@{parameters('editablePath')}",
-                                    "headers": "[variables('github')]",
-                                    "body": {
-                                      "message": "@{outputs('Proposal')?['title']} (#@{variables('issueNumber')})",
-                                      "content": "@{base64(outputs('Fixed_content'))}",
-                                      "sha": "@{body('Get_editable_file')?['sha']}",
-                                      "branch": "@{outputs('Branch_name')}"
-                                    }
-                                  },
-                                  "runtimeConfiguration": "[variables('secure')]",
-                                  "runAfter": { "Create_branch": ["Succeeded"], "Fixed_content": ["Succeeded"] }
-                                },
-                                "Expected_changes": {
-                                  "type": "Select",
-                                  "inputs": {
-                                    "from": "@coalesce(outputs('Proposal')?['expectedChanges'], json('[]'))",
-                                    "select": "@concat('- ', item())"
-                                  },
-                                  "runAfter": {}
-                                },
-                                "Open_pull_request": {
-                                  "type": "Http",
-                                  "inputs": {
-                                    "method": "POST",
-                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/pulls",
-                                    "headers": "[variables('github')]",
-                                    "body": {
-                                      "title": "@{outputs('Proposal')?['title']}",
-                                      "head": "@{outputs('Branch_name')}",
-                                      "base": "main",
-                                      "draft": true,
-                                      "body": "@{outputs('Proposal')?['summary']}\n\nRemediates #@{variables('issueNumber')}. Merging does not close the Issue: the Logic App `posture-verify` closes it once the fix is deployed and Azure Policy reports it compliant.\n\n**Expected changes** (the Azure what-if preview checks them):\n\n@{join(body('Expected_changes'), decodeUriComponent('%0A'))}\n\n**Risks:** @{outputs('Proposal')?['risks']}\n\nDrafted in Azure by the Microsoft Foundry agent `@{parameters('agentName')}`, run by the Logic App `posture-intake` from the Defender for Cloud recommendation. The Azure what-if preview runs next (commit status `posture/what-if`). A person reviews and merges; nothing is deployed until someone runs `azd provision`.\n<!-- posture:fix -->"
-                                    }
-                                  },
-                                  "runtimeConfiguration": "[variables('secure')]",
-                                  "runAfter": { "Commit_the_fix": ["Succeeded"], "Expected_changes": ["Succeeded"] }
-                                },
-                                "Start_the_preview": {
-                                  "type": "Workflow",
-                                  "inputs": {
-                                    "host": {
-                                      "workflow": { "id": "[parameters('previewWorkflowId')]" },
-                                      "triggerName": "Pull_request_event"
-                                    },
-                                    "body": { "number": "@body('Open_pull_request')?['number']" }
-                                  },
-                                  "runAfter": { "Open_pull_request": ["Succeeded"] }
-                                },
-                                "Comment_draft_fix": {
-                                  "type": "Http",
-                                  "inputs": {
-                                    "method": "POST",
-                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{variables('issueNumber')}/comments",
-                                    "headers": "[variables('github')]",
-                                    "body": {
-                                      "body": "The Microsoft Foundry agent `@{parameters('agentName')}` drafted a fix: #@{body('Open_pull_request')?['number']}. The Azure what-if preview runs on it now; a person reviews and merges it."
-                                    }
-                                  },
-                                  "runtimeConfiguration": "[variables('secure')]",
-                                  "runAfter": { "Start_the_preview": ["Succeeded"] }
-                                },
-                                "Comment_draft_fix_without_preview": {
-                                  "type": "Http",
-                                  "inputs": {
-                                    "method": "POST",
-                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{variables('issueNumber')}/comments",
-                                    "headers": "[variables('github')]",
-                                    "body": {
-                                      "body": "The Microsoft Foundry agent `@{parameters('agentName')}` drafted a fix: #@{body('Open_pull_request')?['number']}. The Azure what-if preview did not start: the Logic App `posture-preview` shows why in its run history, and the next push to the pull request starts it again. A person reviews and merges the fix."
-                                    }
-                                  },
-                                  "runtimeConfiguration": "[variables('secure')]",
-                                  "runAfter": { "Start_the_preview": ["Failed", "TimedOut"] }
-                                }
-                              },
-                              "else": {
-                                "actions": {
-                                  "Comment_rejected_proposal": {
-                                    "type": "Http",
-                                    "inputs": {
-                                      "method": "POST",
-                                      "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{variables('issueNumber')}/comments",
-                                      "headers": "[variables('github')]",
-                                      "body": {
-                                        "body": "@{if(equals(outputs('Proposal')?['decision'], 'no_change'), concat('The Microsoft Foundry agent `', parameters('agentName'), '` proposes no change: ', coalesce(outputs('Proposal')?['summary'], ''), ' If a fix is already merged, deploy it with `azd provision`; otherwise fix it by hand in a pull request.'), concat('The Microsoft Foundry agent `', parameters('agentName'), '` proposed a change the Logic App will not apply: ', join(body('Edit_problems'), '; '), '. The Logic App accepts one exact edit, inside the lines marked posture:editable in the solution''s own Bicep file, that leaves roles and the policy assignment alone. Fix it by hand in a pull request.'))}"
-                                      }
-                                    },
-                                    "runtimeConfiguration": "[variables('secure')]",
-                                    "runAfter": {}
-                                  }
-                                }
-                              }
-                            }
-                          },
-                          "else": {
-                            "actions": {
-                              "Comment_existing_fix": {
-                                "type": "Http",
-                                "inputs": {
-                                  "method": "POST",
-                                  "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{variables('issueNumber')}/comments",
-                                  "headers": "[variables('github')]",
-                                  "body": {
-                                    "body": "Defender for Cloud reported this again. A draft fix is already open: #@{first(body('Fixes_for_this_issue'))?['number']}."
-                                  }
-                                },
-                                "runtimeConfiguration": "[variables('secure')]",
-                                "runAfter": {}
-                              }
-                            }
-                          }
-                        }
-                      }
-                    },
-                    "Healthy": {
-                      "case": "Healthy",
-                      "actions": {
-                        "Find_issues": {
-                          "type": "Http",
-                          "inputs": {
-                            "method": "GET",
-                            "uri": "https://api.github.com/repos/@{parameters('repository')}/issues?labels=posture&state=all&per_page=20",
-                            "headers": "[variables('github')]"
-                          },
-                          "runtimeConfiguration": "[variables('secure')]",
-                          "runAfter": {}
-                        },
-                        "Issues_for_this_finding": {
-                          "type": "Query",
-                          "inputs": {
-                            "from": "@body('Find_issues')",
-                            "where": "@and(contains(coalesce(item()?['body'], ''), concat('<!-- ', parameters('marker'), ' -->')), equals(item()?['pull_request'], null))"
-                          },
-                          "runAfter": { "Find_issues": ["Succeeded"] }
-                        },
-                        "Has_issue": {
-                          "type": "If",
-                          "expression": "@greater(length(body('Issues_for_this_finding')), 0)",
-                          "runAfter": { "Issues_for_this_finding": ["Succeeded"] },
-                          "actions": {
-                            "Get_comments": {
-                              "type": "Http",
-                              "inputs": {
-                                "method": "GET",
-                                "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{first(body('Issues_for_this_finding'))?['number']}/comments?per_page=100",
-                                "headers": "[variables('github')]"
-                              },
-                              "runtimeConfiguration": "[variables('secure')]",
-                              "runAfter": {}
-                            },
-                            "Confirmations": {
-                              "type": "Query",
-                              "description": "Only comments from the repository's owner, members, and collaborators count (the Logic Apps' token is a person's): anyone can comment on a public repository.",
-                              "inputs": {
-                                "from": "@body('Get_comments')",
-                                "where": "@and(contains(coalesce(item()?['body'], ''), 'posture:defender-confirmed'), contains(createArray('OWNER', 'MEMBER', 'COLLABORATOR'), coalesce(item()?['author_association'], '')))"
-                              },
-                              "runAfter": { "Get_comments": ["Succeeded"] }
-                            },
-                            "Not_confirmed_yet": {
-                              "type": "If",
-                              "expression": "@or(equals(length(body('Confirmations')), 0), equals(first(body('Issues_for_this_finding'))?['state'], 'open'))",
-                              "runAfter": { "Confirmations": ["Succeeded"] },
-                              "actions": {
-                                "Comment_defender_confirms": {
-                                  "type": "Http",
-                                  "inputs": {
-                                    "method": "POST",
-                                    "uri": "https://api.github.com/repos/@{parameters('repository')}/issues/@{first(body('Issues_for_this_finding'))?['number']}/comments",
-                                    "headers": "[variables('github')]",
-                                    "body": {
-                                      "body": "Microsoft Defender for Cloud now reports the storage account **Healthy** for *@{body('Get_assessment')?['properties']?['displayName']}* (status since @{formatDateTime(coalesce(body('Get_assessment')?['properties']?['status']?['statusChangeDate'], utcNow()), 'yyyy-MM-dd HH:mm')} UTC). Recorded by Defender's workflow automation through the Azure Logic App `posture-intake`.\n<!-- posture:defender-confirmed -->"
-                                    }
-                                  },
-                                  "runtimeConfiguration": "[variables('secure')]",
-                                  "runAfter": {}
-                                }
-                              },
-                              "else": { "actions": {} }
-                            }
-                          },
-                          "else": { "actions": {} }
-                        }
-                      }
-                    }
-                  },
-                  "default": { "actions": {} }
-                }
+                "retryPolicy": { "type": "fixed", "count": 12, "interval": "PT1M" }
               },
-              "else": {
-                "actions": {
-                  "Not_this_solutions_control": {
-                    "type": "Terminate",
-                    "inputs": {
-                      "runStatus": "Cancelled"
-                    },
-                    "runAfter": {}
-                  }
-                }
-              }
+              "runAfter": { "Keep_only_the_recommendation": ["Succeeded"] }
             }
           },
           "outputs": {}
@@ -683,20 +84,7 @@
                 "id": "[parameters('managedApiId')]"
               }
             }
-          },
-          "githubToken": { "value": "[parameters('githubToken')]" },
-          "repository": { "value": "[parameters('githubRepository')]" },
-          "resourceGroupName": { "value": "[parameters('resourceGroupName')]" },
-          "resourceGroupId": { "value": "[parameters('resourceGroupId')]" },
-          "storageAccountId": { "value": "[parameters('storageAccountId')]" },
-          "assessmentKey": { "value": "[parameters('assessmentKey')]" },
-          "policyDefinitionName": { "value": "[parameters('policyDefinitionName')]" },
-          "foundryProjectEndpoint": { "value": "[parameters('foundryProjectEndpoint')]" },
-          "agentName": { "value": "[parameters('agentName')]" },
-          "editablePath": { "value": "[parameters('editablePath')]" },
-          "modulePath": { "value": "[parameters('modulePath')]" },
-          "previewWorkflowId": { "value": "[parameters('previewWorkflowId')]" },
-          "marker": { "value": "[parameters('marker')]" }
+          }
         }
       }
     },
@@ -708,7 +96,7 @@
       "tags": "[parameters('tags')]",
       "dependsOn": ["[resourceId('Microsoft.Logic/workflows', parameters('name'))]"],
       "properties": {
-        "description": "When Defender for Cloud reports the RequestHub storage account Healthy for the private link recommendation, posture-intake records it on the GitHub Issue.",
+        "description": "When Defender for Cloud reports the RequestHub storage account Healthy for the private link recommendation, posture-intake sends it to the posture Function, which records it on the GitHub Issue.",
         "isEnabled": true,
         "scopes": [
           { "description": "This solution's resource group", "scopePath": "[parameters('resourceGroupId')]" }
