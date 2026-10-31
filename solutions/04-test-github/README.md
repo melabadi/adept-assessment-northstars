@@ -131,7 +131,7 @@ The screenshots come from the live run with Issue #100 and pull request #101. Yo
 
    ![The same scenario against main: every step behaves as expected](images/02-not-reproduced-on-main.png)
 
-   The screenshots ran the lab and `main` APIs side by side on ports 5092 and 5091, with `--api`, because the machine was shared (see [Troubleshooting](#troubleshooting)). *About 2 minutes, of which the scenario takes 5 seconds.* **Point out:** step 8, a double-click of eight requests, records three decisions and returns `500` five times; on `main` it returns one `201` and seven `409`.
+   The screenshots ran the lab and `main` APIs side by side on ports 5092 and 5091, with `--api`, because the machine was shared (see [Troubleshooting](#troubleshooting)). *About 2 minutes, of which the scenario takes 5 seconds.* **Point out:** step 8, a double-click of eight requests, records more than one decision and answers the rest with `500` (three and five in this run; the split changes from run to run); on `main` it returns one `201` and seven `409`.
 
 3. **Hand the defect to Copilot.** Create the Issue from the defect report:
 

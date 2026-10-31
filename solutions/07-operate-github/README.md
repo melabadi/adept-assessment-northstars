@@ -212,7 +212,7 @@ About 20 minutes. Each step says how long it takes in our runs.
 
 7. **Show the proof** (2 minutes; CI takes 3). Open the **Operate · GitHub · prove the regression test** check. Its summary reads `Regression proof: PROVEN`, with a table of every test that fails on the code the pull request started from (run with the pull request's tests) and passes with the change. The check is green only for PROVEN. **CI** confirms the whole suite passes. In our run the table has three rows:
    - Two of Copilot's three new tests, `Timed_out_delivery_is_retried_without_rolling_back_the_batch` and `Delivery_that_always_times_out_ends_as_failed`. They reproduce the defect.
-   - An existing test, `Failed_delivery_is_retried_then_succeeds_exactly_once`. On the old code, the new timeout tests leave stuck pending notifications in the shared test database, and those break an existing worker test that runs later. Which one varies between runs: in Copilot's own run it was `Delivery_gives_up_after_max_attempts`. On `main`, without the new tests, both pass.
+   - An existing test, `Failed_delivery_is_retried_then_succeeds_exactly_once`. On the old code, the new timeout tests leave stuck pending notifications in the shared test database, and those break an existing worker test that runs later. Which one varies between runs, and sometimes none breaks: in Copilot's own run it was `Delivery_gives_up_after_max_attempts`, and a later rerun of the proof on the same pull request listed only the two new tests. On `main`, without the new tests, both pass.
 
    The third new test, `Cancelled_token_still_propagates`, is not in the table. It is a guard that passes on both: the old code already let a shutdown's cancellation through, and the fix must keep doing so.
 

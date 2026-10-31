@@ -122,14 +122,14 @@ The workflows, skills, and agent are already active because the repository's roo
 
 2. **Open in advance:** Actions > **Release · GitHub · build the release candidate** (step 1), the repository's **Releases** page (steps 4 and 8), Settings > Environments > **release-github** (step 5), and a PowerShell 7 terminal at the repository root where `gh auth status` and `copilot` are signed in.
 
-3. **Start step 1 about 15 minutes before you present.** The candidate takes 3.5 to 7 minutes and Copilot's summary 5 to 6 more, so both are finished when you reach steps 2 and 3, and you present them from the finished runs.
+3. **Start step 1 about 15 minutes before you present.** The candidate takes 3 to 7 minutes and Copilot's summary 4.5 to 6 more, so both are finished when you reach steps 2 and 3, and you present them from the finished runs.
 
 4. **Timings**, measured on live runs:
 
    | Step | What runs | Time |
    | --- | --- | --- |
-   | 1 | The candidate workflow | 3.5 to 7 min, started early |
-   | 3 | Copilot's summary, started by the candidate | 5 to 6 min, started early |
+   | 1 | The candidate workflow | 3 to 7 min, started early |
+   | 3 | Copilot's summary, started by the candidate | 4.5 to 6 min, started early |
    | 4 | The agent's brief (optional) | 1.5 to 4 min |
    | 5 | Approval from another branch, refused | about 30 s |
    | 6 | Tampered evidence refused, then Copilot's explanation (optional) | about 1 min, then 1.5 min |
@@ -140,7 +140,7 @@ The workflows, skills, and agent are already active because the repository's roo
 
 About 20 minutes of presenting, with step 1 started about 15 minutes earlier.
 
-1. **Start the release candidate** (1 minute; the run takes 3.5 to 7 minutes). Actions > **Release · GitHub · build the release candidate** > **Run workflow**, enter version `1.0.0`, and select **Run workflow**. Or:
+1. **Start the release candidate** (1 minute; the run takes 3 to 7 minutes). Actions > **Release · GitHub · build the release candidate** > **Run workflow**, enter version `1.0.0`, and select **Run workflow**. Or:
 
    ```powershell
    gh workflow run release-github-candidate.yml -f version=1.0.0
@@ -173,7 +173,7 @@ About 20 minutes of presenting, with step 1 started about 15 minutes earlier.
 
    **Point out:** the tests ran against the exact images that will ship. `build_matches_commit` proves the image reports this commit, and `self_approval_refused` proves the approval rule holds in the build.
 
-3. **Watch Copilot write the summary** (5 to 6 minutes, started by itself). When the candidate succeeds, **Release · GitHub · AI release summary** starts within seconds. Its agent reads the evidence, commits, and pull requests with read-only tools. Threat detection checks its output, and only then does the `safe_outputs` job apply it.
+3. **Watch Copilot write the summary** (4.5 to 6 minutes, started by itself). When the candidate succeeds, **Release · GitHub · AI release summary** starts within seconds. Its agent reads the evidence, commits, and pull requests with read-only tools. Threat detection checks its output, and only then does the `safe_outputs` job apply it.
 
    ![The AI release summary run: pre_activation, activation, agent, detection, safe_outputs, and conclusion, all green in under 5 minutes](images/03-ai-summary-run.png)
 
@@ -296,7 +296,7 @@ About 20 minutes of presenting, with step 1 started about 15 minutes earlier.
 - **People decide, AI advises.** Copilot's summary is labeled, append-only, and cannot change a number or an approval. Approving is a person starting a workflow, recorded with their name and note.
 - **Deterministic gates.** A missing report, zero tests, one failure, an edited asset, or a branch other than `main` stops the release, with the reason in the run summary.
 - **Honest about the plan.** Preflight reports which protections are enforced. On a private repository on GitHub Pro there are no required reviewers; on GitHub Enterprise or a public repository the same workflow waits for one.
-- **Speed.** 3.5 to 7 minutes from **Run workflow** to a reviewable draft with every test report attached, 5 to 6 more for Copilot's summary, and about a minute from approval to a published, verified release.
+- **Speed.** 3 to 7 minutes from **Run workflow** to a reviewable draft with every test report attached, 4.5 to 6 more for Copilot's summary, and about a minute from approval to a published, verified release.
 
 ## Reset and clean up
 
