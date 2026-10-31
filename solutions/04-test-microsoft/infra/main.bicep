@@ -1,7 +1,7 @@
 // Test · Microsoft: RequestHub hosted in Azure, an Azure Load Testing resource that runs an authenticated load test
-// against it, and a Logic App that reports every finished run to GitHub, in this solution's own resource group. Deploy
-// from this folder with `azd up`; remove everything with `azd down --purge`. No GitHub workflow is involved: the
-// postprovision hook (sync_test.py) copies the committed test into Azure Load Testing.
+// against it, and a Python Azure Function that reports every finished run to GitHub, in this solution's own resource
+// group. Deploy from this folder with `azd up`; remove everything with `azd down --purge`. No GitHub workflow is
+// involved: the postprovision hook (sync_test.py) copies the committed test into Azure Load Testing.
 targetScope = 'subscription'
 
 @minLength(1)
@@ -18,7 +18,7 @@ param principalId string
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@description('GitHub repository (owner/name) where the Logic App opens Issues for failing runs. Set by the preprovision hook.')
+@description('GitHub repository (owner/name) where the reporting function opens Issues for failing runs. Set by the preprovision hook.')
 param githubRepository string = ''
 
 @secure()
@@ -125,4 +125,4 @@ output LOAD_TEST_NAME string = loadTesting.outputs.loadTestName
 output LOAD_TEST_REQUESTER_IDENTITY string = loadTestIdentities.outputs.requesterName
 output LOAD_TEST_APPROVER_IDENTITY string = loadTestIdentities.outputs.approverName
 output ACTION_GROUP_ID string = reporting.outputs.actionGroupId
-output LOGIC_APP_NAME string = reporting.outputs.logicAppName
+output FUNCTION_APP_NAME string = reporting.outputs.functionAppName
