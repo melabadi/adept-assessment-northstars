@@ -44,8 +44,9 @@ module app '../../../app/infra/requesthub.bicep' = {
     automationAppRoleNames: []
     tags: tags
     // posture:editable-begin. The posture-remediator agent may change only the lines between these two markers.
-    // Reach Blob storage through a private endpoint in the app's virtual network and close the public endpoint.
-    storagePrivateEndpoint: true
+    // Without a private endpoint, RequestHub reaches Blob storage through the account's public endpoint. Where an Azure
+    // Policy closes public endpoints, as in many organizations, RequestHub cannot reach the account at all.
+    storagePrivateEndpoint: false
     // posture:editable-end
   }
 }
