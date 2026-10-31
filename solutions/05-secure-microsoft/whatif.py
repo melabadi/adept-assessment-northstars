@@ -6,7 +6,9 @@ Two ways to run it
     python whatif.py
     python whatif.py --expect Microsoft.Storage/storageAccounts --expect "Microsoft.Network/private*"
   In Azure, for a pull request. The posture-whatif Container Apps job runs it for every open pull request that changes
-  solutions/05-secure-microsoft/infra/ (the Logic App posture-preview starts the job):
+  solutions/05-secure-microsoft/infra/ (the Logic App posture-preview starts the job), when the pull request's branch
+  is in this repository and its author is the repository's owner, a member, or a collaborator. A fork's pull request,
+  or one opened by anyone else, is refused before anything is read from it or written to it:
     python whatif.py --pull-request 123
 
 What it does
@@ -39,7 +41,8 @@ and the random token in resource names (the 13 letters and digits in `st<token>`
 token never reaches the processes that compile or preview the template: it is dropped from their environment and erased
 from this process's initial environment block, which /proc/<pid>/environ would otherwise show them.
 
-Exit codes: 0 only expected changes (or none), 1 unexpected changes or a refused template, 2 configuration or Azure error.
+Exit codes: 0 only expected changes (or none), 1 unexpected changes, a refused template, or a refused pull request (a fork,
+or an author outside the repository), 2 configuration or Azure error.
 """
 from __future__ import annotations
 
@@ -74,6 +77,8 @@ PR_PARAMETER_NAMES = {"AZURE_ENV_NAME", "AZURE_LOCATION", "AZURE_PRINCIPAL_ID", 
 TOKEN_VARIABLE = "POSTURE_GITHUB_TOKEN"
 STATUS_CONTEXT = "posture/what-if"
 COMMENT_MARKER = "<!-- posture:what-if -->"
+# GitHub's author_association values for people the repository trusts; everyone else, bots included, is outside.
+TRUSTED_AUTHORS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 AZ = shutil.which("az") or "az"
 PLACEHOLDER = re.compile(r"\$\{(?P<name>[A-Za-z0-9_]+)(?:=(?P<default>[^}]*))?\}")
@@ -614,6 +619,19 @@ def sign_in() -> None:
     az("login", "--identity", *(["--client-id", client_id] if client_id else []), "--output", "none")
 
 
+def outside_pull_request(pull: dict, repository: str) -> str | None:
+    """Why a pull request must not reach Azure, or None. Its branch must be in this repository (only people with write
+    access push there), and its author must be the repository's owner, a member, or a collaborator: on a public
+    repository anyone can open a pull request, from a fork or from one of this repository's branches. posture-preview
+    checks the same before it starts this job; this check holds when someone starts the job by hand."""
+    head = (((pull.get("head") or {}).get("repo") or {}).get("full_name") or "").lower()
+    if not head or head != repository.lower():
+        return "its branch is in a fork"
+    if pull.get("author_association") not in TRUSTED_AUTHORS:
+        return f"its author is outside the repository (author_association {pull.get('author_association') or 'unknown'})"
+    return None
+
+
 def preview_pull_request(number: int, expect: list[str], baseline_deployment: str) -> int:
     # Read the token once, erase it from the process's initial environment block, and drop it from the environment, so
     # no child process can inherit or read it.
@@ -630,6 +648,12 @@ def preview_pull_request(number: int, expect: list[str], baseline_deployment: st
         return 2
     github = GitHub(repository, token)
     pull = github.call("GET", f"pulls/{number}")
+    refused = outside_pull_request(pull, repository)
+    if refused:
+        # Only the pull request's own record was read: none of its files, and no status or comment is written.
+        print(f"pull request #{number} is not previewed: {refused}. Only pull requests from this repository's branches, "
+              "opened by its owner, members, or collaborators, reach Azure.")
+        return 1
     if pull.get("state") != "open":
         print(f"pull request #{number} is {pull.get('state')}: nothing to preview")
         return 0
@@ -749,7 +773,8 @@ def preview_checkout(args: argparse.Namespace, expect: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pull-request", type=int, metavar="NUMBER",
-                        help="preview this pull request's Bicep in Azure and report on the pull request (needs "
+                        help="preview this pull request's Bicep in Azure and report on the pull request, if its branch "
+                             "is in this repository and its author is the owner, a member, or a collaborator (needs "
                              "POSTURE_GITHUB_TOKEN, GITHUB_REPOSITORY, and AZURE_RESOURCE_GROUP; the posture-whatif job "
                              "sets them)")
     parser.add_argument("--expect", action="append", metavar="TYPE",
