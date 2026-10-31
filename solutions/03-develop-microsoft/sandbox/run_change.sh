@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Build and test a pull request's code in an Azure Container Apps dynamic session (Develop phase, Microsoft track).
 #
-# The Azure pull request reviewer's Logic App takes the pull request's head archive (head.tgz) and this script from
-# GitHub, uploads both into a fresh Shell session, and runs:
+# The Azure pull request reviewer takes the pull request's head archive (head.tgz) and this script from GitHub, uploads
+# both into a fresh Shell session, and runs:
 #
 #   bash run_change.sh start     starts the run in the background and returns at once
 #   bash run_change.sh status    prints {"state": "running" | "done", "step": ...}
 #   bash run_change.sh summary   prints the results as JSON
 #
-# The results are also in /mnt/data/run/summary.json, which the Logic App downloads as a file, because a session cuts a
+# The results are also in /mnt/data/run/summary.json, which the reviewer downloads as a file, because a session cuts a
 # command's output after 4 KB. `start` puts {"state": "not-finished"} there, and the run replaces it when it ends.
 #
 # The run installs Node 22, the .NET 10 SDK, and PostgreSQL in the session, then runs what the repository's CI runs:
