@@ -1,9 +1,14 @@
 """GitHub webhooks for the advisor: verify the signature, read the issue form, and decide what Azure does.
 
 Two events start work in Azure, everything else is acknowledged and ignored:
-  - issues (opened with, or labeled, design-advisor): the advisor workflow answers the question.
+  - issues (opened with, or labeled, design-advisor) whose author is the repository's owner, a member, or a
+    collaborator: the advisor workflow answers the question.
   - push to the default branch that changes the standards, agent.yaml, or the evaluation cases: the standards
     workflow re-indexes, re-publishes the agents, and re-runs the evaluation (the optional step of the demo).
+
+On a public repository anyone can open an Issue, and the issue form applies the design-advisor label for them, so the
+label alone proves nothing. GitHub computes the author's association with the repository and signs the delivery; an
+Issue from anyone else starts nothing in Azure, even when someone with triage access labels it later.
 """
 from __future__ import annotations
 
@@ -16,6 +21,9 @@ PROFILES = ("small-team", "enterprise")
 SOLUTION = "solutions/02-design-microsoft/"
 WATCHED = (SOLUTION + "standards/", SOLUTION + "agent.yaml", SOLUTION + "eval_cases.jsonl")
 MAX_QUESTION = 4000
+# GitHub's author_association values for people the repository trusts. CONTRIBUTOR (someone whose pull request was
+# merged), FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, MANNEQUIN, and NONE (bots included) are outside contributors.
+TRUSTED_AUTHORS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 
 def verify_signature(secret: str, body: bytes, header: str | None) -> bool:
@@ -54,6 +62,10 @@ def classify(event: str, payload: dict, repo: str) -> dict:
         asked = (action == "opened" and LABEL in labels) or (action == "labeled" and (payload.get("label") or {}).get("name") == LABEL)
         if not asked:
             return ignore(f"issues.{action} without the {LABEL} label")
+        association = issue.get("author_association") or "unknown"
+        if association not in TRUSTED_AUTHORS:
+            return ignore(f"asked by an outside contributor (author_association {association}); only the repository's "
+                          "owner, members, and collaborators start the advisor")
         if "pull_request" in issue or issue.get("state") != "open":
             return ignore("not an open issue")
         profile, question = parse_issue_form(issue.get("body") or "")
