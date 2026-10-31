@@ -27,11 +27,11 @@ param principalType string = 'User'
 param githubRepository string
 
 @secure()
-@description('Fine-grained GitHub token for that repository only: Contents read, Pull requests read and write. Empty until you set GITHUB_REVIEW_TOKEN.')
+@description('Fine-grained GitHub token for that repository only: Contents read, Pull requests read and write. Empty until you set GITHUB_REVIEW_TOKEN. Stored only in Key Vault.')
 param githubToken string = ''
 
 @secure()
-@description('Secret GitHub signs every webhook delivery with. The preprovision hook generates it once (GITHUB_WEBHOOK_SECRET).')
+@description('Secret GitHub signs every webhook delivery with. The preprovision hook generates it once (GITHUB_WEBHOOK_SECRET). Stored only in Key Vault.')
 param githubWebhookSecret string = ''
 
 @description('Git ref the rule checker, the sandbox runner, and the review formatter are read from. Never the pull request itself.')
@@ -95,6 +95,7 @@ output FOUNDRY_MODEL_DEPLOYMENT string = reviewer.outputs.modelDeployment
 output REVIEWER_AGENT_NAME string = reviewerAgentName
 output REVIEWER_FUNCTION_APP string = reviewer.outputs.functionAppName
 output REVIEWER_FUNCTION_HOST string = reviewer.outputs.functionHostName
+output KEY_VAULT_NAME string = reviewer.outputs.keyVaultName
 output JUDGE_POOL_ENDPOINT string = reviewer.outputs.judgePoolEndpoint
 output RUN_POOL_ENDPOINT string = reviewer.outputs.runPoolEndpoint
 output SANDBOX_CONNECTION_ID string = reviewer.outputs.sandboxConnectionId

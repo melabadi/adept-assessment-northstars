@@ -5,8 +5,10 @@
 // - the reviewer: a Python Azure Function on the Flex Consumption plan. GitHub's webhook calls it; it queues the review
 //   and runs it from the queue. Its storage has no public network access and no shared keys (tenant policy), so the
 //   Function reaches it through private endpoints in the solution's virtual network;
-// - least-privilege role assignments between them. No key is created. The GitHub token and the webhook secret are
-//   secure parameters, kept only in the Function's app settings, which only people who can change the Function can read.
+// - Key Vault, also closed to the internet and reached through a private endpoint: the GitHub token and the webhook
+//   secret. Bicep writes them from secure parameters through Azure Resource Manager; they are never app settings, and
+//   only the Function's identity can read them;
+// - least-privilege role assignments between them. No key is created.
 param environmentName string
 param location string
 param aiLocation string
@@ -31,6 +33,7 @@ var roles = {
   sessionExecutor: '0fb8eba5-a2bb-4abe-b1c1-49dfad359bb0' // Azure ContainerApps Session Executor: run code in sessions
   storageBlobDataOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' // the Function's host, code package, and dry-run results
   storageQueueDataContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88' // the review queue
+  keyVaultSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6' // read the GitHub token and the webhook secret
 }
 // Shell sessions (Ubuntu with bash, Python, Node, and apt) aren't in the Bicep type definitions yet; the API accepts them.
 var shellSessions = any('Shell')
@@ -164,7 +167,7 @@ resource sandboxConnection 'Microsoft.CognitiveServices/accounts/projects/connec
 
 var projectEndpoint = 'https://${account.properties.customSubDomainName}.services.ai.azure.com/api/projects/${project.name}'
 
-// ---------- Network: the Function reaches its storage through private endpoints ----------
+// ---------- Network: the Function reaches its storage and Key Vault through private endpoints ----------
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: 'vnet-${resourceToken}'
   location: aiLocation
@@ -187,16 +190,21 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   }
 }
 
-// Blob holds the Function's code package, its host files, and the dry-run results; queue holds the reviews to run.
-var privateLinks = ['blob', 'queue']
+// Blob holds the Function's code package, its host files, and the dry-run results; queue holds the reviews to run;
+// the vault holds the GitHub token and the webhook secret.
+var privateLinks = [
+  { name: 'blob', zone: 'privatelink.blob.${environment().suffixes.storage}' }
+  { name: 'queue', zone: 'privatelink.queue.${environment().suffixes.storage}' }
+  { name: 'vault', zone: 'privatelink.vaultcore.azure.net' }
+]
 
-resource privateZones 'Microsoft.Network/privateDnsZones@2024-06-01' = [for name in privateLinks: {
-  name: 'privatelink.${name}.${environment().suffixes.storage}'
+resource privateZones 'Microsoft.Network/privateDnsZones@2024-06-01' = [for link in privateLinks: {
+  name: link.zone
   location: 'global'
   tags: tags
 }]
 
-resource privateZoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = [for (name, i) in privateLinks: {
+resource privateZoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = [for (link, i) in privateLinks: {
   parent: privateZones[i]
   name: 'vnet-link'
   location: 'global'
@@ -206,23 +214,26 @@ resource privateZoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
   }
 }]
 
-resource privateEndpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for name in privateLinks: {
-  name: 'pe-${name}-${resourceToken}'
+resource privateEndpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for link in privateLinks: {
+  name: 'pe-${link.name}-${resourceToken}'
   location: aiLocation
   tags: tags
   properties: {
     subnet: { id: vnet.properties.subnets[1].id }
     privateLinkServiceConnections: [
-      { name: name, properties: { privateLinkServiceId: storage.id, groupIds: [name] } }
+      {
+        name: link.name
+        properties: { privateLinkServiceId: link.name == 'vault' ? vault.id : storage.id, groupIds: [link.name] }
+      }
     ]
   }
 }]
 
-resource privateDnsGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = [for (name, i) in privateLinks: {
+resource privateDnsGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = [for (link, i) in privateLinks: {
   parent: privateEndpoints[i]
   name: 'default'
   properties: {
-    privateDnsZoneConfigs: [{ name: name, properties: { privateDnsZoneId: privateZones[i].id } }]
+    privateDnsZoneConfigs: [{ name: link.name, properties: { privateDnsZoneId: privateZones[i].id } }]
   }
 }]
 
@@ -285,6 +296,36 @@ resource dryRunRetention 'Microsoft.Storage/storageAccounts/managementPolicies@2
   }
 }
 
+// ---------- Key Vault: the GitHub token and the webhook secret ----------
+resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: 'kv-${resourceToken}'
+  location: aiLocation
+  tags: tags
+  properties: {
+    tenantId: tenant().tenantId
+    sku: { family: 'A', name: 'standard' }
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 7
+    publicNetworkAccess: 'Disabled'
+    networkAcls: { defaultAction: 'Deny', bypass: 'AzureServices' }
+  }
+}
+
+// Written through Azure Resource Manager, so this works although the vault takes no traffic from the internet. An empty
+// parameter writes nothing: until the token is set, the Function says it has none.
+resource githubTokenSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(githubToken)) {
+  parent: vault
+  name: 'github-review-token'
+  properties: { value: githubToken, contentType: 'text/plain' }
+}
+
+resource webhookSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(githubWebhookSecret)) {
+  parent: vault
+  name: 'github-webhook-secret'
+  properties: { value: githubWebhookSecret, contentType: 'text/plain' }
+}
+
 // ---------- The reviewer: a Python Azure Function on the Flex Consumption plan ----------
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: 'plan-${resourceToken}'
@@ -329,8 +370,7 @@ resource reviewer 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
         { name: 'GITHUB_REPOSITORY', value: githubRepository }
-        { name: 'GITHUB_REVIEW_TOKEN', value: githubToken }
-        { name: 'GITHUB_WEBHOOK_SECRET', value: githubWebhookSecret }
+        { name: 'KEY_VAULT_URI', value: vault.properties.vaultUri }
         { name: 'REVIEW_LABEL', value: reviewLabel }
         { name: 'REVIEW_CHECKER_REF', value: checkerRef }
         { name: 'REVIEW_SCRIPTS_PATH', value: 'solutions/03-develop-microsoft/sandbox' }
@@ -364,6 +404,18 @@ resource reviewerQueue 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalId: reviewer.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageQueueDataContributor)
+  }
+}
+
+// The Function reads the GitHub token and the webhook secret. Nobody else has a role on the vault's data: Bicep writes
+// the secrets through Azure Resource Manager.
+resource reviewerSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: vault
+  name: guid(vault.id, reviewer.id, roles.keyVaultSecretsUser)
+  properties: {
+    principalId: reviewer.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.keyVaultSecretsUser)
   }
 }
 
@@ -445,6 +497,7 @@ output projectEndpoint string = projectEndpoint
 output modelDeployment string = model.name
 output functionAppName string = reviewer.name
 output functionHostName string = reviewer.properties.defaultHostName
+output keyVaultName string = vault.name
 output judgePoolEndpoint string = judgePool.properties.poolManagementEndpoint
 output runPoolEndpoint string = runPool.properties.poolManagementEndpoint
 output sandboxConnectionId string = sandboxConnection.id

@@ -90,7 +90,7 @@ The GitHub demos use your Copilot plan and Actions minutes. The Microsoft soluti
 | --- | --- |
 | A PostgreSQL flexible server and two container apps kept at one replica each (RequestHub) | 04-test, 05-secure, 06-release, and 07-operate (Microsoft) |
 | Azure AI Search, Basic tier, and two private endpoints: about $90 a month | 02-design-microsoft |
-| Two private endpoints and their DNS zones, for the reviewer Function's storage: about $16 a month | 03-develop-microsoft |
+| Three private endpoints and their DNS zones, for the reviewer Function's storage and Key Vault: about $23 a month | 03-develop-microsoft |
 | Azure SRE Agent: 4 Azure Agent Units (AAUs) an hour while it exists (about $292 a month), plus roughly 10 to 35 AAUs per investigation (capped at 1,000 a month) | 07-operate-microsoft |
 
 Everything else bills for what you use: Foundry models and evaluations, Logic Apps, Azure Functions, Container Apps jobs and dynamic sessions, Azure Load Testing, and Defender for Cloud. 01-plan-microsoft costs close to nothing while nobody runs it. Delete a solution's resource group when you won't present it for a while: `azd up` recreates it.

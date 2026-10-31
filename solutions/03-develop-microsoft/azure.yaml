@@ -1,6 +1,7 @@
 # Azure Developer CLI project for the Develop · Microsoft solution: the Azure pull request reviewer.
 # `azd up` from this folder provisions infra/ (Microsoft Foundry, two Azure Container Apps session pools, and the Azure
-# Function that runs each review, with its storage and network) and deploys the Function's code from function/.
+# Function that runs each review, with its storage, Key Vault, and network) and deploys the Function's code from
+# function/.
 #   preprovision   find the GitHub repository; generate the webhook secret once
 #   postprovision  publish the reviewer agent to Foundry
 #   predeploy      run the offline tests: a Function that breaks a rule of the review never reaches Azure

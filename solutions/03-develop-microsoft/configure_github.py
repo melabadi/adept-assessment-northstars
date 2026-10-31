@@ -5,14 +5,16 @@
          repository whose pull requests the Function reviews.
       2. Generates the webhook secret once and stores it as GITHUB_WEBHOOK_SECRET. GitHub signs every delivery with it,
          and the Function refuses anything not signed with it. The secret goes to azd through a temporary file, never
-         on a command line, and is never printed.
+         on a command line, and is never printed. Provisioning then writes it, and GITHUB_REVIEW_TOKEN, to the
+         solution's Key Vault, where only the Function can read them.
       Warns when GITHUB_REVIEW_TOKEN is not set.
 
   python configure_github.py publish    (azd postdeploy hook)
       1. Creates or updates the review:azure label, which asks for a review.
       2. Checks that GitHub accepts GITHUB_REVIEW_TOKEN for the repository's code and pull requests, as the Function
          will use it, and prints when the token expires.
-      3. Waits until the Function refuses an unsigned delivery (HTTP 401): its code is live, and it checks signatures.
+      3. Waits until the Function refuses an unsigned delivery (HTTP 401): its code is live, it has read the webhook
+         secret from Key Vault, and it checks signatures.
       4. Creates or updates one repository webhook that sends pull_request events, signed with GITHUB_WEBHOOK_SECRET, to
          the Function's /api/github/webhook. Only while the token is set: without it, every review would stop at its
          first GitHub call, so without the token it deletes that webhook if there is one.
@@ -132,8 +134,9 @@ def check_token(repo: str, token: str) -> str:
 
 
 def check_function(url: str, attempts: int = 24, delay: float = 5) -> None:
-    """The Function refuses an unsigned delivery with 401 once its code is live. Waits up to two minutes after a
-    deployment, so GitHub's first ping doesn't arrive before the code. Stops if an unsigned delivery is accepted."""
+    """The Function refuses an unsigned delivery with 401 once its code is live and it has read the webhook secret from
+    Key Vault (until then it answers 404 or 503). Waits up to two minutes after a deployment, so GitHub's first ping
+    doesn't arrive before the Function is ready. Stops if an unsigned delivery is accepted."""
     for attempt in range(attempts):
         request = urllib.request.Request(url, data=b"{}", method="POST", headers={
             "Content-Type": "application/json", "X-GitHub-Event": "ping", "User-Agent": "azure-pr-reviewer-setup"})
@@ -150,8 +153,9 @@ def check_function(url: str, attempts: int = 24, delay: float = 5) -> None:
             pass
         if attempt < attempts - 1:
             time.sleep(delay)
-    print("warning: the reviewer's Function isn't answering yet; GitHub's first ping may fail. Run "
-          "`azd hooks run postdeploy` again in a minute.")
+    print("warning: the reviewer's Function isn't ready yet: it doesn't refuse an unsigned delivery. Right after the "
+          "first `azd up`, its access to Key Vault can take a few minutes, and GitHub's first ping may fail until then. "
+          "Run `azd hooks run postdeploy` again in a few minutes.")
 
 
 def publish() -> None:

@@ -191,6 +191,13 @@ class CheckFunctionTests(unittest.TestCase):
         self.assertEqual(urls, [OURS] * 3)
         self.assertIn("refuses unsigned deliveries", out)
 
+    def test_it_waits_while_the_function_cant_read_its_webhook_secret_yet(self):
+        # Right after the first deployment, the Function's role on Key Vault can take minutes to apply; until then it
+        # answers 503. A 401 shows it read the secret: it refuses an unsigned delivery only once it has one.
+        urls, out = self.answers(503, 503, 401)
+        self.assertEqual(len(urls), 3)
+        self.assertIn("refuses unsigned deliveries", out)
+
     def test_a_function_that_accepts_an_unsigned_delivery_stops_the_hook(self):
         with self.assertRaises(SystemExit) as raised:
             self.answers(200)
@@ -199,7 +206,8 @@ class CheckFunctionTests(unittest.TestCase):
     def test_a_function_that_never_answers_only_warns(self):
         urls, out = self.answers(404)
         self.assertEqual(len(urls), 5)
-        self.assertIn("isn't answering yet", out)
+        self.assertIn("isn't ready yet", out)
+        self.assertIn("Key Vault", out)
 
 
 class RemoveTests(unittest.TestCase):

@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlsplit
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "function"))
 sys.path.insert(0, str(HERE / "sandbox"))
-from reviewer import pipeline, webhook  # noqa: E402
+from reviewer import pipeline, vault, webhook  # noqa: E402
 from reviewer.agent import Agent  # noqa: E402
 from reviewer.github import GitHub, GitHubError  # noqa: E402
 from reviewer.sessions import Session  # noqa: E402
@@ -615,6 +615,13 @@ class Webhook(unittest.TestCase):
         self.assertEqual((status, message), (502, None))
         self.assertIn("HTTP 401", answer["error"])
 
+    def test_key_vault_failing_is_reported_by_name_only(self):
+        def unreadable(number):
+            raise vault.VaultError(f"couldn't read {vault.GITHUB_TOKEN} from Key Vault: ClientAuthenticationError")
+        status, answer, message = intake(self.LABELED, read_pull=unreadable)
+        self.assertEqual((status, message), (502, None))
+        self.assertIn(f"couldn't read {vault.GITHUB_TOKEN} from Key Vault", answer["error"])
+
 
 class Clients(unittest.TestCase):
     def test_a_github_error_names_the_call_never_the_url_or_the_token(self):
@@ -660,11 +667,121 @@ class FunctionSettings(unittest.TestCase):
         self.assertIn("http_auth_level=func.AuthLevel.ANONYMOUS", self.app)
         self.assertIn("webhook.intake(", self.app)  # the webhook's only path in: the signature check comes first
 
-    def test_nothing_logs_a_secret_setting(self):
+
+class ResourceNotFoundError(Exception):
+    """Stands in for azure.core's: vault.Secrets recognizes a missing secret by this type name."""
+
+
+class KeyVaultSecrets(unittest.TestCase):
+    """reviewer/vault.py: the GitHub token and the webhook secret come from Key Vault, kept in memory a few minutes."""
+
+    def setUp(self):
+        self.now = 1000.0
+        self.reads: list[str] = []
+        self.values = {vault.GITHUB_TOKEN: TOKEN, vault.WEBHOOK_SECRET: SECRET}
+        self.failure: Exception | None = None
+        self.secrets = vault.Secrets(self.read, clock=lambda: self.now)
+
+    def read(self, name: str) -> str:
+        self.reads.append(name)
+        if self.failure:
+            raise self.failure
+        if name not in self.values:
+            raise ResourceNotFoundError(f"A secret with (name/id) {name} was not found in this key vault.")
+        return self.values[name]
+
+    def test_a_secret_is_read_once_and_kept_for_five_minutes(self):
+        self.assertEqual(self.secrets.get(vault.GITHUB_TOKEN), TOKEN)
+        self.now += 299
+        self.assertEqual(self.secrets.get(vault.GITHUB_TOKEN), TOKEN)
+        self.assertEqual(self.reads, [vault.GITHUB_TOKEN])
+        self.values[vault.GITHUB_TOKEN] = "github_pat_ROTATED"
+        self.now += 2
+        self.assertEqual(self.secrets.get(vault.GITHUB_TOKEN), "github_pat_ROTATED")  # a rotated token, within 5 minutes
+
+    def test_a_missing_secret_is_empty_and_checked_again_after_30_seconds(self):
+        del self.values[vault.GITHUB_TOKEN]
+        self.assertEqual(self.secrets.get(vault.GITHUB_TOKEN), "")
+        self.now += 29
+        self.assertEqual(self.secrets.get(vault.GITHUB_TOKEN), "")
+        self.assertEqual(len(self.reads), 1)
+        self.values[vault.GITHUB_TOKEN] = TOKEN
+        self.now += 2
+        self.assertEqual(self.secrets.get(vault.GITHUB_TOKEN), TOKEN)
+
+    def test_a_vault_error_names_the_secret_and_the_error_type_only(self):
+        self.failure = PermissionError("(Forbidden) Caller is not authorized: https://kv-example.vault.azure.net/secrets/x")
+        with self.assertRaises(vault.VaultError) as raised:
+            self.secrets.get(vault.WEBHOOK_SECRET)
+        self.assertEqual(str(raised.exception), f"couldn't read {vault.WEBHOOK_SECRET} from Key Vault: PermissionError")
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertTrue(raised.exception.__suppress_context__)  # no traceback carries the vault's own message
+        self.failure = None
+        self.assertEqual(self.secrets.get(vault.WEBHOOK_SECRET), SECRET)  # an error isn't kept: the next call reads again
+
+    def test_the_secrets_never_show_their_values(self):
+        self.secrets.get(vault.GITHUB_TOKEN)
+        self.secrets.get(vault.WEBHOOK_SECRET)
+        self.assertNotIn(TOKEN, repr(self.secrets))
+        self.assertNotIn(SECRET, repr(self.secrets))
+
+
+def bracketed(text: str, start: int) -> str:
+    """The [...] or {...} block that opens at the first bracket at or after start."""
+    opening = min(i for i in (text.find("[", start), text.find("{", start)) if i >= 0)
+    close = {"[": "]", "{": "}"}[text[opening]]
+    depth = 0
+    for i in range(opening, len(text)):
+        depth += (text[i] == text[opening]) - (text[i] == close)
+        if depth == 0:
+            return text[opening:i + 1]
+    raise AssertionError(f"unbalanced block at {opening}")
+
+
+class TheSecretsLiveInKeyVault(unittest.TestCase):
+    """Neither the GitHub token nor the webhook secret is an app setting, which anyone who can change the Function
+    could read back: Bicep writes them to a Key Vault with no public network access, and only the Function reads it."""
+    app = (HERE / "function" / "function_app.py").read_text(encoding="utf-8")
+    bicep = (HERE / "infra" / "resources.bicep").read_text(encoding="utf-8")
+
+    def resources(self, kind: str) -> list[str]:
+        return [bracketed(self.bicep, m.end()) for m in re.finditer(rf"resource \w+ '{re.escape(kind)}@[^']+' =", self.bicep)]
+
+    def test_the_function_reads_both_secrets_from_key_vault(self):
+        self.assertIn("_secrets.get(vault.GITHUB_TOKEN)", self.app)
+        self.assertIn("_secrets.get(vault.WEBHOOK_SECRET)", self.app)
+        self.assertIn('env("KEY_VAULT_URI")', self.app)
         for name in ("GITHUB_REVIEW_TOKEN", "GITHUB_WEBHOOK_SECRET"):
-            for line in self.app.splitlines():
-                if name in line:
-                    self.assertNotIn("log.", line)
+            self.assertNotIn(name, self.app)  # no app setting is read for either
+
+    def test_no_secret_is_an_app_setting(self):
+        settings = bracketed(self.bicep, self.bicep.index("appSettings:"))
+        for parameter in ("githubToken", "githubWebhookSecret"):
+            self.assertNotIn(parameter, settings)
+        self.assertIn("'KEY_VAULT_URI'", settings)
+
+    def test_bicep_writes_the_secrets_to_a_vault_closed_to_the_internet(self):
+        vaults = self.resources("Microsoft.KeyVault/vaults")
+        self.assertEqual(len(vaults), 1)
+        self.assertIn("publicNetworkAccess: 'Disabled'", vaults[0])
+        self.assertIn("enableRbacAuthorization: true", vaults[0])
+        self.assertNotIn("enablePurgeProtection", vaults[0])  # `azd down --purge` must be able to purge it
+        written = self.resources("Microsoft.KeyVault/vaults/secrets")
+        for name, parameter in ((vault.GITHUB_TOKEN, "githubToken"), (vault.WEBHOOK_SECRET, "githubWebhookSecret")):
+            self.assertTrue(any(f"name: '{name}'" in block and f"value: {parameter}" in block for block in written), name)
+        self.assertRegex(self.bicep, r"name: 'vault', zone: 'privatelink\.vaultcore\.azure\.net'")  # its private endpoint
+
+    def test_only_the_function_reads_the_vault_and_only_reads(self):
+        self.assertIn("keyVaultSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'", self.bicep)
+        on_the_vault = [block for block in self.resources("Microsoft.Authorization/roleAssignments") if "scope: vault" in block]
+        self.assertEqual(len(on_the_vault), 1)
+        self.assertIn("roles.keyVaultSecretsUser", on_the_vault[0])
+        self.assertIn("reviewer.identity.principalId", on_the_vault[0])
+
+    def test_nothing_logs_a_secret(self):
+        for line in self.app.splitlines():
+            if "_secrets.get(" in line:
+                self.assertNotIn("log.", line)
 
 
 if __name__ == "__main__":

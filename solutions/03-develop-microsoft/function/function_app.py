@@ -13,8 +13,9 @@ Routes (all under /api):
 Queue:
   reviews               One message per review: {"id", "pr", "dryRun"}. The review function runs reviewer/pipeline.py.
 
-Nothing here logs the GitHub token, the webhook secret, a function key, a webhook body, or an archive link. Logs name
-each review by its id; the review's footer on GitHub shows the same id.
+Nothing here logs the GitHub token, the webhook secret, a function key, a webhook body, or an archive link. The token
+and the webhook secret aren't app settings: they come from the solution's Key Vault, read with the Function's managed
+identity (reviewer/vault.py). Logs name each review by its id; the review's footer on GitHub shows the same id.
 """
 import json
 import logging
@@ -26,9 +27,9 @@ from datetime import datetime, timezone
 
 import azure.functions as func
 
-from reviewer import pipeline, webhook
+from reviewer import pipeline, vault, webhook
 from reviewer.agent import Agent
-from reviewer.github import GitHub
+from reviewer.github import GitHub, GitHubError
 from reviewer.sessions import Session
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
@@ -62,8 +63,17 @@ def bearer(scope: str):
     return lambda: credential().get_token(scope).token
 
 
+def read_secret(name: str) -> str:
+    """One secret from Key Vault, through the vault's private endpoint, with the Function's managed identity."""
+    from azure.keyvault.secrets import SecretClient
+    return SecretClient(env("KEY_VAULT_URI"), credential()).get_secret(name).value
+
+
+_secrets = vault.Secrets(read_secret)
+
+
 def github() -> GitHub:
-    return GitHub(env("GITHUB_REPOSITORY"), os.environ.get("GITHUB_REVIEW_TOKEN", ""))
+    return GitHub(env("GITHUB_REPOSITORY"), _secrets.get(vault.GITHUB_TOKEN))
 
 
 def settings() -> pipeline.Settings:
@@ -102,7 +112,12 @@ def now() -> str:
 @app.route(route="github/webhook", methods=["POST"])
 @app.queue_output(arg_name="reviews", queue_name=QUEUE, connection="AzureWebJobsStorage")
 def github_webhook(req: func.HttpRequest, reviews: func.Out[str]) -> func.HttpResponse:
-    status, answer, message = webhook.intake(dict(req.headers), req.get_body(), secret=os.environ.get("GITHUB_WEBHOOK_SECRET", ""),
+    try:
+        secret = _secrets.get(vault.WEBHOOK_SECRET)
+    except vault.VaultError as exc:  # names the secret and the error's type, never a value
+        log.warning("webhook delivery refused: %s", exc)
+        return respond({"error": "the reviewer couldn't read its webhook secret from Key Vault"}, 503)
+    status, answer, message = webhook.intake(dict(req.headers), req.get_body(), secret=secret,
                                              repository=env("GITHUB_REPOSITORY"), label=env("REVIEW_LABEL", "review:azure"),
                                              read_pull=lambda number: github().pull(number), new_id=new_id)
     if message:
@@ -161,9 +176,9 @@ def review(message: func.QueueMessage) -> None:
                         bearer("https://ai.azure.com/.default")),
         )
         result = pipeline.review(pr, review_id=review_id, dry_run=dry_run, settings=settings(), tools=tools)
-    except Exception as exc:  # configuration errors: only the type, a message could echo a value
-        log.error("review %s: couldn't start: %s", review_id, type(exc).__name__)
-        result = {"id": review_id, "pr": pr, "dry_run": dry_run, "state": "failed", "step": "start",
-                  "error": type(exc).__name__}
+    except Exception as exc:  # configuration errors: our own messages, else only the type, since a message could echo a value
+        detail = str(exc) if isinstance(exc, (GitHubError, vault.VaultError)) else type(exc).__name__
+        log.error("review %s: couldn't start: %s", review_id, detail)
+        result = {"id": review_id, "pr": pr, "dry_run": dry_run, "state": "failed", "step": "start", "error": detail}
     if dry_run:
         save_result(review_id, dict(result, finished_at=now()))

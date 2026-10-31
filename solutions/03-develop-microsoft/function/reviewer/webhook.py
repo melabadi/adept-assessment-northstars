@@ -91,8 +91,8 @@ def intake(headers: dict, body: bytes, *, secret: str, repository: str, label: s
         return 200, {"result": "ignored", "reason": reason}, None
     try:
         pull = read_pull(number)
-    except Exception as exc:  # GitHubError names the call and the status; anything else, only its type
-        detail = str(exc) if exc.__class__.__name__ == "GitHubError" else type(exc).__name__
+    except Exception as exc:  # GitHubError and VaultError name the call and the status; anything else, only its type
+        detail = str(exc) if exc.__class__.__name__ in ("GitHubError", "VaultError") else type(exc).__name__
         return 502, {"error": f"couldn't read pull request #{number} from GitHub: {detail}"}, None
     refusal = eligibility(pull, repository, label, dry_run=False)
     if refusal:
