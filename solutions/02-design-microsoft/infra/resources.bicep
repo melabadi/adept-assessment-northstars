@@ -3,11 +3,12 @@
 //     Insights for the agents' traces. The agents themselves, the knowledge bases, and the evaluators are data-plane
 //     objects that the azd hook (setup_azure.py) publishes from agent.yaml.
 //   - Azure AI Search: the approved standards, one knowledge base per operating profile.
-//   - Orchestration: an Azure Function (webhook, gate, guarded GitHub writes) and two Logic Apps (the advisor, and the
-//     optional re-index and re-evaluate on merge), reachable from GitHub only through the GitHub App's webhook.
+//   - Orchestration: one Azure Function, reachable from GitHub only through the GitHub App's webhook. The webhook
+//     queues each question (and each merged change to the standards); the queue functions ask the agent, run the gate,
+//     and make the guarded GitHub writes, or re-index, re-publish, and re-evaluate.
 //   - Secrets: Key Vault with no public network access (tenant policy), reached by the Function through a private
-//     endpoint, as is the Function's storage. No keys anywhere else: Foundry, Search, and storage disable local auth,
-//     and the Logic Apps call Foundry and the Function with a managed identity.
+//     endpoint, as are the Function's blobs and queues. No keys anywhere else: Foundry, Search, and storage disable local
+//     auth, and the Function calls them with its managed identity.
 param environmentName string
 param location string
 param searchLocation string
@@ -34,6 +35,7 @@ var roles = {
   searchIndexDataReader: '1407120a-92aa-4202-b7e9-c0e197c71c8f'
   searchServiceContributor: '7ca78c08-252a-4471-8644-bb5ff32d4ba0'
   storageBlobDataOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+  storageQueueDataContributor: '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
   keyVaultSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
   logAnalyticsReader: '73c42c96-874c-492b-b04d-ab87d138a893'
 }
@@ -171,7 +173,7 @@ resource appInsightsConnection 'Microsoft.CognitiveServices/accounts/projects/co
   dependsOn: [knowledgeConnections]
 }
 
-// ---------- Network: the Function reaches Key Vault and its storage through private endpoints ----------
+// ---------- Network: the Function reaches Key Vault and its storage (blobs and queues) through private endpoints ----------
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: 'vnet-${resourceToken}'
   location: location
@@ -196,6 +198,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
 
 var privateLinks = [
   { name: 'blob', zone: 'privatelink.blob.${environment().suffixes.storage}' }
+  { name: 'queue', zone: 'privatelink.queue.${environment().suffixes.storage}' }
   { name: 'vault', zone: 'privatelink.vaultcore.azure.net' }
 ]
 
@@ -225,7 +228,7 @@ resource privateEndpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for
       {
         name: link.name
         properties: {
-          privateLinkServiceId: link.name == 'blob' ? storage.id : vault.id
+          privateLinkServiceId: link.name == 'vault' ? vault.id : storage.id
           groupIds: [link.name]
         }
       }
@@ -241,7 +244,7 @@ resource privateDnsGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGrou
   }
 }]
 
-// ---------- Storage: the Function's code package and its markers (handled deliveries, answered issues) ----------
+// ---------- Storage: the Function's code package, its markers (handled deliveries, asked issues), and its queues ----------
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: 'st${resourceToken}'
   location: location
@@ -269,7 +272,18 @@ resource containers 'Microsoft.Storage/storageAccounts/blobServices/containers@2
   properties: { publicAccess: 'None' }
 }]
 
-// ---------- Key Vault: the GitHub App's credentials and the Logic Apps' trigger URLs ----------
+// The webhook answers GitHub within its 10 seconds and leaves the work here: one message per question, one per merge.
+resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource queues 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = [for name in ['advisor-runs', 'standards-runs']: {
+  parent: queueService
+  name: name
+}]
+
+// ---------- Key Vault: the GitHub App's credentials ----------
 resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: 'kv-${resourceToken}'
   location: location
@@ -285,7 +299,7 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-// ---------- The Function: webhook, gate, and the advisor's only GitHub writes ----------
+// ---------- The Function: webhook, queues, the gate, and the advisor's only GitHub writes ----------
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: 'plan-${resourceToken}'
   location: location
@@ -293,12 +307,6 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   kind: 'functionapp'
   sku: { name: 'FC1', tier: 'FlexConsumption' }
   properties: { reserved: true }
-}
-
-resource logicIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-logic-${resourceToken}'
-  location: location
-  tags: tags
 }
 
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
@@ -328,92 +336,30 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     siteConfig: {
       minTlsVersion: '1.2'
       appSettings: [
-        // Blob only: the Function has no queue or table triggers, and only blob has a private endpoint.
+        // Identity-based host storage: the queue triggers and the webhook's queue writes go through the queue endpoint.
         { name: 'AzureWebJobsStorage__blobServiceUri', value: storage.properties.primaryEndpoints.blob }
+        { name: 'AzureWebJobsStorage__queueServiceUri', value: storage.properties.primaryEndpoints.queue }
         { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
         { name: 'KEY_VAULT_URI', value: vault.properties.vaultUri }
         { name: 'STORAGE_BLOB_ENDPOINT', value: storage.properties.primaryEndpoints.blob }
+        { name: 'STORAGE_QUEUE_ENDPOINT', value: storage.properties.primaryEndpoints.queue }
         { name: 'GITHUB_REPOSITORY', value: githubRepository }
         { name: 'GITHUB_APP_NAME', value: githubAppName }
-        { name: 'AZURE_TENANT_ID', value: tenant().tenantId }
-        { name: 'LOGIC_APP_CLIENT_ID', value: logicIdentity.properties.clientId }
-        { name: 'LOGIC_APP_PRINCIPAL_ID', value: logicIdentity.properties.principalId }
         { name: 'FOUNDRY_PROJECT_ENDPOINT', value: 'https://${foundry.properties.customSubDomainName}.services.ai.azure.com/api/projects/${project.name}' }
         { name: 'FOUNDRY_MODEL_DEPLOYMENT', value: chatDeployment.name }
+        { name: 'ADVISOR_AGENT_NAME', value: spec.name }
         { name: 'SEARCH_ENDPOINT', value: searchEndpoint }
         { name: 'SEARCH_INDEX', value: spec.search.index }
       ]
     }
   }
-  dependsOn: [containers, privateDnsGroups, privateZoneLinks]
-}
-
-// ---------- Logic Apps: the orchestration a presenter shows in the run history ----------
-var functionBaseUrl = 'https://${functionApp.properties.defaultHostName}'
-
-resource advisorWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
-  name: 'logic-advisor-${resourceToken}'
-  location: location
-  tags: tags
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: { '${logicIdentity.id}': {} }
-  }
-  properties: {
-    state: 'Enabled'
-    definition: loadJsonContent('workflows/advisor.json')
-    parameters: {
-      functionBaseUrl: { value: functionBaseUrl }
-      responsesUrl: { value: 'https://${foundry.properties.customSubDomainName}.services.ai.azure.com/api/projects/${project.name}/openai/v1/responses' }
-      identityId: { value: logicIdentity.id }
-      // Entra issues no token for a managed identity as audience; Storage is one this identity has no role on (advisor_core/auth.py).
-      functionAudience: { value: 'https://storage.azure.com/' }
-    }
-  }
-}
-
-resource standardsWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
-  name: 'logic-standards-${resourceToken}'
-  location: location
-  tags: tags
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: { '${logicIdentity.id}': {} }
-  }
-  properties: {
-    state: 'Enabled'
-    definition: loadJsonContent('workflows/standards.json')
-    parameters: {
-      functionBaseUrl: { value: functionBaseUrl }
-      identityId: { value: logicIdentity.id }
-      // Entra issues no token for a managed identity as audience; Storage is one this identity has no role on (advisor_core/auth.py).
-      functionAudience: { value: 'https://storage.azure.com/' }
-    }
-  }
-}
-
-// The trigger URLs carry a signature: only Key Vault holds them, and only the Function reads them.
-resource advisorWorkflowUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: vault
-  name: 'advisor-workflow-url'
-  properties: {
-    value: listCallbackUrl('${advisorWorkflow.id}/triggers/When_GitHub_sends_a_design_question', '2019-05-01').value
-    contentType: 'text/plain'
-  }
-}
-
-resource standardsWorkflowUrl 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: vault
-  name: 'standards-workflow-url'
-  properties: {
-    value: listCallbackUrl('${standardsWorkflow.id}/triggers/When_a_change_to_the_standards_merges', '2019-05-01').value
-    contentType: 'text/plain'
-  }
+  dependsOn: [containers, queues, privateDnsGroups, privateZoneLinks]
 }
 
 // ---------- Who may do what ----------
-// The presenter publishes agents and syncs the index from azd; the Function does the same on merge and checks answers.
+// The presenter publishes agents and syncs the index from azd; the Function asks the agents, checks their answers, and
+// re-indexes, re-publishes, and evaluates on merge.
 var operators = ['presenter', 'function']
 
 resource operatorFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for key in operators: {
@@ -468,7 +414,18 @@ resource functionStorage 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
-// The Function stores the GitHub App's credentials once (app-manifest flow) and reads them and the trigger URLs.
+// The webhook adds runs to the queues, and the queue functions read and delete them.
+resource functionQueues 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, functionApp.id, roles.storageQueueDataContributor)
+  properties: {
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.storageQueueDataContributor)
+  }
+}
+
+// The Function stores the GitHub App's credentials once (app-manifest flow) and reads them.
 resource functionSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: vault
   name: guid(vault.id, functionApp.id, roles.keyVaultSecretsOfficer)
@@ -476,17 +433,6 @@ resource functionSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.keyVaultSecretsOfficer)
-  }
-}
-
-// The Logic Apps call the advisor agents (and nothing else in Foundry).
-resource logicFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: foundry
-  name: guid(foundry.id, logicIdentity.id, roles.foundryUser)
-  properties: {
-    principalId: logicIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.foundryUser)
   }
 }
 
@@ -522,6 +468,4 @@ output searchServiceName string = search.name
 output searchEndpoint string = searchEndpoint
 output functionAppName string = functionApp.name
 output keyVaultName string = vault.name
-output advisorWorkflowName string = advisorWorkflow.name
-output standardsWorkflowName string = standardsWorkflow.name
 output appInsightsName string = appInsights.name

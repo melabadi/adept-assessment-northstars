@@ -11,5 +11,18 @@
       "samplingSettings": { "isEnabled": false }
     }
   },
-  "functionTimeout": "00:10:00"
+  "functionTimeout": "00:10:00",
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  },
+  "extensions": {
+    "queues": {
+      "batchSize": 1,
+      "newBatchThreshold": 3,
+      "maxDequeueCount": 1,
+      "maxPollingInterval": "00:00:02",
+      "visibilityTimeout": "00:00:30"
+    }
+  }
 }

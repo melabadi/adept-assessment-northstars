@@ -12,6 +12,10 @@ What the client may write, whatever its token allows (Contents: write would othe
   - a comment on an issue.
 Every other write raises GuardError before any request is sent. Tokens and keys never appear in logs, return values,
 or error messages.
+
+What the client reads to decide: a branch named design/advisor-issue-N in this repository, and an open pull request
+from it. Only people with write access, and the app, can push a branch here, so both come from someone the repository
+trusts. A pull request from a fork never counts, even when its branch has the same name.
 """
 from __future__ import annotations
 
@@ -56,6 +60,12 @@ def assert_writable_ref(ref: str) -> None:
 def assert_writable_path(path: str) -> None:
     if not (path or "").startswith(ADR_DIR) or ".." in path or not path.endswith(".md"):
         raise GuardError(f"refusing to write {path!r}: only Markdown files under {ADR_DIR} are writable")
+
+
+def same_repository(pull: dict, repository: str) -> bool:
+    """Whether a pull request's branch is in this repository (only people with write access, and the app, push there)."""
+    head = (((pull or {}).get("head") or {}).get("repo") or {}).get("full_name") or ""
+    return bool(head) and head.lower() == repository.lower()
 
 
 def app_jwt(app_id: str, private_key: str) -> str:
@@ -190,7 +200,8 @@ class GitHub:
         branch = branch_for(issue)
         owner = self.repo.split("/", 1)[0]
         for existing in self._get("/pulls", head=f"{owner}:{branch}", state="open") or []:
-            return {"number": existing["number"], "url": existing["html_url"], "created": False}
+            if same_repository(existing, self.repo):
+                return {"number": existing["number"], "url": existing["html_url"], "created": False}
         created = self._write("POST", "/pulls", {"title": title, "head": branch, "base": self.default_branch(), "body": body})
         return {"number": created["number"], "url": created["html_url"], "created": True}
 
