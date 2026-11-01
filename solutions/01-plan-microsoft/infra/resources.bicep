@@ -1,5 +1,12 @@
-// Resources for the Plan · Microsoft solution (resource-group scope): a Microsoft Foundry project with a chat model
-// and agent tracing, and the Logic App that runs the agent, scores its brief, and waits for a person.
+// Resources for the Plan · Microsoft solution (resource-group scope):
+//   - Microsoft Foundry: the project, the chat model, and Application Insights for the agent's traces. The agent, its
+//     vector store, the evaluators, and the evaluation are data-plane objects that the azd hook (setup_foundry.py)
+//     publishes from agent.yaml and evaluators/.
+//   - The run: an Azure Function app on the Flex Consumption plan (../function). Three functions: an HTTP start, a
+//     storage queue for the long steps, and a timer that reads the review Issues. Each run's state is one blob.
+//   - Network: tenant policy turns public network access off on storage and Key Vault, so the Function app reaches
+//     its storage (runs, queue, code package) and Key Vault (the GitHub token) through private endpoints in its own
+//     virtual network. No keys: storage disables shared keys, and the Function app signs in with its managed identity.
 param environmentName string
 param location string
 param principalId string
@@ -17,19 +24,10 @@ var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, 
 var foundryUser = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 var monitoringMetricsPublisher = '3913510d-42f4-4e42-8a64-420c390055eb'
 var logAnalyticsReader = '73c42c96-874c-492b-b04d-ab87d138a893'
-
-// The agent's name and the request the Logic App sends it come from agent.yaml, the agent's versioned definition.
-var agent = loadYamlContent('../agent.yaml')
-
-// Quotes for the published Issues: each transcript paragraph and policy, read from inputs/ when the template compiles.
-func excerpt(text string) string => length(text) > 220 ? '${substring(text, 0, 217)}...' : text
-var transcriptLines = split(replace(loadTextContent('../inputs/stakeholder-transcript.md'), '\r', ''), '\n')
-var paragraphLines = filter(transcriptLines, line => startsWith(line, '**[T'))
-var policyRows = filter(split(replace(loadTextContent('../inputs/routing-policies.md'), '\r', ''), '\n'), line => startsWith(line, '| POL-'))
-var sourceExcerpts = union(
-  toObject(paragraphLines, line => substring(line, 3, 3), line => excerpt(trim(substring(line, 9)))),
-  toObject(policyRows, row => trim(split(row, '|')[1]), row => excerpt('Policy "${trim(split(row, '|')[3])}" v${trim(split(row, '|')[2])}: ${trim(split(row, '|')[4])}'))
-)
+var storageBlobDataOwner = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+var storageQueueDataContributor = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+var keyVaultSecretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
+var projectEndpoint = 'https://${foundry.properties.customSubDomainName}.services.ai.azure.com/api/projects/${project.name}'
 
 // ---------- Microsoft Foundry ----------
 resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
@@ -133,30 +131,198 @@ resource presenterReadsTraces 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
-// ---------- The workflow: run the agent, score the brief, wait for a person, publish ----------
-resource workflow 'Microsoft.Logic/workflows@2019-05-01' = {
-  name: 'logic-plan-backlog'
+// ---------- Network: the Function app reaches its storage and Key Vault through private endpoints ----------
+resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
+  name: 'vnet-plan'
   location: location
   tags: tags
-  identity: { type: 'SystemAssigned' }
   properties: {
-    state: 'Enabled'
-    definition: loadJsonContent('workflow.json')
-    parameters: {
-      foundryProjectEndpoint: { value: 'https://${foundry.properties.customSubDomainName}.services.ai.azure.com/api/projects/${project.name}' }
-      agentName: { value: agent.name }
-      agentPrompt: { value: agent.prompt }
-      evaluationName: { value: 'plan-brief-checks' }
-      githubRepository: { value: githubRepository }
-      // A securestring workflow parameter: reading the workflow never returns it, and every action that uses it
-      // hides its inputs and outputs in the run history.
-      githubToken: { value: githubToken }
-      sourceExcerpts: { value: sourceExcerpts }
-    }
+    addressSpace: { addressPrefixes: ['10.43.0.0/16'] }
+    subnets: [
+      {
+        name: 'snet-function'
+        properties: {
+          addressPrefix: '10.43.0.0/26'
+          delegations: [{ name: 'flex', properties: { serviceName: 'Microsoft.App/environments' } }]
+        }
+      }
+      {
+        name: 'snet-private-endpoints'
+        properties: { addressPrefix: '10.43.1.0/27' }
+      }
+    ]
   }
 }
 
-// ---------- Who may use the agent and run evaluations: the presenter and the workflow ----------
+// Blob: the run records and the code package. Queue: the run's steps. Vault: the GitHub token.
+var privateLinks = [
+  { name: 'blob', zone: 'privatelink.blob.${environment().suffixes.storage}' }
+  { name: 'queue', zone: 'privatelink.queue.${environment().suffixes.storage}' }
+  { name: 'vault', zone: 'privatelink.vaultcore.azure.net' }
+]
+
+resource privateZones 'Microsoft.Network/privateDnsZones@2024-06-01' = [for link in privateLinks: {
+  name: link.zone
+  location: 'global'
+  tags: tags
+}]
+
+resource privateZoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = [for (link, i) in privateLinks: {
+  parent: privateZones[i]
+  name: 'vnet-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: { id: vnet.id }
+  }
+}]
+
+resource privateEndpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for link in privateLinks: {
+  name: 'pe-${link.name}-plan'
+  location: location
+  tags: tags
+  properties: {
+    subnet: { id: vnet.properties.subnets[1].id }
+    privateLinkServiceConnections: [
+      {
+        name: link.name
+        properties: {
+          privateLinkServiceId: link.name == 'vault' ? vault.id : storage.id
+          groupIds: [link.name]
+        }
+      }
+    ]
+  }
+}]
+
+resource privateDnsGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = [for (link, i) in privateLinks: {
+  parent: privateEndpoints[i]
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [{ name: link.name, properties: { privateDnsZoneId: privateZones[i].id } }]
+  }
+}]
+
+// ---------- Storage: the run records, the steps queue, and the Function app's code package ----------
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: 'st${resourceToken}'
+  location: location
+  tags: tags
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    publicNetworkAccess: 'Disabled'
+    networkAcls: { defaultAction: 'Deny', bypass: 'AzureServices' }
+  }
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource containers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for name in ['function-package', 'runs']: {
+  parent: blobService
+  name: name
+  properties: { publicAccess: 'None' }
+}]
+
+resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource stepsQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueService
+  name: 'plan-steps'
+}
+
+// ---------- Key Vault: the GitHub token, readable only by the Function app ----------
+resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: 'kv-${resourceToken}'
+  location: location
+  tags: tags
+  properties: {
+    tenantId: tenant().tenantId
+    sku: { family: 'A', name: 'standard' }
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 7
+    publicNetworkAccess: 'Disabled'
+    networkAcls: { defaultAction: 'Deny', bypass: 'AzureServices' }
+  }
+}
+
+// Written through Azure Resource Manager from a secure parameter: deployment history never shows the value. Until
+// PLAN_GITHUB_TOKEN is set there's no secret, and a run fails with GitHubTokenMissing when it opens the review Issue.
+resource githubTokenSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(githubToken)) {
+  parent: vault
+  name: 'github-token'
+  properties: {
+    value: githubToken
+    contentType: 'text/plain'
+  }
+}
+
+// ---------- The Function app: start, steps, and the timer that reads the review Issues ----------
+resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: 'asp-plan'
+  location: location
+  tags: tags
+  kind: 'functionapp'
+  sku: { name: 'FC1', tier: 'FlexConsumption' }
+  properties: { reserved: true }
+}
+
+resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
+  name: 'func-${resourceToken}'
+  location: location
+  tags: union(tags, { 'azd-service-name': 'function' })
+  kind: 'functionapp,linux'
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    serverFarmId: plan.id
+    httpsOnly: true
+    virtualNetworkSubnetId: vnet.properties.subnets[0].id
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storage.properties.primaryEndpoints.blob}function-package'
+          authentication: { type: 'SystemAssignedIdentity' }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: 40
+        instanceMemoryMB: 2048
+      }
+      runtime: { name: 'python', version: '3.12' }
+    }
+    siteConfig: {
+      minTlsVersion: '1.2'
+      appSettings: [
+        // The host's storage (timer locks, queue, keys) through the private endpoints, with the managed identity.
+        { name: 'AzureWebJobsStorage__blobServiceUri', value: storage.properties.primaryEndpoints.blob }
+        { name: 'AzureWebJobsStorage__queueServiceUri', value: storage.properties.primaryEndpoints.queue }
+        { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
+        // Application Insights accepts Microsoft Entra ID only (DisableLocalAuth): the Function app signs in to send logs.
+        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
+        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'Authorization=AAD' }
+        { name: 'FOUNDRY_PROJECT_ENDPOINT', value: projectEndpoint }
+        { name: 'GITHUB_REPOSITORY', value: githubRepository }
+        { name: 'KEY_VAULT_URI', value: vault.properties.vaultUri }
+        { name: 'STORAGE_BLOB_ENDPOINT', value: storage.properties.primaryEndpoints.blob }
+      ]
+    }
+  }
+  dependsOn: [containers, stepsQueue, privateDnsGroups, privateZoneLinks]
+}
+
+// ---------- Who may use the agent and run evaluations: the presenter and the Function app ----------
 resource presenterFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: foundry
   name: guid(foundry.id, principalId, foundryUser)
@@ -167,19 +333,61 @@ resource presenterFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
-resource workflowFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource functionFoundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: foundry
-  name: guid(foundry.id, workflow.id, foundryUser)
+  name: guid(foundry.id, functionApp.id, foundryUser)
   properties: {
-    principalId: workflow.identity.principalId
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', foundryUser)
   }
 }
 
+// The Function app's storage: its code package, the host's locks and keys, and the run records (blob); its steps (queue).
+resource functionBlobOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, functionApp.id, storageBlobDataOwner)
+  properties: {
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwner)
+  }
+}
+
+resource functionQueueContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storage
+  name: guid(storage.id, functionApp.id, storageQueueDataContributor)
+  properties: {
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributor)
+  }
+}
+
+// Reads the GitHub token; nothing else (and nobody else) reads Key Vault's secrets.
+resource functionSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: vault
+  name: guid(vault.id, functionApp.id, keyVaultSecretsUser)
+  properties: {
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUser)
+  }
+}
+
+resource functionPublishesTelemetry 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: appInsights
+  name: guid(appInsights.id, functionApp.id, monitoringMetricsPublisher)
+  properties: {
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringMetricsPublisher)
+  }
+}
+
 output foundryAccountName string = foundry.name
 output foundryProjectName string = project.name
-output foundryProjectEndpoint string = 'https://${foundry.properties.customSubDomainName}.services.ai.azure.com/api/projects/${project.name}'
+output foundryProjectEndpoint string = projectEndpoint
 output foundryModelDeployment string = chatDeployment.name
-output logicAppName string = workflow.name
+output functionAppName string = functionApp.name
 output appInsightsName string = appInsights.name
