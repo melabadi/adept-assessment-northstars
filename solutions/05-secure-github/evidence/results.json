@@ -1,0 +1,30 @@
+{
+  "status": "PASS",
+  "base_sha": "ac3a863225a59931eaadb9f1fc4d8941dd649071",
+  "head_sha": "cc9ff4fcf1f7845d211949a4d96d6644afc61a00",
+  "tests_only_sha": "00740bdeac0af53c3dfc7db1c02ce3059ed7d773",
+  "checks": {
+    "before": {
+      "exit_code": 2,
+      "tests": 10,
+      "failures": 6,
+      "errors": 0,
+      "skipped": 0,
+      "literal_search_failures": 6
+    },
+    "after": {
+      "exit_code": 0,
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "literal_search_failures": 0
+    },
+    "full_suite": {
+      "exit_code": 0
+    }
+  },
+  "reason": "regression failed before repair, passed after; full app suite passed",
+  "schema_version": "1.0",
+  "timestamp_utc": "2026-11-01T02:45:28.645109+00:00"
+}

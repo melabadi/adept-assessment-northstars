@@ -1,0 +1,185 @@
+Running tests from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31mfailed[m RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(persona: "u-ben", scope: "queue", term: "' OR '1'='1") [90m(837ms)[m
+  from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31m  Assert.Equal() Failure: Values differ
+  Expected: 0
+  Actual:   18
+[m[90m    at RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(String persona, String scope, String term) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/SearchSecurityTests.cs:39[90m
+    --- End of stack trace from previous location ---
+[m[31mfailed[m RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(persona: "u-ben", scope: "queue", term: "%") [90m(214ms)[m
+  from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31m  Assert.Equal() Failure: Values differ
+  Expected: 1
+  Actual:   18
+[m[90m    at RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(String persona, String scope, String term) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/SearchSecurityTests.cs:39[90m
+    --- End of stack trace from previous location ---
+[m[31mfailed[m RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(persona: "u-dan", scope: "all", term: "_") [90m(261ms)[m
+  from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31m  Assert.Equal() Failure: Values differ
+  Expected: 0
+  Actual:   24
+[m[90m    at RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(String persona, String scope, String term) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/SearchSecurityTests.cs:39[90m
+    --- End of stack trace from previous location ---
+[m[31mfailed[m RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(persona: "u-dan", scope: "all", term: "' OR '1'='1") [90m(217ms)[m
+  from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31m  Assert.Equal() Failure: Values differ
+  Expected: 0
+  Actual:   24
+[m[90m    at RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(String persona, String scope, String term) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/SearchSecurityTests.cs:39[90m
+    --- End of stack trace from previous location ---
+[m[31mfailed[m RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(persona: "u-ava", scope: "mine", term: "quote'") [90m(145ms)[m
+  from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31m  Assert.Equal() Failure: Values differ
+  Expected: OK
+  Actual:   InternalServerError
+[m[90m    at RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(String persona, String scope, String term) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/SearchSecurityTests.cs:37[90m
+    --- End of stack trace from previous location ---
+[m[31mfailed[m RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(persona: "u-ava", scope: "mine", term: "' OR '1'='1") [90m(94ms)[m
+  from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31m  Assert.Equal() Failure: Values differ
+  Expected: 0
+  Actual:   8
+[m[90m    at RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(String persona, String scope, String term) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/SearchSecurityTests.cs:39[90m
+    --- End of stack trace from previous location ---
+[m[m/home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64) [31mfailed with 6 error(s)[m [90m(6s 835ms)[m
+Exit code: 2
+  Standard output: warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35]
+        No XML encryptor configured. Key {8e8f0c81-7c9c-4218-b9a3-4c13f21076d5} may be persisted to storage in unencrypted form.
+  info: Microsoft.Hosting.Lifetime[0]
+        Application started. Press Ctrl+C to shut down.
+  info: Microsoft.Hosting.Lifetime[0]
+        Hosting environment: Testing
+  info: Microsoft.Hosting.Lifetime[0]
+        Content root path: /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/src/RequestHub.Api
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 3.5627ms with message 'Database not initialized yet: starting'
+  fail: Microsoft.EntityFrameworkCore.Database.Command[20102]
+        Failed executing DbCommand (10ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+        SELECT "MigrationId", "ProductVersion"
+        FROM "__EFMigrationsHistory"
+        ORDER BY "MigrationId";
+  info: Microsoft.EntityFrameworkCore.Migrations[20402]
+        Applying migration '20261026124855_InitialCreate'.
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 0.0278ms with message 'Database not initialized yet: starting'
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 0.0045ms with message 'Database not initialized yet: starting'
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 0.0033ms with message 'Database not initialized yet: starting'
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 0.0029ms with message 'Database not initialized yet: starting'
+  info: RequestHub.Api.DatabaseInitializer[0]
+        Seeded demo data for industry general
+  info: RequestHub.Api.DatabaseInitializer[0]
+        Database ready after 1 attempt(s)
+  fail: Microsoft.EntityFrameworkCore.Database.Command[20102]
+        Failed executing DbCommand (1ms) [Parameters=[@user_Id='?'], CommandType='Text', CommandTimeout='30']
+        SELECT count(*)::int
+        FROM (
+            SELECT * FROM "Requests" WHERE "Title" ILIKE '%quote'%' OR "Description" ILIKE '%quote'%'
+        ) AS r
+        WHERE r."RequesterId" = @user_Id
+  fail: Microsoft.EntityFrameworkCore.Query[10100]
+        An exception occurred while iterating over the results of a query for context type 'RequestHub.Core.Data.RequestHubDbContext'.
+        Npgsql.PostgresException (0x80004005): 42725: operator is not unique: unknown % unknown
+        
+        POSITION: 86
+           at Npgsql.Internal.NpgsqlConnector.ReadMessageLong(Boolean async, DataRowLoadingMode dataRowLoadingMode, Boolean readingNotifications, Boolean isReadingPrependedMessage)
+           at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+           at Npgsql.NpgsqlDataReader.NextResult(Boolean async, Boolean isConsuming, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlDataReader.NextResult(Boolean async, Boolean isConsuming, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+           at Npgsql.EntityFrameworkCore.PostgreSQL.Storage.Internal.NpgsqlExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+          Exception data:
+            Severity: ERROR
+            SqlState: 42725
+            MessageText: operator is not unique: unknown % unknown
+            Hint: Could not choose a best candidate operator. You might need to add explicit type casts.
+            Position: 86
+            File: parse_oper.c
+            Line: 639
+            Routine: op_error
+        Npgsql.PostgresException (0x80004005): 42725: operator is not unique: unknown % unknown
+        
+        POSITION: 86
+           at Npgsql.Internal.NpgsqlConnector.ReadMessageLong(Boolean async, DataRowLoadingMode dataRowLoadingMode, Boolean readingNotifications, Boolean isReadingPrependedMessage)
+           at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+           at Npgsql.NpgsqlDataReader.NextResult(Boolean async, Boolean isConsuming, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlDataReader.NextResult(Boolean async, Boolean isConsuming, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+           at Npgsql.EntityFrameworkCore.PostgreSQL.Storage.Internal.NpgsqlExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+          Exception data:
+            Severity: ERROR
+            SqlState: 42725
+            MessageText: operator is not unique: unknown % unknown
+            Hint: Could not choose a best candidate operator. You might need to add explicit type casts.
+            Position: 86
+            File: parse_oper.c
+            Line: 639
+            Routine: op_error
+  fail: Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware[1]
+        An unhandled exception has occurred while executing the request.
+        Npgsql.PostgresException (0x80004005): 42725: operator is not unique: unknown % unknown
+        
+        POSITION: 86
+           at Npgsql.Internal.NpgsqlConnector.ReadMessageLong(Boolean async, DataRowLoadingMode dataRowLoadingMode, Boolean readingNotifications, Boolean isReadingPrependedMessage)
+           at System.Runtime.CompilerServices.PoolingAsyncValueTaskMethodBuilder`1.StateMachineBox`1.System.Threading.Tasks.Sources.IValueTaskSource<TResult>.GetResult(Int16 token)
+           at Npgsql.NpgsqlDataReader.NextResult(Boolean async, Boolean isConsuming, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlDataReader.NextResult(Boolean async, Boolean isConsuming, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)
+           at Npgsql.NpgsqlCommand.ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+           at Npgsql.EntityFrameworkCore.PostgreSQL.Storage.Internal.NpgsqlExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+           at Microsoft.EntityFrameworkCore.Query.ShapedQueryCompilingExpressionVisitor.SingleAsync[TSource](IAsyncEnumerable`1 asyncEnumerable, CancellationToken cancellationToken)
+           at Microsoft.EntityFrameworkCore.Query.ShapedQueryCompilingExpressionVisitor.SingleAsync[TSource](IAsyncEnumerable`1 asyncEnumerable, CancellationToken cancellationToken)
+           at RequestHub.Core.Services.RequestWorkflow.ListAsync(AppUser user, RequestQuery q, CancellationToken ct) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/src/RequestHub.Core/Services/RequestWorkflow.cs:line 81
+           at RequestHub.Api.Endpoints.ApiEndpoints.ListRequests(HttpContext ctx, RequestWorkflow workflow, IOptionsMonitor`1 faults, TimeProvider clock, CancellationToken ct, String scope, String status, String department, String priority, String q, Int32 page, Int32 pageSize) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/src/RequestHub.Api/Endpoints/ApiEndpoints.cs:line 116
+           at Microsoft.AspNetCore.Http.RequestDelegateFactory.ExecuteTaskResult[T](Task`1 task, HttpContext httpContext)
+           at RequestHub.Api.Auth.AuthSetup.<>c.<<UseCustomHeaderCsrfGuard>b__2_0>d.MoveNext() in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/src/RequestHub.Api/Auth/Authentication.cs:line 243
+        --- End of stack trace from previous location ---
+           at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+           at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+           at Program.<>c.<<<Main>$>b__0_5>d.MoveNext() in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-before-08fyn5tb/app/src/RequestHub.Api/Program.cs:line 88
+        --- End of stack trace from previous location ---
+           at Microsoft.AspNetCore.Diagnostics.StatusCodePagesMiddleware.Invoke(HttpContext context)
+           at Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddlewareImpl.<Invoke>g__Awaited|10_0(ExceptionHandlerMiddlewareImpl middleware, HttpContext context, Task task)
+          Exception data:
+            Severity: ERROR
+            SqlState: 42725
+            MessageText: operator is not unique: unknown % unknown
+            Hint: Could not choose a best candidate operator. You might need to add explicit type casts.
+            Position: 86
+            File: parse_oper.c
+            Line: 639
+            Routine: op_error
+  info: RequestHub.Core.Services.RequestWorkflow[0]
+        Request REQ-1025 created by u-ava for IT
+  info: Microsoft.Hosting.Lifetime[0]
+        Application is shutting down...
+
+  In process file artifacts produced:
+    - /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/before/search.junit.xml
+
+[31mTest run summary: Failed!
+[m  total: 10
+[31m  failed: 6
+[m  succeeded: 4
+  skipped: 0
+  duration: 7s 212ms
+Test run completed with non-success exit code: 2 (see: https://aka.ms/testingplatform/exitcodes)
