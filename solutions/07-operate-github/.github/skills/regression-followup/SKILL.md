@@ -36,7 +36,7 @@ An incident is only closed for good when a test would catch it next time. This s
    It runs the suite at your head, then again with `app/src` put back to the merge base with `origin/main` while keeping your tests. Expect `Regression proof: PROVEN`. Add `--class <fully qualified class>` for a faster run while iterating. It needs PostgreSQL on `localhost:5432`, like the app's tests.
 8. **Open the pull request.** Include a short summary, the incident and follow-up links, the proof table, and anything you could not verify.
 
-The **Operate · GitHub · prove the regression test** workflow runs the same script on the pull request, using the copy from the base branch, so a pull request cannot change the rules of the proof. The proof still runs the pull request's own test code. Treat it as evidence for the reviewer, not as a security boundary: a person still reviews the test like any other code.
+The **Operate · GitHub · prove the regression test** workflow runs the same script on the pull request, using the copy from the base branch, so editing the script doesn't change the rules of the proof. GitHub still runs the pull request's own copy of the workflow file, so review any change to it. The proof still runs the pull request's own test code. Treat it as evidence for the reviewer, not as a security boundary: a person still reviews the test like any other code.
 
 ## Output
 
