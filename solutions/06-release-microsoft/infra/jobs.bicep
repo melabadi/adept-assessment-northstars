@@ -12,7 +12,7 @@ param identityId string
 param identityClientId string
 param apiAppName string
 param apiIdentifierUri string
-@description('Principal id of the Logic App that starts the release job when a build is pushed.')
+@description('Principal id of the release trigger function, which starts the release job when a build is pushed.')
 param triggerPrincipalId string = ''
 
 var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, environmentName))
@@ -72,7 +72,7 @@ resource jobs 'Microsoft.App/jobs@2025-07-01' = [for step in steps: {
   }
 }]
 
-// The Logic App may start the release job, and only that job.
+// The release trigger function may start the release job, and only that job.
 resource triggerStartsRelease 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(triggerPrincipalId)) {
   scope: jobs[0]
   name: guid(jobs[0].id, triggerPrincipalId, jobsOperator)

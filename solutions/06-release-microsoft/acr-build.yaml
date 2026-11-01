@@ -1,5 +1,5 @@
 # ACR task: build RequestHub's API in Azure Container Registry and push it as requesthub-api:<commit> and :main.
-# The push of requesthub-api:<commit> fires Event Grid, and the Logic App starts the release job for that build.
+# The push of requesthub-api:<commit> fires Event Grid, and the release trigger function starts the release job for it.
 #
 # The task is created once, by a person, with a fine-grained GitHub token that can read this repository and manage its
 # webhooks (see the README, "Set up"). On a commit to main, GitHub's webhook starts it and .Run.Commit is that commit.
