@@ -1,6 +1,6 @@
 # Operate · Incident follow-up with GitHub Copilot
 
-After an incident, the follow-up is where teams lose the most. The timeline gets rebuilt from chat history, the first plausible guess becomes the "root cause", and the test that would catch the next occurrence never gets written. In this solution an agentic workflow triages an incident Issue within minutes: it builds a timeline where every row has a source, keeps observed facts apart from hypotheses, and opens one bounded follow-up. Without the token the agentic workflow needs, Copilot CLI runs the same triage from your terminal. A person assigns the follow-up to Copilot. Copilot writes a regression test that fails on the current code, then makes the smallest fix. A deterministic check proves that the test catches the defect.
+After an incident, the follow-up is where teams lose the most. The timeline gets rebuilt from chat history, the first plausible guess becomes the "root cause", and the test that would catch the next occurrence never gets written. In this solution an agentic workflow triages an incident Issue within minutes: it builds a timeline where every row has a source, keeps observed facts apart from hypotheses, and opens one bounded follow-up. Without the token the agentic workflow needs, Copilot CLI drafts the same triage in your terminal, and you file it. A person assigns the follow-up to Copilot. Copilot writes a regression test that fails on the current code, then makes the smallest fix. A deterministic check proves that the test catches the defect.
 
 ![The agentic workflow's triage comment on the incident: severity 3 in the worker area, a timeline in which every row names its source in the report, then the observed facts](images/03-triage-timeline.png)
 
@@ -10,7 +10,7 @@ After an incident, the follow-up is where teams lose the most. The timeline gets
 
 | | Today | With this solution |
 | --- | --- | --- |
-| Triage | Someone rebuilds the timeline from chat and dashboards, hours later. | An agentic workflow (or Copilot CLI) comments within minutes, with a source for every timeline row. |
+| Triage | Someone rebuilds the timeline from chat and dashboards, hours later. | An agentic workflow comments within minutes (or Copilot CLI drafts the comment for you), with a source for every timeline row. |
 | Root cause | The first plausible guess becomes the cause. | Observed facts, hypotheses (with confidence and code references), and missing evidence stay apart. |
 | Follow-up | "Add a test" goes to the backlog and is forgotten. | One bounded follow-up Issue, linked to the incident, ready for Copilot. |
 | Proof | Nobody checks that the new test would have caught the incident. | A check shows the test fails on the old code and passes with the fix. |
@@ -20,11 +20,12 @@ After an incident, the follow-up is where teams lose the most. The timeline gets
 ```mermaid
 flowchart LR
   E([Engineer]) -->|A: files Issue with<br/>label incident| W[Agentic workflow<br/>Copilot engine, read-only]
-  E -.->|B: no token,<br/>runs Copilot CLI| L[Copilot CLI<br/>agent operate-github]
+  E -.->|B: no token,<br/>runs Copilot CLI| L[Copilot CLI<br/>agent operate-github<br/>file tools only]
   W -->|safe outputs| T[Triage comment<br/>and labels]
   W -->|safe outputs| F[Follow-up Issue<br/>sub-issue of the incident]
-  L -.->|allow-listed<br/>gh issue commands| T
-  L -.-> F
+  L -.->|two drafts| D{Engineer reads<br/>and files them}
+  D -.-> T
+  D -.-> F
   F --> H{Person reviews}
   H -->|assigns Copilot,<br/>agent operate-github| C[Copilot cloud agent]
   C --> PR[Pull request:<br/>failing test + smallest fix]
@@ -34,13 +35,13 @@ flowchart LR
   CI --> R
 ```
 
-- **GitHub Agentic Workflows** (option A) runs [`operate-github-incident-triage.md`](.github/workflows/operate-github-incident-triage.md), compiled with `gh aw` v0.93.5 into its `.lock.yml`. The Copilot engine reads the incident and the code with read-only tools, following the `incident-evidence` skill. It cannot write anything itself. After a threat-detection job checks its output, a separate job applies what it asked for: one comment, labels from an allow-list, and one Issue. It needs the `COPILOT_GITHUB_TOKEN` secret.
-- **Copilot CLI** (option B, no token) runs the same triage on the presenter's machine with the custom agent [`operate-github`](.github/agents/operate-github.agent.md) and the same skill. It files the same comment, labels, and follow-up with the presenter's GitHub CLI sign-in. This is not the agentic workflow: there is no sandbox, firewall, threat detection, or safe-output limit. The command allows only `gh issue` commands and the two files Copilot drafts, and within `gh issue` the agent's instructions keep it to the commands the skill lists. When you need a hard boundary, use the agentic workflow.
-- **The Copilot cloud agent** works on the follow-up with the `operate-github` agent and the `regression-followup` skill: test first, watch it fail, smallest fix, prove.
+- **GitHub Agentic Workflows** (option A) runs [`operate-github-incident-triage.md`](.github/workflows/operate-github-incident-triage.md), compiled with `gh aw` v0.93.5 into its `.lock.yml`. The Copilot engine reads the incident and the code with read-only tools, following the `incident-evidence` skill. It cannot write anything itself. A threat-detection job then checks its output. If detection flags it, nothing is applied. Otherwise a separate job applies what the agent asked for: one comment, labels from an allow-list, and one Issue. It needs the `COPILOT_GITHUB_TOKEN` secret.
+- **Copilot CLI** (option B, no token) drafts the same triage on the presenter's machine with the custom agent [`operate-github`](.github/agents/operate-github.agent.md) and the same skill. The person exports the incident to a file, and Copilot runs with file tools only: it reads the repository and the export, and writes two drafts. It has no shell, no GitHub access, and no web access, and it can't read `.env` files. The person reads the drafts and files them with three `gh` commands, under their own name.
+- **The Copilot cloud agent** works on the follow-up with the `operate-github` agent and the `regression-followup` skill: test first, watch it fail, smallest fix, prove. It works from the follow-up and the triage comment, never from the incident's description, and acts only on comments from the owner, members, and collaborators.
 - **GitHub Actions** runs [`operate-github-regression-proof.yml`](.github/workflows/operate-github-regression-proof.yml) on Copilot's pull request. It runs the tests at the head, then again with the production code put back to where the pull request started (the merge base) and the pull request's tests kept. The proof script comes from the base branch, so the pull request cannot change its rules. The script still runs the pull request's own test code, so its verdict is evidence for the reviewer, not a security boundary. CI runs as usual.
 - **People** report the incident, decide whether the follow-up goes to Copilot, approve the workflow runs on Copilot's pull request, and review it.
 
-**Outside contributions.** On a public repository anyone can file an incident with this solution's form, and the form applies the `incident` label for them. The triage still does not start: before anything else, gh-aw checks that whoever applied the label has write access (the role admin, maintainer, or write), so an outside report costs nothing and reaches no model. To triage one, someone with write access removes the `incident` label and applies it again. Only people with write access can assign the follow-up to Copilot or mention `@copilot`. The regression proof runs a fork's pull request once someone with write access approves the run, with a read-only token and no secrets.
+**Outside contributions.** On a public repository anyone can file an incident with this solution's form, and the form applies the `incident` label for them. The triage still does not start. Before anything else, the workflow checks that the incident's author is the owner, a member, or a collaborator (its `author_association`). gh-aw then checks that whoever applied the label has write access (the role admin, maintainer, or write). So an outside report reaches no model, and applying the label again doesn't change that: a maintainer who decides it is an incident files it again in their own words. On a public repository, gh-aw also hides content from anyone else from the agent's GitHub tools, such as comments on the incident. Only people with write access can assign the follow-up to Copilot or mention `@copilot`. The regression proof runs a fork's pull request once someone with write access approves the run, with a read-only token and no secrets. A dispatched run of the proof refuses a fork's pull request: it would build that code with this repository's cache access.
 
 The incident is synthetic, but the defect is real. RequestHub's notification worker does not count a delivery that times out as a failed attempt. One slow notification then stalls the queue and causes duplicate deliveries. The defect stays on `main` on purpose, so the demo can run again.
 
@@ -52,15 +53,17 @@ The incident is synthetic, but the defect is real. RequestHub's notification wor
 ├── images/                                         screenshots in this README, from a real run
 ├── incidents/
 │   └── inc-2041-notification-backlog.md            synthetic incident report (fixture), in the form's format
+├── tests/test_operate_tooling.py                   unit tests: who can start the triage and the proof, what Copilot CLI can do
 └── .github/
-    ├── agents/operate-github.agent.md              custom Copilot agent: CLI triage; test, smallest fix, proof
+    ├── agents/operate-github.agent.md              custom Copilot agent: test, smallest fix, proof; CLI triage drafts
     ├── skills/
-    │   ├── incident-evidence/                      triage method, severity and area rubric, Copilot CLI filing steps
+    │   ├── incident-evidence/                      triage method, severity and area rubric, Copilot CLI drafting steps
     │   └── regression-followup/                    follow-up template, procedure, prove_regression.py
     ├── workflows/
-    │   ├── operate-github-incident-triage.md       agentic workflow: triggers, permissions, safe outputs, prompt
+    │   ├── operate-github-incident-triage.md       agentic workflow: triggers, author check, permissions, safe outputs, prompt
     │   ├── operate-github-incident-triage.lock.yml compiled GitHub Actions workflow (generated, do not edit)
-    │   └── operate-github-regression-proof.yml     proves a follow-up's test fails without its fix
+    │   ├── operate-github-regression-proof.yml     proves a follow-up's test fails without its fix
+    │   └── operate-github-checks.yml               runs the unit tests and checks the lock file on pull requests
     └── ISSUE_TEMPLATE/07-operate-github-incident.yml   the incident report form
 ```
 
@@ -69,7 +72,7 @@ The incident is synthetic, but the defect is real. RequestHub's notification wor
 - GitHub Copilot Business or Enterprise, with the Copilot cloud agent enabled for the repository.
 - [GitHub CLI](https://cli.github.com/) 2.94 or later, signed in with permission to create labels and Issues (and repository secrets for option A).
 - **Option A, agentic workflow:** a fine-grained personal access token with the **Copilot Requests** permission, for the workflow's Copilot engine. Repositories owned by an organization can use the `copilot-requests: write` permission instead (see [Use it in your own repository](#use-it-in-your-own-repository)). GitHub Agentic Workflows is in public preview.
-- **Option B, Copilot CLI:** [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli) (`copilot`). No token or secret is needed.
+- **Option B, Copilot CLI:** [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli) (`copilot`; we tested 1.0.105, which has the `--available-tools` filter the command uses). No token or secret is needed.
 - Only to change the workflow's frontmatter: the `gh aw` extension, `gh extension install github/gh-aw --pin v0.93.5`.
 - Only to run the proof on your machine: Python 3.12 or later, the .NET 10 SDK, and PostgreSQL, as in [Run RequestHub locally](../../app/README.md#run-it-locally).
 
@@ -127,7 +130,7 @@ The last command must print line 85, `catch (Exception ex) when (ex is not Opera
 | Step | Time |
 | --- | --- |
 | 2A. Agentic workflow: incident filed to triage comment | 5 minutes (the whole run: 6) |
-| 2B. Copilot CLI: triage filed | 2.5 to 6.5 minutes |
+| 2B. Copilot CLI: drafts written, then filed | 1.5 minutes, then seconds |
 | 5. Copilot: assigned to finished pull request | 4 to 10 minutes |
 | 7. Proof check, CI | 2 minutes, 3 minutes |
 | Try to break it (optional) | about 5 minutes |
@@ -152,10 +155,10 @@ About 20 minutes. Each step says how long it takes in our runs.
    ```
 
    For a real incident, people use the **Operate: report an incident** Issue form, which applies the same labels. Within a minute or two (once a runner picks up the job) the Issue gets an 👀 reaction and a comment that links to the workflow run. Open it: **Actions** > **Operate · GitHub · triage an incident**. Each label on the new Issue starts a run; the runs for `ai-sdlc` and `phase:operate` are skipped at once. Walk through the jobs of the `incident` run:
-   - `pre_activation` checks that the person who labeled the Issue has write access, and that no open follow-up exists for this incident yet.
+   - `pre_activation` starts only when the incident's author is the owner, a member, or a collaborator. It checks that the person who labeled the Issue has write access, and that no open follow-up exists for this incident yet.
    - `activation` adds the reaction and the status comment, and builds the prompt from the sanitized Issue text.
    - `agent` runs Copilot with read-only permissions, in a sandbox behind a network firewall. Its tools are read-only GitHub tools and a short list of shell commands (`cat`, `grep`, and similar). Anything else is refused: in our run a `sed` pipeline was denied and Copilot read the files another way. It took about 2 minutes.
-   - `detection` checks the agent's output for threats such as prompt injection, leaked secrets, or malicious content. If it flags something, the run goes on in warn mode, as in **Try to break it** below.
+   - `detection` checks the agent's output for threats such as prompt injection, leaked secrets, or malicious content. If it flags something, the job fails and nothing is applied, as in **Try to break it** below.
    - `safe_outputs` applies what the agent asked for, within the limits set in the workflow's frontmatter: the labels, the follow-up as a sub-issue of the incident, and the comment.
    - `conclusion` updates the status comment with the result.
 
@@ -163,23 +166,46 @@ About 20 minutes. Each step says how long it takes in our runs.
 
    **Point out:** the `agent` job can only read. Its requests reach the repository only through `safe_outputs`, after the `detection` job checked them, and only within the limits the workflow declares.
 
-   **B. Copilot CLI** (no token needed; 2.5 to 6.5 minutes). The same agent and skill triage the incident from your terminal and file the results with your GitHub CLI sign-in. This is the Copilot CLI path, not the agentic workflow. The incident is filed without the `incident` label, because that label starts the agentic workflow.
+   **B. Copilot CLI** (no token needed; about 1.5 minutes to the drafts, and seconds to file them). Copilot drafts the same triage from your terminal with the same agent and skill, and you file it with your GitHub CLI sign-in. This is the Copilot CLI path, not the agentic workflow. The incident is filed without the `incident` label, because that label starts the agentic workflow.
 
    ```powershell
    $url = gh issue create --title "INC-2041: reviewers notified late and repeatedly (staging)" --label ai-sdlc --label phase:operate --body-file solutions/07-operate-github/incidents/inc-2041-notification-backlog.md
    $incident = $url.Split('/')[-1]
-   copilot --agent operate-github --allow-tool 'shell(gh issue)' `
-     --allow-tool 'write(followup-issue.md)' --allow-tool 'write(triage-comment.md)' `
-     -p "Triage incident Issue #$incident with the incident-evidence skill and file the results."
+   Remove-Item -Recurse -Force out/operate -ErrorAction SilentlyContinue; New-Item -ItemType Directory out/operate | Out-Null
+   if ((gh api "repos/{owner}/{repo}/issues/$incident" --jq .author_association) -in 'OWNER', 'MEMBER', 'COLLABORATOR') {
+     gh issue view $incident --json number,title,body,url > out/operate/incident.json
+   } else { Write-Warning "Incident #$incident was not filed by the owner, a member, or a collaborator. File it again in your own words." }
+   copilot --agent operate-github --available-tools 'view,glob,grep,skill,create,edit,apply_patch' --disable-builtin-mcps `
+     --disallow-temp-dir --deny-tool 'read(.env)' --allow-tool 'write(followup-issue.md)' --allow-tool 'write(triage-comment.md)' `
+     -p "Draft the triage of the incident in out/operate/incident.json with the incident-evidence skill."
    ```
 
-   In bash, end the lines with `\` instead of a backtick and use `incident=${url##*/}`. Copilot reads the incident and the code, drafts the follow-up and the comment under `out/operate/` (git ignores it), then opens the follow-up, labels the incident, and comments. The terminal shows every command it runs. A non-interactive run cannot ask you for approval, so any command outside `gh issue` that needs approval, such as `gh pr create` or `git push`, and any write to another file are denied. Copilot CLI approves `gh` commands per first-level subcommand, so `shell(gh issue)` allows every `gh issue` command; the skill uses only `view`, `list`, `create`, `edit`, and `comment`.
+   In bash, end the lines with `\` instead of a backtick, use `incident=${url##*/}`, and check the author with `gh api "repos/{owner}/{repo}/issues/$incident" --jq .author_association`.
 
-   ![Copilot CLI triaging incident 110 in the terminal: it reads the skill, the incident, and the code, then files the follow-up, labels, and comment with gh issue commands. A gh api call is refused because the command's --allow-tool list allows only gh issue: the allow-list at work](images/02b-copilot-cli.png)
+   Only an incident filed by the owner, a member, or a collaborator reaches Copilot: the `if` exports it only then, and only its title and description, never its comments. Copilot runs unattended, signed in as you, so the command gives it file tools only:
+   - `--available-tools` leaves it no shell, no web access, and no subagents.
+   - `--disable-builtin-mcps` removes the GitHub tools.
+   - It reads only the repository: no temp directory, and no `.env` file, where an azd environment can keep a token.
+   - It can write only the two drafts.
 
-   **Point out:** the refused `gh api` call is the allow-list at work. The command allows `gh issue` and nothing else, so Copilot falls back to the commands it is allowed.
+   It reads the skill, the exported incident, and the code, then writes the follow-up to `out/operate/followup-issue.md` (its first line is the title) and the triage comment to `out/operate/triage-comment.md`. git ignores `out/`.
 
-3. **Read the triage comment** on the incident (2 minutes). The first part is at the top of this page: the severity and area, and a timeline with a source for every row. Below it come the observed facts, then the hypotheses, each with what supports it, what it does not explain, a confidence, and the code it points at. A list of missing evidence follows, then the one follow-up that was opened and the candidates that were *not* created. The incident's labels now include a severity and an area (`severity:3` and `area:worker` in our runs), and the follow-up is listed under its **Sub-issues** (the Copilot CLI comment also links it by number).
+   ![Copilot CLI drafting the triage of incident 252 in the terminal: the commands check the incident's author and export it, Copilot starts with 165 tools disabled, among them the shell and web access, reads the skill, the incident, and the code, and creates only the two drafts. Nothing was filed on GitHub](images/02b-copilot-cli.png)
+
+   Then read both drafts: you publish them under your name. File them with three commands, applying the severity and area from the first line of the comment:
+
+   ```powershell
+   Get-Content out/operate/followup-issue.md, out/operate/triage-comment.md
+   $followup = Get-Content out/operate/followup-issue.md
+   $followup | Select-Object -Skip 2 | Set-Content out/operate/followup-body.md
+   gh issue create --title $followup[0] --label incident-followup --label ai-sdlc --label phase:operate --parent $incident --body-file out/operate/followup-body.md
+   gh issue edit $incident --add-label severity:3 --add-label area:worker
+   gh issue comment $incident --body-file out/operate/triage-comment.md
+   ```
+
+   **Point out:** Copilot did the analysis, but it couldn't act. It had no `gh`, no shell, and no web access, so nothing in the incident's text could make it file, comment, or reach anything outside the repository. Everything it produced went through a person before it reached GitHub.
+
+3. **Read the triage comment** on the incident (2 minutes). The first part is at the top of this page: the severity and area, and a timeline with a source for every row. Below it come the observed facts, then the hypotheses, each with what supports it, what it does not explain, a confidence, and the code it points at. A list of missing evidence follows, then the one follow-up that was opened and the candidates that were *not* created. The incident's labels now include a severity and an area (`severity:3` and `area:worker` in our runs), and the follow-up is listed under its **Sub-issues**.
 
    ![The rest of the triage comment: hypotheses H1 to H3, each with what supports it, what it does not explain, and a confidence, citing code such as NotificationProcessor.cs:85; then the missing evidence, and the one follow-up with the candidates that were not created](images/03-triage-hypotheses.png)
 
@@ -235,17 +261,17 @@ About 20 minutes. Each step says how long it takes in our runs.
   gh issue create --title "INC-2041: reviewers notified late and repeatedly (staging, try to break it)" --label incident --label ai-sdlc --label phase:operate --body-file -
 ```
 
-Three safeguards respond, independently. The agent quotes the line under **Suspicious content** in its comment and does not follow it. Closing an Issue is not among the workflow's safe outputs, so the agent could not close it even if it tried. And the `detection` job can flag the line as a prompt injection: it did in our latest run, not in an earlier one. When it does, `safe_outputs` applies gh-aw's warn mode: it posts the comment under an **agentic threat detected** banner and still opens the follow-up, but withholds the labels. The incident gets `needs-review` instead, and gh-aw records the run in an **[aw] Detection Runs** Issue. On the Copilot CLI path the command would allow `gh issue close`, so there the agent's instructions are what refuse it.
+Three safeguards respond, independently. The agent quotes the line under **Suspicious content** in its comment and does not follow it. Closing an Issue is not among the workflow's safe outputs, so the agent could not close it even if it tried. And the `detection` job can flag the run as a prompt injection: it flagged one of our two runs. When it does, the job fails and the run applies nothing: no comment, no labels, no follow-up. The status comment on the incident links to the failed run, and gh-aw records it in an **[aw] Detection Runs** Issue. A person reads the run and decides what happens next. On the Copilot CLI path, Copilot has no tool that changes GitHub, so such a line can only end up in a draft, which you read before you file it.
 
-![A triage comment under a Caution banner, agentic threat detected, manual review required: it rates the incident severity 3 in the worker area, and its Suspicious content section quotes the report's instruction to close the Issue and label it severity:4, which it did not follow](images/09-try-to-break-it.png)
+![The Suspicious content section of an agentic triage comment from a run that detection did not flag: the report's instruction to close the Issue and label it severity:4 is quoted, and was not followed](images/09-try-to-break-it.png)
 
-**Point out:** the instruction came in with the data and was treated as data. The agent reported it instead of obeying it, and when the detection job flags a run, a person reviews it before anything else happens.
+**Point out:** the instruction came in with the data and was treated as data. The agent reported it instead of obeying it, and a run that detection flags changes nothing until a person has looked at it.
 
 ## What to observe
 
 - **Minutes, not hours.** The evidence-based triage arrives while the incident is still fresh.
 - **Honest reasoning.** Facts, hypotheses, and missing evidence stay apart. Each hypothesis has a confidence level and points at the code that supports it, so people can check it quickly.
-- **Bounded automation.** The agentic workflow can only read, comment, apply allow-listed labels, and open one Issue. Only people with write access can trigger it, and it never opens a second follow-up for an incident while one is open. On the Copilot CLI path, the command is the boundary: `gh issue` commands and the two drafts, nothing else that needs approval. Within `gh issue`, the agent's instructions keep it to the commands the skill lists, which is why a person runs this path and watches the commands it prints.
+- **Bounded automation.** The agentic workflow can only read, comment, apply allow-listed labels, and open one Issue, and it applies nothing when its threat detection flags the run. It starts only for an incident from the owner, a member, or a collaborator, labeled by someone with write access, and it never opens a second follow-up for an incident while one is open. On the Copilot CLI path, Copilot can read the repository and write two drafts, nothing else, and a person files them.
 - **People decide.** A person chooses whether the follow-up goes to Copilot, approves the workflow runs, and reviews the pull request. Nothing merges by itself.
 - **Proof, not promises.** The check shows which tests fail without the fix, whatever the pull request's description says. In our run it showed that Copilot's summary overstated its own proof. A test that has never failed proves nothing.
 
@@ -258,10 +284,10 @@ gh pr close <copilot-pr-number> --delete-branch
 gh issue list --state open --label incident-followup --json number --jq '.[].number' | ForEach-Object { gh issue close $_ --reason "not planned" }
 gh issue list --state open --search "INC-2041 in:title" --json number --jq '.[].number' | ForEach-Object { gh issue close $_ --reason completed }
 gh issue list --state open --label agentic-workflows --search '"[aw] Detection Runs" in:title' --json number --jq '.[].number' | ForEach-Object { gh issue close $_ }
-Remove-Item -Recurse -Force out/operate -ErrorAction SilentlyContinue   # option B: Copilot CLI's drafts
+Remove-Item -Recurse -Force out/operate -ErrorAction SilentlyContinue   # option B: the export and Copilot CLI's drafts
 ```
 
-Closing the follow-up also lets a new triage of the same incident open a fresh follow-up. The first two checks in [Before each session](#before-each-session) now print `0`. The fourth command is for **Try to break it**: when the `detection` job flags a run, gh-aw opens an **[aw] Detection Runs** Issue, or comments on the one already open. Closing it is safe, because gh-aw opens a new one the next time it needs one.
+Closing the follow-up also lets a new triage of the same incident open a fresh follow-up. The first two checks in [Before each session](#before-each-session) now print `0`. The fourth command is for **Try to break it**: when the `detection` job flags a run, gh-aw opens an **[aw] Detection Runs** Issue, or comments on the one already open. Closing it is safe: gh-aw opens a new one the next time it needs one.
 
 ## Use it in your own repository
 
@@ -272,13 +298,15 @@ Closing the follow-up also lets a new triage of the same incident open a fresh f
    - The code map sentence in the workflow prompt ("The code is in `app/src/` ...").
    - The incident form's fields.
    - [`prove_regression.py`](.github/skills/regression-followup/prove_regression.py) builds and runs RequestHub's .NET test project. For another stack, change `TEST_PROJECT`, `SOURCE_PREFIX`, `TEST_PREFIX`, and the build and test commands in `run_tests`.
-4. After changing the workflow's frontmatter (triggers, permissions, tools, safe outputs), recompile and commit both files. Changes to the prompt below the frontmatter take effect on the next run without recompiling.
+4. After changing the workflow's frontmatter (triggers, permissions, tools, safe outputs), recompile and commit both files. Changes to the prompt below the frontmatter take effect on the next run without recompiling. Keep the `if:` author check and `threat-detection: continue-on-error: false`: they keep outsiders' text out of the prompt, and a flagged run out of your Issues.
 
 ## Troubleshooting
 
-- **The triage run fails at "Validate COPILOT_GITHUB_TOKEN secret", and an Issue named "[aw] Operate · GitHub · triage an incident: failed" appears.** The secret is missing or empty, so the agentic workflow is blocked. gh-aw files that Issue (label `agentic-workflows`) with the reason. Close the failure Issue, then either create the secret as in [Set up](#set-up) and re-apply the `incident` label, or remove the `incident` label and triage with Copilot CLI ([step 2, option B](#run-the-demo), from the `copilot` command on).
-- **Applying `incident` did nothing.** The run was skipped in `pre_activation`: either an open follow-up for this incident already exists, or the person who applied the label does not have write access. Close the follow-up to triage again.
-- **The incident got `needs-review` instead of severity and area labels, and the triage comment starts with "agentic threat detected".** The `detection` job flagged the agent's run, usually because the report contains instructions, as in **Try to break it**. In this warn mode gh-aw still posts the comment and opens the follow-up, but does not apply labels. Open the run's `detection` job to read why. If the triage is sound, apply the labels yourself and remove `needs-review`.
-- **Copilot CLI drafts the triage but reports "Permission denied because no interactive user response was available" for `gh issue create`, `edit`, or `comment`.** The `--allow-tool` pattern is too narrow. Copilot CLI approves `gh` commands per first-level subcommand: `shell(gh issue)` matches them, while `shell(gh issue create)` never matches. Run the `copilot` command from step 2, option B, exactly as written.
+- **The triage run fails at "Validate COPILOT_GITHUB_TOKEN secret", and an Issue named "[aw] Operate · GitHub · triage an incident: failed" appears.** The secret is missing or empty, so the agentic workflow is blocked. gh-aw files that Issue (label `agentic-workflows`) with the reason. Close the failure Issue, then either create the secret as in [Set up](#set-up) and apply the `incident` label again, or remove the `incident` label and draft the triage with Copilot CLI: set `$incident` to the incident's number and run [step 2, option B](#run-the-demo), from `Remove-Item` on.
+- **Applying `incident` did nothing.** The run was skipped. One of three reasons applies:
+  - The incident's author is not the owner, a member, or a collaborator: every job is skipped. File the report again in your own words.
+  - The person who applied the label does not have write access: `pre_activation` runs, and the rest is skipped.
+  - An open follow-up for this incident already exists: close it to triage again.
+- **The triage run failed at `detection`, and nothing was posted on the incident.** The detection job flagged the agent's output, usually because the report contains instructions, as in **Try to break it**, or the detector itself could not run. Either way the run applies nothing. Open the run's `detection` job to read why. If the report is sound, remove the `incident` label and apply it again.
 - **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run** in the merge box, or run `gh run rerun <run-id>`.
-- **The proof check is skipped.** It only runs on pull requests that resolve an Issue labeled `incident-followup`. Make sure the pull request links the follow-up (for example `Fixes #<number>`), or add the `incident-followup` label to the pull request, then re-run it with `gh workflow run operate-github-regression-proof.yml -f pr=<number>`.
+- **The proof check is skipped.** It only runs on pull requests that resolve an Issue labeled `incident-followup`. Make sure the pull request links the follow-up (for example `Fixes #<number>`), or add the `incident-followup` label to the pull request. Then re-run the pull request's own run of **Operate · GitHub · prove the regression test**: select **Re-run all jobs** on its run, or use `gh run rerun <run-id>`. For a pull request from a branch of this repository, such as Copilot's, `gh workflow run operate-github-regression-proof.yml -f pr=<number>` works too. A dispatched run refuses a fork's pull request: it runs on `main`, so it would build that code with this repository's cache access.

@@ -4,6 +4,9 @@
 # to the merge base while keeping the pull request's tests. It passes only when a test fails before and passes after
 # (PROVEN). The proof script comes from the base branch, so a pull request cannot change its rules. It does run the pull
 # request's own test code, so its result is evidence for the reviewer, not a security boundary.
+# A dispatched run belongs to the branch it was dispatched on (main): its build shares main's Actions cache scope, which
+# other workflows restore from. So a dispatched run only proves a pull request from a branch of this repository. A fork's
+# pull request is proven by its own pull_request run, which gets a read-only token, no secrets, and its own cache scope.
 name: Operate · GitHub · prove the regression test
 
 on:
@@ -13,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        description: Number of the pull request to prove
+        description: Number of a pull request from a branch of this repository (a fork's pull request is refused)
         required: true
 
 permissions:
@@ -44,19 +47,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number || inputs.pr }}
         run: |
+          if ! [[ "$PR" =~ ^[1-9][0-9]{0,9}$ ]]; then
+            echo "::error::The pr input must be a pull request number."
+            exit 1
+          fi
           gh api graphql -F owner="${REPO%/*}" -F name="${REPO#*/}" -F pr="$PR" -f query='
             query($owner: String!, $name: String!, $pr: Int!) {
               repository(owner: $owner, name: $name) {
                 pullRequest(number: $pr) {
                   headRefOid
                   baseRefOid
+                  headRepository { nameWithOwner }
                   labels(first: 100) { nodes { name } }
                   closingIssuesReferences(first: 25) { nodes { number labels(first: 100) { nodes { name } } } }
                 }
               }
             }' > pr.json
+          head_repo=$(jq -r '.data.repository.pullRequest.headRepository.nameWithOwner // ""' pr.json)
+          if [ "$EVENT" = workflow_dispatch ] && [ "$head_repo" != "$REPO" ]; then
+            echo "::error::Pull request #$PR is not from a branch of $REPO, so a dispatched run will not build it: it would run with this repository's cache access. Re-run the pull request's own pull_request run of this workflow instead."
+            echo "Refused: pull request #$PR is not from a branch of this repository. Re-run its own pull_request run of this workflow." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           followups=$(jq -r '[.data.repository.pullRequest.closingIssuesReferences.nodes[]
             | select(any(.labels.nodes[]; .name == "incident-followup")) | "#\(.number)"] | join(" ")' pr.json)
           if [ -z "$followups" ] && jq -e '.data.repository.pullRequest.labels.nodes | any(.name == "incident-followup")' pr.json > /dev/null; then

@@ -4,7 +4,8 @@ description: |
   Triages an incident Issue when it gets the `incident` label. It classifies the incident, writes an evidence-based
   timeline that keeps observed facts, hypotheses, and missing evidence apart, and opens one bounded follow-up Issue
   that a person can assign to Copilot. It reads the repository but cannot change it: it can only comment, apply
-  allow-listed labels, and open one Issue.
+  allow-listed labels, and open one Issue. It triages only an incident filed by the owner, a member, or a collaborator,
+  and applies nothing when its threat detection flags the run.
 on:
   issues:
     types: [labeled]
@@ -13,6 +14,9 @@ on:
   skip-if-match: 'is:issue is:open label:incident-followup in:body "Related to #${{ github.event.issue.number }}"'
   reaction: eyes
   status-comment: true
+# The incident's text goes into the prompt, and the follow-up Copilot later works from is written from it. gh-aw's role
+# check covers whoever applied the label, so the report's author must be the owner, a member, or a collaborator too.
+if: github.event.issue.author_association == 'OWNER' || github.event.issue.author_association == 'MEMBER' || github.event.issue.author_association == 'COLLABORATOR'
 permissions:
   contents: read
   issues: read
@@ -22,6 +26,9 @@ tools:
     toolsets: [issues, repos]
   bash: [cat, grep, head, tail, ls, wc, sort]
 safe-outputs:
+  # A run that threat detection flags applies nothing: no comment, no labels, no follow-up. A person reads the run.
+  threat-detection:
+    continue-on-error: false
   add-comment:
     max: 1
     hide-older-comments: true
