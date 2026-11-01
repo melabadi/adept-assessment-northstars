@@ -89,7 +89,7 @@ The GitHub demos use your Copilot plan and Actions minutes. The Microsoft soluti
 | Bills by the hour while deployed | Solutions |
 | --- | --- |
 | A PostgreSQL flexible server and two container apps kept at one replica each (RequestHub) | 04-test, 05-secure, 06-release, and 07-operate (Microsoft) |
-| Azure AI Search, Basic tier, and two private endpoints: about $90 a month | 02-design-microsoft |
+| Azure AI Search, Basic tier, and three private endpoints and their DNS zones, for the advisor Function's storage, queues, and Key Vault: about $96 a month | 02-design-microsoft |
 | Three private endpoints and their DNS zones, for the reviewer Function's storage and Key Vault: about $23 a month | 03-develop-microsoft |
 | Three private endpoints and their DNS zones, for the reporting Function's storage, queue, and Key Vault: about $23 a month | 04-test-microsoft |
 | Two private endpoints and their DNS zones, for the posture Function's storage and Key Vault: about $16 a month | 05-secure-microsoft |
