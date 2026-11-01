@@ -434,11 +434,13 @@ def markdown(result: dict) -> str:
 
 def cell(text: str) -> str:
     """Evidence quotes the pull request, so it goes in the table inert: no column breaks, code spans, HTML or entities,
-    links or autolinked URLs, and no @mentions."""
+    links or autolinked URLs, no references to Issues or pull requests (#123, GH-123, owner/repo#123), no math ($), and
+    no @mentions. Zero-width spaces do the breaking, so the evidence reads the same."""
     text = text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "'")
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("[", "\\[").replace("]", "\\]")
     text = text.replace("://", ":/\u200b/")
     text = re.sub(r"(?i)www\.", "www\u200b.", text)
+    text = re.sub(r"(?i)(#|GH-)(?=\d)", "\\g<1>\u200b", text).replace("$", "\u200b$\u200b")
     return text.replace("@", "@\u200b")
 
 
