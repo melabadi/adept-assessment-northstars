@@ -14,7 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 
 SOLUTION = Path(__file__).resolve().parent
-REPO = SOLUTION.parents[1]
+REPO = SOLUTION.parents[1] if len(SOLUTION.parents) > 1 else SOLUTION  # in the release jobs' image, the files sit at /release
 
 
 @lru_cache(maxsize=1)

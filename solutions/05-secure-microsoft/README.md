@@ -1,234 +1,412 @@
-# Secure · Cloud posture remediation with Defender for Cloud and Azure Policy
+# Secure · Cloud posture remediation with Defender for Cloud, Copilot in Azure, and Microsoft Foundry
 
-Cloud misconfigurations are usually found by one team in a security portal and fixed by another team in code, if they are fixed at all. In this solution, Azure Policy and Microsoft Defender for Cloud flag a real misconfiguration on RequestHub's attachment storage: it has no private endpoint. A scan turns the finding into one tracked GitHub Issue, with the evidence from each source kept apart. Copilot fixes it in Bicep, and an Azure what-if preview on the pull request proves the change touches only storage networking. After a person applies it, a verification run queries both services again and proves that attachments work.
+Cloud misconfigurations are usually found by one team in a security portal and fixed by another team in code, if they are fixed at all. In this solution, Azure Policy and Microsoft Defender for Cloud flag a real misconfiguration on RequestHub's attachment storage: it has no private endpoint. Copilot in Azure explains the risk in the portal. One click on the recommendation hands it to an Azure Function that files a GitHub Issue with each source's evidence, asks a Microsoft Foundry agent for the smallest Bicep fix, checks the answer, and opens it as a draft pull request. A what-if preview that runs in Azure shows that the fix changes only storage networking. A person reviews, merges, and deploys it, and the Function records the evidence on the Issue. GitHub holds only the code, the Issue, and the pull request: the AI and the automation run in Azure.
+
+![The draft pull request that the Foundry agent posture-remediator drafted in Azure: it sets the module parameter storagePrivateEndpoint to true, remediates Issue #223 without closing it, lists the expected changes and the risks, and says nothing is deployed until someone runs azd provision](images/04-agent-pull-request.png)
 
 ## Where it fits
 
-**Phase 5 of 7: Secure.** The GitHub counterpart is [05-secure-github](../05-secure-github/). It finds flaws in the source code; this one finds them in the deployed cloud resources.
+**Phase 5 of 7: Secure.** The GitHub counterpart is [05-secure-github](../05-secure-github/), which finds flaws in the source code with GitHub Copilot. This one finds them in the deployed cloud resources, with AI that runs in Azure.
 
 | | Today | With this solution |
 | --- | --- | --- |
-| Finding | A Defender recommendation waits in a portal the app team never opens. | A scan turns Azure Policy and Defender for Cloud results into one GitHub Issue, deduplicated, with each source's evidence and where to fix it. |
-| Fix | Someone changes the setting in the portal, and the next deployment reverts it. | A one-line Bicep change, drafted by Copilot and reviewed in a pull request. |
-| Blast radius | "It should be fine." | An Azure what-if preview on the pull request lists every resource the change creates or modifies, and fails on anything unexpected. |
-| Done | The ticket closes when someone says so. | A verification run records the evidence: the live configuration, Azure Policy, and an attachment round trip through the app. Defender's slower confirmation is reported as pending until it arrives. |
-| Access | Shared keys or a broad service principal. | GitHub OIDC with an identity that can read, preview, and start a Policy evaluation, but cannot deploy anything. |
+| Finding | A Defender recommendation waits in a portal the app team never opens. | One click on the recommendation files a GitHub Issue with each source's evidence: the live configuration, Azure Policy, and Defender for Cloud. A second click reuses the Issue. |
+| Understanding | Someone searches the documentation for what the recommendation means. | Copilot in Azure explains the risk and the fix next to the recommendation. |
+| Fix | Someone changes the setting in the portal, and the next deployment reverts it. | A Foundry agent drafts the smallest change to the team's Bicep. The Function accepts only one exact edit inside the lines the team marked for posture fixes, and opens it as a draft pull request. |
+| Blast radius | "It should be fine." | A what-if preview lists every resource the pull request creates or modifies, and fails on anything unexpected. |
+| Done | The ticket closes when someone says so. | After deployment, the Function records the live configuration and Azure Policy's result on the Issue, then closes it. Defender's slower confirmation follows. |
+| Access | Shared keys or a broad service principal. | Managed identities that can read, preview, and start a Policy evaluation but cannot deploy, and a GitHub token for this repository only, kept in Key Vault. |
 
 ## How it works
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant AZ as Azure Policy and<br/>Defender for Cloud
-  participant S as Scan workflow
-  participant I as GitHub Issue
-  participant C as Copilot<br/>agent: secure-microsoft
-  participant P as Pull request<br/>preview check
   actor H as Person
-  participant V as Verify workflow
-  AZ-->>S: Storage account has no private endpoint<br/>(Policy NonCompliant, Defender Unhealthy)
-  S->>I: One Issue per finding, source by source, plus the app check
-  H->>C: Assign the Issue
-  C->>P: Bicep change: storagePrivateEndpoint true
-  P->>AZ: What-if, compared with what is deployed (read-only identity)
-  P-->>H: Only storage networking changes
-  H->>H: Review, merge, azd provision
-  H->>V: Run verify
-  V->>AZ: Evaluate Policy now, read Defender
-  V->>V: Upload and download an attachment through the API
-  V->>I: Evidence on the Issue (reopen it if not fixed)
+  participant D as Defender for Cloud<br/>and Azure Policy
+  participant C as Copilot in Azure
+  participant L as Logic App<br/>posture-intake
+  participant P as Function app<br/>intake, preview, verify
+  participant F as Foundry agent<br/>posture-remediator
+  participant G as GitHub<br/>Issue and pull request
+  participant W as Job<br/>posture-whatif
+  D-->>H: Storage account has no private endpoint
+  H->>C: What is the risk, and how do I fix it in Bicep?
+  H->>L: Trigger logic app, on the recommendation
+  L->>P: intake: the recommendation
+  P->>G: Issue with each source's evidence
+  P->>F: The finding and the Bicep files
+  F-->>P: The smallest change, as JSON
+  P->>G: Draft pull request (one exact edit in the marked lines)
+  P->>W: preview: start the what-if job
+  W->>G: What-if summary and commit status
+  H->>G: Review and merge
+  Note over H: azd provision deploys the fix
+  P->>D: verify: evaluate Azure Policy now, read Defender
+  P->>G: Evidence on the Issue, Issue closed
+  D-->>L: Later: recommendation Healthy (workflow automation)
+  L->>P: intake: the recommendation
+  P->>G: Defender's confirmation on the Issue
 ```
 
-- **Azure Policy** is the fast signal. This solution assigns the built-in definition *Storage accounts should use private link* (version 2, AuditIfNotExists) to its own resource group. An on-demand evaluation takes minutes.
-- **Microsoft Defender for Cloud** is the slow signal. It reports the same control through the Microsoft cloud security benchmark and reassesses on its own schedule, usually within 24 hours.
-- **GitHub Actions** signs in through OIDC as an identity with two roles on the resource group: Reader, and Policy Enrollments Contributor, which lets it query compliance, start an evaluation, and run what-if. In the app it has only the Requester role, for the attachment check. It cannot change any resource or policy, push an image, or approve a request. [`secure-microsoft-scan.yml`](.github/workflows/secure-microsoft-scan.yml) files the Issue, [`secure-microsoft-preview.yml`](.github/workflows/secure-microsoft-preview.yml) previews every pull request that changes the infrastructure, and [`secure-microsoft-verify.yml`](.github/workflows/secure-microsoft-verify.yml) verifies the fix.
-- **Copilot** runs the custom agent [`secure-microsoft`](.github/agents/secure-microsoft.agent.md) with two skills: `cloud-posture` (read and verify findings) and `infrastructure-remediation` (fix in Bicep, preview with what-if).
-- **A person** reviews and merges the pull request, applies it with `azd provision`, and decides when the work is done.
+- **Azure Policy and Microsoft Defender for Cloud** find the problem. This solution assigns the built-in definition *Storage accounts should use private link* (version 2, AuditIfNotExists) to its own resource group. Azure Policy is the fast signal: an on-demand evaluation takes minutes. Defender for Cloud reports the same control through the Microsoft cloud security benchmark, on its own schedule: its first assessment of a new storage account took about 20 hours here, and a change can take from about 30 minutes to a day to show.
+- **Copilot in Azure** explains the recommendation and writes example Bicep in the portal's chat. It has no API, so it helps the presenter, not the automation.
+- **The Logic App `posture-intake`** ([`logic/intake.json`](infra/logic/intake.json)) is there because Defender for Cloud sends a recommendation only to a Logic App: from **Trigger logic app**, and from its workflow automation. It has three steps and no other logic: Defender's trigger; *Keep only the recommendation* (the resource, the recommendation's name, its status, and the time); and *Send it to the posture Function*, with a token for its own managed identity, which has no role anywhere. It runs one recommendation at a time. When the Function answers 503 (not yet, or another intake is running), its retry policy sends the recommendation again every minute, up to 12 times.
+- **The Function app** ([`function/`](function/), Python on the Flex Consumption plan) does the work, in three functions. It runs in its own virtual network and reaches its storage account and Key Vault only through private endpoints, because the tenant this was built in forces public network access off on both.
+  - **`intake`** accepts a call only from the Logic App's identity, and handles one at a time. It reads the recommendation's current status and text from Azure with its own managed identity, along with the storage account and Azure Policy's results: it does not trust the event it was sent. When the event reports Healthy before Azure's API does, it asks the Logic App to send it again, for up to 10 minutes. If the account already has an approved private endpoint, Defender has only not caught up with a deployed fix, and it stops. Otherwise, with the GitHub token, it files the Issue, or reuses the open one. It sends the finding, the solution's Bicep file, and the module that file uses to the Foundry agent, and checks the answer before it uses it ([`checks.py`](function/posture/checks.py)). The edit must replace text that occurs exactly once, at most 2,000 characters each way, and leave everything outside the lines marked `posture:editable` in [`resources.bicep`](infra/resources.bicep) byte for byte as it was, marker lines included. In the edited file, every line between the markers must be a `//` comment or exactly `storagePrivateEndpoint: true` or `false`, so roles, other settings, and new resources cannot slip in; the agent's texts must also name no protected setting. Only then does it create a branch, commit the checked file, open a draft pull request, and start the preview. An answer that fails a check becomes a comment on the Issue that lists why.
+  - **`preview`** receives the repository webhook's `pull_request` events, signed with a secret that only GitHub and the Function's Key Vault hold. It drops a pull request whose branch is in a fork, or whose author is not the repository's owner, a member, or a collaborator. From any other it takes only the number, reads the pull request from GitHub's API and checks the same again, skips it if it does not change this solution's `infra/`, and starts the Container Apps job `posture-whatif`. It previews each commit once, so when the webhook reports the pull request that `intake` just opened, it does not start the job again. The job runs [`whatif.py`](whatif.py), comments a summary on the pull request, and sets the commit status `posture/what-if`.
+  - **`verify`** runs every hour, or when you start it. Once the storage account has an approved private endpoint, it waits up to 20 minutes for this solution's assignment to report the account compliant, and starts an Azure Policy evaluation if it does not yet. It then records each source's answer on the Issue and closes it; if Azure Policy has not caught up, the next run tries again. Defender's own confirmation arrives later: when the recommendation turns Healthy, the workflow automation `posture-defender-healthy` sends it through `posture-intake`, and `intake` records it on the Issue.
+- **The Foundry agent `posture-remediator`** is a prompt agent on `gpt-5-mini` in the solution's own Foundry project. Its instructions, [`posture-remediator.md`](posture-remediator.md), tell it to prefer an existing module parameter, change one block and the comment above it, and never weaken a control. A strict JSON schema shapes its answer. The azd hook [`remediation_agent.py`](remediation_agent.py) publishes a new version whenever the definition changes.
+- **A person** creates the GitHub token, reviews and merges the pull request, deploys it with `azd provision`, and decides when the work is done.
+- **GitHub** holds the code, the Issue, the pull request, and one webhook. No GitHub Actions workflow, Copilot agent, or skill takes part.
 
-The finding means different things in different subscriptions, and the scan's app check shows which applies. Where an organization-wide Azure Policy closes the public endpoints of storage accounts, as in the subscription this was built in, an account without a private endpoint is unreachable: attachment uploads fail with HTTP 500. Elsewhere, it is reachable from the internet, and only authentication protects the attachments.
+**Least privilege.** Three managed identities, none with write access to resources, policy assignments, or exemptions, so none can deploy the fix:
+- The Function app's own identity has Reader and Policy Enrollments Contributor on the resource group, Foundry User on the Foundry account, Container Apps Jobs Operator on the job, Storage Blob Data Owner on its own storage account (its code package and host state), and Key Vault Secrets User on its own vault.
+- The job's identity has Reader and Policy Enrollments Contributor on the resource group.
+- The Logic App's identity has no role at all: its token only proves to the Function who is calling.
+
+Policy Enrollments Contributor is the smallest built-in role that can query compliance, start a Policy evaluation, and run what-if. It also allows attestations, deployments (which still need write access to every resource they create or change), and remediation tasks, which run with the identity of a DeployIfNotExists or Modify policy assignment, inherited ones included, and can change the resources it covers. The GitHub token reaches this repository only, with four permissions (see [Set up](#set-up)).
+
+**A pull request's Bicep is untrusted input.** Bicep's `load*` functions, `readEnvironmentVariable`, extension statements, and module paths can read files on the machine that compiles a template, including the process environment that holds the token, or fetch code from a registry. So the job runs `whatif.py` from the default branch, never code from the pull request, and takes `bicepconfig.json` and the parameters file from the default branch too. Before compiling, it refuses a template that names one of those functions anywhere, even in a comment; references a registry module or a path outside `solutions/05-secure-microsoft/infra/` and `app/infra/`; uses an extension other than the alias the default branch's `bicepconfig.json` declares; or contains a carriage return outside a line ending, where Bicep would end a comment. It restores only that declared extension, then compiles with `--no-restore`, so nothing the pull request names is fetched. The token never reaches the processes that compile or preview the template: it is removed from their environment and erased from the job's initial environment block, which `/proc` would otherwise show them. The comment lists only change kinds, resource types, and masked names, in code spans that a name from the pull request cannot break out of: never raw what-if output, property values, or compiler messages. `test_whatif_checks.py` covers these cases.
+
+**Outside contributions reach nothing in Azure.** On a public repository anyone can open a pull request, from a fork or from a branch of this repository, and comment. The webhook still reports every pull request, signed with the webhook secret. `preview` drops the delivery of a fork's pull request, or of one opened by anyone outside the repository, before it calls GitHub or Azure. For any other it decides again from GitHub's API: it starts the what-if job, and writes the commit status, only for a pull request whose branch is in this repository and whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`. `whatif.py` checks the same again before it reads anything from the pull request, in case someone starts the job by hand. `intake` counts only this repository's branches when it looks for an existing fix, so a fork that names its branch `posture/issue-<number>-…` cannot pass for one. The Function counts a marker (the finding's on an Issue, `posture:defender-confirmed` and `posture:verified` on comments) only from the owner, a member, or a collaborator. A call to `intake` without the Logic App's token, or a delivery without a valid signature, gets HTTP 401. Defender for Cloud, the hourly schedule, and a person start the other runs; nobody outside the repository can. `test_function.py` and `test_whatif_checks.py` cover these checks.
+
+**The finding means different things in different subscriptions,** and the Issue says which applies. Where an organization-wide Azure Policy closes the public endpoints of storage accounts, as in the subscription this was built in, an account without a private endpoint is unreachable: attachment uploads fail with HTTP 500. Elsewhere, it is reachable from the internet, and only authentication protects the attachments.
+
+Nothing the automation posts identifies your deployment. The Issue, the pull request, and the comments name the resource group, this solution's policy assignment, and resource types. A policy assignment inherited from a management group or the subscription belongs to your organization's governance, so it appears only as `management group assignment` or `subscription assignment`; `test_policy_names.py` checks this. Resource names appear with their random token masked as `…` (for example `st…`), and GUIDs never appear.
 
 ## What's in this folder
 
 ```text
 05-secure-microsoft/
 ├── README.md
-├── posture.py                          scan: findings by source, app check, deduplicated Issue; verify: re-query and close
-├── azd_env.py                          reads settings from this solution's azd environment
-├── configure_github.py                 azd hooks: connect the solution to GitHub Actions
-├── azure.yaml                          azd project: infra plus the shared app's api and worker
+├── azure.yaml                    azd project: infra, the shared app's api and worker, the posture Function, and the hooks
 ├── infra/
-│   ├── main.bicep                      resource group, then resources.bicep
-│   ├── resources.bicep                 RequestHub platform (app/infra) without a private endpoint, and the Policy assignment
+│   ├── main.bicep                resource group, then resources.bicep and automation.bicep
+│   ├── resources.bicep           RequestHub's platform without a private endpoint, and the Policy assignment: the file a fix changes
+│   ├── automation.bicep          the posture automation: Foundry project and model, the what-if job, the Function app with its
+│   │                             network, storage, and Key Vault, and the Logic App
+│   ├── logic/
+│   │   └── intake.json           Logic App posture-intake (three steps), and the Defender workflow automation posture-defender-healthy
 │   └── main.parameters.json
-└── .github/
-    ├── agents/secure-microsoft.agent.md     Copilot agent that remediates posture Issues in Bicep
-    ├── skills/
-    │   ├── cloud-posture/                    how to read, triage, and verify findings from each source
-    │   └── infrastructure-remediation/       fix in Bicep and preview with what-if (whatif.py)
-    └── workflows/
-        ├── secure-microsoft-scan.yml         scan and file the Issue (manual)
-        ├── secure-microsoft-preview.yml      what-if on every pull request that changes infra/
-        └── secure-microsoft-verify.yml       verify after deployment (manual)
+├── function/                     the posture Function app (Python, Flex Consumption)
+│   ├── function_app.py           the functions intake, preview, and verify
+│   ├── host.json
+│   ├── requirements.txt
+│   └── posture/
+│       ├── checks.py             who the automation acts for, and the checks of the agent's edit (no I/O)
+│       ├── messages.py           the Issue, the pull request, the comments, and the agent's input (no I/O)
+│       ├── flows.py              intake, preview, and verify, step by step
+│       ├── clients.py            Azure Resource Manager, Foundry, Key Vault, and GitHub calls
+│       ├── auth.py               intake accepts only the Logic App's managed identity
+│       └── config.py             the app settings
+├── posture-remediator.md         the Foundry agent's instructions
+├── remediation_agent.py          publishes the agent (azd hook); `try` runs it against your checkout, with the Function's checks
+├── test_edit_checks.py           offline tests of the checks the Function applies to the agent's edit
+├── test_function.py              offline tests of the Function: who it acts for (forks, outside authors) and the three flows
+├── test_policy_names.py          offline tests that the Issue, the agent, and the evidence name only this solution's policy assignment
+├── test_whatif_checks.py         offline tests of the preview's pull request gate, untrusted-Bicep check, and comment sanitizing
+├── whatif.py                     the what-if preview and its untrusted-Bicep check, run by the job or on your checkout
+├── configure_github.py           azd hooks: finds the repository, generates the webhook secret, creates and removes the webhook
+├── azd_env.py                    reads settings from this solution's azd environment
+├── requirements.txt              Python packages for remediation_agent.py
+└── images/                       screenshots of a real run, used below
 ```
 
-The private endpoint itself is implemented in the shared module [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep) (parameter `storagePrivateEndpoint`, on by default). This solution turns it off to stage the finding.
+There is no `.github/` folder: the solution ships no workflow, agent, or skill. The private endpoint itself is implemented in the shared module [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep) (parameter `storagePrivateEndpoint`, on by default). This solution turns it off to stage the finding.
 
 ## Prerequisites
 
-- An Azure subscription where you can create resource groups, Microsoft Entra app registrations, role assignments, and policy assignments, for example as Owner.
-- Microsoft Defender for Cloud with the Microsoft cloud security benchmark assigned. That is the default for Azure subscriptions, and the free foundational CSPM is enough.
-- A region that allows PostgreSQL Flexible Server for the app. The examples use `centralus`.
-- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) 2.76 or later, [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), and the [GitHub CLI](https://cli.github.com/) signed in as a repository admin. The hooks create a GitHub environment and its secrets.
-- Python 3.12 or later. The scripts use only the standard library.
-- GitHub Copilot with the **Copilot cloud agent** enabled for the repository, for step 3. Copilot CLI works too.
+- An Azure subscription where you can create resource groups, Microsoft Entra app registrations, role assignments, and policy assignments, for example as Owner. Owner also covers **Trigger logic app**, which needs Security Admin on the resource group and the right to run the Logic App.
+- Microsoft Defender for Cloud with the Microsoft cloud security benchmark assigned, the default for Azure subscriptions. The free foundational CSPM includes the recommendation, **Trigger logic app**, and workflow automation. With the paid Defender CSPM plan, as in the screenshots, the portal also rates each recommendation's risk level.
+- Copilot in Azure, which the Azure portal offers unless your tenant's administrators turned it off.
+- A region with PostgreSQL Flexible Server, Azure Functions on the Flex Consumption plan, Microsoft Foundry, and Global Standard quota for `gpt-5-mini` (50,000 tokens per minute). The examples use `centralus`.
+- Admin rights on the GitHub repository, because the setup creates a webhook, and a GitHub account that can create a fine-grained personal access token for it.
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) 2.76 or later, [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), the [GitHub CLI](https://cli.github.com/) signed in (`gh auth login`), [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`), and Python 3.12 or later.
 
 ## Set up
 
-Run once, from this folder, **at least a day before you present**:
+Do this once, **at least a day before you present**: Defender for Cloud can take up to 24 hours to assess a new storage account.
 
-```powershell
-cd solutions/05-secure-microsoft
-az login
-azd auth login
-azd env new ai-sdlc-secure --location centralus
-azd up
-```
+1. **Create the GitHub token.** A person does this; nothing in the solution can. On GitHub, open your **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** > **Generate new token**:
+   - **Resource owner**: the repository's owner. **Expiration**: long enough to cover your sessions, for example 90 days.
+   - **Repository access**: **Only select repositories**, then this repository.
+   - **Permissions**: **Commit statuses**, **Contents**, **Issues**, and **Pull requests**, each set to **Read and write**. GitHub adds **Metadata** (read-only).
 
-`azd up` takes about 15 minutes. It creates resource group `rg-ai-sdlc-secure` with:
+   The Function uses it to file the Issue, create the branch, commit the fix, open the pull request, set the pending commit status, comment, and close the Issue. The job uses it to read the pull request's files, comment, and set the final commit status. Copy the token: GitHub shows it only once.
+
+2. **Deploy** from this folder (about 20 minutes):
+
+   ```powershell
+   cd solutions/05-secure-microsoft
+   pip install -r requirements.txt
+   az login
+   azd auth login
+   azd env new ai-sdlc-secure --location centralus
+   azd env set POSTURE_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')
+   azd up
+   ```
+
+   `Read-Host -MaskInput` keeps the token off the screen and out of your PowerShell history. It worked when `azd up` ends with `SUCCESS` and its hooks printed:
+
+   ```text
+   Generated the webhook secret (POSTURE_WEBHOOK_SECRET in the azd environment).
+   Foundry agent posture-remediator: published version 1.
+   Webhook <id> in <owner>/<repo>: pull_request events → the Function's preview route (created).
+   ```
+
+`azd up` creates resource group `rg-ai-sdlc-secure` with:
 
 - **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): private PostgreSQL, Blob storage, a container registry, monitoring, a Container Apps environment, and a Microsoft Entra app registration with RequestHub's app roles (you get every role). Storage is deployed **without a private endpoint**: that is the finding.
-- **The app**, as two container apps (API with web UI, and the notification worker).
+- **The app**, as two container apps: the API with the web UI, and the notification worker.
 - **The Azure Policy assignment** `requesthub-storage-private-link`, on this resource group only.
-- **The GitHub identity**, trusted only by this repository's `secure-microsoft` environment. It has Reader and Policy Enrollments Contributor on the resource group and the Requester role in the app, and nothing else.
-- **GitHub environment `secure-microsoft`**, created by the hooks. Its secrets are the Azure sign-in values (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), your object id for the preview (`AZURE_PRINCIPAL_ID`), and the API's URL and identifier (`API_URL`, `API_IDENTIFIER_URI`). They are secrets because GitHub masks secrets in logs, while it prints variables in every step's environment listing. Its variables are documented names that identify nothing: the resource group, the environment name and region, and the policy assignment. None of these values is a password.
+- **The posture automation**: a Microsoft Foundry account with the project `secure`, the model deployment `gpt-5-mini`, and the agent `posture-remediator`; the Function app `func-posture-…` on the Flex Consumption plan, with its own virtual network, storage account, and Key Vault, the last two reached through private endpoints; the Logic App `posture-intake`; the Container Apps job `posture-whatif`; and the Defender for Cloud connection and workflow automation `posture-defender-healthy`.
+- **Three managed identities**, with the roles listed under [Least privilege](#how-it-works). None has GitHub federation, registry push, or a RequestHub app role.
 
-Azure Policy evaluates the new storage account within about 30 minutes. Defender for Cloud can take up to 24 hours to assess it, which is why you set up the day before. Check that you are ready:
+In GitHub, it creates one webhook that sends `pull_request` events to the Function's `preview` route, signed with the webhook secret that the preprovision hook generated. The hook passes the secret to `gh` on standard input and never prints it or the URL.
 
-```powershell
-python posture.py scan
-```
+**Where the token is stored.** In your local azd environment file, `.azure/ai-sdlc-secure/.env` in this folder, which git ignores, next to the webhook secret. In the Function's Key Vault, which Azure Resource Manager writes but never returns, and which only the Function's identity reads, through its private endpoint. In the job as a secret. The Logic App never sees it. Anyone who can read the job's secrets, or give themselves a role on the vault, can use the token, so keep write access to the resource group as narrow as write access to the repository. To rotate the token, run the `azd env set` line again, then `azd provision`. [Clean up](#reset-and-clean-up) deletes it.
 
-Ready looks like: configuration `no private endpoint ❌`, Azure Policy `NonCompliant ❌`, and Defender for Cloud `Unhealthy ❌`. If Defender still says `not assessed yet ⏳`, the demo still works with Azure Policy alone, and every report says honestly that Defender has not assessed the account yet.
+Without the token, `azd up` still deploys everything and warns you. The Function then answers HTTP 409 and the job fails at its first GitHub call, until you set the token and run `azd provision` again.
+
+## Before each session
+
+Allow 15 minutes, most of it for the portal pages to load. Run the commands in the solution folder (`cd solutions/05-secure-microsoft`).
+
+1. **Check the starting state** (1 minute):
+
+   ```powershell
+   $rg = azd env get-value AZURE_RESOURCE_GROUP
+   $st = az storage account show -g $rg -n (azd env get-value STORAGE_ACCOUNT_NAME) --query id -o tsv
+   az postgres flexible-server list -g $rg --query "[0].state" -o tsv
+   (az storage account show --ids $st --query privateEndpointConnections | ConvertFrom-Json).Count
+   az policy state list --resource $st --filter "policyAssignmentName eq 'requesthub-storage-private-link'" --query "[0].complianceState" -o tsv
+   gh issue list --label posture --state open
+   ```
+
+   ![The starting-state checks in a terminal: the database Ready, 0 private endpoints on RequestHub's storage account, the Azure Policy assignment NonCompliant for it, and no open posture Issue](images/00-before-session.png)
+
+   You want `Ready`, `0`, `NonCompliant`, and no open Issue. The checks look at RequestHub's storage account only: the posture Function's own storage account and Key Vault have private endpoints of their own.
+   - **The database is `Stopped`.** A tenant policy can stop PostgreSQL servers on a schedule. Then the app times out, and the what-if preview and `azd provision` fail with `ServerStoppedError`. Start it; it takes 2 to 5 minutes:
+
+     ```powershell
+     az postgres flexible-server start -g $rg -n (az postgres flexible-server list -g $rg --query "[0].name" -o tsv)
+     ```
+
+   - **RequestHub's storage account has a private endpoint, or an Issue is open.** The last run was not reset: follow [Reset](#reset-and-clean-up).
+   - **Azure Policy still says `Compliant` after a reset.** It has not re-evaluated yet. Run `az policy state trigger-scan -g $rg`, which takes 2 to 15 minutes.
+
+2. **Defender for Cloud still reports the account Unhealthy** (1 minute):
+
+   ```powershell
+   az security assessment show -n cdc78c07-02b0-4af0-1cb2-cb7c672a8b0a --assessed-resource-id $st --query status.code -o tsv --only-show-errors
+   ```
+
+   You want `Unhealthy`. `Healthy` means Defender confirmed the last run's fix and has not reassessed since the reset, which can take up to a day. The Function reads this status from Azure, so until then `intake` only records a confirmation: reset at least a day before you present (see [Troubleshooting](#troubleshooting)). An error that the assessment is not found means Defender has not assessed the account yet: up to 24 hours after setup.
+
+3. **The token and your sign-ins work** (1 minute):
+
+   ```powershell
+   $token = azd env get-value POSTURE_GITHUB_TOKEN
+   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
+   (Invoke-RestMethod "https://api.github.com/repos/$repo" -Headers @{ Authorization = "Bearer $token" }).full_name
+   az account get-access-token --query expiresOn -o tsv
+   gh auth status
+   ```
+
+   The third line prints the repository's name, read with the automation's token and nothing else. An error that the key `POSTURE_GITHUB_TOKEN` is not found means the token was never stored; `401` (Bad credentials) means it expired or was revoked. Either way, create a new one ([Set up](#set-up), step 1), store it with `azd env set`, and run `azd provision`. Also make sure your clone is on an up-to-date `main` (`git switch main`, then `git pull`), because `azd provision` deploys your local copy.
+
+4. **Open these tabs** (the portal pages can take a minute to load the first time):
+   - Azure portal: **Microsoft Defender for Cloud** > **Recommendations**. Search for *private link*, open *Storage account should use a private link connection*, and select the storage account.
+   - Azure portal: **Policy** > **Compliance**. Open *RequestHub: storage accounts should use private link*.
+   - Azure portal: the Logic App `posture-intake`, **Overview** > **Runs history**.
+   - Foundry portal ([ai.azure.com](https://ai.azure.com)): the solution's project, **Build** > **Agents** > **posture-remediator**.
+   - GitHub: the repository's **Issues** and **Pull requests** tabs.
+   - PowerShell 7 in the solution folder.
+
+5. **Plan the timing.** The demo takes about 25 minutes; a third of it is waiting:
+
+   | Step | Takes | While you wait |
+   | --- | --- | --- |
+   | 1. Show the finding | 2 minutes | |
+   | 2. Ask Copilot in Azure | 2 minutes | |
+   | 3. Trigger the automation | 1 minute (the run took 21 seconds) | Open the run and walk through its steps. |
+   | 4. Read the Issue and the pull request | 3 minutes | The preview of step 5 runs meanwhile. |
+   | 5. Preview | 1 to 2 minutes after the trigger (PASS 92 seconds after the run started) | Explain why the preview never runs the pull request's code. |
+   | 6. Merge and apply | 5 to 7 minutes (`azd provision` took 5 minutes 29 seconds) | Explain least privilege: the automation could not have deployed this. |
+   | 7. Verify | 1 to 15 minutes (75 seconds) | Attach a file in the app (optional). |
+   | Later: Defender confirms | 30 minutes to a day | Nothing to do: workflow automation records it. |
+
+   The times in parentheses come from the run shown in the screenshots. In a 15-minute slot, show steps 1 to 5 live, start `azd provision` while you explain least privilege, and show step 7 with this README's screenshots if Azure Policy is slow to report.
 
 ## Run the demo
 
-About 30 minutes, much of it waiting for Copilot and Azure. Run the commands from the repository root unless a step says otherwise.
+Run the commands in the solution folder.
 
-1. **Show the finding where security teams see it** (2 minutes). In the [Azure portal](https://portal.azure.com):
-   - **Microsoft Defender for Cloud** > **Recommendations**, search for *private link*, and open *Storage account should use a private link connection*. The storage account in `rg-ai-sdlc-secure` is listed as unhealthy.
-   - **Policy** > **Compliance**, open *RequestHub: storage accounts should use private link*. The storage account is non-compliant.
-   - Optional: open the app (`azd env get-value API_URL` in the solution folder), open a request, and attach a file. Where public endpoints are closed by policy, the upload fails.
+1. **Show the finding where security teams see it** (2 minutes). In the Defender for Cloud tab, the recommendation lists the storage account, with a remediation: add a private endpoint.
 
-2. **Turn it into engineering work** (2 minutes).
+   ![Defender for Cloud's recommendation "Storage account should use a private link connection" for the storage account (name masked): risk level Low, its description, and under Take action, the remediation: add a private endpoint](images/01-defender-recommendation.png)
+
+   **Point out:** *Risk level: Low* is not the *Medium* severity that the Issue reports in step 4. Severity is Microsoft's fixed rating of the recommendation. Risk level is Defender CSPM's rating of this account in its context (internet exposure, sensitive data, lateral movement, attack paths): it found no risk factors or attack paths here and rated it Low. Without the Defender CSPM plan, risk level reads *Not evaluated*.
+
+   In the Policy tab, the solution's assignment reports the same storage account non-compliant. The other account it lists, the posture Function's own, is compliant: the Function reaches its storage through a private endpoint.
+
+   ![The Azure Policy assignment "RequestHub: storage accounts should use private link" before the fix: non-compliant, 50%, 1 out of 2 resources, with the posture Function's storage account compliant and RequestHub's (names masked) non-compliant, and Create remediation task unavailable](images/01-policy-compliance.png)
+
+   Optional: open the app (`azd env get-value API_URL`), open any request, and attach a file. Where public endpoints are closed by policy, the upload fails.
+
+   **Point out:** both services flag the storage account, and neither says where the fix belongs: Defender links to general guidance, and Policy, which only audits here, offers no remediation task.
+
+2. **Ask Copilot in Azure what it means** (2 minutes). Select **Copilot** in the portal's top bar and ask:
+
+   > Explain the Defender for Cloud recommendation 'Storage account should use a private link connection': what is the risk, and how do I fix it in Bicep for an existing storage account in a virtual network?
+
+   Copilot answers in about 20 seconds, in different words each time.
+
+   ![Copilot in Azure's answer: the recommendation reduces the risk of unauthorized access, data exfiltration, and reconnaissance, and a private endpoint fixes it, followed by a basic Bicep example with placeholder names such as yourStorageAccountName](images/02-azure-copilot.png)
+
+   **Point out:** Copilot explains the risk and writes a generic private endpoint with placeholder names such as `yourStorageAccountName`. It does not know this repository's Bicep; the Foundry agent does, next.
+
+3. **Hand the finding to the automation** (1 minute). Back on the recommendation's page, open **Take action** and select **Trigger logic app**. Select `posture-intake`, then **Trigger**.
+
+   ![The Trigger a logic app pane opened from the recommendation: the Logic App posture-intake selected, with trigger type Recommendation, above the Trigger button](images/03-trigger-logic-app.png)
+
+   In the `posture-intake` tab, refresh **Runs history**: a run appears within seconds and succeeds in about 20 seconds (21 in the run shown). Open it: three steps. *Keep only the recommendation* shows everything that crosses to the Function: the resource, the recommendation's name, its status, and the time. Select *Send it to the posture Function* to see the Function's answer: the Issue it filed, the agent's tries, the pull request, and that the preview started.
+
+   ![The posture-intake run in the Azure portal: Defender recommendation, Keep only the recommendation, and Send it to the posture Function, all succeeded, the last one in 20 seconds](images/03-intake-run.png)
+
+   **Point out:** the Logic App only forwards the recommendation, because Defender for Cloud can call nothing else. The Function reads it again from Azure before it acts: it does not trust the event it was sent.
+
+4. **Read the Issue and the agent's pull request** (3 minutes). In GitHub, the Issue *Posture: attachment storage in rg-ai-sdlc-secure has no private endpoint*, labelled `posture`, appeared 5 seconds into the run. Its table has one row per source: the live configuration, each Azure Policy assignment (an inherited one by its scope, not its name), and Defender for Cloud with the recommendation's severity. Below it: where to fix it, and when the work is done. A comment links the draft pull request.
+
+   ![The posture Issue's body: the storage account has no approved private endpoint and its public endpoint is closed; a table with the resource configuration, two Azure Policy assignments NonCompliant (one in this resource group, one inherited from a management group), and Defender for Cloud Unhealthy with Medium severity; then where to fix it, a Done when checklist, and that the Function intake filed it in Azure from the Defender for Cloud recommendation](images/04-posture-issue.png)
+
+   The draft pull request appeared 11 seconds later. Its description says what changes and why, lists the expected resource changes and the risks, and refers to the Issue without closing it.
+
+   ![The draft pull request's description: set the module parameter storagePrivateEndpoint to true; Remediates #223, and merging does not close the Issue; three expected changes; the risks to check; drafted in Azure by the Foundry agent posture-remediator, run by the Azure Function intake](images/04-agent-pull-request.png)
+
+   Under **Files changed**, the agent's whole change: one value, `storagePrivateEndpoint: true`, and the comment above it, between the `posture:editable` markers.
+
+   ![The pull request's diff of resources.bicep: between the posture:editable-begin and posture:editable-end lines, two comment lines and storagePrivateEndpoint: false are replaced by a one-line comment and storagePrivateEndpoint: true](images/04-agent-diff.png)
+
+   In the Foundry portal tab, show the agent that drafted it: a versioned definition with its model and the instructions from [`posture-remediator.md`](posture-remediator.md).
+
+   ![The Foundry agent posture-remediator in the Foundry portal: version 6, model gpt-5-mini on a Global Standard deployment, the start of its instructions, and its description: drafts the smallest Bicep fix for a cloud posture finding; the Function intake opens it as a pull request](images/04-foundry-agent.png)
+
+   **Point out:** the agent's whole change is one value and the comment above it, between the lines the team marked for posture fixes. When an answer fails the Function's checks, the Function asks again, up to three times, and tells the agent why; the checks never change. Here the first answer passed.
+
+5. **Preview before anyone deploys** (1 to 2 minutes after the trigger, in Azure). On the pull request, the commit status `posture/what-if` turns from pending to success: in the run shown, 92 seconds after the run started, while you read the Issue. The `posture-whatif` job comments the preview: the private endpoint and its DNS zone group, a link from the private DNS zone to RequestHub's virtual network, and a modified virtual network (its new subnet). It ends with **PASS**. To watch it in Azure, open the Container Apps job `posture-whatif` > **Execution history**.
+
+   ![The Azure what-if preview comment on the pull request: four changes, each expected (the virtual network link vnet-link, the private endpoint with a masked name, its DNS zone group, and the virtual network modified), ten resources with recurring what-if noise not counted, one resource what-if cannot preview, and PASS](images/05-what-if-preview.png)
+
+   The agent's description expected a new private DNS zone, and the preview shows none: the zone already exists, because the posture Function reaches its own storage through it, so only the link to RequestHub's network is new. The preview, not the agent, says what a deployment would do.
+
+   **Point out:** before anything is deployed, the comment lists each resource the change creates or modifies, all of them expected, and ends with PASS.
+6. **Review, merge, apply** (5 to 7 minutes). Review the change, mark the pull request **Ready for review**, and merge it. Then deploy it from your terminal:
 
    ```powershell
-   gh workflow run secure-microsoft-scan.yml
-   gh run watch
-   ```
-
-   The run opens an Issue titled *Posture: storage account st… has no private endpoint*. Its table has one row per source: the resource configuration, each Azure Policy assignment, Defender for Cloud with the assessment id, and the app check. It also says where to fix it and when the work is done. Run the workflow again: it comments on the same Issue instead of opening a second one.
-
-3. **Hand it to Copilot** (about 20 minutes, mostly waiting). In the Issue, open **Assignees**, choose **Copilot**, pick the **secure-microsoft** agent, keep the base branch `main`, and assign. Or from a terminal:
-
-   ```powershell
-   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
-   $issue = <issue number>
-   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = 'main'; custom_agent = 'secure-microsoft' } } |
-     ConvertTo-Json | gh api -X POST "repos/$repo/issues/$issue/assignees" --input -
-   ```
-
-   A draft pull request appears within seconds. When Copilot finishes, it changes one line in `infra/resources.bicep` (`storagePrivateEndpoint: true`) and rewrites the comment above it to say why the change is safe: the app signs in to storage with its managed identity, and the private DNS zone is linked to the app's virtual network.
-
-4. **Preview before anyone deploys** (2 minutes). Workflows on Copilot's pull requests wait for a person: select **Approve and run workflows**, or approve the runs for the pull request's latest commit from a terminal:
-
-   ```powershell
-   $sha = gh pr view <pull request number> --json headRefOid -q .headRefOid
-   gh run list --commit $sha --status action_required --json databaseId -q '.[].databaseId' | ForEach-Object { gh run rerun $_ }
-   ```
-
-   The **Secure · Microsoft · preview the infrastructure change** check comments a what-if preview on the pull request: a private DNS zone and its link, the private endpoint and its DNS zone group, a new subnet, and the storage account's network rules (`defaultAction: Allow → Deny`). It ends with **PASS**. Point out the line about other resources: what-if always reports some differences it cannot resolve, and the script previews the deployed template too, so they are not counted.
-
-5. **Review, merge, apply** (about 6 minutes). Review the change, mark the pull request ready, and merge it. Then apply it:
-
-   ```powershell
+   git switch main
    git pull
-   cd solutions/05-secure-microsoft
    azd provision
    ```
 
-6. **Verify** (2 to 15 minutes, depending on when Azure Policy re-evaluates).
+   ![azd provision deploying the merged fix in the solution folder: resource names masked, RequestHub's new Private Endpoint among the resources it deployed, and SUCCESS after 5 minutes 29 seconds](images/06-azd-provision.png)
+
+   **Point out:** a person deploys the fix from their own terminal; the private endpoint is in the output.
+
+7. **Verify** (1 to 15 minutes, depending on Azure Policy; 75 seconds in the run shown). The Function `verify` runs every hour; start it now from the terminal:
 
    ```powershell
-   gh workflow run secure-microsoft-verify.yml -f issue=<issue number>
-   gh run watch
+   az rest --method post --url "/subscriptions/{subscriptionId}/resourceGroups/$(azd env get-value AZURE_RESOURCE_GROUP)/providers/Microsoft.Web/sites/$(azd env get-value POSTURE_FUNCTION_NAME)/hostruntime/admin/functions/verify?api-version=2024-04-01" --body '{}'
    ```
 
-   The run starts an Azure Policy evaluation, waits for this solution's assignment to report Compliant, and then uploads and downloads an attachment through the API. It comments the evidence on the Issue: configuration ✅, Azure Policy `Compliant ✅`, app check `works ✅`, and Defender for Cloud `Unhealthy ⏳ not reassessed since the fix`. Copilot's pull request already closed the Issue when it merged. Verify closes it if it is still open, and reopens it if the fix is not actually in place.
+   The command returns at once, without output. `verify` checks that the storage account has an approved private endpoint. If Azure Policy does not report this solution's assignment Compliant yet, it starts an evaluation and checks again every 30 seconds, for up to 20 minutes. It then comments the evidence on the Issue and closes it. In the run shown, it started an evaluation, and the comment came 75 seconds after the command.
 
-7. **Let Defender confirm** (the next day). Run `gh workflow run secure-microsoft-verify.yml -f issue=<issue number> -f timeout=0`. Defender for Cloud now reports `Healthy ✅`, and the run records it on the Issue.
+   ![The posture verification comment on the Issue: one approved private endpoint, both Azure Policy assignments Compliant (one inherited from a management group, one in this resource group), and Defender for Cloud Unhealthy and not reassessed since the fix; Verified, checked in Azure by the Function verify](images/07-verified.png)
+
+   In the Policy tab, the storage account is now compliant.
+
+   ![The same Azure Policy assignment after the fix: Compliant, 100%, 2 out of 2 resources, with RequestHub's storage account and the posture Function's (names masked) both compliant](images/07-policy-compliant.png)
+
+   Optional: attach a file to a request in the app. The upload now works through the private endpoint: in the run shown, an upload through the API returned HTTP 500 before the fix and HTTP 201 after it.
+
+   **Point out:** the evidence keeps one row per source, and Defender for Cloud's row says it has not reassessed yet.
+
+**Later: Defender for Cloud confirms** (30 minutes to a day). When Defender reassesses the account as Healthy, its workflow automation `posture-defender-healthy` sends the recommendation to `posture-intake`, and the Function `intake` comments on the Issue that Defender for Cloud now reports the storage account Healthy. There is nothing to run, but the reset removes the fix it would confirm, so wait for it before you reset if you want it on the Issue.
 
 ## What to observe
 
-- **Two sources, two clocks.** Azure Policy and Defender for Cloud evaluate the same policy definition but report at different times. The tools never merge their answers or claim a source confirmed something it has not, and the resource configuration is the ground truth.
-- **A finding becomes engineering work.** One deduplicated Issue holds the evidence, the impact on users, where to fix it, and what done means.
-- **The fix is code.** A one-line Bicep change that Copilot drafts with its reasoning, reviewed like any other change. The next deployment cannot undo it.
-- **The blast radius is known before deployment.** The preview lists exactly what the change creates and modifies, and fails if it touches anything else.
-- **Least privilege.** The automation can find, preview, and verify, but cannot deploy. A person applies the change.
-- **Verified by evidence, not by the diff.** Merging the pull request is not the end. The verification run shows Azure Policy Compliant and an attachment round trip on the Issue, and reopens the Issue if the fix is not really in place.
-- **No secrets anywhere.** GitHub Actions uses OIDC, the app uses its managed identity, and you use your own Microsoft Entra ID sign-in.
+- **Two sources, two clocks.** Azure Policy and Defender for Cloud evaluate the same policy definition but report at different times. The Issue and the evidence keep one row per source, and the resource configuration is the ground truth.
+- **AI where it helps, rules where it matters.** Copilot in Azure explains the finding to a person. The Foundry agent drafts the change in the team's own Bicep. Deterministic checks decide: the Function accepts one bounded edit inside the lines the team marked for posture fixes, the what-if preview proves the blast radius, and a person merges and deploys.
+- **A finding becomes engineering work.** One Issue holds the evidence, where to fix it, and what done means, and a second trigger reuses it.
+- **The fix is code**, reviewed like any other change, so the next deployment keeps it.
+- **Untrusted input stays untrusted.** The preview never runs the pull request's code, refuses Bicep that could read the machine it compiles on, and posts only a sanitized summary.
+- **Least privilege.** The automation can find, preview, and verify, but has no write access to deploy. Its GitHub token reaches one repository and stays in Key Vault.
+- **Done means verified.** Merging does not close the Issue; the evidence does.
+- **It runs in Azure.** A Function app, a Foundry agent, and a Container Apps job do the work; a three-step Logic App receives Defender's recommendation. GitHub holds the code, the Issue, and the pull request.
 
 ## Reset and clean up
 
-To run the demo again, put the finding back:
+To run the demo again, put the finding back (about 20 minutes, most of it waiting):
 
-1. Revert the remediation: run `gh pr revert <pull request number>` (or select **Revert** on the merged pull request), then merge the revert pull request. Its preview shows the subnet going away, and lists the private endpoint and DNS zone as left in place, because incremental deployments never delete.
-2. Remove the private endpoint and its DNS zone, then apply `main` again:
+1. Revert the fix: run `gh pr revert <pull request number>`, then merge the revert pull request. The webhook previews it too: the subnet goes away, and the private endpoint, its DNS zone link, and the DNS zone are listed as left in place, because incremental deployments never delete.
+2. Remove RequestHub's private endpoint and its link to the DNS zone, then deploy `main` again:
 
    ```powershell
    git switch main
    git pull                                   # azd provision deploys your local copy, so get the revert first
-   cd solutions/05-secure-microsoft
    $rg = azd env get-value AZURE_RESOURCE_GROUP
-   az network private-endpoint delete -g $rg -n (az network private-endpoint list -g $rg --query "[0].name" -o tsv)
+   $st = az storage account show -g $rg -n (azd env get-value STORAGE_ACCOUNT_NAME) --query id -o tsv
+   az network private-endpoint delete --ids (az storage account show --ids $st --query "privateEndpointConnections[0].privateEndpoint.id" -o tsv)
    az network private-dns link vnet delete -g $rg -z privatelink.blob.core.windows.net -n vnet-link --yes
-   az network private-dns zone delete -g $rg -n privatelink.blob.core.windows.net --yes
    azd provision
    ```
 
-   Incremental deployments never delete resources, so you remove the private endpoint before `azd provision` removes its subnet. The storage account keeps its closed public endpoint and its Deny rule. Only the private path goes away, so attachments fail again until the fix is reapplied. Azure Policy reports the finding again within about 30 minutes; until then the scan shows the configuration ❌ next to a stale Compliant result and files nothing. Run `python posture.py scan --refresh` to re-evaluate now. Defender for Cloud follows within 24 hours.
+   Incremental deployments never delete resources, so you remove the private endpoint before `azd provision` removes its subnet. Keep the DNS zone `privatelink.blob.core.windows.net`: the posture Function reaches its own storage through it (its link is `posture-link`). The storage account keeps its closed public endpoint and its Deny rule; only the private path goes away, so attachments fail again until the fix is reapplied.
+3. Run `az policy state trigger-scan -g $rg` (2 to 15 minutes), until the starting-state check in [Before each session](#before-each-session) shows `NonCompliant`. Defender for Cloud follows on its own schedule: if it confirmed the fix, it can keep saying `Healthy` for up to a day.
+4. On GitHub, delete the branches of the two merged pull requests (**Delete branch** on each). `verify` already closed the Issue.
 
-To clear the posture check requests the app check created, reset the app's demo data (you are an Admin):
+To clear files you attached in the app, reset its demo data (you are an Admin):
 
 ```powershell
 $token = az account get-access-token --scope "$(azd env get-value API_IDENTIFIER_URI)/user_impersonation" --query accessToken -o tsv
 curl.exe -X POST -H "Authorization: Bearer $token" "$(azd env get-value API_URL)/api/admin/reset"
 ```
 
-When you no longer need the solution, run this in the solution folder:
+When you no longer need the solution, run this in the solution folder, then delete the token on GitHub (**Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens**):
 
 ```powershell
-cd solutions/05-secure-microsoft
 $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
 azd down --purge
 az ad app delete --id $app
 az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
-gh api -X DELETE 'repos/{owner}/{repo}/environments/secure-microsoft'
+azd env remove ai-sdlc-secure --force
 ```
 
-`azd down` removes the resource group, but not RequestHub's Microsoft Entra app registration, because resource groups do not contain Entra objects. The last two `az` commands delete it and purge it; a deleted app that is not purged blocks the next `azd up` from creating it again.
+`azd down` first runs the predown hook, which deletes the webhook, then removes the resource group and purges the Foundry account and the Key Vault. It leaves RequestHub's Microsoft Entra app registration, because resource groups do not contain Entra objects: the two `az` commands after it delete and purge it, because a deleted app that is not purged blocks the next `azd up` from creating it again for 30 days. `azd env remove` deletes the local azd environment, including its copies of the token and the webhook secret.
 
 ## Use it in your own repository
 
-1. Copy this folder, and copy its `.github/` contents into your repository's `.github/` folder.
+1. Copy this folder. It needs nothing in `.github/`.
 2. In `infra/resources.bicep`, compose your own app's Bicep and assign the built-in policy for the control you care about.
-3. In `posture.py`, describe the control in `CONTROL`: its policy definition, resource type, a function that judges the live resource, and where the fix belongs. Defender for Cloud recommendations are matched through the same policy definition, so there is no assessment id to look up.
-4. Keep the GitHub identity at Reader and Policy Enrollments Contributor on the resource group, with no registry push and only the app roles its checks need (`automationCanPushImages` and `automationAppRoleNames` in `infra/resources.bicep`). Set `--expect` in `secure-microsoft-preview.yml` to the resource types your fixes may touch.
-5. To scan on a schedule, add a `schedule` trigger to `secure-microsoft-scan.yml`. The Issue stays deduplicated.
+3. In `infra/automation.bicep`, set the control: `privateLinkPolicyDefinition`, and `privateLinkAssessment`, the Defender for Cloud assessment key of the matching recommendation (`az security assessment list --query "[?displayName=='<recommendation>'].name" -o tsv`). Then set, in the Function's app settings, the file the agent may edit (`POSTURE_EDITABLE_PATH`), the module it reads (`POSTURE_MODULE_PATH`), and the folder the preview watches (`POSTURE_INFRA_PREFIX`), and the path of `whatif.py` in the job's bootstrap script. Set the same values at the top of `remediation_agent.py` and `whatif.py`, and in `whatif.py`, list in `DEFAULT_EXPECT` the resource types your fixes may touch. If your app's fix also needs a private DNS zone that the Function's network uses, as here, keep its name and tags the same in both modules.
+4. In the editable file, put the lines the agent may change between `// posture:editable-begin` and `// posture:editable-end`, and keep roles and policy assignments outside them. In `function/posture/checks.py`, list the lines the edited region may contain in `ALLOWED_LINES`, and the setting names the agent's texts must never contain in `PROTECTED`.
+5. Rewrite `posture-remediator.md` for your files and rules. Try it on your checkout with `python remediation_agent.py try` before `azd provision` publishes it as a new version. Adapt the Issue's title and text, and the pull request's, in `function/posture/messages.py`.
+6. Run `python -m unittest test_edit_checks.py test_function.py test_policy_names.py test_whatif_checks.py` after you change the editable region, the allowed lines, the protected names, the messages, the preview's checks, or who the Function acts for. `azd deploy` runs them too, before it deploys anything.
+7. Keep the identities at the roles in [Least privilege](#how-it-works), and the token at four permissions on your repository only.
 
 ## Troubleshooting
 
 - **`AzureCLICredential: exit status 1` during `azd up`, `azd deploy`, or `azd provision`.** azd could not get a token from the Azure CLI, which happens when other Azure CLI sessions run at the same time. Run `az account get-access-token`, then run the command again.
+- **`azd up` fails in the postprovision hook with `ModuleNotFoundError`.** The hook runs `python remediation_agent.py publish` with the first Python on your PATH. Run `pip install -r requirements.txt` with that Python, or activate the virtual environment you installed it in, then run `azd provision`.
+- **A `posture-intake` run fails at *Send it to the posture Function*.** Open the step: its output is the Function's answer. HTTP 409 means the GitHub token is not in Key Vault; HTTP 502 with `GitHub answered HTTP 401` means it expired or was revoked. Create a new one ([Set up](#set-up), step 1), store it with `azd env set POSTURE_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')`, and run `azd provision`. HTTP 404 right after the first `azd provision` of a new environment means the Function's code is not deployed yet: run `azd deploy posture`.
+- **A push to the pull request starts no preview.** In the repository's **Settings** > **Webhooks**, open the posture webhook's **Recent Deliveries**. HTTP 401 `invalid signature` means the webhook's secret and Key Vault's differ: run `azd provision`, whose hooks set both from the azd environment. A delivery that timed out after 10 seconds reached a Function that was starting; it can still have started the preview.
+- **`verify` adds nothing to the Issue.** The `az rest` command only starts it. Its result is in RequestHub's Application Insights: open **Logs** and run `traces | where message startswith "verify"`. *Not fixed yet* means the storage account has no approved private endpoint: run `azd provision` on an up-to-date `main`. *Does not report the storage account compliant yet* means Azure Policy took longer than 20 minutes: start `verify` again, or let the next hourly run try.
+- **The token check in [Before each session](#before-each-session) returns 401 right after you stored a new token.** An `azd provision` or `azd up` that was already running when you stored it rewrote `.azure/ai-sdlc-secure/.env` with the old value when it finished. Store the token again once no azd command is running in this folder, then run `azd provision`.
+- **Defender for Cloud still reports the account Healthy after a reset.** Defender reassesses on its own schedule, up to a day after the reset. The Function reads the recommendation's status from Azure, not from the click, so until then `intake` records Defender's confirmation instead of filing work. Reset at least a day before you present. If you can't wait, show steps 3 to 5 with this README's screenshots, and say why.
+- **The commit status `posture/what-if` says a stopped PostgreSQL server blocks what-if, `azd provision` fails with `ServerStoppedError`, or the app times out.** The PostgreSQL server was stopped, for example by a tenant policy on a schedule. Start it as in [Before each session](#before-each-session); it takes 2 to 5 minutes. Then update the pull request, for example edit its description: the Function previews a commit again when its last preview ended in error.
+- **A button in the app fails with HTTP 403 and no body.** The deployment predates [#134](https://github.com/melabadi/adept-assessment-northstars/pull/134), the shared module's fix for browser requests behind Container Apps authentication. Run `azd deploy api` in this folder from an up-to-date `main`.
 - **A storage setting in your Bicep is ignored after deployment.** An organization-wide Azure Policy with a Modify effect can rewrite storage settings, such as shared key access or public network access, at deployment time. Run `az policy state list --resource <storage account id>` and look for `modify` in `policyDefinitionAction`. This solution uses private link because such a policy cannot fix it for you.
 - **Attachments fail with HTTP 500 before the fix.** Expected where policy closes public storage endpoints: the API's Blob request is refused with `403 AuthorizationFailure`. The fix is what makes uploads work.
-- **Defender for Cloud says `not assessed yet`.** New resources can take up to 24 hours to appear. Deploy the day before.
-- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve and run workflows**.
+- **The Defender recommendation page stays on "Loading…".** The blade sometimes needs a minute after you sign in. Wait, or reload it.
+- **Defender for Cloud has no assessment for the account.** New resources can take up to 24 hours to appear. Deploy the day before.

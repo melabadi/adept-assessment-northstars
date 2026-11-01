@@ -7,7 +7,10 @@
     "aiLocation": { "value": "${AZURE_AI_LOCATION=eastus2}" },
     "principalId": { "value": "${AZURE_PRINCIPAL_ID}" },
     "principalType": { "value": "${AZURE_PRINCIPAL_TYPE=User}" },
-    "githubRepository": { "value": "${GITHUB_REPOSITORY=}" },
-    "githubOidcSubjectPrefix": { "value": "${GITHUB_OIDC_SUBJECT_PREFIX=}" }
+    "githubRepository": { "value": "${GITHUB_REPOSITORY}" },
+    "githubToken": { "value": "${GITHUB_REVIEW_TOKEN=}" },
+    "githubWebhookSecret": { "value": "${GITHUB_WEBHOOK_SECRET=}" },
+    "checkerRef": { "value": "${REVIEW_CHECKER_REF=main}" },
+    "reviewLabel": { "value": "${REVIEW_LABEL=review:azure}" }
   }
 }

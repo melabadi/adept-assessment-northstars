@@ -1,6 +1,6 @@
-# Azure SRE Agent configuration for the Operate · Microsoft solution, applied by configure_sre_agent.py (azd runs it
-# after every provision; the operate-microsoft-agent-config workflow runs it when this folder changes on main).
-# Markdown files hold the long text. {{NAME}} placeholders are filled from the azd environment when applied.
+# Azure SRE Agent configuration for the Operate · Microsoft solution. configure_sre_agent.py applies it through the
+# agent's own API; azd runs it after every provision. Markdown files hold the long text. {{NAME}} placeholders are
+# filled from the azd environment when applied.
 
 # The custom agent that handles the incident. Its tools are the only ones it can call.
 customAgent:
@@ -8,12 +8,12 @@ customAgent:
   instructions: instructions.md
   handoffDescription: >-
     Investigates RequestHub notification backlog alerts from Azure Monitor: measures the backlog, finds what changed
-    on the notification worker, proposes the smallest reversible mitigation, and verifies recovery.
+    on the notification worker, proposes the smallest reversible mitigation, verifies recovery, and drafts the incident
+    record for a person to file as a GitHub Issue.
   tools:
-    - GetAzCliHelp
     - RunAzCliReadCommands
     - RunAzCliWriteCommands        # only for the approved mitigation; the tool policy below makes every write ask first
-    - QueryAppInsightsUsingAppId
+    - QueryAppInsightsByAppId
     - QueryLogAnalyticsByWorkspaceId
     - SearchMemory                 # the runbook in knowledge/
     - PlotAreaChartWithCorrelation
@@ -21,15 +21,66 @@ customAgent:
   skills:
     - investigate-notification-backlog
     - verify-worker-recovery
+    - draft-incident-record
   # Quality gate: the agent cannot finish an investigation without the evidence a person needs to decide.
   stopHook: hooks/evidence-checklist.md
 
 # Procedures the custom agent loads when relevant. Each file starts with name and description front matter.
 skills:
   - file: skills/investigate-notification-backlog.md
-    tools: [QueryAppInsightsUsingAppId, QueryLogAnalyticsByWorkspaceId, RunAzCliReadCommands]
+    tools: [QueryAppInsightsByAppId, QueryLogAnalyticsByWorkspaceId, RunAzCliReadCommands]
   - file: skills/verify-worker-recovery.md
-    tools: [QueryAppInsightsUsingAppId, RunAzCliReadCommands]
+    tools: [QueryAppInsightsByAppId, RunAzCliReadCommands]
+  - file: skills/draft-incident-record.md
+    tools: []                      # the record goes in the agent's reply; a person files it
+
+# GitHub. A person connects this repository once in the agent's portal (Build + setup, Code access) with a read-only
+# fine-grained token (README, "Connect GitHub"), so the agent can read the repository's code. The agent writes nothing
+# in GitHub, whatever the token allows: it has no GitHub tool, every GitHub write tool is denied, and a person files
+# the incident record it drafts.
+github:
+  # Tool name patterns (* is a wildcard, matched without regard to case) for every GitHub Issue tool, reads included
+  # (FetchGithubIssue, FetchGithubIssuesLimited). They make up the guard hook's matcher and go into the tool policy's
+  # ask list: an Issue tool that isn't denied waits for a person.
+  issueTools: ["*Issue*"]
+  # Every GitHub tool that writes, Issue writes included: creating, editing, closing, or commenting on Issues, pull
+  # requests, workflows, branches, commits and their statuses, merges, pushes, webhooks, files, and repositories. The
+  # patterns (and the exact catalog names they match) go into the tool policy's deny list, and the guard hook blocks
+  # them too.
+  deny:
+    # After a person allows it, CreateGithubIssue appends a footer that names the agent instance and links the thread
+    # with the subscription ID and thread GUID. Neither the guard hook nor the approval card shows it (README,
+    # Troubleshooting), so it stays denied by name.
+    - CreateGithubIssue
+    - "*Create*Issue*"
+    - "*Update*Issue*"
+    - "*Close*Issue*"
+    - "*issue_write*"
+    - "*Comment*"
+    - "*PullRequest*"
+    - "*pull_request*"
+    - "*Workflow*"
+    - "*Branch*"
+    - "*Commit*"
+    - "*Merge*"
+    - "*Push*"
+    - "*Webhook*"
+    - "*create_or_update_file*"
+    - "*delete_file*"
+    - "*create_repository*"
+    - "*fork_repository*"
+  # A backstop: a global PreToolUse hook that runs before every call to an Issue tool, ahead of the tool policy. It is
+  # deterministic (regular expressions): it blocks the denied write tools, blocks a call whose text contains an
+  # identifier of this deployment, and otherwise asks a person.
+  guardHook:
+    name: no-identifiers-in-github
+    description: >-
+      Backstop for GitHub Issue tools: blocks the GitHub write tools the policy denies, and blocks a call whose text
+      contains a GUID or trace id, an Azure host name or resource id, an e-mail address, or a resource name with its
+      random suffix; otherwise asks a person. Fails closed.
+    script: hooks/no-identifiers.py
+    timeout: 30
+    failMode: block                # if the script cannot run, the call is blocked
 
 # Reference documents uploaded to the agent's knowledge base.
 knowledge:
@@ -44,12 +95,12 @@ responsePlan:
   maxAutomatedInvestigationAttempts: 3
   mergeEnabled: false              # every drill starts a fresh investigation thread
 
-# Global tool policy for every conversation on this agent. Deny wins, then allow, then ask.
+# Global tool policy for every conversation on this agent. Deny wins, then allow, then ask. The github section adds
+# its patterns: Issue tools to ask, every GitHub write tool to deny.
 toolPolicy:
   allow:
-    - GetAzCliHelp
     - RunAzCliReadCommands
-    - QueryAppInsightsUsingAppId
+    - QueryAppInsightsByAppId
     - QueryLogAnalyticsByWorkspaceId
     - SearchMemory
     - read_skill_file
@@ -59,6 +110,7 @@ toolPolicy:
     - RunAzCliWriteCommands
   deny:
     - RunAzCliWriteCommands(az * delete *)
+    - RunAzCliWriteCommands(az monitor *)   # the platform gives the agent Monitoring Contributor on the subscription
     - RunAzCliWriteCommands(az role *)
     - RunAzCliWriteCommands(az identity *)
     - RunAzCliWriteCommands(az postgres *)
@@ -67,5 +119,8 @@ toolPolicy:
     - RunAzCliWriteCommands(az ad *)
     - bash(az * delete *)
     - RunKubectlWriteCommand
-    - RunInTerminal
+    - RunInTerminal                # with GitHub connected, the terminal can use gh and git with the connection's token
     - Terminal
+    - RunShellCommand
+    - ExecutePythonCode
+    - DisconnectRepositoryFromResourceForGitHub   # disabled by default; would change the agent's GitHub connection

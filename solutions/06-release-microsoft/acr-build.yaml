@@ -1,0 +1,21 @@
+# ACR task: build RequestHub's API in Azure Container Registry and push it as requesthub-api:<commit> and :main.
+# The push of requesthub-api:<commit> fires Event Grid, and the release trigger function starts the release job for it.
+#
+# The task is created once, by a person, with a fine-grained GitHub token that can read this repository and manage its
+# webhooks (see the README, "Set up"). On a commit to main, GitHub's webhook starts it and .Run.Commit is that commit.
+# On a run started by hand, ACR sets .Run.Commit to the commit it cloned, so the commit value is only a fallback.
+# Run it by hand for one commit of main, pinning the source to that commit (ACR clones it with the task's token):
+#   az acr task run --registry <registry> --name build-api --context <repository URL>.git#<commit> --set commit=<commit>
+version: v1.1.0
+steps:
+  - id: build
+    build: >-
+      -t $Registry/requesthub-api:{{if .Run.Commit}}{{.Run.Commit}}{{else}}{{.Values.commit}}{{end}}
+      -t $Registry/requesthub-api:main
+      --build-arg BUILD_SHA={{if .Run.Commit}}{{.Run.Commit}}{{else}}{{.Values.commit}}{{end}}
+      -f app/Dockerfile app
+  - id: push
+    when: ["build"]
+    push:
+      - $Registry/requesthub-api:{{if .Run.Commit}}{{.Run.Commit}}{{else}}{{.Values.commit}}{{end}}
+      - $Registry/requesthub-api:main

@@ -4,9 +4,41 @@
     {
       "type": 1,
       "content": {
-        "json": "## RequestHub notification worker\nThe worker delivers the notifications that RequestHub creates when a request is submitted, commented on, rerouted, or decided. A healthy worker delivers each one within a few seconds.\n\nThe alert **RequestHub notification backlog** fires when the oldest pending notification is older than __THRESHOLD__ seconds. Azure SRE Agent picks it up and investigates."
+        "json": "## RequestHub notification worker\nThe worker delivers the notifications that RequestHub creates when a request is submitted, commented on, rerouted, or decided. A healthy worker delivers each one within a few seconds.\n\nThe alert **RequestHub notification backlog** fires when the oldest pending notification is older than __THRESHOLD__ seconds. Azure SRE Agent picks it up and investigates. Start a drill only when every row below says Ready."
       },
       "name": "intro"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "resources\n| where resourceGroup =~ '__RESOURCE_GROUP__' and type =~ 'microsoft.dbforpostgresql/flexibleservers'\n| extend State = tostring(properties.state)\n| project Order = 1, Check = 'Database', State, Ready = iff(State =~ 'Ready', 'Yes', 'No'), IfNotReady = 'Start the database server (README, Before each session)'\n| union (resources\n    | where resourceGroup =~ '__RESOURCE_GROUP__' and type =~ 'microsoft.app/containerapps' and name =~ '__WORKER_APP_NAME__'\n    | mv-expand env = properties.template.containers[0].env\n    | summarize Faults = countif(tostring(env.name) startswith 'Faults__')\n    | project Order = 2, Check = 'Worker fault', State = iff(Faults == 0, 'None', 'Injected'), Ready = iff(Faults == 0, 'Yes', 'No'), IfNotReady = 'python incident.py reset')\n| union (alertsmanagementresources\n    | where type =~ 'microsoft.alertsmanagement/alerts' and tostring(properties.essentials.alertRule) =~ '__ALERT_ID__'\n    | summarize Fired = countif(tostring(properties.essentials.monitorCondition) == 'Fired')\n    | project Order = 3, Check = 'Backlog alert', State = iff(Fired == 0, 'Not fired', 'Fired'), Ready = iff(Fired == 0, 'Yes', 'No'), IfNotReady = 'Wait: it resolves after 3 healthy minutes')\n| union (resources\n    | where resourceGroup =~ '__RESOURCE_GROUP__' and type =~ 'microsoft.app/agents'\n    | extend State = coalesce(tostring(properties.powerState), tostring(properties.runningState))\n    | project Order = 4, Check = 'Azure SRE Agent', State, Ready = iff(State =~ 'Running', 'Yes', 'No'), IfNotReady = 'Start the agent in sre.azure.com')\n| order by Order asc\n| project-away Order",
+        "size": 3,
+        "title": "Ready for a drill (Azure Resource Graph, refreshes within a minute of a change)",
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": ["__SUBSCRIPTION_ID__"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "^Ready$",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  { "operator": "==", "thresholdValue": "Yes", "representation": "success", "text": "Ready" },
+                  { "operator": "Default", "thresholdValue": null, "representation": "failed", "text": "Not ready" }
+                ]
+              }
+            }
+          ],
+          "labelSettings": [
+            { "columnId": "IfNotReady", "label": "If not ready" }
+          ]
+        }
+      },
+      "name": "readiness"
     },
     {
       "type": 9,

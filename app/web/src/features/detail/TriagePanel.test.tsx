@@ -64,6 +64,9 @@ describe('TriagePanel', () => {
     expect(within(panel).queryByText('Sample rules — not AI')).not.toBeInTheDocument();
     expect(within(panel).getByText('Stale: request was rerouted since this suggestion')).toBeInTheDocument();
     expect(within(panel).getByText('Needs human review')).toBeInTheDocument();
+    expect(
+      within(panel).getByText('The assistant flagged this recommendation for a person. A reviewer should confirm the routing.'),
+    ).toBeInTheDocument();
     expect(within(panel).queryByRole('button')).not.toBeInTheDocument();
   });
 

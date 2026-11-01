@@ -9,13 +9,20 @@ This repository holds fourteen independent solutions built on one shared app. Th
 - **The API contract `requesthub.v1` only grows.** Additive changes only; regenerate [`app/contracts/openapi.json`](app/contracts/openapi.json) and say so in the pull request.
 - **Synthetic data only.** No real people, customers, secrets, tenant ids, or subscription ids in code, docs, or commit messages.
 - **Demos are live.** A demo passes only when it ran against the real service (Copilot, Foundry, Azure). Mocks, fixtures, and canned output are fine in tests, never as demo evidence.
+- **AI helps the people, not the product.** Every demo shows AI helping the people who plan, design, build, test, secure, release, and operate RequestHub. No demo is about an AI feature inside RequestHub.
+
+## Two tracks, two toolsets
+
+- **GitHub solutions** show GitHub Copilot and GitHub Enterprise: Copilot custom agents, skills, the cloud agent, code review, Copilot CLI, GitHub Actions, Issues, and environments.
+- **Microsoft solutions** show AI that runs in Azure: Microsoft Foundry agents, knowledge, and evaluations; Copilot in Azure; Azure Load Testing; Defender for Cloud and Azure Policy; Azure SRE Agent. Their orchestration lives in Azure too: Python Azure Functions, Azure Monitor alerts and action groups, Event Grid, Container Apps jobs, scheduled tests, and a Logic App only where Defender for Cloud can call nothing else. From GitHub they use only the code, pull requests, Issues, and a thin GitHub Actions trigger where Azure has no native trigger. They ship no Copilot agents, skills, or instructions, and no step of a Microsoft demo depends on GitHub Copilot.
+- When an Azure service needs GitHub access (for example an Azure Function that opens Issues, or Azure SRE Agent's Code access), a person grants it once, with the least access that works: this repository only, and only the permissions the demo uses. See [GitHub access](#github-access) below.
 
 ## Anatomy of a solution
 
 ```text
 solutions/<NN>-<phase>-<github|microsoft>/
 ├── README.md                     follows the outline below
-├── .github/
+├── .github/                      GitHub solutions: agent, skills, workflows, issue templates. Microsoft solutions: only thin workflows and issue templates
 │   ├── agents/<phase>-<track>.agent.md
 │   ├── skills/<skill>/SKILL.md   plus the skill's scripts and reference files
 │   ├── instructions/<name>.instructions.md   optional path-specific Copilot instructions (for example for code review)
@@ -29,21 +36,34 @@ solutions/<NN>-<phase>-<github|microsoft>/
 
 1. **Self-contained.** Everything the demo needs lives in its folder. The exceptions are the app (`app/`) and the Bicep modules that host it (`app/infra/`). Small helpers are copied into each solution that needs them rather than shared.
 2. **Root `.github/` is a mirror.** GitHub only reads agents, skills, instructions, workflows, and issue templates from the root `.github/` folder. Edit the solution's copy, then run `python tools/sync_solutions.py`. For files generated at the root, such as `gh aw compile` output, copy them back with `python tools/sync_solutions.py --pull <path>`. The *Repository checks* workflow fails if the copies drift.
-3. **Unique names.** Two solutions may only ship a file with the same path if the contents are identical. Name workflows `<phase>-<track>-<what>.yml` (for example `develop-microsoft-eval.yml`) with a display name such as `Develop · Microsoft · evaluate the triage agent`, issue templates `<NN>-<phase>-<track>-<what>.yml`, and agents `<phase>-<track>`.
+3. **Unique names.** Two solutions may only ship a file with the same path if the contents are identical. Name workflows `<phase>-<track>-<what>.yml` (for example `release-github-candidate.yml`) with a display name such as `Release · GitHub · build the release candidate`, issue templates `<NN>-<phase>-<track>-<what>.yml`, and agents `<phase>-<track>`.
 4. **Paths.** Workflows and agents refer to solution files by their repository path (`solutions/03-develop-microsoft/...`). Skills refer to their own files through `.github/skills/<skill>/...`, which works both here and in an adopter's repository.
 5. **Repository-wide files belong to no solution:** `.github/copilot-instructions.md`, `.github/workflows/ci.yml`, `.github/workflows/copilot-setup-steps.yml`, and `.github/workflows/repo-checks.yml`.
 6. **Workflows only act on their own demo.** Every workflow in this repository sees every pull request. A solution's pull-request workflow must recognize its own demo (paths inside its solution folder, a `lab/<phase>-*` base branch, or an Issue labeled `phase:<phase>`) and skip, never fail, everything else. A check that fails on another solution's demo pull request is a defect.
+7. **Outsiders start nothing that costs money, uses a credential, or writes.** The repository is public: see [Outside contributions](#outside-contributions).
 
 ## Microsoft solutions on Azure
 
 Each Microsoft solution is its own [azd](https://learn.microsoft.com/azure/developer/azure-developer-cli/) project, deployed from its folder into its own resource group.
 
-- **Names.** azd environment `ai-sdlc-<phase>` (for example `ai-sdlc-develop`), resource group `rg-ai-sdlc-<phase>`, GitHub environment `<phase>-microsoft`.
+- **Names.** azd environment `ai-sdlc-<phase>` (for example `ai-sdlc-develop`), resource group `rg-ai-sdlc-<phase>`.
 - **`infra/main.bicep`** is subscription-scoped. It creates the resource group and deploys the solution's resources into it through modules.
-- **GitHub Actions sign in with OIDC**, never with stored credentials. The solution's Bicep creates a user-assigned identity with a federated credential for its GitHub environment. Repositories that use immutable OIDC subjects (this one does) pass the subject prefix from `gh api repos/OWNER/REPO/actions/oidc/customization/sub --jq .sub_claim_prefix`.
-- **The GitHub environment** holds `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID` as secrets, and so is every value that names a deployed resource: endpoints, host names, URLs, and resource names with their random suffix. GitHub masks secrets wherever they appear in a log; variables are printed in every step's environment listing, and anyone can read the logs of a public repository. Variables are only for values that identify nothing, such as a model deployment name. An azd `postprovision` hook publishes them from the azd outputs, so `azd up` leaves both Azure and GitHub ready.
-- **Workflows and reports never print tenant details.** Before a step that may print a derived value (a host name without its `https://`, a subscription name), mask it with `echo "::add-mask::$value"`. Job summaries, artifacts, Issues, and comments use names such as "the API" and placeholders instead of host names, resource names, or GUIDs.
+- **Automation and reports never print tenant details.** Issues, comments, run outputs, and logs use names such as "the API" and placeholders instead of host names, resource names, or GUIDs.
 - **Scripts** read settings from environment variables first, then from the solution's azd environment (`azd env get-values`, run in the solution folder). Nobody has to export values by hand after `azd up`.
+- **Orchestration is one Python Azure Function app per solution** (Flex Consumption, Python 3.12) in the solution's own virtual network. Tenant policy closes storage and Key Vault to public traffic and shared keys, so the app reaches them through private endpoints, with its managed identity. Work that takes longer than a webhook's 10-second answer goes through a storage queue. Keep the decisions in plain Python, unit-tested with fakes for Azure and GitHub, and the routes in `function_app.py` thin: the `predeploy` hook runs the tests, so code that breaks a rule never reaches Azure.
+- **Secrets live in Key Vault, never in app settings.** Anyone who can change the Function can read its app settings back. Bicep writes each secret from a `@secure()` parameter through Azure Resource Manager, which works although the vault takes no public traffic, and the Function reads it with its managed identity: Key Vault Secrets User, or Secrets Officer only where the Function stores a secret itself, as 02-design-microsoft's GitHub App setup does.
+- **A key that Azure uses to call a Function,** for example an action group's webhook, comes from one `@secure()` parameter that defaults to `newGuid()`, set on the function key and on the caller in the same deployment. A `functionKeys` resource without a value changes on every deployment, and `listKeys` in that deployment can return the old key: the caller then gets 401s that the Function never logs.
+- **Logs and answers name ids and counts.** Never quote a token, a webhook body, a URL, or an SDK's error message, which can name hosts and resources: give the error's type instead.
+
+### GitHub access
+
+The Microsoft solutions run in Azure, and each needs one grant from GitHub that only a person can make.
+
+- **Least access.** A fine-grained personal access token limited to this repository and to the permissions the demo uses, or a private GitHub App installed on this repository only. Never a classic token, and never an OAuth connection that reaches every repository: the Logic Apps GitHub connector, for example, asks for `repo`, `workflow`, `read:org`, and `admin:org`, and can't be narrowed. The Functions call GitHub's REST API with the token.
+- **The token stays in Azure.** The person stores it without echoing it, usually in the solution's azd environment: `azd env set <NAME> (Read-Host -MaskInput 'GitHub token')`. Provisioning writes it to the solution's Key Vault, and only the Function app's identity can read it (see [Microsoft solutions on Azure](#microsoft-solutions-on-azure)). 05-secure-microsoft's what-if job also holds it as a Container Apps secret, 06-release-microsoft keeps its token in the Azure Container Registry build task, and 07-operate-microsoft in Azure SRE Agent's Code access.
+- **Webhooks are created by the solution's azd hooks**, with the person's GitHub CLI. GitHub signs every delivery with a webhook secret that only GitHub and the solution's Key Vault hold, and the Function checks the signature before anything else. Pass the secret to `gh` on standard input, never print or save it, match an existing webhook by host and path, and delete the webhook in the `predown` hook.
+- **Webhook payloads are untrusted.** Take only an identifier, such as a pull request number, and read everything else from GitHub's API. Model output is untrusted too: check it with code before anything reaches GitHub.
+- **No GitHub Actions workflow** runs for a Microsoft demo. If a future solution needs a thin trigger where Azure has none, it signs in to Azure with OIDC through a GitHub environment, never with stored credentials, and keeps every value that names a deployed resource in that environment's secrets.
 
 ### Solutions that run RequestHub
 
@@ -57,10 +77,9 @@ module app '../../../app/infra/requesthub.bicep' = {
     environmentName: environmentName
     location: location
     principalId: principalId
-    githubRepository: githubRepository
-    githubOidcSubjectPrefix: githubOidcSubjectPrefix
-    githubEnvironment: 'develop-microsoft'
-    automationRoleDefinitionIds: []   // extra roles on the resource group, only if the workflows need them
+    automationRoleDefinitionIds: []   // roles on the resource group for the solution's automation identity, if its jobs need any
+    automationCanPushImages: false
+    automationAppRoleNames: []        // RequestHub app roles for that identity, only if it calls the API (a smoke test, for example)
     tags: tags
   }
 }
@@ -85,7 +104,31 @@ services:
 
 `main.bicep` must output the values that [`app/infra/api.parameters.json`](app/infra/api.parameters.json) and [`worker.parameters.json`](app/infra/worker.parameters.json) read: `AZURE_CONTAINER_REGISTRY_ENDPOINT`, `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_ENVIRONMENT_NAME`, `APP_IDENTITY_ID`, `APP_IDENTITY_CLIENT_ID`, `APP_IDENTITY_NAME`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `POSTGRES_HOST`, `POSTGRES_DATABASE`, `STORAGE_BLOB_ENDPOINT`, `API_APP_NAME`, `WORKER_APP_NAME`, `API_URL`, `API_CLIENT_ID`, `API_IDENTIFIER_URI`, and `AUTOMATION_CLIENT_ID`. Optional: `FOUNDRY_PROJECT_ENDPOINT`, `TRIAGE_PROVIDER`, `DEMO_INDUSTRY`.
 
-In its cleanup, a solution that runs RequestHub must also delete the Microsoft Entra app registration that `requesthub.bicep` creates for sign-in: `azd down` deletes the resource group, but no resource group contains Microsoft Entra objects. Delete it and empty it from the recycle bin, as [03-develop-microsoft](solutions/03-develop-microsoft/README.md#reset-and-clean-up) does, or the next `azd up` with the same environment name cannot create it again for 30 days.
+In its cleanup, a solution that runs RequestHub must also delete the Microsoft Entra app registration that `requesthub.bicep` creates for sign-in: `azd down` deletes the resource group, but no resource group contains Microsoft Entra objects. Delete it and empty it from the recycle bin, as [06-release-microsoft](solutions/06-release-microsoft/README.md#reset-and-clean-up) does, or the next `azd up` with the same environment name cannot create it again for 30 days.
+
+## Outside contributions
+
+On a public repository anyone can open Issues, comment, and open pull requests from forks. None of that may spend your money, use your credentials, or write to the repository.
+
+- **Only the owner, members, and collaborators start automation.** Anything that runs code, calls a model, or uses a token or an Azure identity starts only for them. Check it where the automation runs, from what GitHub vouches for: the Issue's or pull request's `author_association` (`OWNER`, `MEMBER`, or `COLLABORATOR`), read from GitHub's API or from a webhook delivery whose signature you verified, or the actor's permission. A label proves nothing on its own: an issue form applies its labels for whoever files it. A label applied later does, because only people with triage access can apply one.
+- **A fork's pull request never reaches Azure or a secret.** A Function that receives `pull_request` events takes only the number from the payload, reads the pull request from GitHub's API, and stops unless its branch is in this repository (`head.repo.full_name`). A GitHub Actions workflow that runs a pull request's code uses `pull_request`, never `pull_request_target`, and checks out with `persist-credentials: false`. GitHub gives a fork's run a read-only token and no secrets.
+- **Comments and branch names are data.** Automation that looks for its own marker comment or branch counts only comments from the owner, members, and collaborators, and only this repository's branches.
+- **Agentic workflows keep gh-aw's role check** (admin, maintainer, or write, the default), and on `workflow_run` accept only a run that a person dispatched in this repository: a fork's pull request can add a workflow with the same name.
+- **Copilot needs nothing extra.** Only people with write access can assign an Issue to the cloud agent or mention `@copilot`, and workflows on its pull requests wait for approval. A Copilot code review that someone else requests uses their Copilot plan.
+
+Each solution's README says what an outside contribution can and cannot trigger, under *How it works*.
+
+### Settings for a public copy
+
+Change these yourself when you make a copy public. Nothing in the repository changes them.
+
+| Setting | Where | Choose |
+| --- | --- | --- |
+| Approval for running fork pull request workflows from contributors | **Settings** → **Actions** → **General** | **Require approval for all external contributors**. A fork's runs get a read-only token and no secrets either way; this keeps strangers from running code on GitHub's runners at will. |
+| Workflow permissions | **Settings** → **Actions** → **General** | **Read repository contents and packages permissions**, with **Allow GitHub Actions to create and approve pull requests** off. |
+| Only allow Copilot code review to be triggered by authorized users | **Settings** → **Copilot** → **Code review** | On: in a personal repository, only you and direct collaborators can request a review. |
+| Required reviewers on the `release-github` environment | **Settings** → **Environments** | Yourself, or a team. Free on public repositories. |
+| Private vulnerability reporting | **Settings** → **Advanced Security** | **Enable**, so a finding reaches you before it reaches an Issue. |
 
 ## Python scripts
 
@@ -115,7 +158,7 @@ Write for someone who has never seen the repository and will present the demo to
 
 Screenshots go in the solution's `images/` folder, named after the step they illustrate (`images/05-proof-check.png`), and are linked with alt text that says what the image shows: `![The proof check: the new test fails before the fix and passes after it](images/05-proof-check.png)`. Capture them from a real run of the demo.
 
-**Capture every screenshot with [`tools/screenshot.mjs`](tools/screenshot.mjs)**, never with another screenshot tool. It masks what identifies your tenant and account before the image is saved: your subscription and tenant, your account and tenant domain, resource host names and the unique tokens in resource names, GUIDs, e-mail addresses, and user profile paths. It refuses to save an image when anything is left, and reads every image back with OCR. One-time setup:
+**Capture every screenshot with [`tools/screenshot.mjs`](tools/screenshot.mjs)**, never with another screenshot tool. It masks what identifies your tenant and account before the image is saved: your subscription and tenant, your account and tenant domain, resource host names and the unique tokens in resource names, GUIDs, e-mail addresses, and user profile paths. On GitHub it also hides avatars, because the docs show no real people, and removes the staff bar. It refuses to save an image when anything is left, and reads every image back with OCR. One-time setup:
 
 ```powershell
 npm ci --prefix app/web                      # Playwright, used by the tool
@@ -131,13 +174,15 @@ Run `python tools/redact.py init` again after you deploy a solution, so its new 
 node tools/screenshot.mjs page "https://github.com/<owner>/<repo>/pull/12" solutions/04-test-github/images/05-proof-check.png `
   --selector ".merge-status-list" --width 1200
 # Command output, rendered as a terminal window.
-python solutions/07-operate-microsoft/incident.py verify *> out.txt
-node tools/screenshot.mjs terminal solutions/07-operate-microsoft/images/07-verify.png --input out.txt --title "PowerShell 7"
+gh pr checks 12 *> out.txt
+node tools/screenshot.mjs terminal solutions/04-test-github/images/05-checks.png --input out.txt --title "PowerShell 7"
 ```
 
-`node tools/screenshot.mjs` without arguments lists every option (`--wait`, `--click`, `--selector`, `--clip`, `--full`, `--remove`, `--pick-account`).
+`node tools/screenshot.mjs` without arguments lists every option. Steps (`--wait`, `--click`, `--select`, `--type`, `--press`, `--frame`) run in the order you give them, so you can open a pane, type a question, press Enter, and wait for the answer, for example to capture Azure Copilot. Then `--selector`, `--clip`, or `--full` chooses what to capture; `--remove` and `--pick-account` help with clutter and sign-in.
 
-Before you commit, run `python tools/redact.py check --changed`; it must print `OK`. Then look at every image yourself. A pushed commit stays reachable through its pull request even after you remove the file, so an image must be clean before its first push. The same rule applies to text: never paste host names, subscription or tenant details, or e-mail addresses into Issues, pull requests, or comments.
+In the Azure portal, crop below the top bar (`--clip` or `--selector`): it shows your account and directory, and a crop keeps them out even if masking misses one. Prefer deeper pages to the portals' Home and Overview pages, which show endpoints and subscription details.
+
+Before you commit, run `python tools/redact.py check --changed`; it must print `OK`. It checks every image and every text file, whatever its extension, and lists any other binary file for you to look at. Then look at every image yourself, and make sure each caption says only what its image shows. A pushed commit stays reachable through its pull request even after you remove the file, so an image must be clean before its first push. The same rule applies to text: never paste host names, subscription or tenant details, or e-mail addresses into Issues, pull requests, or comments.
 
 ## Definition of done
 

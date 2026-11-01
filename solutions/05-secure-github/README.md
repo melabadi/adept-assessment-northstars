@@ -46,6 +46,12 @@ evidence and **verified-remediation** to prove the repair. It is not Copilot Aut
 **Actions** executes tests against real PostgreSQL in isolated runner databases, without Azure credentials.
 The optional CodeQL workflow checks entitlement **before** downloading or running CodeQL, then records actual SARIF.
 
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request
+from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`.
+The CodeQL scan and the remediation replay start only by hand (`workflow_dispatch`, which needs write access), and the
+replay accepts only pull requests from this repository's branches into `lab/secure-*`. The tooling checks run on a fork's
+pull request with a read-only token and no secrets, once someone with write access approves the run.
+
 ## What's in this folder
 
 ```text

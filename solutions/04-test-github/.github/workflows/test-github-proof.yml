@@ -73,7 +73,7 @@ jobs:
         run: |
           if [ -f out/regression-proof/proof.md ]; then
             cat out/regression-proof/proof.md >> "$GITHUB_STEP_SUMMARY"
-            echo "Both test outputs (console logs and CTRF reports) are in the \`regression-proof\` artifact of this run." >> "$GITHUB_STEP_SUMMARY"
+            printf '\nBoth test outputs (console logs and CTRF reports) are in the `regression-proof` artifact of this run.\n' >> "$GITHUB_STEP_SUMMARY"
           else
             echo "No proof was produced. Open the previous step's log." >> "$GITHUB_STEP_SUMMARY"
           fi

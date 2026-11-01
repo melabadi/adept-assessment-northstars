@@ -1,13 +1,13 @@
 """Settings for this solution's scripts: environment variables first, then the solution's azd environment.
 
 After `azd up` in solutions/02-design-microsoft, `azd env get-values` (run in that folder) holds every endpoint the
-scripts need, so nobody exports anything by hand. GitHub Actions sets the same names as environment variables from the
-`design-microsoft` GitHub environment, and azd is not needed there.
+scripts need, so nobody exports anything by hand.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +17,8 @@ from functools import lru_cache
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+_AZURE_HOST = r"\b[\w.-]+\.(?:windows\.net|azure\.com|azure\.net|azurewebsites\.net|microsoftonline\.com|microsoft\.com)\b"
+_GUID = r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 
 
 @lru_cache(maxsize=1)
@@ -42,9 +44,9 @@ def setting(name: str, default: str | None = None) -> str:
 
 
 def credential():
-    """Microsoft Entra ID sign-in: `az login` on your machine, OIDC through azure/login in GitHub Actions, or a managed
-    identity in Azure. Tokens are shared across the Foundry, OpenAI, and Search clients, so the Azure CLI (which can
-    need more than the SDK's default 10 seconds) runs once per audience."""
+    """Microsoft Entra ID sign-in: `az login` on your machine (the scripts and the azd hooks run as you). Tokens are
+    shared across the Foundry, OpenAI, and Search clients, so the Azure CLI (which can need more than the SDK's default
+    10 seconds) runs once per audience."""
     from azure.identity import DefaultAzureCredential
 
     return _SharedTokens(DefaultAzureCredential(process_timeout=60))
@@ -72,3 +74,19 @@ def utf8_stdout() -> None:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
+
+
+def describe_error(exc: BaseException) -> str:
+    """An error as the scripts print it. Request errors quote the URL they called, which names the subscription and
+    the resources, and a query string can carry a key or a code. So an HTTP error shows only its status, a network
+    error only its type, and any other message has its URLs, Azure resource paths, Azure host names, and GUIDs masked."""
+    import requests
+
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return f"{type(exc).__name__}: HTTP {exc.response.status_code}"
+    if isinstance(exc, requests.RequestException):
+        return f"{type(exc).__name__}: the request didn't complete; check the network and az login, then try again"
+    message = re.sub(r"https?://[^\s'\"<>)]+", "<url>", str(exc))
+    message = re.sub(r"/subscriptions/[^\s'\"<>)]+", "<resource>", message)
+    message = re.sub(_AZURE_HOST, "<host>", message)
+    return f"{type(exc).__name__}: {re.sub(_GUID, '<id>', message)}"

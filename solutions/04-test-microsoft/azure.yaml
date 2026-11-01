@@ -1,8 +1,11 @@
 # Azure Developer CLI project for the Test · Microsoft solution. Run `azd up` from this folder.
-# It provisions infra/ (RequestHub's hosting platform from app/infra, plus Azure Load Testing and the two identities the
-# load test signs in with) and deploys the shared app: the api and worker images are built in Azure Container Registry,
-# and each `azd deploy` applies app/infra/api.bicep or worker.bicep so image and configuration ship together. The hooks
-# connect the solution to GitHub Actions.
+# It provisions infra/ (RequestHub's hosting platform from app/infra, Azure Load Testing and the two identities the load
+# test signs in with, and the Function app that reports finished runs to GitHub) and deploys three services: the shared
+# app's api and worker images are built in Azure Container Registry, and each `azd deploy` applies app/infra/api.bicep
+# or worker.bicep so image and configuration ship together; `reporter` is the Python function in function/.
+#   preprovision   find the GitHub repository for the Issues (sync_test.py prepare)
+#   postprovision  copy the committed load test into Azure Load Testing (sync_test.py setup)
+#   predeploy      run the reporter's offline tests: a broken report never reaches Azure
 name: ai-sdlc-test-microsoft
 metadata:
   template: ai-sdlc-test-microsoft@1.0.0
@@ -28,18 +31,29 @@ services:
       path: ./Dockerfile.worker
       context: .
       remoteBuild: true
+  reporter:
+    project: function
+    language: python
+    host: function
 hooks:
   preprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py prepare
+      run: python sync_test.py prepare
     posix:
       shell: sh
-      run: python3 configure_github.py prepare
+      run: python3 sync_test.py prepare
   postprovision:
     windows:
       shell: pwsh
-      run: python configure_github.py publish
+      run: python sync_test.py setup
     posix:
       shell: sh
-      run: python3 configure_github.py publish
+      run: python3 sync_test.py setup
+  predeploy:
+    windows:
+      shell: pwsh
+      run: python -m unittest -q test_reporter
+    posix:
+      shell: sh
+      run: python3 -m unittest -q test_reporter

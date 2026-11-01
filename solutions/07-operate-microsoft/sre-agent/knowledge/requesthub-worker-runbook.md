@@ -50,7 +50,7 @@ permissions. The agent's own identity can only read.
 
 | Cause | Mitigation | Effect |
 | --- | --- | --- |
-| Delay fault | `az containerapp update -n {{WORKER_APP_NAME}} -g {{AZURE_RESOURCE_GROUP}} --remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc` | A new revision without the fault starts within about a minute and drains the backlog within seconds. |
+| Delay fault | `az containerapp update -n {{WORKER_APP_NAME}} -g {{AZURE_RESOURCE_GROUP}} --subscription {{AZURE_SUBSCRIPTION_ID}} --remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc` | A new revision without the fault starts within about a minute and drains the backlog within seconds. |
 | Database or worker failure | Escalate to the platform team with the evidence. | |
 | Load spike | No change. Watch the backlog drain. | |
 

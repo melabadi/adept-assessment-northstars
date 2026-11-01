@@ -136,7 +136,13 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
         }
       }
     }
-    login: { preserveUrlFragmentsForLogins: true }
+    // The app's own origin must be an allowed redirect URL: Container Apps authentication rejects a browser's POST
+    // that signed in with the session cookie when its Origin is neither an allowed redirect URL nor a CORS origin, so
+    // every button that changes something would get a 403. Other sites stay rejected.
+    login: {
+      preserveUrlFragmentsForLogins: true
+      allowedExternalRedirectUrls: ['https://${api.properties.configuration.ingress.fqdn}']
+    }
   }
 }
 
