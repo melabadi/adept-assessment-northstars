@@ -1,6 +1,6 @@
-// Everything in this solution's resource group: RequestHub's hosting platform and the Azure Policy assignment that audits
-// it. main.bicep deploys this file. A change to it is previewed with a resource-group what-if (nothing is deployed):
-//   python .github/skills/infrastructure-remediation/whatif.py --expect Microsoft.Storage/storageAccounts ...
+// RequestHub's hosting platform and the Azure Policy assignment that audits it, in this solution's resource group.
+// main.bicep deploys this file. This is the file a posture fix changes, so the Azure what-if preview of a pull request
+// (whatif.py, run by the posture-whatif Container Apps job) previews exactly this file.
 targetScope = 'resourceGroup'
 
 @description('azd environment name. Part of resource names and of the Entra app identifier URI.')
@@ -14,23 +14,19 @@ param principalId string
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@description('GitHub repository (owner/name) whose workflows sign in to Azure with OIDC.')
-param githubRepository string = ''
-
-@description('OIDC subject prefix for repositories that use immutable subjects.')
-param githubOidcSubjectPrefix string = ''
-
 // Computed here rather than passed in, so a resource-group what-if of this file reproduces `azd provision` exactly.
 var tags = {
   'azd-env-name': environmentName
   solution: '05-secure-microsoft'
 }
-var githubEnvironment = 'secure-microsoft'
 var roles = {
   reader: 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
   // Policy Enrollments Contributor is the smallest built-in role with Microsoft.PolicyInsights/* (query compliance, start an
-  // evaluation) and Microsoft.Resources/deployments/* (what-if). It cannot change resources, policy assignments, or
-  // exemptions, so the GitHub workflows can find, preview, and verify, but never deploy.
+  // evaluation) and Microsoft.Resources/deployments/* (what-if). Those also allow attestations, deployments (which still
+  // need write access to every resource they create or change), and remediation tasks, which run with the identity of a
+  // DeployIfNotExists or Modify policy assignment, inherited ones included, and can change the resources it covers. The
+  // identity itself has no write access to resources, policy assignments, or exemptions: it can find, preview, and verify
+  // a fix, and a person deploys it.
   policyEnrollmentsContributor: '285ce6d6-fa11-43bd-94ef-42a9b3740bfd'
 }
 
@@ -41,19 +37,17 @@ module app '../../../app/infra/requesthub.bicep' = {
     location: location
     principalId: principalId
     principalType: principalType
-    githubRepository: githubRepository
-    githubOidcSubjectPrefix: githubOidcSubjectPrefix
-    githubEnvironment: githubEnvironment
-    // The GitHub identity finds, previews, and verifies; it never deploys or builds. Reader and Policy Enrollments
-    // Contributor on this resource group, no registry push, and only the Requester role in the app (for the app check).
+    // The automation identity is used only inside Azure, by the what-if job: no GitHub federation, no registry push, no
+    // RequestHub app role. Reader and Policy Enrollments Contributor on this group. The posture Function app has its own.
     automationRoleDefinitionIds: [roles.reader, roles.policyEnrollmentsContributor]
     automationCanPushImages: false
-    automationAppRoleNames: ['Requester']
-    // Without a private endpoint, RequestHub reaches Blob storage through the account's public endpoint, which is open to
-    // the internet. Where Azure Policy closes public endpoints (many organizations do), attachment uploads fail instead.
-    // This solution starts without it, so Azure Policy and Defender for Cloud have a real finding to report.
-    storagePrivateEndpoint: false
+    automationAppRoleNames: []
     tags: tags
+    // posture:editable-begin. The posture-remediator agent may change only the lines between these two markers.
+    // Without a private endpoint, RequestHub reaches Blob storage through the account's public endpoint. Where an Azure
+    // Policy closes public endpoints, as in many organizations, RequestHub cannot reach the account at all.
+    storagePrivateEndpoint: false
+    // posture:editable-end
   }
 }
 
@@ -77,8 +71,10 @@ resource storagePrivateLinkPolicy 'Microsoft.Authorization/policyAssignments@202
   }
 }
 
-output githubEnvironment string = githubEnvironment
 output policyAssignmentName string = storagePrivateLinkPolicy.name
+output policyAssignmentId string = storagePrivateLinkPolicy.id
+output storageAccountId string = resourceId('Microsoft.Storage/storageAccounts', app.outputs.storageAccountName)
+output automationIdentityName string = app.outputs.automationIdentityName
 output storageAccountName string = app.outputs.storageAccountName
 output registryLoginServer string = app.outputs.registryLoginServer
 output registryName string = app.outputs.registryName

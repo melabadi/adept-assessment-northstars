@@ -23,7 +23,8 @@ Answer the open design question in `solutions/02-design-github/inputs/reviewed-b
    ref is missing) and paste its report. Then name the endpoints and fields the design relies on. If the design needs an
    API change, describe it as an additive change (STD-API-001); do not edit the contract in this task.
 4. Include a mermaid architecture flowchart and a sequence diagram of one recommendation request, a threat-model checklist
-   for the real data flow, bounded implementation tasks, and the open questions.
+   for the real data flow, bounded implementation tasks, and the open questions. In the sequence diagram, never write `;`
+   inside a message or name: it ends the statement and GitHub cannot render the diagram.
 5. Run `python .github/skills/architecture-decision/check_adr.py <your ADR>` and fix the ADR until it prints PASS.
 6. Summarize for the reviewer: the recommendation per profile, the main trade-offs, any conflicts between standards, and
    the open questions a person must decide.
@@ -34,7 +35,7 @@ Answer the open design question in `solutions/02-design-github/inputs/reviewed-b
 - Write for a reviewer who has ten minutes: one comparison table for the options, short sentences, and no detail the
   decision does not need.
 - Cite standards by id and version (for example `STD-OBS-001 v1.2`), and only standards that exist. Write repository
-  paths with forward slashes, and put a path in backticks only when the file exists.
+  paths relative to the repository root, with forward slashes, and put a path in backticks only when the file exists.
 - When two applicable standards contradict each other, cite both, explain the conflict, and leave the choice to the
   reviewer. When the design depends on a rule that no standard covers, record an open question. Never invent a
   standard, a number, or a decision.

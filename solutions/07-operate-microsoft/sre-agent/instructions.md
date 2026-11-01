@@ -34,22 +34,25 @@ Search it before you start.
    fault settings from the worker, and nothing else:
 
    ```
-   az containerapp update -n {{WORKER_APP_NAME}} -g {{AZURE_RESOURCE_GROUP}} --remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc
+   az containerapp update -n {{WORKER_APP_NAME}} -g {{AZURE_RESOURCE_GROUP}} --subscription {{AZURE_SUBSCRIPTION_ID}} --remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc
    ```
 
-   Say what it changes (a new worker revision without the fault), the expected effect (the backlog drains within a
-   minute), how to roll it back, and when the fault would have switched itself off anyway (`Faults__ExpiresAtUtc`).
+   Keep `--subscription`: the approved command runs with the approver's sign-in, whose default subscription can be a
+   different one. Say what it changes (a new worker revision without the fault), the expected effect (the backlog
+   drains within a minute), how to roll it back, and when the fault would have switched itself off anyway
+   (`Faults__ExpiresAtUtc`).
 7. **Ask for approval through the platform.** Right after your report, run exactly that command with the Azure CLI
-   write tool. The platform pauses it until an SRE Agent Administrator selects **Approve** or **Deny**, and your own
-   identity cannot make the change, so it runs with the approver's permissions. Only **Deny** is a denial: then stop
-   and give them the exact command so they can run it themselves. If it was approved but failed to run (for example,
-   the platform could not retrieve the response), read the worker's `Faults__` settings. If they are still there,
-   submit the same command once more for approval; if they are gone, continue with step 8. Run no other write command.
+   write tool. The platform pauses it until an SRE Agent Administrator approves or cancels it, and your own identity
+   cannot make the change, so it runs with the approver's permissions. Only a cancellation is a denial: then stop and
+   give them the exact command so they can run it themselves. If it was approved but failed to run (for example, the
+   platform could not retrieve the response), read the worker's `Faults__` settings. If they are still there, submit
+   the same command once more for approval; if they are gone, continue with step 8. Run no other write command.
 8. **Verify recovery** with the `verify-worker-recovery` skill after the change. Report before and after numbers with
    UTC timestamps. Do not declare recovery while telemetry is still missing; ingestion can lag a few minutes.
-9. **Summarize the incident** in a few lines the on-call team can paste into their incident record: impact,
-   duration, root cause, mitigation, and one follow-up that would prevent a repeat. End your last response with that
-   summary. The team files it, so do not look for a tool to post it, and do not mention that you did not post it.
+9. **Draft the incident record** with the `draft-incident-record` skill, at the end of your last response: the title,
+   labels, and body of one GitHub Issue for `{{GITHUB_REPOSITORY}}`, with the impact, UTC timeline, root cause,
+   mitigation, and one follow-up that would prevent a repeat, written with placeholders ("the worker", "the API")
+   instead of resource names or ids. A person reads it and files it; you never file it.
 
 ## Rules
 
@@ -60,3 +63,5 @@ Search it before you start.
 - Never read or change data in the database, and never approve, reject, or reroute RequestHub requests.
 - When you read container app settings, show only the `Faults__` settings. Never print connection strings, keys, or
   tokens.
+- You have no GitHub tool and never write to GitHub: no Issues, comments, pull requests, workflows, or code changes.
+  Never put a resource name, GUID, host name, resource id, subscription detail, or e-mail address in the record.

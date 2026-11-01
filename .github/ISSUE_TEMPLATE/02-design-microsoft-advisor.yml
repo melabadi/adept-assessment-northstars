@@ -1,13 +1,13 @@
 name: "Design: ask the Foundry architecture advisor"
-description: Design phase (Microsoft track). A Microsoft Foundry agent grounded in the approved architecture standards answers and drafts an ADR for review.
+description: Design phase (Microsoft track). An Azure Function asks a Microsoft Foundry agent grounded in the approved architecture standards, checks its citations, and drafts an ADR for review.
 title: "Architecture question: "
 labels: ["ai-sdlc", "phase:design", "design-advisor"]
 body:
   - type: markdown
     attributes:
       value: |
-        Opening this issue runs **Design · Microsoft · ask the Foundry architecture advisor**. The advisor answers only from the approved standards that the selected operating profile may retrieve, and says so when they do not answer the question.
-        Its answer is advisory: it comments here and links a pull request with a draft ADR that an architect accepts or rejects.
+        Opening this issue sends your question to Azure when you are this repository's owner, a member, or a collaborator; the advisor ignores Issues from anyone else. An Azure Function asks the architecture advisor in Microsoft Foundry, which answers only from the approved standards the selected operating profile may retrieve, and says so when they do not answer the question.
+        The Function checks every citation against the standards index before anything is posted. The advisor then comments here and opens a pull request with a draft ADR that an architect accepts (merge) or rejects (close). Its answer is advisory.
   - type: dropdown
     id: profile
     attributes:

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "posture-intake: Defender for Cloud sends a recommendation only to a Logic App, so this one receives it, from Trigger logic app on the recommendation or from the workflow automation posture-defender-healthy, one run at a time. It keeps only the resource, the recommendation, its status, and the time, and sends them to the posture Function's intake route with its managed identity, which has no role anywhere. It has no other logic: the Function reads everything else from Azure and decides. When the Function answers 503 (not yet, or another intake is running), the retry policy sends it again every minute, up to 12 times."
+  },
+  "parameters": {
+    "name": { "type": "string" },
+    "location": { "type": "string" },
+    "tags": { "type": "object" },
+    "identityId": { "type": "string" },
+    "connectionId": { "type": "string" },
+    "managedApiId": { "type": "string" },
+    "functionUrl": { "type": "string" },
+    "functionAudience": { "type": "string" },
+    "resourceGroupId": { "type": "string" },
+    "assessmentKey": { "type": "string" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": { "[parameters('identityId')]": {} }
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": { "type": "Object", "defaultValue": {} }
+          },
+          "triggers": {
+            "Defender_recommendation": {
+              "type": "ApiConnectionWebhook",
+              "inputs": {
+                "host": { "connection": { "name": "@parameters('$connections')['ascassessment']['connectionId']" } },
+                "body": { "callback_url": "@{listCallbackUrl()}" },
+                "path": "/Microsoft.Security/Assessment/subscribe"
+              },
+              "runtimeConfiguration": { "concurrency": { "runs": 1 } }
+            }
+          },
+          "actions": {
+            "Keep_only_the_recommendation": {
+              "type": "Compose",
+              "inputs": {
+                "resourceId": "@coalesce(triggerBody()?['properties']?['resourceDetails']?['Id'], triggerBody()?['properties']?['resourceDetails']?['id'], '')",
+                "assessment": "@coalesce(triggerBody()?['name'], '')",
+                "status": "@coalesce(triggerBody()?['properties']?['status']?['code'], '')",
+                "triggeredAt": "@trigger()?['startTime']"
+              },
+              "runAfter": {}
+            },
+            "Send_it_to_the_posture_Function": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "[parameters('functionUrl')]",
+                "body": "@outputs('Keep_only_the_recommendation')",
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "identity": "[parameters('identityId')]",
+                  "audience": "[parameters('functionAudience')]"
+                },
+                "retryPolicy": { "type": "fixed", "count": 12, "interval": "PT1M" }
+              },
+              "runAfter": { "Keep_only_the_recommendation": ["Succeeded"] }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "ascassessment": {
+                "connectionId": "[parameters('connectionId')]",
+                "connectionName": "ascassessment",
+                "id": "[parameters('managedApiId')]"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Security/automations",
+      "apiVersion": "2023-12-01-preview",
+      "name": "posture-defender-healthy",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "dependsOn": ["[resourceId('Microsoft.Logic/workflows', parameters('name'))]"],
+      "properties": {
+        "description": "When Defender for Cloud reports the RequestHub storage account Healthy for the private link recommendation, posture-intake sends it to the posture Function, which records it on the GitHub Issue.",
+        "isEnabled": true,
+        "scopes": [
+          { "description": "This solution's resource group", "scopePath": "[parameters('resourceGroupId')]" }
+        ],
+        "sources": [
+          {
+            "eventSource": "Assessments",
+            "ruleSets": [
+              {
+                "rules": [
+                  { "propertyJPath": "name", "propertyType": "String", "expectedValue": "[parameters('assessmentKey')]", "operator": "Equals" },
+                  { "propertyJPath": "properties.status.code", "propertyType": "String", "expectedValue": "Healthy", "operator": "Equals" }
+                ]
+              }
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "actionType": "LogicApp",
+            "logicAppResourceId": "[resourceId('Microsoft.Logic/workflows', parameters('name'))]",
+            "uri": "[listCallbackURL(resourceId('Microsoft.Logic/workflows/triggers', parameters('name'), 'Defender_recommendation'), '2019-05-01').value]"
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "id": { "type": "string", "value": "[resourceId('Microsoft.Logic/workflows', parameters('name'))]" }
+  }
+}

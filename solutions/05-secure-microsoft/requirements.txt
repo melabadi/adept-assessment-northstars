@@ -1,0 +1,4 @@
+# Python packages for this solution's scripts (Python 3.12+): pip install -r requirements.txt
+# remediation_agent.py publishes and tries the Foundry agent; whatif.py and configure_github.py use only the standard library.
+azure-ai-projects==2.9.0
+azure-identity==1.26.0

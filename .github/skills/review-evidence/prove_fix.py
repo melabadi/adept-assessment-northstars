@@ -43,6 +43,7 @@ TEST_FILE = re.compile(r"^(app/tests/|app/web/e2e/)|\.(test|spec)\.tsx?$")
 TEST_ATTRIBUTE = re.compile(r"^\s*\[(?:Fact|Theory)\b")
 METHOD = re.compile(r"\b(?:Task|ValueTask|void)\s+(\w+)\s*\(")
 CLASS = re.compile(r"\bclass\s+(\w+)")
+LITERAL = re.compile(r'@"(?:[^"]|"")*"|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)\'')
 
 
 class ProofError(Exception):
@@ -90,13 +91,33 @@ def tests_only_commit(commits: list[dict]) -> dict | None:
     return found
 
 
+def method_end(lines: list[str], start: int, stop: int) -> int:
+    """Index just past the method that starts at `start`: the brace closing its body, or the `;` ending `=> ...`.
+
+    Without this, the last test of a file would run to the end of the file, so adding a helper or a test after it
+    would make it look changed.
+    """
+    depth, opened, arrow = 0, False, False
+    for i in range(start, stop):
+        code = LITERAL.sub('""', lines[i]).split("//", 1)[0]
+        arrow = arrow or (not opened and "=>" in code)
+        for char in code:
+            if char == "{":
+                depth, opened = depth + 1, True
+            elif char == "}":
+                depth -= 1
+        if (opened and depth <= 0) or (arrow and not opened and code.rstrip().endswith(";")):
+            return i + 1
+    return stop
+
+
 def test_methods(source: str) -> dict[str, str]:
-    """Map each xUnit test method to its text, from its [Fact] or [Theory] attribute to the next test."""
+    """Map each xUnit test method to its text, from its [Fact] or [Theory] attribute to the end of its body."""
     lines = source.splitlines()
     starts = [i for i, line in enumerate(lines) if TEST_ATTRIBUTE.match(line)]
     methods: dict[str, str] = {}
     for n, start in enumerate(starts):
-        block = lines[start:starts[n + 1] if n + 1 < len(starts) else len(lines)]
+        block = lines[start:method_end(lines, start, starts[n + 1] if n + 1 < len(starts) else len(lines))]
         name = next((m.group(1) for line in block if not line.lstrip().startswith("[") and (m := METHOD.search(line))), None)
         if name:
             methods[name] = "\n".join(line.rstrip() for line in block).strip()

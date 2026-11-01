@@ -35,9 +35,11 @@ Reviewers and approvers in IT and Facilities received RequestHub notifications u
 ### Signals and logs (sanitized)
 
 ```text
-2026-10-20T13:58:12Z info NotificationWorker: Notification backlog: pending=3 oldestPendingAgeSeconds=4.1 failed=0 workerDelayFaultActive=False
+2026-10-20T13:58:12Z info NotificationWorker: Notification backlog: pending=3 oldestPendingAgeSeconds=4.1 failed=0
+  workerDelayFaultActive=False
 2026-10-20T13:58:29Z warn NotificationWorker: Notification worker iteration failed; retrying in 5 seconds
-  System.Threading.Tasks.TaskCanceledException: The request was canceled due to the configured HttpClient.Timeout of 10 seconds elapsing.
+  System.Threading.Tasks.TaskCanceledException: The request was canceled due to the configured HttpClient.Timeout
+    of 10 seconds elapsing.
    ---> System.TimeoutException: A task was canceled.
      at RelayPilot.WebhookNotificationSender.SendAsync(Notification notification, CancellationToken cancellationToken)
      at RequestHub.Core.Notifications.NotificationProcessor.ProcessBatchAsync(CancellationToken ct)

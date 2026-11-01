@@ -1,8 +1,9 @@
 # Azure Load Testing configuration for the RequestHub journey (Test phase, Microsoft track).
 #
-# Everything here is environment-independent and safe to commit. load_test.py adds what depends on your deployment
-# (the API URL, the two managed identities the engines sign in with, and the Azure resources to monitor) and writes
-# the complete configuration to out/loadtest.yaml, which both `az load` and the azure/load-testing GitHub Action use.
+# Everything here is environment-independent and safe to commit. sync_test.py adds what depends on your deployment
+# (the API URL, the two managed identities the engines sign in with, and the Azure resources to monitor), writes the
+# complete configuration to out/loadtest.yaml, and creates or updates the test in Azure Load Testing from it. `azd
+# provision` runs it, so a reviewed change reaches Azure with the next provision.
 #
 # The workload values are small rehearsal settings for a demo environment, not a capacity claim.
 version: v0.1
@@ -34,9 +35,10 @@ env:
   # Dataset: the 24 seeded requests, plus this many extra synthetic requests created before the measured load.
   - name: DATASET_REQUESTS
     value: 0
-  # Cleanup: the requester identity deletes the requests it submitted earlier before the run (before, after, both, none).
+  # Cleanup: the requester identity deletes the requests it submitted, before the run (leftovers of a stopped run) and
+  # after it, so the seeded data is all that remains (before, after, both, none).
   - name: CLEANUP
-    value: before
+    value: both
 # Acceptance thresholds. The run fails if any of these is true.
 failureCriteria:
   clientMetrics:

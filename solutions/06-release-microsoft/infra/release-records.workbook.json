@@ -1,0 +1,289 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "## RequestHub release records\nEvery release job prints one record per step (`RELEASE-RECORD`), which Log Analytics keeps. A *release* deploys a build as a candidate with no traffic and gates it; a person decides with *promote* (go) or *abort* (no-go); *rollback* moves traffic back; *drill* rehearses a bad release. Records reach Log Analytics a minute or two after a step finishes."
+      },
+      "name": "intro"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "4d2b8f8e-9a51-4f5c-9a8c-2f6c1d0e7a01",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 14400000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 14400000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 259200000
+                },
+                {
+                  "durationMs": 604800000
+                }
+              ],
+              "allowCustom": true
+            }
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ContainerAppConsoleLogs_CL\n| where ContainerName_s == \"release\" and ContainerGroupName_s startswith \"caj-\" and Log_s startswith \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, 15))\n| extend Started = format_datetime(todatetime(r.startedAt), \"yyyy-MM-dd HH:mm:ss\"), Job = tostring(r.step), Step = tostring(r.command), Result = tostring(r.status), Seconds = todouble(r.seconds), Outcome = tostring(r.outcome), Execution = tostring(r.execution)\n| summarize arg_max(TimeGenerated, *) by Execution, Step, tostring(r.startedAt)\n| project Started, Job, Step, Result, Seconds, Outcome, Execution\n| order by Started desc",
+        "size": 0,
+        "title": "Release steps: select a row to see its checks",
+        "timeContextFromParameter": "TimeRange",
+        "exportFieldName": "Execution",
+        "exportParameterName": "Execution",
+        "exportDefaultValue": "latest",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__LOG_ANALYTICS_ID__"
+        ],
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Result",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "pass",
+                    "representation": "success",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "fail",
+                    "representation": "4",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "skipped",
+                    "representation": "Blank",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "Unknown",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "Seconds",
+              "formatter": 0,
+              "numberFormat": {
+                "unit": 24,
+                "options": {
+                  "maximumFractionDigits": 0
+                }
+              }
+            },
+            {
+              "columnMatch": "Execution",
+              "formatter": 5
+            }
+          ],
+          "labelSettings": [
+            {
+              "columnId": "Started",
+              "label": "Started (UTC)"
+            }
+          ]
+        }
+      },
+      "name": "steps"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let records = ContainerAppConsoleLogs_CL\n| where ContainerName_s == \"release\" and ContainerGroupName_s startswith \"caj-\" and Log_s startswith \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, 15));\nlet selected = \"{Execution}\";\nlet pick = iff(isempty(selected) or selected == \"latest\", toscalar(records | top 1 by TimeGenerated desc | project tostring(r.execution)), selected);\nrecords\n| where tostring(r.execution) == pick\n| summarize arg_max(TimeGenerated, *) by tostring(r.command), tostring(r.startedAt)\n| mv-expand c = r.checks\n| where isnotempty(c)\n| project Started = format_datetime(todatetime(r.startedAt), \"yyyy-MM-dd HH:mm:ss\"), Step = tostring(r.command), Target = tostring(c['where']), Check = tostring(c.name), Result = iff(tobool(c.ok), \"pass\", \"FAIL\"), Detail = tostring(c.detail)\n| order by Started asc",
+        "size": 0,
+        "title": "Checks of the selected step's job execution (the latest when nothing is selected)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__LOG_ANALYTICS_ID__"
+        ],
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Result",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "pass",
+                    "representation": "success",
+                    "text": "{0}"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "4",
+                    "text": "{0}"
+                  }
+                ]
+              }
+            }
+          ],
+          "labelSettings": [
+            {
+              "columnId": "Started",
+              "label": "Started (UTC)"
+            }
+          ]
+        }
+      },
+      "name": "checks"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let records = ContainerAppConsoleLogs_CL\n| where ContainerName_s == \"release\" and ContainerGroupName_s startswith \"caj-\" and Log_s startswith \"RELEASE-RECORD \"\n| extend r = parse_json(substring(Log_s, 15))\n| where array_length(r.evidence) > 0;\nlet selected = \"{Execution}\";\nlet pick = iff(isempty(selected) or selected == \"latest\", toscalar(records | top 1 by TimeGenerated desc | project tostring(r.execution)), selected);\nrecords\n| where tostring(r.execution) == pick\n| summarize arg_max(TimeGenerated, *) by tostring(r.startedAt)\n| mv-expand e = r.evidence\n| project Candidate = tostring(r.candidate.revision), Evidence = tostring(e)",
+        "size": 1,
+        "title": "Why the candidate failed: what the gate read from its live logs before removing it",
+        "noDataMessage": "No failed gate in this time range, or for the selected step.",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "__LOG_ANALYTICS_ID__"
+        ]
+      },
+      "name": "evidence"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":null,\"headers\":[],\"method\":\"GET\",\"path\":\"/subscriptions/__SUBSCRIPTION_ID__/providers/Microsoft.Insights/eventtypes/management/values\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2015-04-01\"},{\"key\":\"$filter\",\"value\":\"eventTimestamp ge '{TimeRange:startISO}' and eventTimestamp le '{TimeRange:endISO}' and resourceProvider eq 'Microsoft.App'\"}],\"batchDisabled\":false,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$.value[?(@.operationName.value == 'Microsoft.App/jobs/start/action' && @.status.value == 'Started' && @.resourceGroupName == '__RESOURCE_GROUP__')]\",\"columns\":[{\"columnid\":\"Time\",\"columnType\":\"datetime\",\"path\":\"$.eventTimestamp\"},{\"columnid\":\"Step\",\"path\":\"$.resourceId\",\"substringRegexMatch\":\"^.*/jobs/caj-([a-z]+)-[^/]*$\",\"substringReplace\":\"$1\"},{\"columnid\":\"Started by\",\"path\":\"$.caller\"},{\"columnid\":\"Through\",\"path\":\"$.claims.xms_mirid\",\"substringRegexMatch\":\"^.*/providers/Microsoft.Web/sites/func-release-[^/]*$\",\"substringReplace\":\"Function (release trigger)\"}]}}]}",
+        "size": 1,
+        "title": "Who started each step: the person's go or no-go, from the Activity log",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 12,
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Time",
+              "formatter": 6,
+              "dateFormat": {
+                "showUtcTime": true,
+                "formatName": "shortDateTimeNoMsPattern"
+              }
+            }
+          ],
+          "sortBy": [
+            {
+              "itemKey": "Time",
+              "sortOrder": 2
+            }
+          ],
+          "labelSettings": [
+            {
+              "columnId": "Time",
+              "label": "Time (UTC)"
+            }
+          ]
+        }
+      },
+      "name": "decisions"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "resources\n| where type =~ 'microsoft.app/containerapps' and name =~ '__API_APP__' and resourceGroup =~ '__RESOURCE_GROUP__'\n| mv-expand t = properties.configuration.ingress.traffic\n| project Revision = tostring(split(tostring(t.revisionName), '--')[1]), Label = tostring(t.label), Traffic = toint(t.weight)\n| order by Traffic desc, Label asc",
+        "size": 4,
+        "title": "Traffic now (Azure Resource Graph)",
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "/subscriptions/__SUBSCRIPTION_ID__"
+        ],
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Traffic",
+              "formatter": 0,
+              "numberFormat": {
+                "unit": 1,
+                "options": {
+                  "style": "decimal"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "customWidth": "40",
+      "name": "traffic"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "resourcechanges\n| where tostring(properties.targetResourceId) endswith '/containerApps/__API_APP__'\n| extend At = todatetime(properties.changeAttributes.timestamp), Changes = properties.changes\n| where tostring(Changes) has 'ingress.traffic'\n| mv-expand bagexpansion = array Change = Changes\n| extend Property = tostring(Change[0]), Before = tostring(Change[1].previousValue), After = tostring(Change[1].newValue)\n| where Property has 'ingress.traffic' and (Property endswith '.weight' or Property endswith '.label' or Property endswith '.revisionName')\n| extend Before = iff(Property endswith '.revisionName', tostring(split(Before, '--')[1]), Before), After = iff(Property endswith '.revisionName', tostring(split(After, '--')[1]), After)\n| project At, Property = replace_string(Property, 'properties.configuration.ingress.', ''), Before, After\n| order by At desc, Property asc",
+        "size": 0,
+        "title": "Traffic changes (Resource Graph change history)",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources",
+        "crossComponentResources": [
+          "/subscriptions/__SUBSCRIPTION_ID__"
+        ],
+        "gridSettings": {
+          "labelSettings": [
+            {
+              "columnId": "At",
+              "label": "When (UTC)"
+            }
+          ]
+        }
+      },
+      "customWidth": "60",
+      "name": "traffic-changes"
+    }
+  ],
+  "fallbackResourceIds": [
+    "__LOG_ANALYTICS_ID__"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

@@ -1,5 +1,8 @@
-// Develop · Microsoft: RequestHub hosted in Azure with its triage panel backed by a Microsoft Foundry agent, in this
-// solution's own resource group. Deploy from this folder with `azd up`; remove everything with `azd down --purge`.
+// Develop · Microsoft: an Azure-hosted pull request reviewer, in this solution's own resource group.
+// A GitHub webhook calls a Python Azure Function, which queues the review and runs it: it checks the pull request against
+// the team's rules in one Azure Container Apps sandbox session, builds and tests it in another, asks a Microsoft Foundry
+// agent for commentary, and posts one COMMENT review. Deploy from this folder with `azd up`; remove everything with
+// `azd down --purge`.
 targetScope = 'subscription'
 
 @minLength(1)
@@ -7,35 +10,46 @@ targetScope = 'subscription'
 @description('azd environment name, for example ai-sdlc-develop. The resource group is rg-<name>.')
 param environmentName string
 
-@description('Region for the app, its database, and monitoring. PostgreSQL Flexible Server must be allowed there for your subscription.')
+@description('Region for the resource group and monitoring.')
 param location string
 
-@description('Region for Microsoft Foundry. The model below must be available there.')
+@description('Region for Microsoft Foundry, the sandbox session pools, and the Function with its storage and network. The model below must be available there.')
 param aiLocation string = 'eastus2'
 
-@description('Object id of the person running azd. Receives every RequestHub app role and the Foundry User role.')
+@description('Object id of the person running azd. Receives the Foundry User role and may run sandbox sessions.')
 param principalId string
 
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@description('GitHub repository (owner/name) whose workflows publish and evaluate the agent through OIDC. Set by the preprovision hook.')
-param githubRepository string = ''
+@minLength(3)
+@description('GitHub repository (owner/name) whose pull requests are reviewed. Set it with `azd env set GITHUB_REPOSITORY`.')
+param githubRepository string
 
-@description('OIDC subject prefix for repositories that use immutable subjects. Set by the preprovision hook.')
-param githubOidcSubjectPrefix string = ''
+@secure()
+@description('Fine-grained GitHub token for that repository only: Contents read, Pull requests read and write. Empty until you set GITHUB_REVIEW_TOKEN. Stored only in Key Vault.')
+param githubToken string = ''
 
-@description('Chat model for the triage agent. triage-agent.yaml sets temperature, so pick a non-reasoning model.')
-param modelName string = 'gpt-4.1-mini'
-param modelVersion string = '2025-04-14'
+@secure()
+@description('Secret GitHub signs every webhook delivery with. The preprovision hook generates it once (GITHUB_WEBHOOK_SECRET). Stored only in Key Vault.')
+param githubWebhookSecret string = ''
+
+@description('Git ref the rule checker, the sandbox runner, and the review formatter are read from. Never the pull request itself.')
+param checkerRef string = 'main'
+
+@description('Label that asks for a review.')
+param reviewLabel string = 'review:azure'
+
+@description('Reasoning model for the reviewer agent.')
+param modelName string = 'gpt-5.4-mini'
+param modelVersion string = '2026-03-17'
 
 @description('Model capacity in thousands of tokens per minute.')
-param modelCapacity int = 50
+param modelCapacity int = 150
 
-@description('Name of the Foundry agent the app calls. publish_triage_agent.py publishes it.')
-param triageAgentName string = 'requesthub-triage'
+@description('Name of the Foundry agent the Function calls. publish_reviewer_agent.py publishes it after each provision.')
+param reviewerAgentName string = 'requesthub-pr-reviewer'
 
-var githubEnvironment = 'develop-microsoft'
 var tags = {
   'azd-env-name': environmentName
   solution: '03-develop-microsoft'
@@ -47,35 +61,24 @@ resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   tags: tags
 }
 
-module app '../../../app/infra/requesthub.bicep' = {
-  name: 'requesthub'
+module reviewer 'resources.bicep' = {
+  name: 'pr-reviewer'
   scope: rg
   params: {
     environmentName: environmentName
     location: location
+    aiLocation: aiLocation
     principalId: principalId
     principalType: principalType
     githubRepository: githubRepository
-    githubOidcSubjectPrefix: githubOidcSubjectPrefix
-    githubEnvironment: githubEnvironment
-    tags: tags
-  }
-}
-
-module foundry 'foundry.bicep' = {
-  name: 'foundry'
-  scope: rg
-  params: {
-    environmentName: environmentName
-    location: aiLocation
+    githubToken: githubToken
+    githubWebhookSecret: githubWebhookSecret
+    checkerRef: checkerRef
+    reviewLabel: reviewLabel
     modelName: modelName
     modelVersion: modelVersion
     modelCapacity: modelCapacity
-    users: [
-      { principalId: principalId, principalType: principalType }
-      { principalId: app.outputs.appIdentityPrincipalId, principalType: 'ServicePrincipal' }
-      { principalId: app.outputs.automationPrincipalId, principalType: 'ServicePrincipal' }
-    ]
+    reviewerAgentName: reviewerAgentName
     tags: tags
   }
 }
@@ -83,28 +86,17 @@ module foundry 'foundry.bicep' = {
 output AZURE_LOCATION string = location
 output AZURE_TENANT_ID string = tenant().tenantId
 output AZURE_RESOURCE_GROUP string = rg.name
-output GITHUB_ENVIRONMENT string = githubEnvironment
+output GITHUB_REPOSITORY string = githubRepository
+output REVIEW_LABEL string = reviewLabel
 
-// Read by app/infra/api.parameters.json and worker.parameters.json when `azd deploy` ships the container apps.
-output AZURE_CONTAINER_REGISTRY_ENDPOINT string = app.outputs.registryLoginServer
-output AZURE_CONTAINER_REGISTRY_NAME string = app.outputs.registryName
-output AZURE_CONTAINER_ENVIRONMENT_NAME string = app.outputs.containerAppsEnvironmentName
-output APP_IDENTITY_ID string = app.outputs.appIdentityId
-output APP_IDENTITY_CLIENT_ID string = app.outputs.appIdentityClientId
-output APP_IDENTITY_NAME string = app.outputs.appIdentityName
-output APPLICATIONINSIGHTS_CONNECTION_STRING string = app.outputs.appInsightsConnectionString
-output POSTGRES_HOST string = app.outputs.postgresHost
-output POSTGRES_DATABASE string = app.outputs.postgresDatabase
-output STORAGE_BLOB_ENDPOINT string = app.outputs.storageBlobEndpoint
-output API_APP_NAME string = app.outputs.apiAppName
-output WORKER_APP_NAME string = app.outputs.workerAppName
-output API_URL string = app.outputs.apiUrl
-output API_CLIENT_ID string = app.outputs.apiClientId
-output API_IDENTIFIER_URI string = app.outputs.apiIdentifierUri
-output AUTOMATION_CLIENT_ID string = app.outputs.automationClientId
-output TRIAGE_PROVIDER string = 'Foundry'
-output TRIAGE_AGENT_NAME string = triageAgentName
-
-output FOUNDRY_ACCOUNT_NAME string = foundry.outputs.accountName
-output FOUNDRY_PROJECT_ENDPOINT string = foundry.outputs.projectEndpoint
-output FOUNDRY_MODEL_DEPLOYMENT string = foundry.outputs.modelDeployment
+output FOUNDRY_ACCOUNT_NAME string = reviewer.outputs.foundryAccountName
+output FOUNDRY_PROJECT_ENDPOINT string = reviewer.outputs.projectEndpoint
+output FOUNDRY_MODEL_DEPLOYMENT string = reviewer.outputs.modelDeployment
+output REVIEWER_AGENT_NAME string = reviewerAgentName
+output REVIEWER_FUNCTION_APP string = reviewer.outputs.functionAppName
+output REVIEWER_FUNCTION_HOST string = reviewer.outputs.functionHostName
+output KEY_VAULT_NAME string = reviewer.outputs.keyVaultName
+output JUDGE_POOL_ENDPOINT string = reviewer.outputs.judgePoolEndpoint
+output RUN_POOL_ENDPOINT string = reviewer.outputs.runPoolEndpoint
+output SANDBOX_CONNECTION_ID string = reviewer.outputs.sandboxConnectionId
+output APPLICATIONINSIGHTS_NAME string = reviewer.outputs.appInsightsName
