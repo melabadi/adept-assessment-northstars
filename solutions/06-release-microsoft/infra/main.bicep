@@ -1,6 +1,6 @@
 // Release · Microsoft: RequestHub hosted in Azure Container Apps, released through candidate revisions that get no
-// traffic until a person promotes them. The release runs in Azure: a push to the registry fires Event Grid, a Logic App
-// starts the release job, and Container Apps jobs gate, promote, abort, roll back, and rehearse a bad release.
+// traffic until a person promotes them. The release runs in Azure: a push to the registry fires Event Grid, an Azure
+// Function starts the release job, and Container Apps jobs gate, promote, abort, roll back, and rehearse a bad release.
 // Deploy from this folder with `azd up`; remove everything with `azd down --purge`.
 targetScope = 'subscription'
 
@@ -61,6 +61,7 @@ module release 'release.bicep' = {
     automationPrincipalId: app.outputs.automationPrincipalId
     logAnalyticsId: app.outputs.logAnalyticsId
     apiAppName: app.outputs.apiAppName
+    appInsightsConnectionString: app.outputs.appInsightsConnectionString
   }
 }
 
@@ -90,6 +91,11 @@ output AUTOMATION_CLIENT_ID string = app.outputs.automationClientId
 // Read by infra/jobs.parameters.json when `azd deploy release` ships the release jobs.
 output AUTOMATION_IDENTITY_ID string = resourceId(subscription().subscriptionId, rg.name, 'Microsoft.ManagedIdentity/userAssignedIdentities', app.outputs.automationIdentityName)
 output RELEASE_TRIGGER_PRINCIPAL_ID string = release.outputs.triggerPrincipalId
+// Read by azd's postdeploy hook (azure.yaml), which connects Event Grid to the function (release-on-push.bicep),
+// and by preflight.py.
 output RELEASE_TRIGGER_NAME string = release.outputs.triggerName
+output RELEASE_TOPIC_NAME string = release.outputs.topicName
+output RELEASE_REPOSITORY string = release.outputs.repository
+
 output RELEASE_WORKBOOK_ID string = release.outputs.workbookId
 output LOG_ANALYTICS_WORKSPACE_ID string = app.outputs.logAnalyticsCustomerId
