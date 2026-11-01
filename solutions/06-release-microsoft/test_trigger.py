@@ -10,6 +10,8 @@ They cover what a reviewer must be able to trust without a live run:
   - the job keeps its own image, arguments, resources, and settings, and only IMAGE and COMMIT are replaced;
   - Azure calls use the function's managed identity, and an Azure error fails the invocation, so Event Grid delivers
     the event again;
+  - logs use placeholders: the success line names the build and the execution's suffix, and an Azure error names the
+    call, the HTTP status, and Azure's error code, never a host name, resource name, or GUID;
   - Event Grid calls the function by its name, one event per call, and its filter and the function's check use the
     repository set once, in infra/release.bicep;
   - azd runs these tests before every deploy, and connects Event Grid to the function only after every service is
@@ -64,18 +66,18 @@ def push(**changes) -> dict:
 
 
 class FakeArm:
-    def __init__(self, job: dict = JOB, fail_on: str = ""):
-        self.job, self.fail_on, self.calls = job, fail_on, []
+    def __init__(self, job: dict = JOB, fail_on: str = "", execution: str = "caj-release-example-x1"):
+        self.job, self.fail_on, self.execution, self.calls = job, fail_on, execution, []
 
-    def call(self, method: str, path: str, body: dict | None = None) -> dict:
-        self.calls.append((method, path, copy.deepcopy(body)))
+    def call(self, what: str, method: str, path: str, body: dict | None = None) -> dict:
+        self.calls.append((what, method, path, copy.deepcopy(body)))
         if method == self.fail_on:
-            raise RuntimeError(f"{method} returned HTTP 503")
-        return copy.deepcopy(self.job) if method == "GET" else {"id": f"{JOB_ID}/executions/x", "name": "caj-release-example-x1"}
+            raise RuntimeError(f"Could not {what}: HTTP 503")
+        return copy.deepcopy(self.job) if method == "GET" else {"id": f"{JOB_ID}/executions/x", "name": self.execution}
 
 
 def started_container(arm: FakeArm) -> dict:
-    method, _, body = arm.calls[-1]
+    _, method, _, body = arm.calls[-1]
     assert method == "POST"
     return json.loads(json.dumps(body))["containers"][0]  # what Azure receives
 
@@ -84,12 +86,13 @@ class AcceptedPush(unittest.TestCase):
     def test_a_push_of_the_api_starts_the_release_job_once(self):
         arm = FakeArm()
         started = trigger.start_release(push(), SETTINGS, arm)
-        self.assertEqual([(m, p) for m, p, _ in arm.calls],
-                         [("GET", f"{JOB_ID}?api-version=2025-07-01"), ("POST", f"{JOB_ID}/start?api-version=2025-07-01")])
+        self.assertEqual([(w, m, p) for w, m, p, _ in arm.calls],
+                         [("read the release job", "GET", f"{JOB_ID}?api-version=2025-07-01"),
+                          ("start the release job", "POST", f"{JOB_ID}/start?api-version=2025-07-01")])
         env = started_container(arm)["env"]
         self.assertEqual(env[-2:], [{"name": "IMAGE", "value": f"{HOST}/requesthub-api@{DIGEST}"},
                                     {"name": "COMMIT", "value": SHA}])
-        self.assertEqual(started, trigger.Started("caj-release-example-x1", f"{HOST}/requesthub-api@{DIGEST}", SHA))
+        self.assertEqual(started, trigger.Started("x1", DIGEST, SHA))
 
     def test_the_job_keeps_its_own_container_and_settings(self):
         arm = FakeArm()
@@ -121,6 +124,34 @@ class AcceptedPush(unittest.TestCase):
         for method in ("GET", "POST"):
             with self.subTest(method=method), self.assertRaisesRegex(RuntimeError, "HTTP 503"):
                 trigger.start_release(push(), SETTINGS, FakeArm(fail_on=method))
+
+
+class LoggedText(unittest.TestCase):
+    """Logs use placeholders, never a host name, resource name, or GUID (CONTRIBUTING): the function logs the build and
+    the execution's suffix, and an Azure error names only the call, the HTTP status, and Azure's error code."""
+
+    IDENTIFIERS = (HOST, "crdesk", "caj-release-example", "rg-example", "/subscriptions/", "00000000-")
+
+    def test_the_success_line_names_the_build_and_the_execution_suffix_only(self):
+        line = trigger.start_release(push(), SETTINGS, FakeArm()).summary()
+        self.assertEqual(line, f"execution x1 for build {SHA[:7]}, image {DIGEST[:19]}")
+        for identifier in self.IDENTIFIERS + (release.REPOSITORY, SHA):
+            self.assertNotIn(identifier, line)
+
+    def test_an_unexpected_execution_name_logs_none_of_it(self):
+        for name in ("caj-release-example", "caj-release-other-x1", "x1", "", "caj-release-example-X1/../y",
+                     "caj-release-example-" + "a" * 40):
+            with self.subTest(name=name):
+                line = trigger.start_release(push(), SETTINGS, FakeArm(execution=name)).summary()
+                self.assertTrue(line.startswith("execution ? for build "), line)
+                for identifier in self.IDENTIFIERS + ("other", "X1"):
+                    self.assertNotIn(identifier, line)
+
+    def test_the_function_logs_only_the_summary(self):
+        source = (FOLDER / "trigger/function_app.py").read_text(encoding="utf-8")
+        self.assertIn("started.summary()", source)
+        for raw in ("started.image", "started.execution", "started.digest", "started.commit"):
+            self.assertNotIn(raw, source)
 
 
 class RejectedEvents(unittest.TestCase):
@@ -232,8 +263,9 @@ class ManagedIdentity(unittest.TestCase):
     def test_calls_sign_in_as_the_function_with_one_token(self):
         open_, requests = self.opener({"access_token": "t0ken"}, JOB, {"name": "x1"})
         arm = trigger.Arm(self.environ, open_)
-        self.assertEqual(arm.call("GET", f"{JOB_ID}?api-version=2025-07-01"), JOB)
-        self.assertEqual(arm.call("POST", f"{JOB_ID}/start?api-version=2025-07-01", {"containers": []}), {"name": "x1"})
+        self.assertEqual(arm.call("read the release job", "GET", f"{JOB_ID}?api-version=2025-07-01"), JOB)
+        self.assertEqual(arm.call("start the release job", "POST", f"{JOB_ID}/start?api-version=2025-07-01",
+                                  {"containers": []}), {"name": "x1"})
         identity, read, start = requests
         self.assertTrue(identity.full_url.startswith(self.environ["IDENTITY_ENDPOINT"] + "?"))
         self.assertIn("resource=https%3A%2F%2Fmanagement.azure.com%2F", identity.full_url)
@@ -244,21 +276,33 @@ class ManagedIdentity(unittest.TestCase):
         self.assertEqual(start.get_method(), "POST")
         self.assertEqual(json.loads(start.data), {"containers": []})
 
-    def test_an_azure_error_names_its_code_and_never_the_token(self):
-        body = json.dumps({"error": {"code": "AuthorizationFailed", "message": "The client does not have authorization."}})
-        error = urllib.error.HTTPError("https://management.azure.com/x", 403, "Forbidden", {}, io.BytesIO(body.encode()))
+    def arm_error(self, status: int, body: bytes, what: str = "start the release job") -> str:
+        error = urllib.error.HTTPError("https://management.azure.com/x", status, "Error", {}, io.BytesIO(body))
         open_, _ = self.opener({"access_token": "t0ken"}, error)
         with self.assertRaises(RuntimeError) as caught:
-            trigger.Arm(self.environ, open_).call("POST", f"{JOB_ID}/start?api-version=2025-07-01", {})
-        message = str(caught.exception)
-        self.assertIn("HTTP 403: AuthorizationFailed The client does not have authorization.", message)
-        self.assertIn("Microsoft.App/jobs/caj-release-example/start", message)
-        self.assertNotIn("t0ken", message)
+            trigger.Arm(self.environ, open_).call(what, "POST", f"{JOB_ID}/start?api-version=2025-07-01", {})
+        return str(caught.exception)
+
+    def test_an_azure_error_names_the_call_its_status_and_code_only(self):
+        # Azure's messages name the subscription, the resource group, and the resource: none of it is logged.
+        body = json.dumps({"error": {"code": "AuthorizationFailed", "message": (
+            "The client 'release-trigger' with object id '11111111-2222-3333-4444-555555555555' does not have "
+            "authorization to perform action 'Microsoft.App/jobs/start/action' over scope "
+            f"'{JOB_ID}' or the scope is invalid. Registry {HOST}.")}}).encode()
+        message = self.arm_error(403, body)
+        self.assertEqual(message, "Could not start the release job: HTTP 403 AuthorizationFailed")
+        for identifier in ("caj-release-example", "rg-example", "/subscriptions/", "00000000-", "11111111-", HOST, "t0ken"):
+            self.assertNotIn(identifier, message)
+
+    def test_an_unexpected_error_code_or_body_leaves_only_the_status(self):
+        for body in (json.dumps({"error": {"code": f"Denied at {JOB_ID}"}}).encode(), b"<html>Bad gateway</html>", b""):
+            with self.subTest(body=body[:40]):
+                self.assertEqual(self.arm_error(502, body, "read the release job"), "Could not read the release job: HTTP 502")
 
     def test_no_managed_identity_no_call(self):
         open_, requests = self.opener()
         with self.assertRaisesRegex(RuntimeError, "no managed identity"):
-            trigger.Arm({}, open_).call("GET", JOB_ID)
+            trigger.Arm({}, open_).call("read the release job", "GET", JOB_ID)
         self.assertEqual(requests, [])
 
 
