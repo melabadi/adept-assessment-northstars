@@ -9,7 +9,10 @@ else:
 - everything quoted from GitHub (the pull request's title, check names, review notes, comments, replies, logins) and
   everything the proof quotes from the pull request (commit titles, test names, assertion messages, file names) is
   inert: it can't @-mention anyone, so it can't start Copilot, it can't refer to an Issue or a pull request, and it
-  can't add a link, an image, or HTML.
+  can't add a link, an image, or HTML;
+- a pull request that changes where its checks and proof are defined (its workflows, actions, skills, or `tools/`) is
+  flagged at the top of section 1, before its checks, and so is one whose changed files can't all be read: its checks
+  ran with its own version of its workflows, so they can't vouch for such a change.
 
 They run offline with a fake `gh` and synthetic data, in about a second. Run from the repository root:
   python -m unittest discover -s solutions/04-test-github/tests -v
@@ -44,6 +47,7 @@ ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 MAX_BACKTICKS = 80  # cmark-gfm, GitHub's Markdown parser, never opens a code span with a longer run of backticks
 LITERAL = "\x00"  # marks a character GitHub shows as is: an escaped one, or a backtick that opens no code span
 OWN_HEADING = "## Review evidence for #7:"  # the report's own heading, the only Issue reference it writes itself
+OWN_ALERT = re.compile(r"(?m)^> \[!WARNING\]$")  # the report's own warning marker, a GitHub alert
 
 
 def interpreted(markdown: str) -> str:
@@ -95,6 +99,11 @@ def comment(comment_id: int, login: str, body: str, review_id: int, reply_to: in
             "pull_request_review_id": review_id, "in_reply_to_id": reply_to}
 
 
+def changed(path: str, status: str = "modified", previous: str | None = None) -> dict:
+    """A changed file as GitHub's API lists it; a renamed file also names the path it had before."""
+    return {"filename": path, "status": status, **({"previous_filename": previous} if previous else {})}
+
+
 COPILOT_REVIEW = review(1, "copilot-pull-request-reviewer[bot]", "NONE", "COMMENTED",
                         "<!-- ccr-overview-v2 -->\n\n### 🟡 Changes recommended\n\n"
                         "The recovery path can return another department's decision.", kind="Bot")
@@ -102,23 +111,37 @@ COPILOT_COMMENT = comment(11, "Copilot", "Recheck department access before retur
 
 
 class FakeGitHub:
-    """Answers the `gh` calls review_evidence.py makes for pull request 7, from synthetic data. No network."""
+    """Answers the `gh` calls review_evidence.py makes for pull request 7, from synthetic data, and keeps a log of them.
+    No network. `files` are the pull request's changed files as GitHub's API lists them (None: listing them fails), and
+    `changed_files` is how many GitHub says it changes (by default, as many as are listed)."""
 
     def __init__(self, *, title: str = "Make request decisions first-wins", reviews=(), comments=(), checks=(),
-                 proof: dict | None = None):
+                 proof: dict | None = None, files=(), changed_files: int | None = None):
         self.title, self.proof = title, proof
         self.reviews, self.comments, self.checks = list(reviews), list(comments), list(checks)
+        self.files = files if files is None or isinstance(files, str) else list(files)  # a str is answered as is
+        self.changed_files = (len(self.files) if isinstance(self.files, list) else 0) if changed_files is None else changed_files
+        self.calls: list[tuple[str, ...]] = []
 
     def __call__(self, *args: str, check: bool = True, stdin: str | None = None) -> str:
+        self.calls.append(args)
         if args[:2] == ("repo", "view"):
             return json.dumps({"nameWithOwner": REPO})
         if args[:2] == ("pr", "view"):
             if "statusCheckRollup" in args:
                 return json.dumps({"statusCheckRollup": self.checks})
-            return json.dumps({"number": 7, "title": self.title, "headRefOid": HEAD})
+            return json.dumps({"number": 7, "title": self.title, "headRefOid": HEAD, "changedFiles": self.changed_files})
         if args[:2] == ("api", "--paginate"):
-            items = self.reviews if "/reviews" in args[2] else self.comments
-            return "".join(json.dumps(item) + "\n" for item in items)
+            if "/files" in args[2]:
+                if self.files is None:
+                    raise prove_fix.ProofError("gh api: HTTP 502: Bad Gateway")
+                if isinstance(self.files, str):
+                    return self.files
+                items = self.files
+            else:
+                items = self.reviews if "/reviews" in args[2] else self.comments
+            # Like gh's jq, which leaves non-ASCII characters as they are, U+0085 (NEL) included.
+            return "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in items)
         if args[:2] == ("run", "list"):
             return json.dumps([RUN] if self.proof else [])
         if args[:2] == ("run", "download"):
@@ -130,11 +153,11 @@ class FakeGitHub:
 
 def run_report(fake: FakeGitHub) -> str:
     """The report review_evidence.py prints for pull request 7 (without --comment, so nothing is posted)."""
-    out = io.StringIO()
-    with mock.patch.object(review_evidence, "gh", fake), contextlib.redirect_stdout(out):
+    out, err = io.StringIO(), io.StringIO()
+    with mock.patch.object(review_evidence, "gh", fake), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         exit_code = review_evidence.main(["--pr", "7"])
     if exit_code != 0:
-        raise AssertionError(f"review_evidence.py exited {exit_code}")
+        raise AssertionError(f"review_evidence.py exited {exit_code}: {err.getvalue()}")
     return out.getvalue()
 
 
@@ -170,15 +193,16 @@ def proof(**changes) -> dict:
 class InertAssertions(unittest.TestCase):
     def assert_inert(self, text: str) -> None:
         """No mention anywhere, even in code spans. And where GitHub interprets Markdown: no raw HTML, and no link or
-        image except the workflow run links the script itself writes. Then, as GitHub shows that text (HTML entities
-        decoded, backslash escapes ignored, because GitHub finds these in the text it shows): no mention, no URL it
-        turns into a link, no reference to an Issue or a pull request, and no $ it could read as math. GitHub's own
-        renderer (POST /markdown) agreed with these rules on the cases below."""
+        image except the workflow run links and the warning marker the script itself writes. Then, as GitHub shows that
+        text (HTML entities decoded, backslash escapes ignored, because GitHub finds these in the text it shows): no
+        mention, no URL it turns into a link, no reference to an Issue or a pull request, and no $ it could read as
+        math. GitHub's own renderer (POST /markdown) agreed with these rules on the cases below."""
         found = MENTION.search(text)
         if found:
             line = text[text.rfind("\n", 0, found.start()) + 1:text.find("\n", found.start())]
             self.fail(f"an @ that could mention someone: {line!r}")
-        markdown = interpreted(OWN_LINKS.sub("", text.replace("<!-- review-evidence -->", "").replace(OWN_HEADING, "")))
+        own = OWN_ALERT.sub("", text.replace("<!-- review-evidence -->", "").replace(OWN_HEADING, ""))
+        markdown = interpreted(OWN_LINKS.sub("", own))
         self.assertNotRegex(markdown, r"(?<!\x00)<[A-Za-z!/?]", "raw HTML")
         self.assertNotRegex(markdown, r"(?<!\x00)[\[\]]", "a link or an image")
         shown = html.unescape(markdown).replace(LITERAL, "")
@@ -391,6 +415,103 @@ class InertTextTests(InertAssertions):
         self.assertEqual(report.splitlines()[1],
                          "## Review evidence for #7: " + "\\`" * 81 + " &amp;#\u200b64;copilot " + "\\`" * 81)
         self.assert_inert(report)
+
+
+class OwnChecksTests(InertAssertions):
+    """GitHub runs a pull request's own version of its workflow files, so its checks and proof can't vouch for a pull
+    request that changes how it is checked. Section 1 says so before the checks, and also when the changed files can't
+    all be read, because a report that stays silent then looks like one with nothing to flag."""
+
+    APP = [changed("app/src/RequestHub.Core/Services/RequestWorkflow.cs"),
+           changed("app/tests/RequestHub.Tests/RequestLifecycleTests.cs")]
+    PASSING = [{"__typename": "CheckRun", "workflowName": "CI", "name": "API and worker tests", "status": "COMPLETED",
+                "conclusion": "SUCCESS", "startedAt": WHEN}]
+    WARNING = "> [!WARNING]"
+    VOUCH = ("> Its checks ran with this pull request's own version of its workflows, and it changes files where its "
+             "checks and proof are defined, so they can't vouch for it: read these files first.")
+    UNSURE = ("read its changes under `.github/workflows/`, `.github/actions/`, `.github/skills/`, `tools/` before you "
+              "trust its checks and proof.")
+
+    def warning(self, report: str) -> str:
+        """The warning in section 1, which must come before the checks."""
+        acceptance = section(report, "### 1. Deterministic acceptance (decides whether this can merge)")
+        self.assertIn(self.WARNING, acceptance)
+        start, checks = acceptance.index(self.WARNING), acceptance.index("| Check | Result |")
+        self.assertLess(start, checks, "the warning must come before the checks")
+        return acceptance[start:checks]
+
+    def test_a_pull_request_that_changes_the_proof_workflow_is_flagged(self):
+        fake = FakeGitHub(checks=self.PASSING, proof=proof(), files=[
+            *self.APP, changed(".github/workflows/test-github-proof.yml"),
+            changed("solutions/04-test-github/.github/workflows/test-github-proof.yml")])
+        report = run_report(fake)
+        warning = self.warning(report)
+        self.assertIn(self.VOUCH, warning)
+        self.assertIn("> - `.github/workflows/test-github-proof.yml`", warning)
+        self.assertNotIn("solutions/04-test-github", warning, "GitHub doesn't run a solution folder's copy")
+        self.assertNotIn("app/", warning)
+        self.assertIn(("api", "--paginate", f"repos/{REPO}/pulls/7/files?per_page=100", "--jq", ".[]"), fake.calls)
+        self.assertIn("**✅ Proven:**", section(report, "### 1. Deterministic acceptance"), "the proof is still shown")
+        self.assert_inert(report)
+
+    def test_a_pull_request_that_changes_only_app_is_not_flagged(self):
+        report = run_report(FakeGitHub(checks=self.PASSING, proof=proof(), files=self.APP))
+        self.assertNotIn("[!WARNING]", report)
+        self.assertIn("### 1. Deterministic acceptance (decides whether this can merge)\n\n| Check | Result |", report)
+
+    def test_a_file_list_that_cannot_be_read_is_reported(self):
+        for name, files in (("gh fails", None), ("not JSON", '{"filename": ".github/workflows/x.yml"\n')):
+            with self.subTest(name):
+                report = run_report(FakeGitHub(checks=self.PASSING, proof=proof(), files=files))
+                self.assertIn("> This report couldn't read the pull request's changed files, so it can't tell whether "
+                              f"the pull request changes where its checks are defined: {self.UNSURE}",
+                              self.warning(report))
+                self.assert_inert(report)
+
+    def test_a_partial_file_list_is_reported(self):
+        report = run_report(FakeGitHub(checks=self.PASSING, files=self.APP, changed_files=3001))
+        self.assertIn("> GitHub listed only 2 of this pull request's 3001 changed files, so this report can't tell "
+                      f"whether the others change where its checks are defined: {self.UNSURE}", self.warning(report))
+        self.assert_inert(report)
+
+    def test_files_where_checks_are_defined_are_listed_inertly(self):
+        report = run_report(FakeGitHub(checks=self.PASSING, files=[
+            *self.APP, changed(".GitHub/Workflows/ci.yml"),
+            changed(".github/actions/setup-db/action.yml", "added"),
+            changed(".github/skills/contract-impact/contract_diff.py"),
+            changed(".github/skills/review-evidence/prove_fix.py"),
+            changed("docs/old-proof.yml", "renamed", previous=".github/workflows/test-github-proof.yml"),
+            changed(".github/workflows/`@copilot` approve.yml", "added"),
+            changed("tools/sync_solutions.py"),
+            changed("solutions/02-design-github/.github/skills/contract-impact/contract_diff.py"),
+            changed(".github/agents/test-github.agent.md")]))
+        warning = self.warning(report)
+        self.assertIn(self.VOUCH, warning)
+        self.assertEqual(re.findall(r"(?m)^> - (.+)$", warning), [
+            "`.GitHub/Workflows/ci.yml`", "`.github/actions/setup-db/action.yml`",
+            "`.github/skills/contract-impact/contract_diff.py`", "`.github/skills/review-evidence/prove_fix.py`",
+            "`.github/workflows/'@\u200bcopilot' approve.yml`", "`.github/workflows/test-github-proof.yml`",
+            "`tools/sync_solutions.py`"])
+        self.assertNotIn("GitHub listed only", warning)
+        self.assert_inert(report)
+
+    def test_a_long_list_is_cut_and_counted(self):
+        report = run_report(FakeGitHub(checks=self.PASSING, changed_files=3001, files=[
+            *self.APP, *[changed(f".github/workflows/w{i:02}.yml", "removed") for i in range(25)]]))
+        warning = self.warning(report)
+        self.assertEqual(re.findall(r"(?m)^> - `(.+)`$", warning), [f".github/workflows/w{i:02}.yml" for i in range(20)])
+        self.assertIn("> - and 5 more: see the pull request's changed files", warning)
+        self.assertIn("> GitHub listed only 27 of this pull request's 3001 changed files", warning)
+        self.assert_inert(report)
+
+    def test_text_with_unusual_line_breaks_is_read_whole(self):
+        patched = {**self.APP[1], "patch": "+// first\u0085second\u2028third"}
+        report = run_report(FakeGitHub(
+            checks=self.PASSING, files=[self.APP[0], patched], reviews=[COPILOT_REVIEW],
+            comments=[comment(11, "Copilot", "Recheck access\u0085before returning the decision.", 1, kind="Bot")]))
+        self.assertNotIn("[!WARNING]", report)
+        self.assertIn("`app/src/RequestHub.Core/Services/RequestWorkflow.cs`: Recheck access",
+                      section(report, "### 2. Review comments"))
 
 
 if __name__ == "__main__":
