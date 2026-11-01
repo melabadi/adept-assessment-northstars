@@ -184,7 +184,7 @@ The setup page refuses to run again once an app is connected (HTTP 409). Nobody 
 Use this only if your organization doesn't allow GitHub Apps. Comments and pull requests then appear under your name, and you rotate the token yourself.
 
 1. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new): only this repository; Contents, Issues, and Pull requests read and write; an expiry that covers your demos.
-2. In the repository, **Settings** → **Webhooks** → **Add webhook**: the payload URL is the Function's `/api/github/webhook` (`az functionapp show -g rg-ai-sdlc-design -n (azd env get-value FUNCTION_APP_NAME) --query defaultHostName -o tsv`), content type `application/json`, a random secret, and the **Issues** and **Pushes** events.
+2. In the repository, **Settings** → **Webhooks** → **Add webhook**: the payload URL is `https://<host>/api/github/webhook`, where `<host>` is what `az functionapp show -g rg-ai-sdlc-design -n (azd env get-value FUNCTION_APP_NAME) --query "properties.defaultHostName || defaultHostName" -o tsv` prints (on Flex Consumption, Azure CLI returns the host under `properties`), content type `application/json`, a random secret, and the **Issues** and **Pushes** events.
 3. Store both in Key Vault. Its public network access is disabled, so write through Azure Resource Manager:
 
    ```powershell
