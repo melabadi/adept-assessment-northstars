@@ -2,8 +2,9 @@
 #  Unit tests for the review-evidence skill's trust boundaries: only the owner's, members', and collaborators' reviews
 #  count as the reviewer decision, Copilot is recognized by its exact bot accounts, and everything the evidence report
 #  and the proof quote from GitHub or from a pull request is inert (no @mention, no reference to an Issue or a pull
-#  request, and no link, image, or HTML), because the report is posted with a person's token. The tests run offline
-#  against a fake `gh`, with synthetic data.
+#  request, and no link, image, or HTML), because the report is posted with a person's token. A pull request that changes
+#  where its checks are defined is flagged before them, because its checks ran with its own version of its workflows.
+#  The tests run offline against a fake `gh`, with synthetic data.
 # Only pull requests that change this solution start it; other solutions' pull requests never do.
 name: Test · GitHub · check the review-evidence tooling
 
