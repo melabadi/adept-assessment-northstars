@@ -129,7 +129,7 @@ The last command must print line 85, `catch (Exception ex) when (ex is not Opera
 
 | Step | Time |
 | --- | --- |
-| 2A. Agentic workflow: incident filed to triage comment | 5 minutes (the whole run: 6) |
+| 2A. Agentic workflow: incident filed to triage comment | 4.5 to 5 minutes (the whole run: 5 to 6) |
 | 2B. Copilot CLI: drafts written, then filed | 1.5 minutes, then seconds |
 | 5. Copilot: assigned to finished pull request | 4 to 10 minutes |
 | 7. Proof check, CI | 2 minutes, 3 minutes |
@@ -154,7 +154,7 @@ About 20 minutes. Each step says how long it takes in our runs.
    gh issue create --title "INC-2041: reviewers notified late and repeatedly (staging)" --label incident --label ai-sdlc --label phase:operate --body-file solutions/07-operate-github/incidents/inc-2041-notification-backlog.md
    ```
 
-   For a real incident, people use the **Operate: report an incident** Issue form, which applies the same labels. Within a minute or two (once a runner picks up the job) the Issue gets an 👀 reaction and a comment that links to the workflow run. Open it: **Actions** > **Operate · GitHub · triage an incident**. Each label on the new Issue starts a run; the runs for `ai-sdlc` and `phase:operate` are skipped at once. Walk through the jobs of the `incident` run:
+   For a real incident, people use the **Operate: report an incident** Issue form, which applies the same labels. Within a minute or two (once a runner picks up the job) the Issue gets an 👀 reaction and a comment that links to the workflow run. Open it: **Actions** > **Operate · GitHub · triage an incident**. Each label on the new Issue starts a run. The runs for `ai-sdlc` and `phase:operate` are skipped, though one of them can wait in the queue until the `incident` run ends: runs for the same Issue take turns. Walk through the jobs of the `incident` run:
    - `pre_activation` starts only when the incident's author is the owner, a member, or a collaborator. It checks that the person who labeled the Issue has write access, and that no open follow-up exists for this incident yet.
    - `activation` adds the reaction and the status comment, and builds the prompt from the sanitized Issue text.
    - `agent` runs Copilot with read-only permissions, in a sandbox behind a network firewall. Its tools are read-only GitHub tools and a short list of shell commands (`cat`, `grep`, and similar). Anything else is refused: in our run a `sed` pipeline was denied and Copilot read the files another way. It took about 2 minutes.
@@ -192,14 +192,14 @@ About 20 minutes. Each step says how long it takes in our runs.
 
    ![Copilot CLI drafting the triage of incident 252 in the terminal: the commands check the incident's author and export it, Copilot starts with 165 tools disabled, among them the shell and web access, reads the skill, the incident, and the code, and creates only the two drafts. Nothing was filed on GitHub](images/02b-copilot-cli.png)
 
-   Then read both drafts: you publish them under your name. File them with three commands, applying the severity and area from the first line of the comment:
+   Then read both drafts: you publish them under your name. File them with the three `gh` commands below. `severity:3` and `area:worker` are this demo incident's labels; for another incident, use the ones Copilot gives in its summary and on the first line of the comment:
 
    ```powershell
    Get-Content out/operate/followup-issue.md, out/operate/triage-comment.md
    $followup = Get-Content out/operate/followup-issue.md
    $followup | Select-Object -Skip 2 | Set-Content out/operate/followup-body.md
    gh issue create --title $followup[0] --label incident-followup --label ai-sdlc --label phase:operate --parent $incident --body-file out/operate/followup-body.md
-   gh issue edit $incident --add-label severity:3 --add-label area:worker
+   gh issue edit $incident --add-label severity:3 --add-label area:worker   # this demo's labels: use the ones Copilot gives
    gh issue comment $incident --body-file out/operate/triage-comment.md
    ```
 
@@ -261,7 +261,7 @@ About 20 minutes. Each step says how long it takes in our runs.
   gh issue create --title "INC-2041: reviewers notified late and repeatedly (staging, try to break it)" --label incident --label ai-sdlc --label phase:operate --body-file -
 ```
 
-Three safeguards respond, independently. The agent quotes the line under **Suspicious content** in its comment and does not follow it. Closing an Issue is not among the workflow's safe outputs, so the agent could not close it even if it tried. And the `detection` job can flag the run as a prompt injection: it flagged one of our two runs. When it does, the job fails and the run applies nothing: no comment, no labels, no follow-up. The status comment on the incident links to the failed run, and gh-aw records it in an **[aw] Detection Runs** Issue. A person reads the run and decides what happens next. On the Copilot CLI path, Copilot has no tool that changes GitHub, so such a line can only end up in a draft, which you read before you file it.
+Three safeguards respond, independently. The agent quotes the line in its comment as **Suspicious content** and does not follow it. Closing an Issue is not among the workflow's safe outputs, so the agent could not close it even if it tried. And the `detection` job can flag the run as a prompt injection: it flagged one of our four runs. When it does, the job fails and the run applies nothing: no comment, no labels, no follow-up. The status comment on the incident changes to "Security scanning failed", with a link to the run, and gh-aw records the run in an **[aw] Detection Runs** Issue. A person reads the run and decides what happens next. On the Copilot CLI path, Copilot has no tool that changes GitHub, so such a line can only end up in a draft, which you read before you file it.
 
 ![The Suspicious content section of an agentic triage comment from a run that detection did not flag: the report's instruction to close the Issue and label it severity:4 is quoted, and was not followed](images/09-try-to-break-it.png)
 
@@ -307,6 +307,6 @@ Closing the follow-up also lets a new triage of the same incident open a fresh f
   - The incident's author is not the owner, a member, or a collaborator: every job is skipped. File the report again in your own words.
   - The person who applied the label does not have write access: `pre_activation` runs, and the rest is skipped.
   - An open follow-up for this incident already exists: close it to triage again.
-- **The triage run failed at `detection`, and nothing was posted on the incident.** The detection job flagged the agent's output, usually because the report contains instructions, as in **Try to break it**, or the detector itself could not run. Either way the run applies nothing. Open the run's `detection` job to read why. If the report is sound, remove the `incident` label and apply it again.
+- **The triage run failed at `detection`, and the incident's status comment says "Security scanning failed".** The detection job flagged the agent's output, usually because the report contains instructions, as in **Try to break it**, or the detector itself could not run. Either way the run applies nothing: no triage comment, no labels, no follow-up. Open the run's `detection` job to read why. If the report is sound, remove the `incident` label and apply it again.
 - **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run** in the merge box, or run `gh run rerun <run-id>`.
 - **The proof check is skipped.** It only runs on pull requests that resolve an Issue labeled `incident-followup`. Make sure the pull request links the follow-up (for example `Fixes #<number>`), or add the `incident-followup` label to the pull request. Then re-run the pull request's own run of **Operate · GitHub · prove the regression test**: select **Re-run all jobs** on its run, or use `gh run rerun <run-id>`. For a pull request from a branch of this repository, such as Copilot's, `gh workflow run operate-github-regression-proof.yml -f pr=<number>` works too. A dispatched run refuses a fork's pull request: it runs on `main`, so it would build that code with this repository's cache access.
