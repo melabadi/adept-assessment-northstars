@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import subprocess
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -137,6 +138,23 @@ class JunitTests(unittest.TestCase):
                             '</testcase><testcase name="skip"><skipped /></testcase></testsuite></testsuites>')
             self.assertEqual({"tests": 3, "failures": 1, "errors": 1, "skipped": 1,
                               "literal_search_failures": 1}, verify.report(path))
+
+
+class ReplayWorkflowTests(unittest.TestCase):
+    def test_midnight_eastern_schedule_defaults_to_recorded_repair(self):
+        workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
+        self.assertRegex(workflow, r"schedule:\s*\n\s*- cron: '0 0 \* \* \*'\s*\n\s*timezone: America/New_York")
+        self.assertIn("PR: ${{ inputs.pr || '105' }}", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("required: true", workflow)
+        self.assertIn("group: secure-github-replay-${{ github.repository }}", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+
+    def test_replay_remains_read_only_and_never_publishes_repo_changes(self):
+        workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
+        permissions = re.search(r"^permissions:\n((?:  .*\n)+)", workflow, re.MULTILINE).group(1)
+        self.assertEqual(["  contents: read", "  pull-requests: read"], permissions.strip("\n").splitlines())
+        self.assertNotRegex(workflow, r"\bwrite\b|\bsecrets\.|\bgit push\b|\bgit commit\b|\bgh pr comment\b")
 
 
 if __name__ == "__main__":
