@@ -14,7 +14,10 @@ when any check fails. It changes nothing.
               release's own lock uses (release.py, still_running)
   Identity    the release identity holds what a release needs and no more: Container Apps Contributor and Container
               Apps Jobs Reader on the resource group, and AcrPull on the registry
-  Trigger     the Logic App is enabled and may start the release job, and Event Grid delivers pushed builds to it
+  Trigger     the release trigger function is deployed and running, and only it may start the release job (no Logic App
+              left from the earlier trigger, no other principal with Container Apps Jobs Operator); Event Grid's topic
+              watches this registry, and its subscription sends the function each push of the API's repository except
+              :main, one event per call
   Build       the ACR task that builds main exists, no pull request can start it, and whether its commit trigger is on
   Workbook    the release-records workbook exists
 
@@ -42,6 +45,11 @@ RELEASE_ROLES = {"Container Apps Contributor": "resourcegroups/{rg}", "Container
                  "AcrPull": "/registries/"}
 BROAD_ROLES = {"Owner", "Contributor", "User Access Administrator", "Role Based Access Control Administrator", "AcrPush"}
 JOBS_OPERATOR = "Container Apps Jobs Operator"
+TRIGGER_FUNCTION = "release_on_push"  # trigger/function_app.py; Event Grid calls it (infra/release-on-push.bicep)
+SUBSCRIPTION = "release-on-push"  # Event Grid's subscription to the function (infra/release-on-push.bicep)
+IMAGE_PUSHED = "Microsoft.ContainerRegistry.ImagePushed"
+REGISTRY_TOPIC = "Microsoft.ContainerRegistry.Registries"
+LEGACY_TRIGGER = "logic-release-"  # the Logic App that was the trigger before the function
 counts = {"PASS": 0, "WARN": 0, "FAIL": 0}
 
 
@@ -193,30 +201,107 @@ def check_identity(s: dict) -> None:
 
 def check_trigger(s: dict, jobs: dict) -> None:
     try:
-        trigger = az("resource", "show", "--resource-group", s["rg"], "--resource-type", "Microsoft.Logic/workflows", "--name", s["trigger"])
+        trigger = az("resource", "show", "--resource-group", s["rg"], "--resource-type", "Microsoft.Web/sites", "--name", s["trigger"])
     except RuntimeError as error:
-        report("FAIL", "Trigger", f"Logic App {s['trigger']} not found: {error}", "Run `azd provision` in this folder.")
+        report("FAIL", "Trigger", f"function app {s['trigger']} not found: {error}", "Run `azd provision` in this folder.")
+        trigger = None
+    function_id = f"{trigger['id']}/functions/{TRIGGER_FUNCTION}" if trigger else ""
+    if trigger:
+        state = str(trigger["properties"].get("state") or "unknown")
+        try:
+            az("rest", "--method", "get", "--url", f"https://management.azure.com{function_id}?api-version=2024-04-01")
+            deployed = True
+        except RuntimeError:
+            deployed = False
+        if not deployed:
+            report("FAIL", "Trigger", f"function {TRIGGER_FUNCTION} is not deployed", "Run `azd deploy trigger` in this folder.")
+        else:
+            report("PASS" if state == "Running" else "FAIL", "Trigger", f"function {TRIGGER_FUNCTION} deployed, app {state.lower()}",
+                   f"Start it: az functionapp start -g {s['rg']} -n {s['trigger']}")
+    # Whatever happened to the function, check what else may start releases, and where Event Grid sends pushes.
+    check_who_starts_releases(s, trigger, jobs.get("release"))
+    check_events(s, function_id)
+
+
+def check_who_starts_releases(s: dict, trigger: dict | None, job: dict | None) -> None:
+    """Only the function may start the release job, with Container Apps Jobs Operator on that job alone: no Logic App
+    left from the earlier trigger, and no other role assignment of Jobs Operator on the job or its resource group (on
+    the resource group, it would start the other release steps too)."""
+    workflows = az("resource", "list", "--resource-group", s["rg"], "--resource-type", "Microsoft.Logic/workflows") or []
+    for workflow in workflows:
+        if str(workflow.get("name", "")).startswith(LEGACY_TRIGGER):
+            report("FAIL", "Trigger", f"Logic App {workflow['name']}, the earlier trigger, still exists",
+                   f"It can still start the release job when called. Delete it: az resource delete --ids {workflow.get('id')}"
+                   " (the next lines name any role it keeps).")
+    if not job:
         return
-    state = trigger["properties"].get("state")
-    report("PASS" if state == "Enabled" else "FAIL", "Trigger", f"Logic App {state.lower()}",
-           f"Enable it: az resource update --ids {trigger['id']} --set properties.state=Enabled")
-    release = jobs.get("release")
-    if release:
-        principal = (trigger.get("identity") or {}).get("principalId")
-        roles = az("role", "assignment", "list", "--assignee", principal, "--scope", release["id"]) if principal else []
-        ok = any(r.get("roleDefinitionName") == JOBS_OPERATOR for r in roles)
-        report("PASS" if ok else "FAIL", "Trigger", f"may start the release job ({JOBS_OPERATOR})" if ok else "may not start the release job",
+    job_id = job["id"].lower()
+    group = job_id.split("/providers/", 1)[0]
+    principal = str(((trigger or {}).get("identity") or {}).get("principalId") or "").lower()
+    operators = [a for a in az("role", "assignment", "list", "--scope", job["id"], "--include-inherited")
+                 if a.get("roleDefinitionName") == JOBS_OPERATOR and str(a.get("scope") or "").lower().startswith(group)]
+    own = [a for a in operators if principal and str(a.get("principalId") or "").lower() == principal
+           and str(a.get("scope") or "").lower() == job_id]
+    others = [a for a in operators if a not in own]
+    if not own:
+        report("FAIL", "Trigger", f"the function may not start the release job ({JOBS_OPERATOR} on it)",
                "Run `azd deploy release` in this folder.")
-    topics = az("eventgrid", "system-topic", "list", "--resource-group", s["rg"]) or []
-    topic = next((t for t in topics if t.get("topicType") == "Microsoft.ContainerRegistry.Registries"), None)
-    if not topic:
-        report("FAIL", "Trigger", "no Event Grid topic on the registry", "Run `azd provision` in this folder.")
+    if others:
+        report("FAIL", "Trigger", f"{len(others)} other role assignment{'s' if len(others) > 1 else ''} may start the release "
+                                  f"job too ({JOBS_OPERATOR})",
+               "Only the trigger function's, on the release job itself, should. Remove the others: az role assignment "
+               "delete --ids " + " ".join(str(a.get("id")) for a in others))
+    if own and not others:
+        report("PASS", "Trigger", f"only the function may start the release job ({JOBS_OPERATOR})")
+
+
+def check_events(s: dict, function_id: str) -> None:
+    """Event Grid's topic watches this registry, and its subscription sends the function each push of the API's
+    repository except :main, one event per call, as infra/release-on-push.bicep sets it."""
+    connect = "Run `azd deploy trigger` in this folder: once it has deployed, azd connects Event Grid to the function."
+    try:
+        topic = az("eventgrid", "system-topic", "show", "--resource-group", s["rg"], "--name", s["topic"])
+    except RuntimeError as error:
+        report("FAIL", "Trigger", f"Event Grid topic {s['topic'] or '(RELEASE_TOPIC_NAME is not set)'} not found: {error}",
+               "Run `azd provision` in this folder.")
         return
-    subscription = az("eventgrid", "system-topic", "event-subscription", "show", "--resource-group", s["rg"],
-                      "--system-topic-name", topic["name"], "--name", "release-on-push")
-    state = subscription.get("provisioningState")
-    report("PASS" if state == "Succeeded" else "FAIL", "Trigger", f"Event Grid delivers pushes of requesthub-api to it ({state})",
+    registry = f"/providers/microsoft.containerregistry/registries/{s['registry']}".lower()
+    watches = topic.get("topicType") == REGISTRY_TOPIC and str(topic.get("source") or "").lower().endswith(registry)
+    report("PASS" if watches else "FAIL", "Trigger",
+           f"Event Grid topic {s['topic']} " + ("watches" if watches else "does not watch") + f" registry {s['registry']}",
            "Run `azd provision` in this folder.")
+    try:
+        subscription = az("eventgrid", "system-topic", "event-subscription", "show", "--resource-group", s["rg"],
+                          "--system-topic-name", s["topic"], "--name", SUBSCRIPTION)
+    except RuntimeError:
+        report("FAIL", "Trigger", f"Event Grid has no subscription {SUBSCRIPTION}", connect)
+        return
+    problems = subscription_problems(subscription, function_id, s["repository"])
+    report("FAIL" if problems else "PASS", "Trigger",
+           f"Event Grid's subscription {SUBSCRIPTION} " + "; ".join(problems) if problems else
+           f"Event Grid sends the function each push of {s['repository']}:<tag> except :main, one at a time", connect)
+
+
+def subscription_problems(subscription: dict, function_id: str, repository: str) -> list[str]:
+    """How an Event Grid subscription differs from the trigger's (infra/release-on-push.bicep); [] when it matches."""
+    destination = subscription.get("destination") or {}
+    events = subscription.get("filter") or {}
+    problems = []
+    if subscription.get("provisioningState") != "Succeeded":
+        problems.append(f"is {str(subscription.get('provisioningState') or 'not provisioned').lower()}")
+    if (destination.get("endpointType") != "AzureFunction"
+            or str(destination.get("resourceId") or "").lower() != function_id.lower()):
+        problems.append(f"sends events elsewhere ({destination.get('endpointType') or 'no destination'})")
+    elif destination.get("maxEventsPerBatch") != 1:
+        problems.append("sends more than one event per call")
+    if events.get("includedEventTypes") != [IMAGE_PUSHED]:
+        problems.append("sends other events than image pushes")
+    if events.get("subjectBeginsWith") != f"{repository}:":
+        problems.append(f"sends pushes of other repositories than {repository}")
+    if not any(f.get("operatorType") == "StringNotIn" and f.get("key") == "data.target.tag" and "main" in (f.get("values") or [])
+               for f in events.get("advancedFilters") or []):
+        problems.append("sends pushes of :main too")
+    return problems
 
 
 def check_build(s: dict) -> None:
@@ -259,7 +344,8 @@ def main() -> int:
     pick = lambda name: os.environ.get(name) or values.get(name, "")  # noqa: E731
     s = {"rg": args.resource_group or pick("AZURE_RESOURCE_GROUP"), "app": pick("API_APP_NAME"),
          "registry": pick("AZURE_CONTAINER_REGISTRY_NAME"), "identity": pick("AUTOMATION_IDENTITY_ID"),
-         "trigger": pick("RELEASE_TRIGGER_NAME")}
+         "trigger": pick("RELEASE_TRIGGER_NAME"), "topic": pick("RELEASE_TOPIC_NAME"),
+         "repository": pick("RELEASE_REPOSITORY") or release.REPOSITORY}
     if not s["rg"] or not s["app"]:
         raise SystemExit("error: run `azd up` in this folder first, or pass --resource-group.")
 
