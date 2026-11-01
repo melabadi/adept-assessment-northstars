@@ -1,0 +1,9 @@
+Running tests from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-2wajs39p/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[m/home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-2wajs39p/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64) [32mpassed[m [90m(9s 962ms)[m
+
+[32mTest run summary: Passed!
+[m  total: 70
+  failed: 0
+[32m  succeeded: 70
+[m  skipped: 0
+  duration: 10s 230ms
