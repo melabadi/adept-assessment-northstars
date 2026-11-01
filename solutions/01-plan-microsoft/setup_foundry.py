@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""Publish the Plan · Microsoft solution's AI to Microsoft Foundry. azd runs it as hooks; run it yourself after you
-change agent.yaml, the inputs, or an evaluator.
+"""Publish the Plan · Microsoft solution's AI to Microsoft Foundry, and prepare the Function app's package. azd runs
+it as hooks; run `publish` yourself after you change agent.yaml, the inputs, or an evaluator.
 
   python setup_foundry.py prepare    (azd preprovision hook)
       Stores the GitHub repository (`gh repo view`) in the azd environment as GITHUB_REPOSITORY, unless it's set.
-      The Logic App creates its Issues there. Its token comes from PLAN_GITHUB_TOKEN only: a GITHUB_TOKEN stored in
+      The Function app creates its Issues there. Its token comes from PLAN_GITHUB_TOKEN only: a GITHUB_TOKEN stored in
       the azd environment is moved there, so a GITHUB_TOKEN in your shell never reaches Azure. Reminds you when
       PLAN_GITHUB_TOKEN isn't set yet.
 
   python setup_foundry.py publish    (azd postprovision hook)
-      0. Runs the evaluator tests in tests/ first. If one fails, nothing is published.
+      0. Runs the unit tests in tests/ first. If one fails, nothing is published.
       1. Uploads inputs/ (the transcript and the policies) to a Foundry vector store. The store's name includes a
          hash of the files, so unchanged inputs are reused instead of uploaded again.
       2. Publishes the prompt agent defined in agent.yaml: model, instructions, file search over that vector store,
-         and the JSON schema in backlog.schema.json that its answer must match. The Logic App runs the agent's latest
-         version, so a new version is created whenever the latest one differs from this definition.
+         and the JSON schema in backlog.schema.json that its answer must match. The Function app runs the agent's
+         latest version, so a new version is created whenever the latest one differs from this definition.
       3. Publishes each file in evaluators/ to the project's evaluator catalog as a code-based evaluator. A new
          version is created only when the code changes.
-      4. Creates the evaluation "plan-brief-checks" that the Logic App runs on every brief, and creates it again
+      4. Creates the evaluation "plan-brief-checks" that the Function app runs on every brief, and creates it again
          when the newest one doesn't use these evaluator versions and thresholds.
+
+  python setup_foundry.py bundle     (azd prepackage hook of the function service)
+      Copies agent.yaml and inputs/ into function/bundle/, which git ignores: the Function app reads the agent's name
+      and request, and the quotes for the published Issues, from its own package.
 
 Configuration (environment variables, or read from `azd env get-values`, run in this folder):
   FOUNDRY_PROJECT_ENDPOINT   https://<account>.services.ai.azure.com/api/projects/<project>
@@ -42,7 +46,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 INPUTS = [HERE / "inputs/stakeholder-transcript.md", HERE / "inputs/routing-policies.md"]
 EVALUATION_NAME = "plan-brief-checks"
-# Evaluator file -> pass threshold. The first four gate publishing in the Logic App; the others are reported.
+# Evaluator file -> pass threshold. The first four gate the review Issue (function/planner/checks.py); the others are reported.
 THRESHOLDS = {
     "structure": 1.0,
     "citations": 1.0,
@@ -141,7 +145,7 @@ def ensure_agent(project, spec: dict, model: str, vector_store_id: str):
         versions = list(project.agents.list_versions(agent_name=spec["name"]))
     except Exception:  # first run: the agent does not exist yet
         versions = []
-    # The Logic App calls the agent by name, which runs its latest version. Reuse only that one: after a change and a
+    # The Function app calls the agent by name, which runs its latest version. Reuse only that one: after a change and a
     # revert, an older version with the same definition isn't the one that runs.
     latest = max(versions, key=lambda v: int(v.version), default=None)
     if latest is not None and (latest.metadata or {}).get("definitionHash") == definition_hash:
@@ -204,7 +208,7 @@ def ensure_evaluation(client, evaluators: dict[str, tuple[str, bool]]) -> tuple[
         "initialization_parameters": {"pass_threshold": threshold},
     } for stem, threshold in THRESHOLDS.items()]
     definition_hash = hashlib.sha256(json.dumps(criteria, sort_keys=True).encode()).hexdigest()[:16]
-    # The Logic App runs the newest evaluation with this name. Reuse it only when it matches; delete the superseded
+    # The Function app runs the newest evaluation with this name. Reuse it only when it matches; delete the superseded
     # ones that never ran, and keep the others for their history.
     newest, reused = None, False
     for evaluation in list(client.evals.list(order="desc", limit=100)):
@@ -238,7 +242,7 @@ def prepare() -> int:
         repo = run("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner")
         run("azd", "env", "set", "GITHUB_REPOSITORY", repo, *env_args())
         print(f"GitHub repository: {repo}")
-    # The Logic App's token comes from PLAN_GITHUB_TOKEN only. azd also fills a parameter from your shell, and many
+    # The Function app's token comes from PLAN_GITHUB_TOKEN only. azd also fills a parameter from your shell, and many
     # shells hold a broader GITHUB_TOKEN for other tools. A GITHUB_TOKEN stored in this azd environment (never one from
     # the shell) is the token you set last: it replaces PLAN_GITHUB_TOKEN and is removed.
     if values.get("GITHUB_TOKEN"):
@@ -247,7 +251,7 @@ def prepare() -> int:
         values["PLAN_GITHUB_TOKEN"] = values["GITHUB_TOKEN"]
         print("Moved GITHUB_TOKEN to PLAN_GITHUB_TOKEN in the azd environment.")
     if not values.get("PLAN_GITHUB_TOKEN"):
-        print("PLAN_GITHUB_TOKEN is not set yet: the Logic App deploys, but can't create Issues until you set it "
+        print("PLAN_GITHUB_TOKEN is not set yet: the Function app deploys, but can't create Issues until you set it "
               "(README, Set up) and run `azd provision` again.")
     return 0
 
@@ -257,12 +261,25 @@ def tests_pass() -> bool:
     proc = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], capture_output=True, text=True, cwd=HERE)
     if proc.returncode != 0:
         print(proc.stderr.strip(), file=sys.stderr)
-        print("error: the evaluator tests failed, so nothing was published. Fix the evaluator, then run "
-              "`python setup_foundry.py publish` again.", file=sys.stderr)
+        print("error: the unit tests failed, so nothing was published. Fix the evaluator or the Function app's code, "
+              "then run `python setup_foundry.py publish` again.", file=sys.stderr)
         return False
     ran = re.search(r"Ran (\d+) tests?", proc.stderr)
-    print(f"evaluator tests: {ran.group(1) if ran else 'all'} passed")
+    print(f"unit tests: {ran.group(1) if ran else 'all'} passed")
     return True
+
+
+def bundle() -> int:
+    """Copies what the Function app reads at run time into its package folder (function/bundle/, ignored by git)."""
+    target = HERE / "function" / "bundle"
+    if target.exists():
+        shutil.rmtree(target)
+    (target / "inputs").mkdir(parents=True)
+    shutil.copy2(HERE / "agent.yaml", target / "agent.yaml")
+    for path in INPUTS:
+        shutil.copy2(path, target / "inputs" / path.name)
+    print(f"bundled agent.yaml and {len(INPUTS)} input files into function/bundle/")
+    return 0
 
 
 def publish() -> int:
@@ -297,10 +314,14 @@ def publish() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=["prepare", "publish"], help="prepare (preprovision hook) or publish (postprovision hook)")
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a legacy code page
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("command", choices=["prepare", "publish", "bundle"],
+                        help="prepare (preprovision hook), publish (postprovision hook), or bundle (prepackage hook)")
     args = parser.parse_args(argv)
-    return prepare() if args.command == "prepare" else publish()
+    return {"prepare": prepare, "publish": publish, "bundle": bundle}[args.command]()
 
 
 if __name__ == "__main__":

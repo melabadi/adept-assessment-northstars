@@ -1,4 +1,6 @@
-# Python packages for this solution's setup script (Python 3.12+): pip install -r requirements.txt
+# Python packages for this solution's scripts (Python 3.12+): pip install -r requirements.txt
+# setup_foundry.py (the azd hooks) uses them; runs.py and the unit tests need only the standard library.
+# The Function app's own packages are in function/requirements.txt.
 azure-ai-projects==2.9.0
 azure-identity==1.26.0
 openai==3.35.1
