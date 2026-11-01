@@ -6,8 +6,10 @@ Foundry runs the evaluation; this script only starts it from this folder's files
   2. Registers the five code-based evaluators and the evaluation if their code changed (evaluation.py).
   3. Starts one Foundry evaluation run per operating profile. Foundry sends each labelled case in eval_cases.jsonl to
      that profile's agent, then scores every answer with the evaluators, which embed the gate's own checks.
-  4. Waits for the runs (unless --no-wait), then prints each case's result, each evaluator's pass rate, and where to
-     open the runs in the Foundry portal (Evaluations > "Architecture advisor · labelled cases").
+  4. Waits for the runs (unless --no-wait). Foundry's preview grader sometimes fails to score one evaluator of a run;
+     such a run is started again for its profile, so the agent answers again, up to --attempts runs. A run with a
+     failed case is never started again: a failed case is a result. Then prints each case's result, each evaluator's
+     pass rate, and where to open the runs in the Foundry portal (Evaluations > "Architecture advisor · labelled cases").
 The same runs start in Azure, without this script, when a change to the standards, agent.yaml, or the cases merges.
 
 Fallback: code-based evaluators are a Foundry preview feature. If they are unavailable, --local asks the same agent
@@ -18,14 +20,15 @@ Usage
   python evaluate.py
   python evaluate.py --cases E07,E08
   python evaluate.py --no-wait
+  python evaluate.py --attempts 1
   python evaluate.py --local
 
 Settings: environment variables, or this folder's azd environment (FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL_DEPLOYMENT,
 SEARCH_ENDPOINT). Your identity needs Foundry User on the Foundry account and read access to the search index.
 
 Exit codes: 0 every case passed (or --no-wait), 1 a case failed, 2 a run could not start or ended in error, or an
-answer was not graded: an evaluator errored or returned no result, the agent call failed, or a case has no result.
-Foundry's run totals count some of these as passed; this script does not.
+answer was not graded in the last run of its profile: an evaluator errored or returned no result, the agent call
+failed, or a case has no result. Foundry's run totals count some of these as passed; this script does not.
 """
 from __future__ import annotations
 
@@ -74,6 +77,57 @@ def case_results(openai, run: dict) -> list[tuple[str, list[str], list[str]]]:
     return sorted(rows)
 
 
+def ungraded(run: dict, state: dict, rows: list) -> list[str]:
+    """Why a finished run's answers were not all graded (rows from case_results); empty when every case has every
+    check's result."""
+    reasons = []
+    if state["status"] != "completed":
+        reasons.append(f"the run ended {state['status']}")
+    if state["errored"] > 0:
+        reasons.append(f"Foundry reports {state['errored']} item(s) in error")
+    if len(rows) != len(run["cases"]):
+        reasons.append(f"{len(rows)} results for {len(run['cases'])} cases")
+    if any(errors for _, _, errors in rows):
+        reasons.append("some answers could not be graded (COULD NOT GRADE)")
+    return reasons
+
+
+def wait(openai, runs: list[dict], restart, attempts: int, timeout: int, poll: float = 15) -> tuple[list, dict, list]:
+    """Wait for the runs. A finished run that Foundry could not grade (ungraded) is started again for its profile with
+    restart(run), which returns the new run, until that profile has had `attempts` runs. A run with a failed case is
+    final even when another answer was not graded: a failed case is a result, and asking again could hide it.
+    Returns (the last run of each profile, in the order given; their states; the runs still running after `timeout`
+    seconds)."""
+    from advisor_core import evaluation
+
+    pending = [dict(run, attempt=1, deadline=time.monotonic() + timeout) for run in runs]
+    last, states, late = {}, {}, []
+    while pending:
+        time.sleep(poll)
+        for run in list(pending):
+            state = evaluation.status(openai, run["evalId"], run["runId"])
+            if state["status"] not in ("completed", "failed", "canceled"):
+                if time.monotonic() > run["deadline"]:
+                    pending.remove(run)
+                    late.append(run)
+                continue
+            pending.remove(run)
+            rows = case_results(openai, run)
+            reasons = ungraded(run, state, rows)
+            if reasons and run["attempt"] < attempts and not any(failed for _, failed, _ in rows):
+                missing = [kind for kind in CHECKS if any(kind in errors for _, _, errors in rows)]
+                detail = ", ".join(missing) or "; ".join(reasons)
+                print(f"{run['agent']}: Foundry could not grade run {run['attempt']} ({detail}); "
+                      f"starting run {run['attempt'] + 1} of up to {attempts}", flush=True)
+                try:
+                    pending.append(dict(restart(run), attempt=run["attempt"] + 1, deadline=time.monotonic() + timeout))
+                    continue
+                except Exception as exc:  # report the run that could not be graded instead
+                    print(f"error: could not start {run['agent']} again: {describe_error(exc)}", file=sys.stderr)
+            last[run["profile"]], states[run["runId"]] = run, state
+    return [last[run["profile"]] for run in runs if run["profile"] in last], states, late
+
+
 def summarize(openai, runs: list[dict], results: dict, started: float) -> int:
     """Print each run's cases and each evaluator's pass rate. Returns the exit code (see the module docstring)."""
     passed = total = 0
@@ -91,14 +145,7 @@ def summarize(openai, runs: list[dict], results: dict, started: float) -> int:
             if errors:
                 verdict.append("COULD NOT GRADE: " + ", ".join([e for e in errors if e not in CHECKS] or errors))
             print(f"  {case_id}  {'; '.join(verdict) or 'PASS'}")
-        if state["status"] != "completed":
-            problems.append(f"{run['agent']}: the run ended {state['status']}")
-        if state["errored"] > 0:
-            problems.append(f"{run['agent']}: Foundry reports {state['errored']} item(s) in error")
-        if len(rows) != len(run["cases"]):
-            problems.append(f"{run['agent']}: {len(rows)} results for {len(run['cases'])} cases")
-        if any(errors for _, _, errors in rows):
-            problems.append(f"{run['agent']}: some answers could not be graded (COULD NOT GRADE)")
+        problems += [f"{run['agent']}: {reason}" for reason in ungraded(run, state, rows)]
     print(f"\n{passed}/{total} cases passed in {round(time.monotonic() - started)} s")
     sys.stdout.flush()  # the errors follow the results, also when both streams go to one pipe
     for problem in problems:
@@ -139,10 +186,15 @@ def main(argv: list[str] | None = None) -> int:
                                      epilog="Settings come from the environment or from this folder's azd environment.")
     parser.add_argument("--cases", help="Comma-separated case ids to run, for example E07,E08 (default: all ten)")
     parser.add_argument("--no-wait", action="store_true", help="Start the runs and return; read the results in Foundry")
-    parser.add_argument("--timeout", type=int, default=900, help="Seconds to wait for the runs (default 900)")
+    parser.add_argument("--attempts", type=int, default=3,
+                        help="Runs per profile at most: a run Foundry could not grade is started again, and the agent "
+                             "answers again (default 3; 1 never starts a run again). A run with a failed case is final")
+    parser.add_argument("--timeout", type=int, default=900, help="Seconds to wait for each run (default 900)")
     parser.add_argument("--local", action="store_true",
                         help="Fallback without Foundry evaluations: ask the agents and score the answers here with checks.py")
     args = parser.parse_args(argv)
+    if args.attempts < 1:
+        parser.error("--attempts must be at least 1")
     utf8_stdout()
 
     from azure.ai.projects import AIProjectClient
@@ -175,20 +227,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_wait:
         return 0
 
+    def restart(run: dict) -> dict:
+        """The same profile's cases against the same agent version, as a new run."""
+        again = [case for case in cases if case["id"] in run["cases"]]
+        return evaluation.start(project, model, again, search, signed_in, spec["search"]["index"], published,
+                                f"evaluate.py, run {run['attempt'] + 1}")[0]
+
     openai = project.get_openai_client()
-    pending, results = {r["runId"] for r in runs}, {}
-    while pending and time.monotonic() - started < args.timeout:
-        time.sleep(15)
-        for run in runs:
-            if run["runId"] in pending:
-                state = evaluation.status(openai, run["evalId"], run["runId"])
-                if state["status"] in ("completed", "failed", "canceled"):
-                    pending.discard(run["runId"])
-                    results[run["runId"]] = state
-    if pending:
-        print(f"error: {len(pending)} run(s) still running after {args.timeout} s; see Foundry", file=sys.stderr)
+    final, results, late = wait(openai, runs, restart, args.attempts, args.timeout)
+    if late:
+        print(f"error: {len(late)} run(s) still running after {args.timeout} s; see Foundry", file=sys.stderr)
         return 2
-    return summarize(openai, runs, results, started)
+    return summarize(openai, final, results, started)
 
 
 if __name__ == "__main__":
