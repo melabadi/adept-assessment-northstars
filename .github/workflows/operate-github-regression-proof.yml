@@ -2,8 +2,9 @@
 # A regression test proves its value only by failing without the fix. On a pull request that resolves an Issue labeled
 # `incident-followup`, this workflow runs RequestHub's tests twice: at the pull request head, and with app/src put back
 # to the merge base while keeping the pull request's tests. It passes only when a test fails before and passes after
-# (PROVEN). The proof script comes from the base branch, so a pull request cannot change its rules. It does run the pull
-# request's own test code, so its result is evidence for the reviewer, not a security boundary.
+# (PROVEN). The proof script comes from the base branch, so editing the script doesn't change its rules, though GitHub
+# still runs a pull request's own copy of this file: review a change to it. It does run the pull request's own test
+# code, so its result is evidence for the reviewer, not a security boundary.
 # A dispatched run belongs to the branch it was dispatched on (main): its build shares main's Actions cache scope, which
 # other workflows restore from. So a dispatched run only proves a pull request from a branch of this repository. A fork's
 # pull request is proven by its own pull_request run, which gets a read-only token, no secrets, and its own cache scope.
