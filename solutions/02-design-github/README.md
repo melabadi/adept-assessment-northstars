@@ -31,7 +31,7 @@ flowchart LR
 ```
 
 - **Copilot** runs the custom agent [`design-github`](.github/agents/design-github.agent.md) with two skills. [`architecture-decision`](.github/skills/architecture-decision/SKILL.md) provides the ADR template and a deterministic checker. [`contract-impact`](.github/skills/contract-impact/SKILL.md) classifies every change to `app/contracts/openapi.json` as additive or breaking. The agent reads the inputs and the code, writes the ADR, and runs the checker until it passes.
-- **GitHub Actions** runs [`design-github-review.yml`](.github/workflows/design-github-review.yml) on every pull request that adds or changes an ADR, and on demand for any branch. It takes the checker, the contract tool, and the standards from the base branch, so a pull request cannot weaken them.
+- **GitHub Actions** runs [`design-github-review.yml`](.github/workflows/design-github-review.yml) on every pull request that adds or changes an ADR, and on demand for any branch. It takes the checker, the contract tool, and the standards from the base branch, so a pull request can't weaken them by editing them. GitHub still runs a pull request's own copy of the workflow file, so review any change to it before you trust the checks.
 - **Copilot code review** follows [`design-github-adr-review.instructions.md`](.github/instructions/design-github-adr-review.instructions.md): unstated assumptions, standards the ADR missed, the API impact, and the threat model.
 - **A person** reviews the ADR, asks Copilot for changes, settles the conflicts and open questions, and accepts or rejects it.
 
@@ -264,7 +264,7 @@ About 20 minutes. Run the commands from the repository root.
 - **One question, two answers.** The recommendation follows the operating profile where the standards do: direct calls for the small team (STD-OPS-001), the central AI gateway for the enterprise (STD-OPS-002).
 - **Deterministic checks catch what reviewers miss.** Neither the first checker nor Copilot code review noticed that GitHub could not render the sequence diagrams, or that the cloud agent cited files by their absolute path on its runner. Rules in the checker now catch both, and the agent runs the checker until it passes. In our run, Copilot fixed the diagrams as soon as the checker reported them.
 - **Contract impact as evidence.** The API impact is a deterministic report on every design pull request. Breaking changes fail; Copilot proposes any needed API change as an additive one.
-- **People decide.** Copilot proposes and Copilot code review questions; only a named person accepts. The checker and the standards come from the base branch, so the proposal cannot weaken them.
+- **People decide.** Copilot proposes and Copilot code review questions; only a named person accepts. The checker and the standards come from the base branch, so the proposal can't weaken them by editing them; a change to the workflow file itself shows in the pull request, for a person to review.
 - **Speed.** About 7 minutes from a reviewed brief to a reviewable design, and minutes for each revision.
 
 ## Reset and clean up

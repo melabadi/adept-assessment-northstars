@@ -18,7 +18,8 @@ crosses one of these boundaries:
 
 By default it checks your working tree: commits since the merge base plus uncommitted and untracked files. With
 --head it checks the commits of that ref instead and never reads the working tree. CI uses this to run the checker
-from the base branch against a pull request's commits, so a pull request cannot change the checker that judges it.
+from the base branch against a pull request's commits, so editing this checker doesn't change how a pull request is
+judged (GitHub still runs the pull request's own copy of the workflow file: review a change to it).
 
 Usage
   python .github/skills/bounded-feature/scope_check.py                       # working tree against origin/main

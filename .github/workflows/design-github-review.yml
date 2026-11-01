@@ -4,7 +4,8 @@
 #     versions), and is not accepted by an agent: any status other than Proposed must name the people who decided.
 #  2. API contract compatibility: app/contracts/openapi.json is compared with the point where the change branched off.
 #     Breaking changes fail (STD-API-001); additive changes are listed in the run summary.
-# The checker, the contract tool, and the standards come from the base branch, so a pull request cannot weaken them.
+# The checker, the contract tool, and the standards come from the base branch, so editing them doesn't change the
+# result. GitHub still runs a pull request's own copy of this file: review a change to it before you trust these checks.
 # Copilot code review and people judge the content; these checks decide whether it is complete and compatible.
 # It runs on design pull requests (an ADR added or changed) and on demand for any branch, never on other solutions'
 # pull requests. In your own repository, add your contract's path to `paths` so every API change gets the report.
