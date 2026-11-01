@@ -2,7 +2,8 @@
 
 Everything here is plain text built from the checked answer, so the Function stays the only place that talks to
 GitHub. Nothing names an Azure host, resource, or tenant: only the agent, the model, the response id, and the
-Logic App run name, which identify the evidence without exposing where it lives.
+advisor run's id, which identify the evidence without exposing where it lives. The Function's log lines in
+Application Insights start with the same run id.
 
 The model's text reaches GitHub only when the gate passed. A rejected answer's comment says which checks failed,
 inside a code block (so nothing in it renders as a link or notifies anyone), and shows none of the answer. In an
@@ -39,9 +40,9 @@ def checks_line(run: dict) -> str:
 
 def evidence_line(run: dict) -> str:
     seconds = f" · {run['durationSeconds']} s" if run.get("durationSeconds") is not None else ""
-    workflow = f" · Logic App run `{run['workflowRun']}`" if run.get("workflowRun") else ""
+    advisor_run = f" · advisor run `{run['runId']}`" if run.get("runId") else ""
     return (f"Agent `{run['agent']['name']}` v{run['agent']['version']} · model `{run['model']}` · response "
-            f"`{run['responseId']}` · {run['knowledgeCalls']} knowledge call(s){seconds}{workflow}")
+            f"`{run['responseId']}` · {run['knowledgeCalls']} knowledge call(s){seconds}{advisor_run}")
 
 
 def summary_markdown(run: dict) -> str:
@@ -83,18 +84,21 @@ def comment_markdown(run: dict, pull_request: int | None = None) -> str:
     return "\n".join(lines)
 
 
-def unavailable_markdown(workflow_run: str = "") -> str:
+RETRY = "To ask again, a maintainer removes the `design-advisor` label and adds it back"
+
+
+def unavailable_markdown(run_id: str = "") -> str:
     """The issue comment when the advisor could not answer (service error), so the question is never left silent."""
-    where = f" Logic App run `{workflow_run}` has the details." if workflow_run else ""
-    return (f"{HEADING}\n\n⚠️ The advisor could not answer this question right now, so no ADR draft was proposed."
-            f"{where} A maintainer can resubmit the run once the service is available.\n")
+    where = f" The Function's log has the details under advisor run `{run_id}`." if run_id else ""
+    return (f"{HEADING}\n\n⚠️ The advisor could not answer this question right now, so no ADR draft was proposed.{where} "
+            f"{RETRY} once the service is available.\n")
 
 
-def incomplete_markdown(workflow_run: str = "") -> str:
+def incomplete_markdown(run_id: str = "") -> str:
     """The issue comment when the answer passed the gate but a GitHub step after it failed."""
-    where = f" Logic App run `{workflow_run}` has the details." if workflow_run else ""
+    where = f" The Function's log has the details under advisor run `{run_id}`." if run_id else ""
     return (f"{HEADING}\n\n⚠️ The advisor answered, but the ADR draft or its comment could not be completed.{where} "
-            "A maintainer can resubmit the run: it reuses the branch and the pull request it already created.\n")
+            f"{RETRY}: the new run reuses the branch and the pull request this one created.\n")
 
 
 def adr_markdown(run: dict) -> str:
@@ -151,7 +155,7 @@ def pull_request_text(run: dict, path: str) -> tuple[str, str]:
         "`solutions/02-design-microsoft/standards/`, and give each conflict and unknown an owner. Merge to accept, "
         "close to reject.",
         "",
-        f"<sub>Opened by the advisor's Azure Logic App{' run `' + run['workflowRun'] + '`' if run.get('workflowRun') else ''}. "
+        f"<sub>Opened by the advisor's Azure Function{', advisor run `' + run['runId'] + '`' if run.get('runId') else ''}. "
         f"{ADVISORY}</sub>",
     ])
     return title, body

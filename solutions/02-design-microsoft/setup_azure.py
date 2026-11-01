@@ -36,7 +36,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "function"))
-from azd_env import credential, setting, utf8_stdout  # noqa: E402
+from azd_env import credential, describe_error, setting, utf8_stdout  # noqa: E402
 
 
 def prepare() -> int:
@@ -159,9 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit:
         raise
     except Exception as exc:  # surface service and auth errors clearly; there is no offline fallback
-        # Error messages can quote request URLs: drop their query strings, which may carry a key or a code.
-        message = re.sub(r"\?[^\s'\"]*", "?…", str(exc))
-        print(f"error: {args.command} failed: {type(exc).__name__}: {message}", file=sys.stderr)
+        print(f"error: {args.command} failed: {describe_error(exc)}", file=sys.stderr)
         return 1
 
 

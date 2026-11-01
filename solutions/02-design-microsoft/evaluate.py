@@ -38,7 +38,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "function"))
-from azd_env import credential, setting, utf8_stdout  # noqa: E402
+from azd_env import credential, describe_error, setting, utf8_stdout  # noqa: E402
 
 CASES = HERE / "eval_cases.jsonl"
 CHECKS = ("citations", "access", "grounding", "abstention", "conflicts")
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             return run_local(project, cases, published, search, signed_in, spec["search"]["index"])
         runs = evaluation.start(project, model, cases, search, signed_in, spec["search"]["index"], published, "evaluate.py")
     except Exception as exc:
-        print(f"error: could not start the evaluation: {exc}", file=sys.stderr)
+        print(f"error: could not start the evaluation: {describe_error(exc)}", file=sys.stderr)
         return 2
     for run in runs:
         print(f"started {run['agent']} on {len(run['cases'])} case(s): {', '.join(run['cases'])}")

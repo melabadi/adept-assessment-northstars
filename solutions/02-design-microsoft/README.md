@@ -1,8 +1,8 @@
 # Design · Architecture advisor in Microsoft Foundry
 
-Design reviews stall when nobody can find the standard that applies, when two standards disagree, or when the answer depends on which team is asking. In this solution the architecture advisor runs in Azure. A Microsoft Foundry agent answers design questions only from your approved standards, retrieved through Foundry IQ, and cites the id, version, and exact sentence of every standard it uses. It says so when the standards don't answer, and lists contradictions for an architect to decide. A question filed as a GitHub issue reaches Azure through a GitHub App. An Azure Logic App asks the agent, and an Azure Function checks every citation against the standards index. Only then does the advisor comment on the issue and open a pull request with a draft architecture decision record (ADR) that a person accepts or rejects. A Foundry evaluation scores the agents on ten labelled cases with the same checks.
+Design reviews stall when nobody can find the standard that applies, when two standards disagree, or when the answer depends on which team is asking. In this solution the architecture advisor runs in Azure. A Microsoft Foundry agent answers design questions only from your approved standards, retrieved through Foundry IQ, and cites the id, version, and exact sentence of every standard it uses. It says so when the standards don't answer, and lists contradictions for an architect to decide. A question filed as a GitHub issue reaches Azure through a GitHub App. An Azure Function asks the agent and checks every citation against the standards index. Only then does the advisor comment on the issue and open a pull request with a draft architecture decision record (ADR) that a person accepts or rejects. A Foundry evaluation scores the agents on ten labelled cases with the same checks.
 
-![The advisor's answer on a GitHub issue, posted from Azure by the GitHub App: for the small-team profile, keep the live AI triage provider inside the existing RequestHub API, followed by the first standards it relied on, each with its id, version, and requirement](images/06-issue-answer.png)
+![The advisor's answer on a GitHub issue, posted from Azure by the GitHub App (ai-sdlc-design-advisor, with AI-SDLC design advisor), for the small-team profile: implement the live AI triage provider inside the existing RequestHub API behind ITriageProvider, not as a separate service, followed by the first standards it relied on, each with its id, version, and requirement](images/06-issue-answer.png)
 
 ## Where it fits
 
@@ -26,9 +26,13 @@ flowchart LR
     S[standards/, agent.yaml,<br/>eval_cases.jsonl]
   end
   subgraph AZ["Azure: rg-ai-sdlc-design"]
-    F[Azure Function<br/>webhook, gate,<br/>guarded GitHub writes]
-    LA[Logic App<br/>advisor]
-    LS[Logic App<br/>standards]
+    subgraph FN["Azure Function"]
+      W[webhook<br/>signature, author, one run per issue]
+      QA[(queue<br/>advisor-runs)]
+      QS[(queue<br/>standards-runs)]
+      AD[advisor run<br/>ask, gate, guarded writes]
+      ST[standards run<br/>re-index, publish, evaluate]
+    end
     subgraph FDY["Microsoft Foundry"]
       A[Agents<br/>small-team, enterprise]
       E[Evaluation<br/>5 code-based evaluators]
@@ -36,28 +40,32 @@ flowchart LR
     end
     KB[Foundry IQ knowledge bases<br/>one per profile, fixed scope filter<br/>Azure AI Search]
     KV[(Key Vault<br/>private endpoint)]
+    AI[Application Insights<br/>one log line per step]
   end
-  Q -->|GitHub App webhook| F
-  F -->|starts| LA
-  LA -->|managed identity| A
+  Q -->|GitHub App webhook| W
+  W --> QA --> AD
+  AD -->|managed identity| A
   A -->|retrieves| KB
-  LA -->|answer| F
-  F -->|comment, branch, ADR, PR| PR
-  S -->|merge to main| F
-  F -->|starts| LS
-  LS -->|re-index, publish, evaluate| E
+  AD -->|comment, branch, ADR, PR| PR
+  S -->|merge to main| W
+  W --> QS --> ST
+  ST -->|re-index| KB
+  ST -->|publish, evaluate| E
   A --> T
-  F --- KV
+  FN --- KV
+  FN --> AI
   PR --> H{Architect<br/>merge or close}
 ```
 
 - **Foundry Agent Service** hosts one prompt agent per operating profile, published from [`agent.yaml`](agent.yaml): instructions, model settings, a knowledge tool, and a strict JSON output schema.
 - **Foundry IQ** gives each profile its own knowledge base over the `architecture-standards` index in Azure AI Search. The profile's scope filter (`scope eq 'all' or scope eq 'small-team'`) is stored in the knowledge source, so the search service, not the prompt, decides what a team can retrieve.
-- **The advisor Logic App** is the orchestration a presenter shows: ask the agent, check the answer, then create the ADR branch, commit the draft, open the pull request, and comment on the issue. When a check fails it comments only the failed checks and opens nothing. When the agent or a GitHub step fails, it says so on the issue, so no question goes unanswered.
-- **The Azure Function** receives the GitHub App's webhooks, runs the gate ([`checks.py`](function/advisor_core/checks.py)), and is the only code that writes to GitHub. Every citation must exist in the index, be inside the profile's scope, have the indexed version, and be quoted word for word, and the knowledge base must not have returned anything outside the profile. A quote may shorten a sentence of the standard, but it may not skip a negation such as "not", "never", or "unless": "API keys … be stored in configuration" is rejected, because the standard says "must not be stored".
+- **The Azure Function** ([`function/`](function/), Python on the Flex Consumption plan) is the only code that talks to GitHub, and the orchestration a presenter shows:
+  - Its **webhook** checks GitHub's signature and who asked, then puts the question on a queue and answers GitHub within its 10 seconds.
+  - The **advisor run** ([`runs.py`](function/advisor_core/runs.py)) takes the question from the queue, asks the profile's agent with the Function's managed identity, and runs the gate ([`checks.py`](function/advisor_core/checks.py)). Only when the gate passes does it create the ADR branch, commit the draft, open the pull request, and comment on the issue. When a check fails, it comments only the failed checks and opens nothing. When the agent or a GitHub step fails, it says so on the issue, so no question goes unanswered.
+  - **The gate** decides what reaches GitHub. Every citation must exist in the index, be inside the profile's scope, have the indexed version, and be quoted word for word, and the knowledge base must not have returned anything outside the profile. A quote may shorten a sentence of the standard, but it may not skip a negation such as "not", "never", or "unless": "API keys … be stored in configuration" is rejected, because the standard says "must not be stored".
+  - The **standards run** starts when a change to the standards, `agent.yaml`, or the cases merges to `main`: it re-indexes the standards of that commit, publishes new agent versions if the definition changed, and starts a new evaluation.
+- **Application Insights** gets one line per step of each run, starting with the run's id; the issue comment and the pull request show the same id. Connected to the Foundry project, it also traces every agent run: duration, tokens, estimated cost, and the evaluation scores attached to it.
 - **The Foundry evaluation** sends the ten labelled cases in [`eval_cases.jsonl`](eval_cases.jsonl) to the agents and scores every answer with five code-based evaluators that embed `checks.py`, one report column each: citations, access, grounding, abstention, conflicts.
-- **Application Insights**, connected to the Foundry project, traces every agent run: duration, tokens, estimated cost, and the evaluation scores attached to it.
-- **The standards Logic App** runs when a change to the standards, `agent.yaml`, or the cases merges to `main`: it re-indexes the standards of that commit, publishes new agent versions if the definition changed, and starts a new evaluation.
 - **GitHub** holds the code, the issue form, and the ADR pull requests. No GitHub Actions workflow and no GitHub Copilot take part.
 - **People** decide. An architect reviews the ADR draft, gives each conflict and unknown an owner, and accepts it (merge) or rejects it (close). A person authorizes GitHub once.
 
@@ -67,13 +75,12 @@ This build runs the preferred path of both preview features: the agents retrieve
 
 - **GitHub access.** A private GitHub App, installed on this repository only, with Contents, Issues, and Pull requests write and Metadata read, and the Issues and Push events. GitHub creates it from a manifest and hands its id, private key, and webhook secret straight to the Function, which stores only those three in Key Vault. The Function mints 1-hour installation tokens scoped to this repository.
 - **Writes are fenced in code.** The Function refuses any write except a branch matching `refs/heads/design/advisor-*`, a Markdown file under `solutions/02-design-microsoft/adr/` on such a branch, a pull request from such a branch, and an issue comment. It checks before sending the request, whatever the token allows.
-- **Webhooks.** The Function verifies GitHub's signature, ignores a delivery it has already handled (`X-GitHub-Delivery`), and starts at most one advisor run per issue, so a redelivery never opens a second ADR pull request.
-- **Who can ask.** Only the repository's owner, members, and collaborators. On a public repository anyone can open an Issue with the form, and the form applies the `design-advisor` label for them, so the Function checks the Issue's `author_association`, which GitHub computes and signs with the delivery: `OWNER`, `MEMBER`, or `COLLABORATOR` starts the advisor; anyone else's Issue, bots included, is acknowledged and ignored, even when someone with triage access labels it later. To have the advisor answer an outside contributor's question, ask it in an Issue of your own. Nothing else an outsider can do (comment, fork, open a pull request) reaches Azure: the app receives only Issues and pushes, and only a push to `main` starts the standards Logic App.
+- **Webhooks.** The Function verifies GitHub's signature, ignores a delivery it has already handled (`X-GitHub-Delivery`), and queues at most one advisor run per issue, so a redelivery never opens a second ADR pull request. Each time the `design-advisor` label is added counts as one request; GitHub sends that event when an issue is filed with the label, too. A run starts from the queue only if the issue is still waiting for it, so a second copy of a message, or one the webhook never wrote, asks nothing. A run that couldn't finish (the agent or a GitHub step failed) may be asked again: a maintainer removes the `design-advisor` label and adds it back. An answered or rejected question stays answered.
+- **Who can ask.** Only the repository's owner, members, and collaborators. On a public repository anyone can open an Issue with the form, and the form applies the `design-advisor` label for them, so the Function checks the Issue's `author_association`, which GitHub computes and signs with the delivery: `OWNER`, `MEMBER`, or `COLLABORATOR` starts the advisor; anyone else's Issue, bots included, is acknowledged and ignored, even when someone with triage access labels it later. To have the advisor answer an outside contributor's question, ask it in an Issue of your own. Nothing else an outsider can do (comment, fork, open a pull request) reaches Azure: the app receives only Issues and pushes, and only a push to `main` starts a standards run. The advisor reuses an open ADR pull request only when its branch is in this repository, where only people with write access and the app can push; a fork's pull request with the same branch name never counts.
 - **What reaches GitHub.** The model's text reaches GitHub only after the gate passed, with @mentions neutralized. A rejected answer's comment lists only the failed checks, inside a code block, and none of the answer.
-- **Only merged changes are published.** The merge path re-indexes and re-publishes only from a commit that is on the default branch, so an unmerged proposal never reaches the index or the agents.
-- **Logic Apps to the Function, without keys.** The Logic Apps call with a short-lived Microsoft Entra token for their user-assigned managed identity. Entra doesn't issue tokens whose audience is a managed identity, and an app registration would be a tenant object outside the resource group, so the audience is Azure Storage, a resource that identity has no role on. The Function verifies the token's signature, tenant, audience, and expiry, and pins the identity's object id and client id.
-- **No keys anywhere else.** Foundry, Azure AI Search, and storage have local authentication disabled. The Logic Apps call Foundry with their managed identity. The Logic Apps' trigger URLs, which carry a signature, live only in Key Vault.
-- **Private network.** Key Vault and the Function's storage have no public network access; the Function reaches them through private endpoints in the solution's virtual network.
+- **Only merged changes are published.** The standards run re-indexes and re-publishes only from a commit that is on the default branch, so an unmerged proposal never reaches the index or the agents.
+- **No keys.** The Function calls Foundry, Azure AI Search, Key Vault, and its own blobs and queues with its managed identity; Foundry, Azure AI Search, and storage have local authentication disabled. The only secrets are the GitHub App's three credentials, in Key Vault, never in app settings. Logs name the run, the issue, the commit, and counts, never a token, a URL, the question, or the answer.
+- **Private network.** Key Vault and the Function's storage (blobs and queues) have no public network access; the Function reaches them through private endpoints in the solution's virtual network.
 
 ## What's in this folder
 
@@ -85,14 +92,15 @@ This build runs the preferred path of both preview features: the agents retrieve
 ├── eval_cases.jsonl               ten labelled cases: grounding, access, conflict, abstention
 ├── inputs/reviewed-brief.md       the reviewed brief behind the design question
 ├── function/                      the Azure Function (Python 3.12, Flex Consumption)
-│   ├── function_app.py            routes: GitHub webhook and setup, the gate, the guarded writes, the merge path
+│   ├── function_app.py            the webhook, the two queue functions, and connecting GitHub
 │   ├── advisor_core/
+│   │   ├── runs.py                the advisor run (ask, gate, guarded writes) and the standards run (re-index, publish, evaluate)
 │   │   ├── checks.py              the deterministic checks; Foundry also runs this file as the code-based evaluators
+│   │   ├── foundry.py             ask an advisor agent through the Foundry project's Responses API
 │   │   ├── report.py              the issue comment, the ADR draft, and the pull request text
 │   │   ├── github.py              GitHub App tokens and the write guard
 │   │   ├── webhook.py             signature check, the issue form, which events and authors start work
 │   │   ├── setup_flow.py          connect GitHub with the app-manifest flow
-│   │   ├── auth.py                only the Logic Apps' managed identity may call the work routes
 │   │   ├── standards.py           parse the standards and keep the index in sync
 │   │   ├── knowledge.py           the Foundry IQ knowledge sources and bases, one per profile
 │   │   ├── agents.py              publish the agents from agent.yaml
@@ -102,9 +110,7 @@ This build runs the preferred path of both preview features: the agents retrieve
 ├── infra/
 │   ├── main.bicep                 resource group rg-<environment name>
 │   ├── resources.bicep            Foundry, model, AI Search, connections, Application Insights, VNet and private endpoints,
-│   │                              storage, Key Vault, the Function, the Logic Apps, role assignments
-│   ├── workflows/advisor.json     the advisor Logic App: ask, check, branch, commit, pull request, comment
-│   ├── workflows/standards.json   the standards Logic App: re-index, publish, evaluate
+│   │                              storage and its queues, Key Vault, the Function, role assignments
 │   └── main.parameters.json
 ├── azure.yaml                     azd project: the Function and the hooks
 ├── setup_azure.py                 the azd hooks, and `github`, which connects GitHub
@@ -126,7 +132,7 @@ The scripts write nothing to the repository. The advisor writes ADR drafts to `a
 - A GitHub account that may create a GitHub App and install it on the repository: the repository's owner, or an organization owner.
 - The `design-advisor` label in the repository. The issue form applies it, and GitHub skips labels that don't exist: `gh label create design-advisor --description "Ask the Foundry architecture advisor"`.
 
-**Cost.** About $90 a month while deployed: Azure AI Search Basic (about $73), two private endpoints and their DNS zones (about $16), and storage, Key Vault, and Log Analytics within cents. The Function and the Logic Apps cost nothing while idle. Each answer costs about half a cent in model tokens (the agent's Traces tab shows the estimate), and an evaluation of the ten cases about six cents.
+**Cost.** About $96 a month while deployed: Azure AI Search Basic (about $73), three private endpoints and their DNS zones for the Function's blobs, queues, and Key Vault (about $23), and storage, Key Vault, and Log Analytics within cents. The Function costs nothing while idle. Each answer costs about half a cent in model tokens (the agent's Traces tab shows the estimate), and an evaluation of the ten cases about six cents.
 
 ## Set up
 
@@ -213,7 +219,15 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
   2. The [Foundry portal](https://ai.azure.com), project `design`: **Build** → **Knowledge**.
   3. The same project: **Build** → **Agents** → `architecture-advisor-small-team` (Playground).
   4. GitHub: the advisor's [issue form, with the demo question filled in](../../../../issues/new?template=02-design-microsoft-advisor.yml&question=Should%20the%20live%20AI%20triage%20provider%20run%20inside%20the%20existing%20RequestHub%20API%20behind%20ITriageProvider%2C%20or%20as%20a%20new%20separate%20service%3F). GitHub can't prefill the profile; you pick it in step 4.
-  5. The [Azure portal](https://portal.azure.com): resource group `rg-ai-sdlc-design` → the Logic App whose name starts with `logic-advisor-` → **Runs history**.
+  5. The [Azure portal](https://portal.azure.com): resource group `rg-ai-sdlc-design` → the Application Insights resource (`appi-…`) → **Monitoring** → **Logs**, in **KQL mode** (close the **Queries hub** if it opens), with this query, which lists every step of the advisor's and the standards' runs of the last hour:
+
+     ```kusto
+     traces
+     | where timestamp > ago(1h) and (message startswith "advisor run " or message startswith "standards run ")
+     | project timestamp, message
+     | order by timestamp asc
+     ```
+
   6. The Foundry project: **Build** → **Evaluations**.
 - [ ] **Start early.** About 15 minutes before step 8, run the evaluation from this folder, in the activated environment: `python evaluate.py`. It takes 3 to 6 minutes and should end with `10/10 cases passed`. If it reports `COULD NOT GRADE`, Foundry's preview grader failed on one evaluator ([Troubleshooting](#troubleshooting)): run it again. If the second run can't be graded either, plan to show the fallback in step 8.
 
@@ -256,19 +270,19 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    **Point out:** the issue is the whole interface. Nothing runs in GitHub; the GitHub App sends the event to Azure.
 
-5. **Azure orchestrates.** Switch to the advisor Logic App's **Runs history** and open the newest run (refresh after a few seconds). It asks the agent with its managed identity, sends the answer to the Function's gate, and, because the checks passed, creates the branch, commits the ADR draft, opens the pull request, and comments on the issue. The run takes about 30 seconds, most of it the agent's answer. Two more paths comment on the issue when something fails: one when the agent or the gate is unavailable, one when a GitHub step fails after the gate.
+5. **Azure orchestrates.** Switch to the **Logs** tab and select **Run**. Each line is one step of the advisor run and starts with its id; the issue comment shows the same id. Lines arrive about half a minute after they're written, so select **Run** again as the run goes on. The webhook queued the question when GitHub reported the `design-advisor` label; the other events of the new issue (opened, and its other labels) start nothing. The Function then asked the small-team agent with its managed identity, ran the gate, and, because the checks passed, created the branch, committed the ADR draft, opened the pull request, and commented on the issue. When this was run, the run started 6 seconds after the question was queued, the agent answered in 12 seconds, and the run took 20 seconds. Two more paths comment on the issue when something fails: one when the agent or the gate is unavailable, one when a GitHub step fails after the gate.
 
-   ![The advisor Logic App run in the Azure portal: the trigger, then Answer and check (22 seconds: Ask the architecture advisor 18 seconds, Check the answer 3 seconds), then Checks passed and its True branch, Create the ADR branch, Commit the ADR draft, Open the ADR pull request, and Comment with the answer, all succeeded; the False branch and the incomplete-draft comment were skipped](images/05-logic-app-run.png)
+   ![The advisor run's log in Application Insights: seven lines, each starting with the run's id. The question on issue #242 was queued from the issues.labeled event for the small-team profile; architecture-advisor-small-team v2 answered in 12 seconds; the gate passed the answer with 8 standards cited and 8 retrieved, all in the small-team scope; then the branch design/advisor-issue-242 was created, the ADR draft committed, pull request #243 opened, and the answer commented, done in 20 seconds](images/05-function-log.png)
 
-   **Point out:** the gate sits between the model and GitHub. If a citation were invented, out of scope, misversioned, or misquoted, the run would take the other branch and only comment the failures.
+   **Point out:** the gate sits between the model and GitHub. If a citation were invented, out of scope, misversioned, or misquoted, the run would comment only the failed checks and open nothing.
 
-6. **Review in GitHub.** Back on the issue, the advisor's comment arrives about 45 seconds after you filed it. It shows the recommendation, the standards it relied on with their versions, the conflicts and unknowns for an architect, and the checks that passed.
+6. **Review in GitHub.** Back on the issue, the advisor's comment arrives within a minute of filing it (36 and 47 seconds in the two runs measured here). It shows the recommendation, the standards it relied on with their versions, the conflicts and unknowns for an architect, and the checks that passed.
 
-   ![The end of the advisor's comment: the conflict between STD-SEC-002 and STD-OBS-002 that needs an architect's decision, five unknowns, the deterministic checks that passed, the link to the ADR draft pull request, and the evidence line with the agent version, model, response id, duration, and Logic App run](images/06-issue-checks.png)
+   ![The end of the advisor's comment: the conflict between STD-SEC-002 and STD-OBS-002 that an architect must resolve, four unknowns, the deterministic checks that passed, the link to the ADR draft pull request, and the evidence line with the agent version, model, response id, duration, and advisor run](images/06-issue-checks.png)
 
    The comment links the ADR draft pull request. Open it, then its file: **Files changed**, or **⋯** → **View file** for the rendered ADR.
 
-   ![The ADR draft pull request on GitHub, opened by the GitHub App from branch design/advisor-issue-176: it closes the issue, names the Foundry agent version and response id, and asks the reviewer to check the citations and give each conflict and unknown an owner](images/07-adr-pull-request.png)
+   ![The ADR draft pull request on GitHub, opened by the GitHub App from branch design/advisor-issue-242: it closes the issue, names the Foundry agent version and response id, asks the reviewer to check the citations and give each conflict and unknown an owner, and names the advisor run](images/07-adr-pull-request.png)
 
    ![The rendered ADR draft, committed by the GitHub App: status Proposed, the issue, the Foundry agent and model that drafted it, the evidence (response id, time, and the standards retrieved), the operating profile, the checks that passed, then Context and Summary](images/07-adr-draft.png)
 
@@ -294,9 +308,9 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    **Point out:** the evaluators run the gate's own code (`checks.py`), so the cases measure exactly what protects GitHub, and the scope and abstention cases prove the advisor says "the standards don't say" rather than inventing a budget.
 
-9. **Optional: merge a change to a standard.** Merge a pull request that edits a file in `standards/` (for example, add a keyword). The push reaches the Function, and about 6 seconds after the merge the standards Logic App (`logic-standards-…` in the Azure portal, **Runs history**) starts. In about 20 seconds it re-indexes that commit, publishes new agent versions only if `agent.yaml` changed, and starts a new evaluation run, which appears in step 8's list a few minutes later, named after the commit. It only publishes commits that are on the default branch, so an unmerged proposal never reaches the index or the agents.
+9. **Optional: merge a change to a standard.** Merge a pull request that edits a file in `standards/` (for example, add a keyword). The push reaches the Function, which queues a standards run within 2 seconds of the merge. In the **Logs** tab, select **Run** again: its lines start with `standards run`. In about 20 seconds it checks that the commit is on `main`, re-indexes that commit's standards, publishes new agent versions only if `agent.yaml` changed, and starts a new evaluation run, which appears in step 8's list a few minutes later, named after the commit. It only publishes commits that are on the default branch, so an unmerged proposal never reaches the index or the agents.
 
-   ![The standards Logic App run in the Azure portal: Re-index the standards (9 seconds), Publish the advisor agents (4 seconds), and Evaluate the agents in Foundry (6 seconds), all succeeded](images/10-standards-run.png)
+   ![The standards run's log in Application Insights: five lines, each starting with the run's id. Commit 74e59ec was queued from a push to the default branch with 1 file in the solution; the commit is on main; the index architecture-standards was re-indexed, 12 standards with 1 changed; both agents were reused at version 2; an evaluation started in Foundry with 2 runs and 10 cases, done in 12 seconds](images/10-standards-log.png)
 
    **Point out:** every change to the standards is measured, by Azure, before the next question.
 
@@ -329,12 +343,18 @@ azd down --purge --force
 
 Then delete the GitHub App: GitHub → **Settings** → **Developer settings** → **GitHub Apps** → `AI-SDLC design advisor` → **Advanced** → **Delete GitHub App**. To recreate the solution right after `azd down --purge`, give it new resource names first (`azd env set AZURE_RESOURCE_SEED <any new value>`): a purged Foundry name can keep pointing at the deleted account for a while. New names mean a new Function address, so connect GitHub again with a new app.
 
-To connect a different GitHub App without removing anything, delete the GitHub secrets from Key Vault, then run `python setup_azure.py github` again:
+To connect a different GitHub App without removing anything, empty the GitHub secrets in Key Vault, then run `python setup_azure.py github` again. The vault is closed to the internet, so this goes through Azure Resource Manager, which can't delete a secret but can replace its value; the Function treats an empty secret as missing:
 
 ```powershell
 $vault = az keyvault show -n (azd env get-value KEY_VAULT_NAME) --query id -o tsv
-foreach ($name in 'github-app-id', 'github-app-private-key', 'github-webhook-secret', 'github-token') {
-  az rest --method delete --url "https://management.azure.com$vault/secrets/$($name)?api-version=2023-07-01" -o none 2>$null
+$file = Join-Path $env:TEMP "github-secret-$PID.json"
+try {
+  '{"properties":{"value":""}}' | Set-Content $file
+  foreach ($name in 'github-app-id', 'github-app-private-key', 'github-webhook-secret', 'github-token') {
+    az rest --method put --url "https://management.azure.com$vault/secrets/$($name)?api-version=2023-07-01" --body "@$file" -o none
+  }
+} finally {
+  Remove-Item $file -ErrorAction SilentlyContinue
 }
 ```
 
@@ -352,7 +372,8 @@ foreach ($name in 'github-app-id', 'github-app-private-key', 'github-webhook-sec
 - **`ModuleNotFoundError` in an azd hook.** The hooks run `python` from your PATH. Activate the solution's virtual environment before `azd up`.
 - **azd shows no hook output.** azd doesn't print hook output when it isn't attached to a terminal. Run the hook yourself to see it: `python setup_azure.py foundry`.
 - **`setup_azure.py github --check` warns that the Function answered 404 or 503 right after a deploy.** The Function restarts after a deployment and indexes its routes for up to a minute. Run the check again.
-- **An issue gets no answer.** Check that the issue has the `design-advisor` label (GitHub skips labels that don't exist in the repository), and that its author is the repository's owner, a member, or a collaborator: the advisor ignores anyone else's Issue. Then look at the advisor Logic App's **Runs history**. No run means the webhook didn't reach the Function, or the Function ignored it: GitHub → **Settings** → **Developer settings** → **GitHub Apps** → the app → **Advanced** → **Recent Deliveries** lists each delivery and the Function's response, which gives the reason.
+- **An issue gets no answer.** Check that the issue has the `design-advisor` label (GitHub skips labels that don't exist in the repository), and that its author is the repository's owner, a member, or a collaborator: the advisor ignores anyone else's Issue. Then run the **Logs** query from [Before each session](#before-each-session) with `delivery ` added to its prefixes: every delivery the Function ignored has a line that says why. No line at all means the webhook didn't reach the Function: GitHub → **Settings** → **Developer settings** → **GitHub Apps** → the app → **Advanced** → **Recent Deliveries** lists each delivery and the Function's response. A queued run can wait about 10 seconds while Azure starts an instance for it, and log lines arrive about half a minute after they're written.
+- **The issue says the advisor could not answer, or that the ADR draft could not be completed.** Foundry, the index, or a GitHub step failed; the **Logs** lines of that advisor run (its id is in the comment) say which. Once the service is back, remove the `design-advisor` label from the issue and add it back: a run that couldn't finish may run again, and it reuses the branch and pull request the last one created. An answered or rejected question doesn't run again; ask it in a new issue.
 - **An evaluation run fails with `use of builtin 'compile()' is not allowed in Python graders`.** Foundry runs `checks.py` as a Python grader, which refuses any call named `compile()`, even `re.compile`. Use pattern strings with `re.findall` and `re.sub`; the tests check this.
 - **`python evaluate.py` reports `COULD NOT GRADE` and exits with code 2.** Foundry's code-based evaluators are a preview, and the service sometimes fails to grade every item of one evaluator in a run. Those items say *An error occurred during grading*, yet the Foundry portal counts them as passed, so trust `evaluate.py` here. It happened in 7 of 19 runs measured over two days, right after new evaluator versions and many hours later alike. The checks take milliseconds, far inside Foundry's limit of 2 minutes per grading call, and turn any error into a fail, so the error comes from the service. Run the evaluation again, or use `python evaluate.py --local`. `no answer to grade` means the agent call itself failed, and `no result for this case` means Foundry returned no result for it; open the run in Foundry for the details.
 - **A case fails every evaluator at once.** The agent's run ended without an answer: in Foundry, the item's output has no final message. It happened once in more than 100 answers, after 80 seconds instead of the usual 15. Run the evaluation again; if the same case keeps failing, read that case's trace in the agent's **Traces** tab.

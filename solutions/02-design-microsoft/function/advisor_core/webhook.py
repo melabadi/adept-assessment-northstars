@@ -1,10 +1,12 @@
 """GitHub webhooks for the advisor: verify the signature, read the issue form, and decide what Azure does.
 
 Two events start work in Azure, everything else is acknowledged and ignored:
-  - issues (opened with, or labeled, design-advisor) whose author is the repository's owner, a member, or a
-    collaborator: the advisor workflow answers the question.
-  - push to the default branch that changes the standards, agent.yaml, or the evaluation cases: the standards
-    workflow re-indexes, re-publishes the agents, and re-runs the evaluation (the optional step of the demo).
+  - issues.labeled with design-advisor, on an Issue whose author is the repository's owner, a member, or a
+    collaborator: the Function queues an advisor run, which answers the question. GitHub sends this event for a label
+    set when the Issue is opened, too, so each application of the label is exactly one attempt; issues.opened alone
+    starts nothing, and a maintainer asks again by removing the label and adding it back.
+  - push to the default branch that changes the standards, agent.yaml, or the evaluation cases: the Function queues a
+    standards run, which re-indexes, re-publishes the agents, and re-runs the evaluation (the optional step of the demo).
 
 On a public repository anyone can open an Issue, and the issue form applies the design-advisor label for them, so the
 label alone proves nothing. GitHub computes the author's association with the repository and signs the delivery; an
@@ -58,10 +60,9 @@ def classify(event: str, payload: dict, repo: str) -> dict:
         return ignore("another repository")
     if event == "issues":
         issue, action = payload.get("issue") or {}, payload.get("action")
-        labels = {label.get("name") for label in issue.get("labels") or []}
-        asked = (action == "opened" and LABEL in labels) or (action == "labeled" and (payload.get("label") or {}).get("name") == LABEL)
+        asked = action == "labeled" and (payload.get("label") or {}).get("name") == LABEL
         if not asked:
-            return ignore(f"issues.{action} without the {LABEL} label")
+            return ignore(f"issues.{action} is not the {LABEL} label being added")
         association = issue.get("author_association") or "unknown"
         if association not in TRUSTED_AUTHORS:
             return ignore(f"asked by an outside contributor (author_association {association}); only the repository's "
