@@ -30,7 +30,7 @@ Whatever the format, tell the same story: one app, RequestHub, goes through ever
 | [05-secure-github](solutions/05-secure-github/) | 15 min | Prepare the lab and start the review and the cloud agent 30 to 45 minutes before: the review took about 6 minutes and the repair 15 in the screenshot run. |
 | [05-secure-microsoft](solutions/05-secure-microsoft/) | 25 min (15 with step 7 from screenshots) | Reset at least a day before, so that Defender for Cloud reports the account Unhealthy again, and start the database if a tenant policy stopped it (about 2 minutes). Nothing else: the Issue, the agent's draft pull request, and its what-if preview follow the click in about 2 minutes, `azd provision` takes about 5½, and the Function `verify` 1 to 15. |
 | [06-release-github](solutions/06-release-github/) | 20 min | Start the release candidate about 15 minutes before: the candidate takes 3.5 to 7 minutes, and Copilot's summary 5 to 6 more. |
-| [06-release-microsoft](solutions/06-release-microsoft/) | 20 min | Start `release.py watch` two minutes before, so the audience sees what users get. A release takes about 4 minutes: about 2 to build the commit, then about 2 for the release job to deploy and check the candidate. |
+| [06-release-microsoft](solutions/06-release-microsoft/) | 20 min | Start `release.py watch` two minutes before, so the audience sees what users get. A release takes about 4 minutes: about 2 to build the commit; Event Grid and the Azure Function start the release job 2 seconds after the push, and it deploys and checks the candidate in about 2.5. |
 | [07-operate-github](solutions/07-operate-github/) | 20 min | In a short slot, run the triage (about 5 minutes) and Copilot's follow-up (4 to 10 more) before the audience arrives. |
 | [07-operate-microsoft](solutions/07-operate-microsoft/) | 25 min | In a short slot, start the incident up to 10 minutes before you show the investigation (no more than 30: the fault switches itself off after 45); the alert fires about 6 minutes after the start. |
 
@@ -93,6 +93,7 @@ The GitHub demos use your Copilot plan and Actions minutes. The Microsoft soluti
 | Three private endpoints and their DNS zones, for the reviewer Function's storage and Key Vault: about $23 a month | 03-develop-microsoft |
 | Three private endpoints and their DNS zones, for the reporting Function's storage, queue, and Key Vault: about $23 a month | 04-test-microsoft |
 | Two private endpoints and their DNS zones, for the posture Function's storage and Key Vault: about $16 a month | 05-secure-microsoft |
+| One private endpoint, for the release trigger Function's storage: about $7 a month | 06-release-microsoft |
 | Azure SRE Agent: 4 Azure Agent Units (AAUs) an hour while it exists (about $292 a month), plus roughly 10 to 35 AAUs per investigation (capped at 1,000 a month) | 07-operate-microsoft |
 
 Everything else bills for what you use: Foundry models and evaluations, Logic Apps, Azure Functions, Container Apps jobs and dynamic sessions, Azure Load Testing, and Defender for Cloud. 01-plan-microsoft costs close to nothing while nobody runs it. Delete a solution's resource group when you won't present it for a while: `azd up` recreates it.
