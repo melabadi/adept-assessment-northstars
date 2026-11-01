@@ -37,7 +37,7 @@ flowchart LR
 - **Copilot code review** comments on the change. The `review-evidence` skill reports those comments apart from the checks.
 - **A person** approves the workflow runs, reads the tests, and approves or requests changes.
 
-**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. The proof runs a fork's pull request into a `lab/test-*` branch once someone with write access approves the run: it runs that pull request's tests with a read-only token, no secrets, and no credentials left in the checkout, and takes the proof script from the base branch.
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. The proof runs a fork's pull request into a `lab/test-*` branch once someone with write access approves the run: it runs that pull request's tests with a read-only token, no secrets, and no credentials left in the checkout, and takes the proof script from the base branch. The evidence comment is posted with your token, so it never speaks for anyone else: only reviews from the owner, members, and collaborators count as the decision, and everything it quotes from GitHub is inert: it can't mention anyone (`@copilot` included) or refer to an Issue or a pull request, and it can't add a link, an image, or HTML.
 
 ## What's in this folder
 
@@ -51,6 +51,7 @@ flowchart LR
 ├── scenarios/
 │   ├── duplicate-decision.json         the reported defect as data: a retry, a second approver, eight parallel clicks
 │   └── whitespace-rejection.json       a second, smaller defect for the same procedure
+├── tests/test_review_evidence.py       unit tests: the evidence report never speaks for anyone else (offline, fake gh)
 └── .github/
     ├── agents/test-github.agent.md     the custom Copilot agent: reproduce, failing tests first, then the fix
     ├── skills/
@@ -58,7 +59,9 @@ flowchart LR
     │   ├── review-evidence/            prove_fix.py (fails before, passes after) and review_evidence.py (the report)
     │   ├── regression-validation/      runs the test suites that cover a change (shared with 03-develop-github)
     │   └── contract-impact/            additive-only API contract check that regression-validation calls (shared)
-    ├── workflows/test-github-proof.yml proves the fix test-first on fix pull requests
+    ├── workflows/
+    │   ├── test-github-proof.yml       proves the fix test-first on fix pull requests
+    │   └── test-github-checks.yml      runs the unit tests on pull requests that change this solution
     └── ISSUE_TEMPLATE/04-test-github-defect.yml
 ```
 
@@ -203,11 +206,11 @@ The screenshots come from the live run with Issue #100 and pull request #101. Yo
    python .github/skills/review-evidence/review_evidence.py --pr <pr> --comment
    ```
 
-   The comment has three sections. **Deterministic acceptance** (the checks, and the proof at known SHAs) decides; it is the image at the top of this README. **Review comments** (Copilot code review, people) informs. **Reviewer decision** stays pending until a person reviews:
+   The comment has three sections. **Deterministic acceptance** (the checks, and the proof at known SHAs) decides; it is the image at the top of this README. **Review comments** (Copilot code review, people) informs. **Reviewer decision** stays pending until the repository's owner, a member, or a collaborator approves or requests changes; a review from anyone else is listed as not counted, without its text:
 
    ![The review comments and reviewer decision sections: Copilot's finding is listed, no comments does not mean correct, and the decision is pending](images/07-evidence-review.png)
 
-   These images show the comment after step 8 updated it, so the head is the review-loop commit. *About 20 seconds.* **Point out:** what decides (checks and proof) is kept apart from what informs (review comments).
+   These images show the comment after step 8 updated it, so the head is the review-loop commit. The comment is posted with your token, so everything it quotes from GitHub is inert: it can't mention anyone, which would start Copilot in your name, or refer to an Issue or a pull request, and it can't add a link, an image, or HTML. *About 20 seconds.* **Point out:** what decides (checks and proof) is kept apart from what informs (review comments).
 
 8. **Decide.** Read the tests in the tests-only commit: do they assert what the Issue expects, including the concurrent case? If the review found a gap, ask Copilot on the pull request. This run used:
 
@@ -255,7 +258,7 @@ Never merge Copilot's pull request. Step 1 rebuilds the lab branch from `main` f
 
 ## Use it in your own repository
 
-1. Copy this folder's `.github/` contents into your repository's `.github/` folder. The cloud agent loads the custom agent profile from the default branch, so merge changes to the agent before you assign work. Skills and scripts come from the branch Copilot works on.
+1. Copy this folder's `.github/` contents into your repository's `.github/` folder, and `tests/` to your repository's root; then, in `test-github-checks.yml`, run `tests` instead of `solutions/04-test-github/tests`, and watch `tests/**` instead of `solutions/04-test-github/**`. The cloud agent loads the custom agent profile from the default branch, so merge changes to the agent before you assign work. Skills and scripts come from the branch Copilot works on.
 2. Point the scripts at your stack: the sign-in header and base URL in `repro.py`, the solution and test folder (`app/RequestHub.slnx`, `app/tests/`) and the xUnit attribute pattern in `prove_fix.py`, and the suites in `run_regression.py`.
 3. Decide which pull requests need the proof. The workflow runs only on pull requests into `lab/test-**` branches, so it never touches other work. For fixes into `main`, change its `branches` filter, add an `if:` that recognizes a fix (for example a `bug` label), and make the check required in a ruleset.
 4. Write a scenario for your next defect report, and make sure the Copilot cloud agent can run your tests (database services in `copilot-setup-steps.yml`).
