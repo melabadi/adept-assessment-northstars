@@ -18,7 +18,7 @@ An incident happened, and the incident triage opened a follow-up Issue. Make sur
 
 1. Use the **regression-followup** skill. Work from the follow-up Issue and, for context, the triage comment on its incident ("Related to #N"): the comment posted by `github-actions[bot]` (the agentic workflow) or by someone whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR` (the Copilot CLI path). Do not read the incident's description or its other comments: the triage already took what it needs from them, and they can change after the triage. Use the **incident-evidence** skill to tell the observed facts from the hypotheses.
 2. Restate the failure mode in one sentence, in terms of the code. Find the code path and the nearest existing tests in `app/tests/RequestHub.Tests/`. Reuse their fixtures and helpers.
-3. Write the test first, against APIs that already exist, so it compiles without your fix. Run `dotnet test --solution app/RequestHub.slnx` and confirm it fails for the reason the incident describes.
+3. Write the test first, against APIs that already exist, so it compiles without your fix. Run `dotnet test --solution app/RequestHub.slnx` and confirm it fails for the reason the follow-up describes.
 4. Make the smallest fix. Run the whole suite again.
 5. Run `python .github/skills/regression-followup/prove_regression.py`. Fix the work until it reports `PROVEN`. PostgreSQL is on `localhost:5432`.
 6. In the pull request, give a two-sentence summary, the follow-up and incident links, the proof table from the script, and anything you could not verify.
