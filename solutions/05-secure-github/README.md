@@ -58,6 +58,7 @@ pull request with a read-only token and no secrets, once someone with write acce
 05-secure-github/
 ├── README.md
 ├── images/                                real review, regression, repair and Actions screenshots
+├── evidence/                              committed replay snapshot, readable without signing in
 ├── requirements.txt                       standard library only; nothing to install
 ├── remediate-task.md                      acceptance criteria copied into the remediation Issue
 ├── lab/code-finding.patch                 deliberately unsafe query, stored as data only on main
@@ -142,7 +143,8 @@ Allow about 15 minutes presenting, with the cloud agent started beforehand. Its 
 than promising a fixed duration. Commands below create two temporary lab branches and two PRs, never targeting `main`.
 The screenshots show the real run of [lab PR #99](https://github.com/melabadi/adept-assessment-northstars/pull/99),
 [repair PR #105](https://github.com/melabadi/adept-assessment-northstars/pull/105) and
-[trusted replay](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40712087636).
+[replay workflow runs](https://github.com/melabadi/adept-assessment-northstars/actions/workflows/secure-github-verify.yml).
+The [committed evidence snapshot](evidence/) preserves the actual failed and passing tests without requiring sign-in.
 Use your new run's numbers in the commands, not those historical examples.
 
 1. **Prepare the undeployed lab.** Use a clean worktree so no unrelated app edits enter the exercise.
@@ -274,6 +276,31 @@ Use your new run's numbers in the commands, not those historical examples.
    failed tests or blocked licensing explicitly rather than calling every completed workflow a PASS.
 
    ![The actual Actions run lists the successful replay job, retained secure-remediation-evidence artifact and run link](images/06-retained-evidence.png)
+
+## Nightly replay and lasting evidence
+
+The replay workflow runs at **midnight Eastern** (`America/New_York`): 05:00 UTC in winter and 04:00 UTC in summer.
+It runs from the default branch and replays the recorded repair **PR #105** against real PostgreSQL.
+It fetches the commits from the PR record, so the deleted lab branches do not need to be recreated.
+Manual dispatch still accepts another same-repository repair PR targeting `lab/secure-*`.
+
+This is a deterministic replay, **not a new Copilot demo**: no new Issue, PR, review, agent session, token or secret.
+Permissions remain read-only, runs share a concurrency group, and the workflow never pushes, commits or comments.
+In particular, it cannot trigger a release candidate through a nightly commit. The job timeout remains 30 minutes;
+the recorded execution took about 84 seconds. Standard public-repository Actions runners are free; this replay
+consumes no Copilot premium requests or AI credits.
+
+Open [the workflow's runs](https://github.com/melabadi/adept-assessment-northstars/actions/workflows/secure-github-verify.yml)
+for recent results. GitHub requires sign-in to view job logs or download artifacts; here those expire after **90 days**.
+The [one-time committed snapshot](evidence/) contains `results.json`, before/after test logs, the full-suite log and
+both JUnit files. Anyone can read it without signing in, and it does not expire with Actions retention.
+The snapshot is historical evidence, not an automatically updated nightly result.
+
+GitHub can delay or drop scheduled runs during high load, so midnight is the requested time, not a guarantee.
+In public repositories, schedules are automatically disabled after **60 days without repository activity**.
+To resume, open **Actions → Secure · GitHub · replay the remediation → Enable workflow**.
+To stop nightly runs, use the same workflow's **… → Disable workflow**; re-enable it when wanted.
+The workflow intentionally never manufactures repository activity to avoid that pause.
 
 ## Optional: CodeQL and Autofix when public or licensed
 

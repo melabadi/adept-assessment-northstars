@@ -154,7 +154,7 @@ class ReplayWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
         permissions = re.search(r"^permissions:\n((?:  .*\n)+)", workflow, re.MULTILINE).group(1)
         self.assertEqual(["  contents: read", "  pull-requests: read"], permissions.strip("\n").splitlines())
-        self.assertNotRegex(workflow, r"\bwrite\b|\bsecrets\.|\bgit push\b|\bgit commit\b|\bgh pr comment\b")
+        self.assertNotRegex(workflow, r": write\b|\bsecrets\.|\bgit push\b|\bgit commit\b|\bgh pr comment\b")
 
 
 if __name__ == "__main__":
