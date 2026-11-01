@@ -1,0 +1,36 @@
+# Test · GitHub: checks this solution's tooling on every pull request that changes it.
+#  Unit tests for the review-evidence skill's trust boundaries: only the owner's, members', and collaborators' reviews
+#  count as the reviewer decision, Copilot is recognized by its exact bot accounts, and everything the evidence report
+#  and the proof quote from GitHub or from a pull request is inert (no @mention, no reference to an Issue or a pull
+#  request, and no link, image, or HTML), because the report is posted with a person's token. The tests run offline
+#  against a fake `gh`, with synthetic data.
+# Only pull requests that change this solution start it; other solutions' pull requests never do.
+name: Test · GitHub · check the review-evidence tooling
+
+on:
+  pull_request:
+    paths:
+      - 'solutions/04-test-github/**'
+      - '.github/agents/test-github.agent.md'
+      - '.github/skills/failure-reproduction/**'
+      - '.github/skills/review-evidence/**'
+      - '.github/workflows/test-github-*'
+      - '.github/ISSUE_TEMPLATE/04-test-github-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Review-evidence unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s solutions/04-test-github/tests -v
