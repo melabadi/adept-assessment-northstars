@@ -3,7 +3,8 @@ the registry. This file only adapts the event and logs what happened; release_tr
 
   release_on_push   Event Grid trigger, called by the subscription release-on-push on the registry's system topic. For a
                     push of the API's repository to this registry, it starts one execution of the release job with the
-                    image's digest. For any other event it starts nothing, and the invocation fails with every failed
+                    image's digest, and logs the build and the execution's suffix: logs name no host or resource
+                    (CONTRIBUTING). For any other event it starts nothing, and the invocation fails with every failed
                     check in its error, in the function's Invocations and in Application Insights.
 """
 import json
@@ -22,5 +23,4 @@ def release_on_push(event: func.EventGridEvent) -> None:
         {"topic": event.topic, "eventType": event.event_type, "data": event.get_json()},
         release_trigger.Settings.from_environment(), release_trigger.Arm())
     # Event ids repeat when Event Grid delivers an event again; the release job then skips the repeat.
-    logging.info("Started release execution %s for %s, tag %s, event %s", started.execution, started.image,
-                 json.dumps(started.commit[:72]), json.dumps(str(event.id)[:72]))
+    logging.info("Started release %s, event %s", started.summary(), json.dumps(str(event.id)[:72]))

@@ -11,7 +11,9 @@ function decides is here, in plain Python, so test_trigger.py checks it without 
                                (registry/repository@digest, from the checked values) and COMMIT (the pushed tag)
   start_release(...)           checks the event, then starts one execution of the release job with that container.
                                A rejected event raises EventRejected and starts nothing: the invocation fails, with
-                               every failed check in its message.
+                               every failed check in its message. A started release returns Started, whose summary()
+                               is what the function logs: the build and the execution's suffix, never a host or
+                               resource name. An Azure error names the call, the HTTP status, and Azure's error code.
 
 The release job (release.py) checks the build itself: the image is in the API's own registry, the commit baked into it
 is the one the tag names, release steps run one at a time, first come, first served, and a push that Event Grid
@@ -33,6 +35,8 @@ from dataclasses import dataclass
 IMAGE_PUSHED = "Microsoft.ContainerRegistry.ImagePushed"
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 COMMIT = re.compile(r"[0-9a-f]{40}")  # the build task tags each build with the commit it was made from
+SUFFIX = re.compile(r"[a-z0-9]{1,16}")  # what follows a job's name in its executions' names
+ERROR_CODE = re.compile(r"[A-Za-z][A-Za-z0-9.]{0,63}")  # Azure's error codes, such as AuthorizationFailed
 ARM = "https://management.azure.com"
 JOBS_API = "2025-07-01"  # Microsoft.App jobs, as in release.py
 SETTINGS = ("REGISTRY_ID", "REGISTRY_HOST", "RELEASE_REPOSITORY", "RELEASE_JOB_ID")
@@ -61,9 +65,14 @@ class Settings:
 
 @dataclass(frozen=True)
 class Started:
-    execution: str
-    image: str
+    """An execution the function started, as the function logs it: the execution's name after its job's name, and the
+    build. Logs use placeholders, never a host name, resource name, or GUID (CONTRIBUTING)."""
+    execution: str  # the part of the execution's name after the job's name and a hyphen, or "?"
+    digest: str
     commit: str
+
+    def summary(self) -> str:
+        return f"execution {self.execution} for build {self.commit[:7]}, image {self.digest[:19]}"
 
 
 def text(value) -> str:
@@ -131,10 +140,18 @@ def start_release(event: dict, settings: Settings, arm: Arm) -> Started:
     if found:
         raise EventRejected(f"No release was started: {'; '.join(found)}. Event Grid sends only pushes of the API to "
                             "this registry, so the event came from elsewhere.")
-    job = arm.call("GET", f"{settings.release_job_id}?api-version={JOBS_API}")
+    job = arm.call("read the release job", "GET", f"{settings.release_job_id}?api-version={JOBS_API}")
     container = release_container(job, build, settings)
-    execution = arm.call("POST", f"{settings.release_job_id}/start?api-version={JOBS_API}", {"containers": [container]})
-    return Started(text(mapping(execution).get("name")) or "(no name returned)", image_of(build, settings), build["tag"])
+    execution = arm.call("start the release job", "POST", f"{settings.release_job_id}/start?api-version={JOBS_API}",
+                         {"containers": [container]})
+    return Started(execution_suffix(text(mapping(execution).get("name")), settings), build["digest"], build["tag"])
+
+
+def execution_suffix(name: str, settings: Settings) -> str:
+    """The part of an execution's name after its job's name: all the function logs of it. "?" for any other name."""
+    job_name = settings.release_job_id.rstrip("/").rsplit("/", 1)[-1].lower()
+    suffix = name[len(job_name) + 1:] if name.lower().startswith(job_name + "-") else ""
+    return suffix if SUFFIX.fullmatch(suffix) else "?"
 
 
 class Arm:
@@ -156,9 +173,11 @@ class Arm:
                 self._token = json.load(response)["access_token"]
         return self._token
 
-    def call(self, method: str, path: str, body: dict | None = None) -> dict:
-        """One request. An error raises with Azure's error code and message, which name no secret; Event Grid then
-        delivers the event again (up to five attempts in an hour)."""
+    def call(self, what: str, method: str, path: str, body: dict | None = None) -> dict:
+        """One request, named by what ("read the release job"). An error names only that, the HTTP status, and Azure's
+        error code: the request's path and Azure's message name the subscription and its resources, which logs never
+        show (CONTRIBUTING). The invocation then fails, and Event Grid delivers the event again (up to five attempts in
+        an hour)."""
         request = urllib.request.Request(f"{ARM}{path}", method=method,
                                          data=None if body is None else json.dumps(body).encode(),
                                          headers={"Authorization": f"Bearer {self.token()}",
@@ -168,10 +187,9 @@ class Arm:
                 raw = response.read()
         except urllib.error.HTTPError as error:
             with error:
-                detail = mapping(mapping(_json(error.read())).get("error"))
-            where = path.split("?")[0].rsplit("/providers/", 1)[-1]
-            raise RuntimeError(f"{method} {where} returned HTTP {error.code}: {text(detail.get('code'))} "
-                               f"{text(detail.get('message'))[:300]}".rstrip()) from None
+                code = text(mapping(mapping(_json(error.read())).get("error")).get("code"))
+            raise RuntimeError(f"Could not {what}: HTTP {error.code}"
+                               + (f" {code}" if ERROR_CODE.fullmatch(code) else "")) from None
         return mapping(_json(raw))
 
 
