@@ -1234,6 +1234,67 @@ class EvaluateScriptTests(unittest.TestCase):
         openai.evals.runs.output_items.list.return_value = [graded[0], self.output("E02", **dict(self.ALL, access=False))]
         self.assertEqual(exit_code([run], completed), 1)
 
+    def waited(self, outputs: dict, restart, attempts=3, status="completed", timeout=60):
+        """evaluate.wait over fake runs: one small-team run (st-1) and one enterprise run (ent-1)."""
+        openai = mock.MagicMock()
+        openai.evals.runs.output_items.list.side_effect = lambda run_id, eval_id: outputs[run_id]
+        runs = [{"profile": "small-team", "runId": "st-1", "evalId": "e", "agent": "small-team v2", "cases": ["E01"]},
+                {"profile": "enterprise", "runId": "ent-1", "evalId": "e", "agent": "enterprise v2", "cases": ["E02"]}]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("advisor_core.evaluation.status", return_value={"status": status, "errored": 0}), \
+                mock.patch("sys.stdout", new=out), mock.patch("sys.stderr", new=err):
+            final, states, late = self.evaluate.wait(openai, runs, restart, attempts, timeout, poll=0)
+        printed = out.getvalue() + err.getvalue()
+        return openai, [run["runId"] for run in final], states, [run["runId"] for run in late], printed
+
+    def test_a_run_foundry_could_not_grade_is_started_again_but_a_failed_case_never_is(self):
+        restarted = []
+
+        def restart(run):
+            restarted.append(run["runId"])
+            return {"profile": "enterprise", "runId": f"ent-{run['attempt'] + 1}", "evalId": "e",
+                    "agent": "enterprise v2", "cases": ["E02"]}
+
+        passing, not_graded = self.output("E02", **self.ALL), self.output("E02", **dict(self.ALL, grounding=None))
+        outputs = {"st-1": [self.output("E01", **self.ALL)], "ent-1": [not_graded], "ent-2": [passing]}
+        _, final, _, late, printed = self.waited(outputs, restart)
+        self.assertEqual((restarted, final, late), (["ent-1"], ["st-1", "ent-2"], []))
+        self.assertIn("enterprise v2: Foundry could not grade run 1 (grounding); starting run 2 of up to 3", printed)
+
+        # A failed case is a result: that run is final, even though another of its checks was not graded.
+        restarted.clear()
+        outputs["ent-1"] = [self.output("E02", **dict(self.ALL, citations=False, grounding=None))]
+        _, final, _, _, _ = self.waited(outputs, restart)
+        self.assertEqual((restarted, final), ([], ["st-1", "ent-1"]))
+
+        # After the last attempt, the run that still could not be graded is reported, and never as a pass.
+        restarted.clear()
+        outputs["ent-1"] = outputs["ent-2"] = [not_graded]
+        openai, final, states, _, _ = self.waited(outputs, restart, attempts=2)
+        self.assertEqual((restarted, final), (["ent-1"], ["st-1", "ent-2"]))
+        runs = [{"runId": run_id, "evalId": "e", "agent": run_id, "cases": [case]}
+                for run_id, case in (("st-1", "E01"), ("ent-2", "E02"))]
+        with mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(self.evaluate.summarize(openai, runs, states, time.monotonic()), 2)
+
+        # --attempts 1 never starts a run again.
+        restarted.clear()
+        _, final, _, _, _ = self.waited(outputs, restart, attempts=1)
+        self.assertEqual((restarted, final), ([], ["st-1", "ent-1"]))
+
+    def test_a_run_that_cannot_start_again_or_never_finishes_is_reported(self):
+        def broken(run):
+            raise RuntimeError("Failed to resolve 'aif-abc123.services.ai.azure.com'")
+
+        outputs = {"st-1": [self.output("E01", **self.ALL)], "ent-1": [self.output("E02", **dict(self.ALL, access=None))]}
+        _, final, _, _, printed = self.waited(outputs, broken)
+        self.assertEqual(final, ["st-1", "ent-1"])
+        self.assertIn("could not start enterprise v2 again", printed)
+        self.assertNotIn("aif-abc123", printed)
+
+        _, final, _, late, _ = self.waited(outputs, broken, status="in_progress", timeout=0)
+        self.assertEqual((final, late), ([], ["st-1", "ent-1"]))
+
 
 if __name__ == "__main__":
     unittest.main()
