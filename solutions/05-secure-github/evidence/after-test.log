@@ -1,0 +1,12 @@
+Running tests from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-2wajs39p/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[m/home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-2wajs39p/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64) [32mpassed[m [90m(5s 134ms)[m
+
+  In process file artifacts produced:
+    - /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/after/search.junit.xml
+
+[32mTest run summary: Passed!
+[m  total: 10
+  failed: 0
+[32m  succeeded: 10
+[m  skipped: 0
+  duration: 5s 420ms
