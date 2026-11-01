@@ -1,0 +1,35 @@
+# Plan · GitHub: checks this solution's tooling on every pull request that changes it.
+#  Unit tests for the backlog publisher's trust boundary: it treats as its own only the Issues it could have written,
+#  those the workflow published as github-actions[bot] and those the owner, a member, or a collaborator opened, so a
+#  publish or a reset never updates, reopens, closes, or links an Issue that someone else opened with the same hidden
+#  marker. The tests run offline against a fake `gh`, with synthetic data.
+# Only pull requests that change this solution's tooling start it. A pull request that changes nothing but brief/, such
+# as Copilot's brief, doesn't: plan-github-brief.yml validates those.
+name: Plan · GitHub · check the backlog publisher
+
+on:
+  pull_request:
+    paths:
+      - 'solutions/01-plan-github/**'
+      - '!solutions/01-plan-github/brief/**'
+      - '.github/skills/backlog-publish/**'
+      - '.github/skills/requirements-traceability/**'
+      - '.github/workflows/plan-github-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Backlog publisher unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s solutions/01-plan-github/tests -v

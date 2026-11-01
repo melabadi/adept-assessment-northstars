@@ -5,7 +5,10 @@ What it does
   1. Validates backlog.json with ../requirements-traceability/validate_backlog.py (refuses to publish if invalid).
   2. Ensures labels exist: ai-sdlc, phase:plan, type:epic, type:task, track:<track>.
   3. Creates or updates one epic issue and one issue per task. Each issue body carries a hidden marker
-     <!-- ai-sdlc-backlog: <scenario>/<track>/<item id> -->, so re-running updates instead of duplicating.
+     <!-- ai-sdlc-backlog: <scenario>/<track>/<item id> -->, so re-running updates instead of duplicating. Only an issue
+     that the publisher could have opened counts as one it published: GitHub Actions' bot (the workflow) or the
+     repository's owner, a member, or a collaborator (a local run). Any other issue that carries the marker is left
+     alone, and a note on stderr gives its number.
   4. Links every task as a sub-issue of the epic and records "blocked by" dependencies between tasks
      (falls back to a text link when the dependencies API is unavailable). Links between this backlog's own issues
      that its dependsOn no longer lists are removed, so a new brief never inherits an old one's dependencies;
@@ -48,6 +51,16 @@ LABELS = {
     "track:github": ("24292f", "Produced with GitHub Copilot"),
     "track:microsoft": ("0078d4", "Produced with Microsoft Foundry"),
 }
+# Who may have opened an Issue that the publisher treats as its own. Anyone can open an Issue with the phase:plan label
+# (the issue form applies it) and copy the hidden marker into it, so the marker alone proves nothing.
+# - The workflow publishes with its GITHUB_TOKEN, as GitHub Actions' bot. Only this repository's workflows open Issues
+#   here as that bot, and GitHub reports its author_association as NONE. If your workflow publishes with another
+#   identity, such as a GitHub App, add that app's bot login here, or each run creates the Issues again.
+# - A local run publishes with a person's sign-in: the repository's owner, a member, or a collaborator. GitHub reports
+#   an organization member whose membership is private as NONE, so such a member's local runs aren't recognized later
+#   and a re-run creates the Issues again (SKILL.md says whom to publish as).
+PUBLISHER_BOTS = ("github-actions[bot]",)
+TRUSTED_AUTHORS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 
 class GitHubError(RuntimeError):
@@ -166,13 +179,31 @@ def ensure_labels(repo: str, track: str, dry_run: bool) -> None:
             gh(f"repos/{repo}/labels", "POST", {"name": name, "color": color, "description": description})
 
 
+def could_have_published(issue: dict) -> bool:
+    """Whether the publisher could have opened this Issue: GitHub Actions' bot, as the workflow does, or the repository's
+    owner, a member, or a collaborator, as a local run does. Nobody can register a [bot] login, and a person's account
+    is never of type Bot."""
+    user = issue.get("user") or {}
+    if user.get("login") in PUBLISHER_BOTS and user.get("type") == "Bot":
+        return True
+    return issue.get("author_association") in TRUSTED_AUTHORS
+
+
 def existing_issues(repo: str, scenario: str, track: str) -> dict[str, dict]:
+    """This track's Issues from earlier runs, by backlog id, found by their hidden marker. Only an Issue the publisher
+    could have opened counts. Any other Issue with the marker is never updated, reopened, closed, or linked; a note on
+    stderr gives its number, never who opened it."""
     found = {}
     pattern = re.compile(re.escape(f"<!-- ai-sdlc-backlog: {scenario}/{track}/") + r"([A-Z0-9-]+) -->")
     for issue in gh(f"repos/{repo}/issues?state=all&labels=phase:plan&per_page=100", paginate=True):
         match = pattern.search(issue.get("body") or "")
-        if match and "pull_request" not in issue:
-            found[match.group(1)] = issue
+        if not match or "pull_request" in issue:
+            continue
+        if not could_have_published(issue):
+            print(f"note: ignored #{issue['number']}: it carries this backlog's marker, but neither this repository's "
+                  "workflows nor its owner, a member, or a collaborator opened it", file=sys.stderr)
+            continue
+        found[match.group(1)] = issue
     return found
 
 
