@@ -56,10 +56,9 @@ COPILOT_REVIEWER = "copilot-pull-request-reviewer[bot]"  # Copilot code review s
 COPILOT = "Copilot"  # Copilot code review's inline comments, and the cloud agent's replies
 # The paths that hold what decides how a pull request is checked. GitHub runs a pull request's own version of its
 # workflows, and they decide what runs and from which commit. Workflows here run scripts from .github/skills/
-# (02-design-github's ADR review from the pull request's checkout, other checkers from the base branch, where a change
-# judges every later pull request once merged) and from tools/ (the mirror check, from the pull request's checkout,
-# which also keeps the solution folders' copies of .github/ equal to the ones here). In your own repository, list the
-# paths that hold what your workflows run.
+# (checkers restored from the base branch, where a change judges every later pull request once merged) and from tools/
+# (the mirror check, from the pull request's checkout, which also keeps the solution folders' copies of .github/ equal
+# to the ones here). In your own repository, list the paths that hold what your workflows run.
 CHECK_DEFINITIONS = (".github/workflows/", ".github/actions/", ".github/skills/", "tools/")
 LISTED = 20  # check-definition files the warning names; it counts the rest
 inert, cell, code = prove_fix.inert, prove_fix.cell, prove_fix.code
