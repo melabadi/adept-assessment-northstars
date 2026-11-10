@@ -258,6 +258,18 @@ public sealed partial class RequestWorkflow(
             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
         }
 
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"Requests\" WHERE \"Id\" = {request.Id} FOR UPDATE", ct);
+
+        var existing = await db.Decisions
+            .Include(d => d.DecidedBy)
+            .SingleOrDefaultAsync(d => d.RequestId == request.Id, ct);
+        if (existing is not null)
+        {
+            return ExistingDecisionOutcome(existing, user, key);
+        }
+
         var now = clock.GetUtcNow();
         var decision = new ApprovalDecision
         {
@@ -276,6 +288,7 @@ public sealed partial class RequestWorkflow(
         AddNotification(request, request.RequesterId, "request.decided", now, new { outcome = outcome.ToString() });
 
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         RequestHubTelemetry.DecisionsRecorded.Add(1, new KeyValuePair<string, object?>("outcome", outcome.ToString()));
         logger.LogInformation("Decision {Outcome} recorded on {RequestId} by {UserId}", outcome, request.PublicId, user.Id);
