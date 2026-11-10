@@ -1,0 +1,45 @@
+diff --git a/app/src/RequestHub.Core/Services/RequestWorkflow.cs b/app/src/RequestHub.Core/Services/RequestWorkflow.cs
+index 521eaa5..90d373e 100644
+--- a/app/src/RequestHub.Core/Services/RequestWorkflow.cs
++++ b/app/src/RequestHub.Core/Services/RequestWorkflow.cs
+@@ -77,8 +77,10 @@ public sealed partial class RequestWorkflow(
+             }
+             else
+             {
++                // EscapeLike escapes with a backslash. Name it as the escape character: EF Core (and so Npgsql) applies no
++                // escape character unless one is given, which would make "%" and "_" searches match nothing.
+                 var pattern = $"%{EscapeLike(term)}%";
+-                query = query.Where(r => EF.Functions.ILike(r.Title, pattern) || EF.Functions.ILike(r.Description, pattern));
++                query = query.Where(r => EF.Functions.ILike(r.Title, pattern, "\\") || EF.Functions.ILike(r.Description, pattern, "\\"));
+             }
+         }
+ 
+diff --git a/app/tests/RequestHub.Tests/RequestLifecycleTests.cs b/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
+index 0cebcef..ce96b7d 100644
+--- a/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
++++ b/app/tests/RequestHub.Tests/RequestLifecycleTests.cs
+@@ -156,4 +156,24 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
+         var history = await (await api.As("u-ava").GetAsync($"/api/requests/{id}/history")).Read<List<AuditEventDto>>();
+         Assert.Contains(history, e => e.Action == "routing.changed");
+     }
++
++    [Fact]
++    public async Task Search_treats_percent_and_underscore_as_literal_characters()
++    {
++        var ava = api.As("u-ava");
++        var literal = await ava.PostJson("/api/requests", NewRequest("Archive share Q3_cap at 100% quota"));
++        Assert.Equal(HttpStatusCode.Created, literal.StatusCode);
++        var expected = (await literal.Read<RequestDetailDto>()).Id;
++        // Matches both terms only if "_" or "%" were treated as wildcards.
++        var lookalike = await ava.PostJson("/api/requests", NewRequest("Archive share Q3xcap at 1005 quota"));
++        Assert.Equal(HttpStatusCode.Created, lookalike.StatusCode);
++
++        foreach (var term in new[] { "Q3_cap", "100%" })
++        {
++            var found = await (await ava.GetAsync($"/api/requests?scope=mine&pageSize=100&q={Uri.EscapeDataString(term)}"))
++                .Read<PagedResult<RequestSummaryDto>>();
++            var row = Assert.Single(found.Items);
++            Assert.Equal(expected, row.Id);
++        }
++    }
+ }

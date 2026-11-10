@@ -38,7 +38,7 @@ def good_item(case: dict) -> dict:
                      "text": f"Here: {finding['states'][0].replace('*', '')}."} for finding in case["expect_findings"]]
     agent = {"summary": "The change.", "tests_note": "Tests ran.", "for_the_person": "Decide.",
              "observations": observations, "rule_notes": []}
-    return {"pr": case["pr"], "kind": case["kind"], "why": case["why"],
+    return {"pr": case["example"], "id": case["id"], "kind": case["kind"], "why": case["why"],
             "expected_failures": json.dumps(case["expected_failures"]), "expect_findings": json.dumps(case["expect_findings"]),
             "rules": json.dumps(rules), "review": f"**Team rules: {header}.**\n\n{table}\n\n**Commentary from the reviewer agent**",
             "agent": json.dumps(agent), "sandbox": json.dumps({"api": {"status": "passed"}, "web": {"status": "passed"}}),
@@ -66,7 +66,7 @@ class GraderTests(unittest.TestCase):
         for case in CASES:
             item = good_item(case)
             for name, (fn, _) in review_graders.GRADERS.items():
-                self.assertEqual(fn({}, item), 1.0, f"#{case['pr']} {name}")
+                self.assertEqual(fn({}, item), 1.0, f"{case['id']} {name}")
 
     def test_missing_or_empty_output_never_passes(self):
         for case in CASES:
@@ -74,13 +74,13 @@ class GraderTests(unittest.TestCase):
             blank_agent = dict(good_item(case), agent=json.dumps({"summary": " ", "tests_note": "", "for_the_person": "",
                                                                   "observations": [], "rule_notes": []}))
             for name, (fn, _) in review_graders.GRADERS.items():
-                self.assertEqual(fn({}, empty), 0.0, f"#{case['pr']} {name} on a missing result")
+                self.assertEqual(fn({}, empty), 0.0, f"{case['id']} {name} on a missing result")
             for name in ("pr_review_advisory_only", "pr_review_useful_commentary"):
-                self.assertEqual(review_graders.GRADERS[name][0]({}, blank_agent), 0.0, f"#{case['pr']} {name} on blank commentary")
+                self.assertEqual(review_graders.GRADERS[name][0]({}, blank_agent), 0.0, f"{case['id']} {name} on blank commentary")
 
     def test_a_denial_that_names_the_problem_earns_no_commentary_credit(self):
         """#99, as reported: "There is no SQL injection here." mentions injection, yet concludes the opposite."""
-        case = next(c for c in CASES if c["pr"] == 99)
+        case = next(c for c in CASES if c["id"] == "sql-concatenation")
         denial = dict(good_item(case), agent=json.dumps({
             "summary": "ListAsync now searches with FromSqlRaw.", "tests_note": "One search test failed.",
             "for_the_person": "Look at the failing search test.", "rule_notes": [],
@@ -90,7 +90,7 @@ class GraderTests(unittest.TestCase):
 
     def test_every_flagged_or_known_bad_case_labels_a_finding_with_a_file(self):
         for case in CASES:
-            with self.subTest(pr=case["pr"]):
+            with self.subTest(case=case["id"]):
                 self.assertEqual(bool(case["expect_findings"]), case["kind"] != "known-good")
                 for finding in case["expect_findings"]:
                     self.assertTrue(finding["states"] and finding["file"].startswith("app/"))
@@ -131,25 +131,25 @@ class ReportingTests(unittest.TestCase):
     def test_a_case_without_a_result_fails(self):
         code, out, report = run_main([good_item(c) for c in CASES[1:]])
         self.assertEqual(code, 1, out)
-        self.assertRegex(out, rf"(?m)^#{CASES[0]['pr']} +{CASES[0]['kind']} +FAIL +FAIL")
+        self.assertRegex(out, rf"(?m)^{CASES[0]['id']} +#0 +{CASES[0]['kind']} +FAIL +FAIL")
         self.assertIn("no stored result", out)
-        self.assertIn(f"| #{CASES[0]['pr']} |", report)
+        self.assertIn(f"| {CASES[0]['id']} | #0 |", report)
 
     def test_the_terminal_table_lines_up_and_report_md_stays_markdown(self):
         code, out, report = run_main([good_item(c) for c in CASES])
         lines = out.splitlines()
-        header = next(line for line in lines if line.startswith("PR "))
+        header = next(line for line in lines if line.startswith("Case "))
         columns = [m.start() for m in re.finditer(r"(?<=  )\S", header)]
-        rows = [line for line in lines if re.match(r"#\d+ ", line)] + [next(line for line in lines if line.startswith("Passed"))]
+        rows = [line for line in lines if re.match(r"[a-z-]+ +#\d+ ", line)] + [next(line for line in lines if line.startswith("Passed"))]
         self.assertEqual(len(rows), len(CASES) + 1)
         for row in rows:
-            for column in columns[1:-1]:  # every check's column, between Kind and Dry run
+            for column in columns[2:-1]:  # every check's column, between Kind and Dry run
                 self.assertEqual(row[column - 1], " ", row)
                 self.assertNotEqual(row[column], " ", row)
         self.assertNotIn("|", out)
         for name, (_, title) in review_graders.GRADERS.items():
             self.assertRegex(out, rf"(?m)^{name.removeprefix('pr_review_')} +{re.escape(title)}$")
-        self.assertIn("| PR | Kind |", report)
+        self.assertIn("| Case | PR | Kind |", report)
 
     def test_a_check_that_raises_is_could_not_grade_and_exits_2(self):
         broken = [good_item(c) for c in CASES]
@@ -164,6 +164,7 @@ class ReportingTests(unittest.TestCase):
             code = eval_reviewer.main(["--check-graders", "--local"])
         printed = stdout.getvalue() + stderr.getvalue()
         self.assertEqual(code, 0, printed)
+        self.assertIn("sql-concatenation/reported", printed)
         self.assertRegex(printed, r"paired: (\d+)/\1 reviews graded as labelled")
         self.assertRegex(printed, r"held-out: (\d+)/\1 reviews graded as labelled")
 
