@@ -278,7 +278,7 @@ About 5 minutes, at least 15 minutes before you present.
 ## Run the demo
 
 Run the commands in this folder. The screenshots of steps 2 to 6 come from one live run of this drill, and those of
-step 7 from a second run, so the times in the record differ from those in the earlier screenshots.
+step 7 from later runs, so the times in the record differ from those in the earlier screenshots.
 
 1. **Show the starting state and the guardrails** (3 minutes). The workbook's **Ready for a drill** table is all
    **Ready** (see [Before each session](#before-each-session)). In the SRE Agent portal, open **Incidents**, then
@@ -408,7 +408,7 @@ step 7 from a second run, so the times in the record differ from those in the ea
    `gh` prints the new Issue's URL. You can also paste the title and body into **New issue** in GitHub and add the two
    labels.
 
-   ![The GitHub Issue filed from the draft: Incident record: notification backlog, 2026-10-30, with the summary, the impact table, the UTC timeline with its evidence, the root cause, the mitigation written with placeholders, one follow-up, and the closing line that the agent drafted it for a person to file](images/07-issue.png)
+   ![The GitHub Issue filed from the draft: Incident record: notification backlog, 2026-11-10, with the summary, the impact table, the UTC timeline with its evidence, the recent changes, the root cause, the mitigation written with placeholders, one follow-up, the Status table with the status Resolved, the environment, and the time the alert fired, and the closing line that the agent drafted it and a person who read it filed it](images/07-issue.png)
 
    **Point out:** the agent wrote the record from its own investigation, in its own words and with its evidence, but a
    person decided what went into GitHub.
