@@ -106,7 +106,7 @@ Run once from the repository root.
 
    `gh secret list` now shows `COPILOT_GITHUB_TOKEN`. In an organization with Copilot and centralized billing, add `copilot-requests: write` to the workflow's permissions instead and recompile; no token is needed.
 
-The workflows, skills, and agent are already active because the repository's root `.github/` folder mirrors them. The container images are created in GitHub Container Registry on the first run, private like the repository.
+The workflows, skills, and agent are already active because the repository's root `.github/` folder mirrors them. The container images are created in GitHub Container Registry on the first run, as private packages, even in a public repository.
 
 ## Before each session
 

@@ -15,9 +15,10 @@ when any check fails. It changes nothing.
   Identity    the release identity holds what a release needs and no more: Container Apps Contributor and Container
               Apps Jobs Reader on the resource group, and AcrPull on the registry
   Trigger     the release trigger function is deployed and running, and only it may start the release job (no Logic App
-              left from the earlier trigger, no other principal with Container Apps Jobs Operator); Event Grid's topic
-              watches this registry, and its subscription sends the function each push of the API's repository except
-              :main, one event per call
+              left from the earlier trigger, no other principal with Container Apps Jobs Operator or Jobs Contributor).
+              It needs Jobs Contributor on that job: Azure requires write permission on a job to start it with settings
+              of its own, here the build's digest. Event Grid's topic watches this registry, and its subscription sends
+              the function each push of the API's repository except :main, one event per call
   Build       the ACR task that builds main exists, no pull request can start it, and whether its commit trigger is on
   Workbook    the release-records workbook exists
 
@@ -45,6 +46,11 @@ RELEASE_ROLES = {"Container Apps Contributor": "resourcegroups/{rg}", "Container
                  "AcrPull": "/registries/"}
 BROAD_ROLES = {"Owner", "Contributor", "User Access Administrator", "Role Based Access Control Administrator", "AcrPush"}
 JOBS_OPERATOR = "Container Apps Jobs Operator"
+JOBS_CONTRIBUTOR = "Container Apps Jobs Contributor"
+STARTERS = (JOBS_OPERATOR, JOBS_CONTRIBUTOR)  # roles that may start a job: both hold Microsoft.App/jobs/*/action
+# The trigger starts the release job with the build's digest as settings, which Azure allows only with write permission
+# on the job (Microsoft.App/jobs/write): Jobs Contributor has it, Jobs Operator doesn't.
+TRIGGER_ROLE = JOBS_CONTRIBUTOR
 TRIGGER_FUNCTION = "release_on_push"  # trigger/function_app.py; Event Grid calls it (infra/release-on-push.bicep)
 SUBSCRIPTION = "release-on-push"  # Event Grid's subscription to the function (infra/release-on-push.bicep)
 IMAGE_PUSHED = "Microsoft.ContainerRegistry.ImagePushed"
@@ -224,9 +230,11 @@ def check_trigger(s: dict, jobs: dict) -> None:
 
 
 def check_who_starts_releases(s: dict, trigger: dict | None, job: dict | None) -> None:
-    """Only the function may start the release job, with Container Apps Jobs Operator on that job alone: no Logic App
-    left from the earlier trigger, and no other role assignment of Jobs Operator on the job or its resource group (on
-    the resource group, it would start the other release steps too)."""
+    """Only the function may start the release job, with Container Apps Jobs Contributor on that job alone: no Logic App
+    left from the earlier trigger, and no other role assignment that may start the job (Jobs Operator or Jobs
+    Contributor) on the job or its resource group (on the resource group, it would start the other release steps too).
+    The function starts the job with the build's digest as settings, which Azure allows only with write permission on
+    the job: Jobs Operator, which earlier deployments gave the function, is not enough."""
     workflows = az("resource", "list", "--resource-group", s["rg"], "--resource-type", "Microsoft.Logic/workflows") or []
     for workflow in workflows:
         if str(workflow.get("name", "")).startswith(LEGACY_TRIGGER):
@@ -238,21 +246,29 @@ def check_who_starts_releases(s: dict, trigger: dict | None, job: dict | None) -
     job_id = job["id"].lower()
     group = job_id.split("/providers/", 1)[0]
     principal = str(((trigger or {}).get("identity") or {}).get("principalId") or "").lower()
-    operators = [a for a in az("role", "assignment", "list", "--scope", job["id"], "--include-inherited")
-                 if a.get("roleDefinitionName") == JOBS_OPERATOR and str(a.get("scope") or "").lower().startswith(group)]
-    own = [a for a in operators if principal and str(a.get("principalId") or "").lower() == principal
-           and str(a.get("scope") or "").lower() == job_id]
-    others = [a for a in operators if a not in own]
+    starters = [a for a in az("role", "assignment", "list", "--scope", job["id"], "--include-inherited")
+                if a.get("roleDefinitionName") in STARTERS and str(a.get("scope") or "").lower().startswith(group)]
+    mine = [a for a in starters if principal and str(a.get("principalId") or "").lower() == principal
+            and str(a.get("scope") or "").lower() == job_id]
+    own = [a for a in mine if a.get("roleDefinitionName") == TRIGGER_ROLE]
+    earlier = [a for a in mine if a not in own]
+    others = [a for a in starters if a not in mine]
     if not own:
-        report("FAIL", "Trigger", f"the function may not start the release job ({JOBS_OPERATOR} on it)",
-               "Run `azd deploy release` in this folder.")
+        report("FAIL", "Trigger", f"the function may not start the release job with a build's digest ({TRIGGER_ROLE} on it)",
+               "Run `azd deploy release` in this folder. Azure requires write permission on a job to start it with "
+               "settings of its own, as the trigger does with each build's digest.")
+    elif earlier:
+        report("WARN", "Trigger", f"the function also keeps {JOBS_OPERATOR} on the release job, from an earlier deployment",
+               f"{TRIGGER_ROLE} covers what it needs. Remove the earlier one: az role assignment delete --ids "
+               + " ".join(str(a.get("id")) for a in earlier))
     if others:
+        roles = ", ".join(sorted({str(a.get("roleDefinitionName")) for a in others}))
         report("FAIL", "Trigger", f"{len(others)} other role assignment{'s' if len(others) > 1 else ''} may start the release "
-                                  f"job too ({JOBS_OPERATOR})",
+                                  f"job too ({roles})",
                "Only the trigger function's, on the release job itself, should. Remove the others: az role assignment "
                "delete --ids " + " ".join(str(a.get("id")) for a in others))
     if own and not others:
-        report("PASS", "Trigger", f"only the function may start the release job ({JOBS_OPERATOR})")
+        report("PASS", "Trigger", f"only the function may start the release job ({TRIGGER_ROLE})")
 
 
 def check_events(s: dict, function_id: str) -> None:

@@ -2,6 +2,8 @@
 
 They cover what a reviewer must be able to trust without a live run:
   - only builds of requesthub-api from the API's own registry are released, whatever an event or a person names;
+  - an image is pinned by the digest the registry reports, an OCI image index with attestations (a build of GitHub
+    Actions, imported into the registry) included, and its commit is read from its linux/amd64 image;
   - nothing untrusted can print a line that looks like a release record;
   - promote needs the gate's verdict for exactly this candidate and image, with the standard bake;
   - a release that fails removes its own candidate, even while another step waits for its turn;
@@ -182,6 +184,56 @@ class ImageReferences(unittest.TestCase):
         problem = release.image_problem(f"{REGISTRY}/evil:x\nRELEASE-RECORD {{\"step\":\"promote\"}}", self.registries)
         self.assertNotIn("\n", problem)
         self.assertIn("\\n", problem)
+
+
+class ImageResolution(unittest.TestCase):
+    """Which build an image is, read from the registry itself. A build made with docker buildx and SBOM and provenance
+    attestations, as GitHub Actions builds a release candidate (06-release-github), is an OCI image index, and
+    az acr import keeps its digest: the release pins the index's own digest, and reads the commit from its linux/amd64
+    image, never from an attestation manifest."""
+
+    BASE = f"https://{REGISTRY}/v2/requesthub-api"
+    IMAGE = "sha256:" + "11" * 32
+    ATTESTATION = "sha256:" + "22" * 32
+    CONFIG = "sha256:" + "33" * 32
+
+    def resolve(self, reference: str, responses: dict[str, tuple[int, dict | None, dict]]) -> tuple[tuple[str, str], list[str]]:
+        calls: list[str] = []
+
+        def fake_http(method: str, url: str, **kwargs) -> release.Response:
+            calls.append(url)
+            status, body, headers = responses[url]
+            return release.Response(status, b"" if body is None else json.dumps(body).encode(), headers, 1.0)
+        with mock.patch.object(release, "registry_token", return_value="token"), \
+                mock.patch.object(release, "http", side_effect=fake_http):
+            return release.resolve_image(reference), calls
+
+    def image(self, build_sha: str) -> dict[str, tuple[int, dict | None, dict]]:
+        """The linux/amd64 image and its configuration, served from storage through a redirect as ACR does."""
+        return {f"{self.BASE}/manifests/{self.IMAGE}": (200, {"config": {"digest": self.CONFIG}}, {}),
+                f"{self.BASE}/blobs/{self.CONFIG}": (307, None, {"location": "https://storage.example/config"}),
+                "https://storage.example/config": (200, {"config": {"Env": ["PATH=/usr/bin", f"BUILD_SHA={build_sha}"]}}, {})}
+
+    def test_an_index_with_attestations_is_pinned_by_its_own_digest_and_read_from_its_image(self):
+        index = {"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
+            {"digest": self.ATTESTATION, "platform": {"architecture": "unknown", "os": "unknown"},
+             "annotations": {"vnd.docker.reference.type": "attestation-manifest", "vnd.docker.reference.digest": self.IMAGE}},
+            {"digest": self.IMAGE, "platform": {"architecture": "amd64", "os": "linux"}}]}
+        for reference in (f"{REGISTRY}/requesthub-api@{DIGEST}", f"{REGISTRY}/requesthub-api:{SHA}"):
+            with self.subTest(reference=reference):
+                ref = reference.rsplit("@", 1)[-1] if "@" in reference else SHA
+                responses = {f"{self.BASE}/manifests/{ref}": (200, index, {"docker-content-digest": DIGEST}), **self.image(SHA)}
+                (image, commit), calls = self.resolve(reference, responses)
+                self.assertEqual(image, f"{REGISTRY}/requesthub-api@{DIGEST}")
+                self.assertEqual(commit, SHA)
+                self.assertNotIn(f"{self.BASE}/manifests/{self.ATTESTATION}", calls)
+
+    def test_a_single_image_is_read_directly_and_a_local_build_reports_no_commit(self):
+        responses = {f"{self.BASE}/manifests/main": (200, {"config": {"digest": self.CONFIG}}, {"docker-content-digest": DIGEST}),
+                     **self.image("local")}
+        responses.pop(f"{self.BASE}/manifests/{self.IMAGE}")
+        (image, commit), _ = self.resolve(f"{REGISTRY}/requesthub-api:main", responses)
+        self.assertEqual((image, commit), (f"{REGISTRY}/requesthub-api@{DIGEST}", ""))
 
 
 class PrintableRecords(Quiet):

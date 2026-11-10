@@ -154,10 +154,10 @@ resource triggerPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
   properties: { reserved: true }
 }
 
-// Its managed identity gets Container Apps Jobs Operator on the release job only (jobs.bicep), so it can start that job
-// and nothing else. It starts the job only for a push of the API's repository to this registry, named by digest, and
-// passes the event's values to the job as values. An event that fails a check starts nothing, and the invocation fails
-// with the check's name.
+// Its managed identity gets Container Apps Jobs Contributor on the release job only (jobs.bicep), so it can start that
+// job with a build's digest, which Azure allows only with write permission on the job, and nothing else. It starts the
+// job only for a push of the API's repository to this registry, named by digest, and passes the event's values to the
+// job as values. An event that fails a check starts nothing, and the invocation fails with the check's name.
 resource trigger 'Microsoft.Web/sites@2024-04-01' = {
   name: 'func-release-${resourceToken}'
   location: location
