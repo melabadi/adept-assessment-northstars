@@ -102,4 +102,3 @@ Add regression coverage for the advisory workflow and measure the agreed reroute
 - **Acceptance criteria:**
   - [ ] Given the assistant has not been enabled, When the baseline period is completed, Then the share of requests rerouted after triage is measured for the two weeks before enablement.
   - [ ] Given recommendation and reviewer-confirmation flows are available, When the regression suite runs, Then it verifies that recommendations do not approve or reject requests and a double-click does not duplicate audit entries or notifications.
-
