@@ -2,7 +2,9 @@
 #  Unit tests for the backlog publisher's trust boundary: it treats as its own only the Issues it could have written,
 #  those the workflow published as github-actions[bot] and those the owner, a member, or a collaborator opened, so a
 #  publish or a reset never updates, reopens, closes, or links an Issue that someone else opened with the same hidden
-#  marker. The tests run offline against a fake `gh`, with synthetic data.
+#  marker. In the Plan solution combo, they also check that it publishes only the revision Microsoft Foundry evaluated,
+#  once a person decided its open items, and counts only evaluation Issues from the owner, members, and collaborators.
+#  The tests run offline against a fake `gh`, with synthetic data.
 # Only pull requests that change this solution's tooling start it. A pull request that changes nothing but brief/, such
 # as Copilot's brief, doesn't: plan-github-brief.yml validates those.
 name: Plan · GitHub · check the backlog publisher
