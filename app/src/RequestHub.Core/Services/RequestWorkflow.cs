@@ -237,6 +237,14 @@ public sealed partial class RequestWorkflow(
         }
 
         var key = NormalizeKey(idempotencyKey);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        if (Request.TryParsePublicId(publicId, out var requestNumber))
+        {
+            _ = await db.Database.SqlQuery<Guid>(
+                    $"SELECT \"Id\" AS \"Value\" FROM \"Requests\" WHERE \"Number\" = {requestNumber} FOR UPDATE")
+                .SingleOrDefaultAsync(ct);
+        }
+
         var request = await LoadAsync(publicId, ct);
         if (request is null)
         {
@@ -258,6 +266,25 @@ public sealed partial class RequestWorkflow(
             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
         }
 
+        if (request.Decision is { } existingDecision)
+        {
+            var existing = new DecisionDto(
+                existingDecision.Outcome.ToString(),
+                new PersonRef(existingDecision.DecidedById, existingDecision.DecidedBy!.DisplayName),
+                existingDecision.Comment,
+                existingDecision.DecidedAt);
+            if (key is not null && existingDecision.DecidedById == user.Id && existingDecision.IdempotencyKey == key)
+            {
+                return Result<DecisionDto>.Ok(existing, replayed: true);
+            }
+
+            return new WorkflowError(
+                "decision.already_decided",
+                $"{request.PublicId} has already been decided by {existingDecision.DecidedBy!.DisplayName}.",
+                409,
+                new { existingDecision = existing });
+        }
+
         var now = clock.GetUtcNow();
         var decision = new ApprovalDecision
         {
@@ -276,6 +303,7 @@ public sealed partial class RequestWorkflow(
         AddNotification(request, request.RequesterId, "request.decided", now, new { outcome = outcome.ToString() });
 
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
         RequestHubTelemetry.DecisionsRecorded.Add(1, new KeyValuePair<string, object?>("outcome", outcome.ToString()));
         logger.LogInformation("Decision {Outcome} recorded on {RequestId} by {UserId}", outcome, request.PublicId, user.Id);
