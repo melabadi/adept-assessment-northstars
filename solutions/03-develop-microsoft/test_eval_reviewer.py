@@ -99,17 +99,21 @@ class GraderTests(unittest.TestCase):
                                          f"{claim!r}: claims are positive statements")
 
     def test_paired_reviews_share_their_words_and_evidence(self):
-        """Each right review has a wrong twin that points at the same file and line and differs in what it concludes."""
+        """Each right review has a wrong twin that points at the same file and line and differs in what it concludes: the
+        /wrong review of a /right one, or the review its "twin" field names."""
         by_id = {row["id"]: row for row in GRADER_CHECKS}
+        pairs = 0
         for row in GRADER_CHECKS:
-            if not row["id"].endswith("/right"):
+            if not (row["id"].endswith("/right") or row.get("twin")):
                 continue
             with self.subTest(review=row["id"]):
-                twin = by_id[row["id"].replace("/right", "/wrong")]
+                twin = by_id[row.get("twin") or row["id"].replace("/right", "/wrong")]
                 where = lambda r: [(o["file"], o["line"]) for o in json.loads(r["item"]["agent"])["observations"]]  # noqa: E731
                 self.assertEqual(where(row), where(twin))
                 self.assertTrue(all(row["expect"].values()))
                 self.assertFalse(twin["expect"]["pr_review_useful_commentary"])
+                pairs += 1
+        self.assertGreaterEqual(pairs, 10)
         self.assertTrue(any(row["split"] == "held-out" for row in GRADER_CHECKS))
 
     def test_every_grader_check_is_graded_as_labelled(self):
