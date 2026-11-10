@@ -67,7 +67,7 @@ public sealed class DuplicateDecisionTests(ApiFixture api) : IClassFixture<ApiFi
         Assert.Equal("decision.already_decided", await later.Code());
         using (var response = JsonDocument.Parse(await later.Content.ReadAsStringAsync()))
         {
-            var existing = response.RootElement.GetProperty("existingDecision");
+            var existing = response.RootElement.GetProperty("decision");
             Assert.Equal("Approved", existing.GetProperty("outcome").GetString());
             Assert.Equal("u-chloe", existing.GetProperty("decidedBy").GetProperty("id").GetString());
         }
