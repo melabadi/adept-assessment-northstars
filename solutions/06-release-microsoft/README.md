@@ -188,7 +188,7 @@ The app is [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`
 git fetch origin main
 $sha = git rev-parse origin/main
 $src = New-Item -ItemType Directory -Force (Join-Path ([IO.Path]::GetTempPath()) "requesthub-$sha")
-git archive $sha app | tar -x -C $src
+git -C (git rev-parse --show-toplevel) archive $sha app | tar -x -C $src
 az acr build --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --image "requesthub-api:$sha" --image requesthub-api:main `
   --build-arg "BUILD_SHA=$sha" --file "$src/app/Dockerfile" --no-logs "$src/app"
 ```
