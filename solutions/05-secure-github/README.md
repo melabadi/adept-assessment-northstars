@@ -12,7 +12,8 @@ AI review is not code scanning, and a passing review does not prove a vulnerabil
 ## Where it fits
 
 **Phase 5 of 7: Secure.** The [Microsoft counterpart](../05-secure-microsoft/) addresses deployed cloud posture.
-This solution addresses source-code risk, without deploying the training defect.
+This solution addresses source-code risk, without deploying the training defect. Its Copilot code review also checks
+the counterpart's cloud posture fix in the [Secure solution combo](../../PRESENTING.md#secure-azure-finds-and-fixes-copilot-reviews-a-person-deploys).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -67,6 +68,8 @@ pull request with a read-only token and no secrets, once someone with write acce
 ├── tests/test_security_tools.py           parser/guard unit tests, NOT demo evidence
 └── .github/
     ├── agents/secure-github.agent.md
+    ├── instructions/
+    │   └── secure-github-posture-review.instructions.md   Copilot code review of a cloud posture fix (Secure solution combo)
     ├── skills/
     │   ├── finding-triage/                evidence procedure, entitlement and SARIF reporter
     │   └── verified-remediation/          bounded two-snapshot replay with JUnit evidence
@@ -414,6 +417,8 @@ Replace the supplied regression with assertions for your actual behavior and neg
 Require detection before remediation and keep tests-only and fix commits separate. Never place the training defect
 on the default branch. Configure branch rulesets so deployment workflows cannot run lab refs. For the nightly replay,
 run `replay_setup.py` once in your repository, or `--adopt` a repair pull request of your own.
+The posture review instruction applies only to the Microsoft counterpart's Bicep: point its `applyTo` at the folder
+where your infrastructure fixes land, or leave it out.
 
 For tooling changes, run:
 
