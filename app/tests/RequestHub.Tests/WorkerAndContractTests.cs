@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -27,11 +28,42 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
         }
     }
 
-    private NotificationProcessor Processor(RequestHubDbContext db, INotificationSender sender, int maxAttempts) => new(
-        db, sender, TimeProvider.System,
+    private NotificationProcessor Processor(RequestHubDbContext db, INotificationSender sender, int maxAttempts, TimeProvider? clock = null, FaultOptions? fault = null) => new(
+        db, sender, clock ?? TimeProvider.System,
         Options.Create(new WorkerOptions { BatchSize = 1, MaxAttempts = maxAttempts, BaseBackoffSeconds = 0 }),
-        new StaticOptionsMonitor<FaultOptions>(new FaultOptions()),
+        new StaticOptionsMonitor<FaultOptions>(fault ?? new FaultOptions()),
         NullLogger<NotificationProcessor>.Instance);
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private sealed class DeliveryActivityCapture : IDisposable
+    {
+        private readonly ActivityListener listener;
+
+        public IReadOnlyList<KeyValuePair<string, object?>> Tags { get; private set; } = [];
+
+        public DeliveryActivityCapture()
+        {
+            listener = new ActivityListener
+            {
+                ShouldListenTo = source => source.Name == RequestHubTelemetry.SourceName,
+                Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+                ActivityStopped = activity =>
+                {
+                    if (activity.OperationName == "notification.deliver")
+                    {
+                        Tags = activity.TagObjects.ToArray();
+                    }
+                },
+            };
+            ActivitySource.AddActivityListener(listener);
+        }
+
+        public void Dispose() => listener.Dispose();
+    }
 
     private async Task<Guid> PendingNotificationAsync(RequestHubDbContext db)
     {
@@ -63,6 +95,57 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
         Assert.Null(n.LastError);
         // A sent notification is never delivered again.
         Assert.Equal(3, sender.Calls);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(null)]
+    public async Task Expired_or_unset_worker_delay_is_ignored(int? expiryOffsetSeconds)
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var id = await PendingNotificationAsync(db);
+        var sender = new FlakySender(id, failuresBeforeSuccess: 0);
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var fault = new FaultOptions
+        {
+            WorkerDelayMs = 1000,
+            ExpiresAtUtc = expiryOffsetSeconds is { } seconds ? now.AddSeconds(seconds) : null,
+        };
+        var processor = Processor(db, sender, maxAttempts: 1, new FixedTimeProvider(now), fault);
+        using var capture = new DeliveryActivityCapture();
+        var watch = Stopwatch.StartNew();
+
+        await processor.ProcessBatchAsync(TestContext.Current.CancellationToken);
+
+        watch.Stop();
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1), $"delivery took {watch.Elapsed}");
+        Assert.DoesNotContain(capture.Tags, tag => tag.Key == "requesthub.fault.worker_delay_ms");
+        Assert.Equal(1, sender.Calls);
+        db.ChangeTracker.Clear();
+        Assert.Equal(NotificationStatus.Sent, (await db.Notifications.SingleAsync(n => n.Id == id, TestContext.Current.CancellationToken)).Status);
+    }
+
+    [Fact]
+    public async Task Active_worker_delay_is_applied_and_tagged()
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var id = await PendingNotificationAsync(db);
+        var sender = new FlakySender(id, failuresBeforeSuccess: 0);
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        const int delayMs = 50;
+        var fault = new FaultOptions { WorkerDelayMs = delayMs, ExpiresAtUtc = now.AddMinutes(1) };
+        var processor = Processor(db, sender, maxAttempts: 1, new FixedTimeProvider(now), fault);
+        using var capture = new DeliveryActivityCapture();
+        var watch = Stopwatch.StartNew();
+
+        await processor.ProcessBatchAsync(TestContext.Current.CancellationToken);
+
+        watch.Stop();
+        Assert.True(watch.Elapsed >= TimeSpan.FromMilliseconds(delayMs), $"delivery took {watch.Elapsed}");
+        Assert.Contains(capture.Tags, tag => tag.Key == "requesthub.fault.worker_delay_ms" && Equals(tag.Value, delayMs));
+        Assert.Equal(1, sender.Calls);
     }
 
     [Fact]
