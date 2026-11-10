@@ -52,14 +52,119 @@ To show the other offering of a phase, swap in its other solution; the table abo
 
 ## Solution combos
 
-Each phase's two solutions also work together on one change. In a combo, the GitHub solution and the Microsoft solution each do the part they are built for, pass one artifact between them, and a person makes the decision at the end. Each combo is a single-phase session. Both solutions still run on their own from their READMEs, so a customer can adopt either accelerator first and add the other later.
+The two solutions of a phase can also work together on one change. In a combo, the GitHub solution and the Microsoft solution each do the part they are built for, pass one artifact between them, and a person makes the decision at the end. Each combo is a single-phase session. Both solutions still run on their own from their READMEs, so a customer can adopt either accelerator first and add the other later.
 
 Before a combo, complete both solutions' **Set up** and run both **Before each session** checklists. Afterwards, follow both **Reset and clean up** sections.
 
 | Phase | GitHub does | Azure does | What passes between them | A person decides |
 | --- | --- | --- | --- | --- |
+| [Plan](#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes) | Copilot drafts the brief in a pull request; Actions validate it and publish the backlog | A Function scores that commit with a Foundry evaluation and lists the open items | The brief's commit, and the evaluation Issue that names it | The product owner decides each open item and approves the brief |
 | [Design](#design-foundry-cites-the-standards-github-checks-the-adr) | Copilot completes the ADR from the code; Actions check it and the API contract | The Foundry advisor answers from the approved standards and lists conflicts | The advisor's pull request | The architect accepts or rejects the ADR |
 | [Develop](#develop-copilot-writes-azure-reviews-a-person-decides) | Copilot writes the change; CI, the bounds check, and the reviewer's own test | A Function checks the team rules, builds the change in a sandbox, and asks a Foundry agent | The pull request's head commit | The reviewer approves or asks for changes |
+| [Test](#test-copilot-proves-the-repair-azure-load-tests-the-same-commit) | Copilot repairs a defect test-first; the proof check shows the tests fail before the repair and pass after it | Azure deploys that commit as its own revision, load-tests it, and reports on the defect Issue | The repair commit's SHA | The test lead approves the repair or asks for changes |
+| [Secure](#secure-azure-finds-and-fixes-copilot-reviews-a-person-deploys) | Copilot code review checks the Bicep fix against Azure's preview | Defender for Cloud and Azure Policy find the misconfiguration; a Foundry agent drafts the fix; what-if previews it; `verify` rechecks the resource | The fix's draft pull request and its head commit | A person deploys the fix or asks for a change |
+| [Operate](#operate-azure-recovers-a-person-files-copilot-proves-the-follow-up) | The triage and Copilot turn the incident into a regression test, proven to fail without its fix | Azure SRE Agent investigates, proposes the fix, verifies recovery, and drafts the record | One incident record, filed as an `incident` Issue | A person approves the fix, files the record, and reviews Copilot's pull request |
+
+### Plan: Copilot drafts, Foundry evaluates, the product owner publishes
+
+A team that drafts requirements with Copilot wants an independent check of each brief, run in its own Azure, before the product owner turns it into a backlog. Copilot drafts the brief in a pull request, Foundry evaluates that exact commit, and the product owner decides the open items and publishes one backlog from GitHub.
+
+- **When a customer uses both:** Copilot already drafts briefs in pull requests, and the product owner wants the team's own evaluation (traceability, conflicts, and gaps) to score the exact revision they approve, and to keep the result as a record.
+- **What passes between them:** one pull request and its head commit. Foundry's evaluation Issue names that commit, GitHub publishes only that commit, and the epic names the commit and the evaluation Issue.
+- **What the person decides:** the product owner decides each open item the evaluation lists (the unresolved conflict and the open questions), writes the decisions in the evaluation Issue, ticks each item, and applies `brief-approved`. No AI decides, and GitHub publishes nothing while an item is unticked.
+- **Evidence to show:** for one commit, GitHub's validation check, the Foundry evaluation run named after the commit, the evaluation Issue with the product owner's decisions, the publish comment on the pull request, the epic's **Review** section, and the evaluation Issue's comment that lists the published Issues.
+- **Pilot metric:** elapsed time from the brief's pull request to the published backlog: the pull request's creation time and the time of its **Backlog published after review** comment. Track alongside it the number of revisions Foundry evaluated before the approved one (the `type:evaluation` Issues that name the pull request), and the open items the product owner decided. Compare it with similar work from before the pilot. Our rehearsal measured 5 minutes 36 seconds, with one evaluated revision and seven open items, whose decisions were written in advance (measured). A target is a goal the customer sets, never a result.
+
+**Prepare** (about 5 minutes): both solutions' **Set up** ([01-plan-github](solutions/01-plan-github/README.md#set-up), [01-plan-microsoft](solutions/01-plan-microsoft/README.md#set-up)); 01-plan-microsoft's token also needs **Contents: Read-only**. Run both solutions' starting-state checks. Then have Copilot draft the brief before the session, as in 01-plan-github's [Run the demo](solutions/01-plan-github/README.md#run-the-demo), step 2: option A took 2 minutes 20 seconds and 2 minutes 30 seconds in our runs. With option B, approve each workflow run on Copilot's pull request as that step shows, including the runs the label starts in steps 4 and 5. Note the pull request's number.
+
+1. **Show the input** (2 minutes). Open the transcript, as in 01-plan-github's [Run the demo](solutions/01-plan-github/README.md#run-the-demo), step 1: two disagreements, one decided in T19, an instruction pasted into T18, and four unknowns.
+
+   ![Transcript paragraphs T04 to T07: Priya requires advisory suggestions confirmed by a reviewer, Ava wants automatic routing, Grace sends anything above 5,000 to Finance, and Ben says IT owns all computing equipment](solutions/01-plan-github/images/01-transcript.png)
+
+   **Point out:** whoever writes the backlog would normally settle the Finance-versus-IT conflict silently. Today a person settles it, on the record.
+
+2. **Copilot's brief and GitHub's check** (2 minutes). Open the pull request: Copilot's summary names the decisions a person still has to make, and **Validate the brief** passed in about 10 seconds, as in 01-plan-github's steps 3 and 4. Show the commit it checked:
+
+   ```powershell
+   gh pr checks <n>
+   gh pr view <n> --json headRefOid --jq .headRefOid
+   ```
+
+   ![The workflow run: Validate the brief passed in 9 seconds, Publish to GitHub Issues was skipped, and the summary reads VALID - 4 tasks, 5 open questions, 1/2 conflicts unresolved](solutions/01-plan-github/images/03-validation-check.png)
+
+   **Point out:** everything after this step names that head commit.
+
+3. **Foundry evaluates that revision** (about 2 minutes; 1 minute 58 seconds, 2 minutes 3 seconds, and 2 minutes in our runs). From the repository root:
+
+   ```powershell
+   cd solutions/01-plan-microsoft
+   python runs.py start --evaluate-pull-request <n>
+   ```
+
+   The Function app reads Copilot's brief at the pull request's head commit, scores it with the evaluation `plan-brief-checks` (93 seconds each time), and opens an evaluation Issue. It drafts no brief of its own and publishes nothing.
+
+   ![python runs.py start --evaluate-pull-request 290 in PowerShell 7: the run reads the Copilot brief on pull request #290 at revision 68f2108, the four gates pass after 93 seconds with 7 of 7 checks, and it opens evaluation Issue #291 for that revision](solutions/01-plan-microsoft/images/combo-03-evaluate.png)
+
+   **Point out:** one brief and one commit. In Foundry, the evaluation run is named after the pull request and the commit.
+
+4. **The product owner decides the open items** (about 5 minutes). Open the evaluation Issue from the link `runs.py` printed. It shows the commit, the verdict, the seven scores, and the open items: the unresolved conflict, the open questions, and any reported check that didn't pass. First try to publish anyway:
+
+   ```powershell
+   gh pr edit <n> --add-label brief-approved
+   ```
+
+   About 30 seconds later (27 seconds in our runs), the workflow comments on the pull request that nothing was published, and names the items nobody has decided yet. Now decide each item, write the decisions in a comment on the evaluation Issue, and tick each item. To read the Issue in the terminal instead: `gh issue view <evaluation issue> --json body --jq '.body | split("## Evaluation in Microsoft Foundry")[1]'`.
+
+   ![The evaluation Issue #291 in PowerShell 7: all seven checks at 1; the seven open items, the Finance-versus-IT conflict C2 and questions Q1 to Q6, ticked; the marker naming run 20261110-051933-ae0b, pull request #290, and the full revision; then the product owner's decision on each item](solutions/01-plan-microsoft/images/combo-04-open-items.png)
+
+   **Point out:** the AI found the open items and cited their sources. Only the person decides them.
+
+5. **Publish one backlog** (under a minute; 36, 32, and 44 seconds after the label in our runs). Apply the label again:
+
+   ```powershell
+   gh pr edit <n> --remove-label brief-approved
+   gh pr edit <n> --add-label brief-approved
+   ```
+
+   The workflow checks that Foundry evaluated this exact commit, that its gates passed, and that every open item is ticked. Then it publishes the epic and its four tasks, comments on the pull request, and comments the published Issues on the evaluation Issue and closes it.
+
+   ![The comments on pull request #290: first, nothing was published because seven open items in evaluation #291 were not decided yet; then, once they were, the backlog was published from revision 68f2108: the epic #12 and tasks #13 to #16 updated, and #291 commented and closed](solutions/01-plan-github/images/combo-05-published.png)
+
+   **Point out:** GitHub publishes and Azure never does, so there is one backlog, from the revision Foundry scored.
+
+6. **Follow the links** (2 minutes). The epic names the commit and the evaluation, the evaluation Issue lists the published Issues, and Azure keeps the run's record:
+
+   ```powershell
+   gh issue view <epic> --json body --jq '.body | split("## Review")[1]'
+   gh issue view <evaluation issue> --json comments --jq '.comments[-1].body'
+   python runs.py show <run id>
+   ```
+
+   ![Following the links in PowerShell 7: the epic's Review section names revision 68f2108 of pull request #290 and evaluation #291; the last comment on #291 lists the epic #12 and tasks #13 to #16 published from that revision; and runs.py show prints the Azure run that evaluated it](solutions/01-plan-github/images/combo-06-links.png)
+
+   **Point out:** every link names the same commit, from Copilot's draft to the published backlog.
+
+7. **Optional: a changed brief is refused** (about a minute; 32 and 40 seconds after the label in our runs). Change the brief after its evaluation, here by making every open question blocking, and apply the label again:
+
+   ```powershell
+   cd ../..
+   gh pr checkout <n>
+   $path = 'solutions/01-plan-github/brief/backlog.json'
+   (Get-Content $path -Raw) -replace '"blocking": false', '"blocking": true' | Set-Content $path -NoNewline
+   python .github/skills/requirements-traceability/render_brief.py --backlog $path --producer "GitHub Copilot (plan-github agent)"
+   git commit -am "Plan: every open question blocks"
+   git push
+   gh pr edit <n> --remove-label brief-approved
+   gh pr edit <n> --add-label brief-approved
+   ```
+
+   ![After the new commit a3a200a, the last comment on pull request #290 refuses to publish, because Foundry evaluated revision 68f2108, not a3a200a; the epic still names revision 68f2108 and evaluation #291](solutions/01-plan-github/images/combo-07-refused.png)
+
+   To publish the new revision, evaluate it again (step 3), decide its open items (step 4), and apply the label again (step 5). Run `git switch main` afterwards.
+
+   **Point out:** the backlog stays at the revision Foundry evaluated until a person approves another evaluated one.
+
+**What to observe:** the AI's contribution (Copilot's cited brief, and Foundry's seven code-based checks on the same commit), the deterministic check (GitHub's validator, Foundry's four gates, and the publisher's check that the commit was evaluated and every open item decided), and the human decision (the product owner's decisions and the `brief-approved` label). Each accelerator also runs on its own: [01-plan-github](solutions/01-plan-github/) and [01-plan-microsoft](solutions/01-plan-microsoft/).
 
 ### Design: Foundry cites the standards, GitHub checks the ADR
 
@@ -69,7 +174,7 @@ An architecture question gets two kinds of help on one pull request. The Foundry
 - **What passes between them:** the advisor's pull request, with its draft ADR: the standards it cited by id and version, the conflicts, and the unknowns. Copilot completes that file on the same branch, so the pull request ends with one ADR.
 - **What the person decides:** the architect gives each conflict and unknown an owner, then accepts the ADR (status Accepted, the deciders named, merged) or rejects it (closed). Neither agent can accept it: the ADR check fails an accepted ADR that names no people.
 - **Evidence to show:** the advisor's comment (standards, conflicts, unknowns, the checks its citations passed, the agent version and run), the pull request's two commits (the advisor's draft and Copilot's completion), and GitHub's ADR and API contract checks on its head commit.
-- **Pilot metric:** time from a design question to a reviewable ADR with green checks, with the conflicts and unknowns found before review tracked alongside the ones found later. Compare it with design decisions made before the pilot. Our rehearsal measured one question: the advisor answered in 39 seconds, Copilot completed the ADR in 5 minutes 16 seconds, and the checks finished within a minute of the push; one conflict and three unknowns reached the architect before any review. That is one run, not a trend; a target is a goal the customer sets.
+- **Pilot metric:** time from a design question to a reviewable ADR with green checks, with the conflicts and unknowns found before review tracked alongside the ones found later. Compare it with design decisions made before the pilot. Our rehearsal measured one question: the advisor answered in 39 seconds, Copilot completed the ADR in 5 minutes 16 seconds, and the checks finished 18 seconds after its commit; one conflict and three unknowns reached the architect before any review. That is one run, not a trend; a target is a goal the customer sets.
 
 **Prepare** (5 minutes): both solutions' **Set up** ([02-design-github](solutions/02-design-github/README.md#set-up), [02-design-microsoft](solutions/02-design-microsoft/README.md#set-up)) and **Before each session**, and a PowerShell 7 terminal at the repository root, signed in to GitHub and Copilot CLI.
 
@@ -176,6 +281,240 @@ A team that lets Copilot write bounded changes wants an independent review, run 
    **Point out:** the decision is the only step no tool can take: Azure comments, and Copilot can't approve its own pull request.
 
 **What to observe:** the AI's contribution (Copilot wrote the change and its tests, Copilot CLI fixed the defect the reviewer's test found, and the Foundry agent pointed at the one risk no rule covers), the deterministic checks (CI with the reviewer's test, the bounds check, Azure's rule checker and sandbox, all on one commit), and the human decision (the person started the runs, wrote the independent test, and approves or asks for changes). Each accelerator also runs on its own: [03-develop-github](solutions/03-develop-github/) and [03-develop-microsoft](solutions/03-develop-microsoft/).
+
+### Test: Copilot proves the repair, Azure load-tests the same commit
+
+A team that lets Copilot repair defects needs two answers before it accepts a repair: is it correct, and does it hold up under load? GitHub proves the repair with regression tests that fail before it and pass after it. Azure deploys that exact commit as its own revision and load-tests it.
+
+- **When a customer uses both:** the repair changes a hot path, here a row lock on every approval and rejection, and a passing regression test says nothing about latency under load.
+- **What passes between them:** the repair commit's SHA, the pull request head that GitHub's proof passed. Azure builds that commit, deploys it as API revision `c` plus the SHA's first 7 characters, and names both in the load test run.
+- **What the person decides:** the test lead approves the repair or requests changes on the pull request, with the proof and the load report in hand. Copilot can't approve its own pull request, and Azure only reports.
+- **Evidence to show:** for one SHA: the proof check on the pull request, `/api/meta` on the deployed revision, the load test run whose description names the SHA and the revision, and the function's report on the defect Issue, which names the run, the commit, and the revision, and confirms the revision from the API's telemetry.
+- **Pilot metric:** lead time from a defect report to a repair that is both proven and load-tested: from the Issue's creation to the function's report on it, both on the Issue's timeline. Track alongside it how many repairs miss a load criterion, the performance regressions caught before review. Compare it with similar work from before the pilot. Our rehearsal measured 51 minutes from the Issue to the report, 5 of them waiting for a database that a tenant policy had stopped (measured). A target is a goal the customer sets, never a result.
+
+**Prepare** (about 35 minutes; 30 in our run, from filing the Issue to a passing proof): both solutions' **Set up** ([04-test-github](solutions/04-test-github/README.md#set-up), [04-test-microsoft](solutions/04-test-microsoft/README.md#set-up)) and **Before each session** checklists, then 04-test-github [steps 1 and 3](solutions/04-test-github/README.md#run-the-demo): rebuild the lab branch and hand the defect Issue to Copilot. Copilot worked 25 minutes in our run, and its tests-only commit came after 6. When its session ends, approve the latest commit's workflow runs (step 4): the proof took 1 minute 6 seconds and CI 2 minutes. Note the Issue and pull request numbers. Just before the session, check that the database is `Ready` again: in our rehearsal a tenant policy stopped it 35 minutes after we started it, and the candidate revision waited until we started it again.
+
+1. **The proof names the repair** (2 minutes). Show the proof check, as in 04-test-github [step 5](solutions/04-test-github/README.md#run-the-demo). Then take the head SHA that the proof passed: it is the only thing that crosses to Azure.
+
+   ```powershell
+   $issue = <issue>; $pr = <pr>
+   $sha = gh pr view $pr --json headRefOid -q .headRefOid
+   ```
+
+   ![The proof check's summary: 5 of 7 selected tests fail at the tests-only commit, and 7 of 7 pass at the head](solutions/04-test-github/images/05-proof-check.png)
+
+   In our run, 3 of 3 selected tests failed at the tests-only commit `9c7d686aa` and passed at the head `de0f88739`.
+
+   **Point out:** the same tests fail at one known SHA and pass at the head. That head is the commit Azure tests next.
+
+2. **Azure deploys that commit** (about 4 minutes; the image build took 2 minutes 9 seconds in our run). In `solutions/04-test-microsoft`, build the commit and deploy it as its own revision ([Optional: load-test one commit](solutions/04-test-microsoft/README.md#optional-load-test-one-commit)):
+
+   ```powershell
+   cd solutions/04-test-microsoft
+   python candidate.py deploy $sha
+   ```
+
+   The script first checks that the commit is on a branch of this repository: it refuses a fork's pull request commit, which never reaches Azure. Azure Container Registry builds the commit's API image with the SHA baked in, Container Apps deploys it as revision `c` plus the SHA's first 7 characters, and the script checks that the live API reports the SHA.
+
+   ![The hand-off in a terminal: the pull request's head SHA de0f887 goes to candidate.py deploy, which builds requesthub-api for that commit in Azure Container Registry in 129 seconds, deploys it as API revision cde0f887, deactivates the previous revision, and confirms that /api/meta reports build de0f887390a3](solutions/04-test-microsoft/images/combo-02-deploy-candidate.png)
+
+   **Point out:** the revision is named after the commit, and `/api/meta` on the live API reports the SHA baked into its image, not a label someone typed.
+
+3. **Azure Load Testing exercises the candidate** (under a minute to start; the verdict came 8 minutes 41 seconds after the start in our run).
+
+   ```powershell
+   python candidate.py run --issue $issue
+   ```
+
+   ![candidate.py run --issue 284: load test run candidate-de0f887-20261110-051549 started against API revision cde0f887, with the description Commit de0f887390a374379d3618188fa1c47dc9c3963a on API revision cde0f887 for Issue #284](solutions/04-test-microsoft/images/combo-03-run-candidate.png)
+
+   While it runs, open the run in the portal, as in 04-test-microsoft [step 2](solutions/04-test-microsoft/README.md#2-run-the-baseline), then Copilot's concurrency test (04-test-github step 3) and the journey's criteria (04-test-microsoft [step 1](solutions/04-test-microsoft/README.md#1-show-the-test-in-azure)): the repair locks the request on every decision, and the `decide` criterion fails the run if its 95th percentile passes 1,500 ms.
+
+   **Point out:** the run's id, display name, and description name the commit and the revision, so nobody mistakes which build it measured.
+
+4. **One SHA, three records** (2 minutes; the report arrives 2 minutes 4 seconds after the verdict).
+
+   ```powershell
+   gh pr view $pr --json headRefOid,statusCheckRollup --jq '.headRefOid, (.statusCheckRollup[] | select(.name | startswith("Regression tests")) | "\(.name): \(.conclusion)")'
+   (Invoke-RestMethod "$(azd env get-value API_URL)/api/meta").buildSha
+   $lt = azd env get-value LOAD_TEST_NAME
+   az load test-run list --load-test-resource $lt -g rg-ai-sdlc-test --test-id requesthub-journey --only-show-errors `
+     --query "[?contains(to_string(description), '$sha')].{run:testRunId, result:testResult, description:description}" -o yaml
+   gh api "repos/{owner}/{repo}/issues/$issue/comments" --jq '.[-1].body' | Select-String 'load-tested|^\*\*(PASSED|FAILED)|Build under test|decide p95'
+   ```
+
+   ![One SHA in three records: the pull request's head de0f887 with its passing proof check, /api/meta on the live API reporting the same SHA, the load test run that names it and passed, and the function's comment on Issue #284: PASSED in run candidate-de0f887-20261110-051549, commit de0f887 on API revision cde0f887 with every server request from that revision, and decide at 193 ms against 1,500 ms at the 95th percentile](solutions/04-test-microsoft/images/combo-04-one-sha.png)
+
+   Open the Issue to show the whole report: the criteria, the client and server tables, and the revision check.
+
+   **Point out:** three records name one SHA: the proof on the pull request, the run in Azure, and the report on the Issue. The report doesn't take the run's word for the revision: the API's telemetry shows every request came from it.
+
+5. **The test lead decides** (2 minutes). Read the tests, the proof, and the load report, then approve the pull request or request changes as a GitHub review, and record it with 04-test-github [step 7](solutions/04-test-github/README.md#run-the-demo). Don't merge: the lab branch is rebuilt for every run.
+
+   ![The review comments and reviewer decision sections: Copilot's finding is listed, no comments does not mean correct, and the decision is pending](solutions/04-test-github/images/07-evidence-review.png)
+
+   **Point out:** the decision is the test lead's, made on correctness and performance evidence for the same commit.
+
+   Afterwards, put the API back on its normal image with `python candidate.py restore` (about a minute), and follow 04-test-github's [Reset and clean up](solutions/04-test-github/README.md#reset-and-clean-up).
+
+**What to observe:** the AI's contribution (Copilot's failing tests and its repair), the deterministic check (the proof at two known SHAs, the load test's pass/fail criteria, and the telemetry's revision check), and the human decision (the test lead's review on the pull request). Each accelerator also runs on its own: [04-test-github](solutions/04-test-github/) and [04-test-microsoft](solutions/04-test-microsoft/).
+
+### Secure: Azure finds and fixes, Copilot reviews, a person deploys
+
+A security team wants a cloud misconfiguration fixed in code, reviewed like any other change, and rechecked on the resource that was flagged. Azure finds it, drafts the Bicep fix, and previews it with what-if; GitHub Copilot reviews the same pull request; a person decides whether to deploy.
+
+- **When a customer uses both:** posture findings land in Defender for Cloud and Azure Policy, but fixes ship through pull requests that Copilot already reviews. The Microsoft track turns the finding into a previewed Bicep fix; the GitHub track gives that fix the same review as every other change.
+- **What passes between them:** one draft pull request and its head commit. Azure's commit status `posture/what-if` and Copilot's review both name that SHA, and the posture Issue links the pull request.
+- **What the person decides:** whether to deploy the fix. They read Copilot's review and Azure's preview of the same commit, then merge it and run `azd provision`, or ask for a change. Copilot only comments, and the automation's identities in Azure can't deploy.
+- **Evidence to show:** the posture Issue with each source's finding, the Foundry agent's draft pull request, Azure's what-if comment and status on its head commit, Copilot's review of the same commit, the `azd provision` output, and `verify`'s comment on the Issue with the private endpoint and Azure Policy's result for the storage account. Defender for Cloud's own confirmation follows on the same Issue.
+- **Pilot metric:** time from finding to verified fix, from the posture Issue's creation to its close by `verify` (`gh issue view <number> --json createdAt,closedAt`), with the share of fixes that Copilot's review or a failed preview sent back tracked alongside. Compare it with similar findings fixed before the pilot. Our rehearsal measured one finding, [#292](https://github.com/melabadi/adept-assessment-northstars/issues/292): 26 minutes from the Issue to its close, the deployment and Azure Policy's evaluation included. That is one run, not a trend; a target is a goal the customer sets.
+
+**Prepare** (15 minutes, with Set up done at least a day ahead): both solutions' **Set up** ([05-secure-github](solutions/05-secure-github/README.md#set-up), [05-secure-microsoft](solutions/05-secure-microsoft/README.md#set-up)). Defender for Cloud takes up to 24 hours to assess a new storage account, and after a reset it can report the account Healthy for up to a day. Copilot code review must be enabled for the repository. Before the session, run 05-secure-microsoft's [Before each session](solutions/05-secure-microsoft/README.md#before-each-session) checks and open its tabs. Start the database if a tenant policy stopped it: 2 to 5 minutes (about 2 minutes in our runs).
+
+1. **Show the finding where security teams see it** (2 minutes). Follow 05-secure-microsoft's [step 1](solutions/05-secure-microsoft/README.md#run-the-demo): Defender for Cloud's recommendation and Azure Policy's compliance both list RequestHub's storage account.
+
+   ![Defender for Cloud's recommendation "Storage account should use a private link connection" for the storage account (name masked): risk level Low, its description, and under Take action, the remediation: add a private endpoint](solutions/05-secure-microsoft/images/01-defender-recommendation.png)
+
+   **Point out:** two sources flag the same resource, and neither says where the fix belongs in the team's code.
+
+2. **Hand the finding to Azure** (1 minute; the run took 22 seconds in ours). On the recommendation, select **Take action** > **Trigger logic app** > `posture-intake` > **Trigger**, as in 05-secure-microsoft's [steps 3 and 4](solutions/05-secure-microsoft/README.md#run-the-demo). In our run the posture Issue [#292](https://github.com/melabadi/adept-assessment-northstars/issues/292) appeared 5 seconds after the trigger, and the Foundry agent's draft pull request [#293](https://github.com/melabadi/adept-assessment-northstars/pull/293) 17 seconds after it.
+
+   ![The draft pull request that the Foundry agent posture-remediator drafted in Azure: it sets the module parameter storagePrivateEndpoint to true, remediates Issue #223 without closing it, lists the expected changes and the risks, and says nothing is deployed until someone runs azd provision](solutions/05-secure-microsoft/images/04-agent-pull-request.png)
+
+   **Point out:** the agent's whole change is one value between the lines the team marked for posture fixes, and nothing is deployed yet.
+
+3. **Azure previews the fix** (1 to 2 minutes; PASS 88 seconds after the trigger in ours). As in 05-secure-microsoft's [step 5](solutions/05-secure-microsoft/README.md#run-the-demo), the commit status `posture/what-if` turns from pending to success, and the `posture-whatif` job comments the preview.
+
+   ![The Azure what-if preview comment on the pull request: four changes, each expected (the virtual network link vnet-link, the private endpoint with a masked name, its DNS zone group, and the virtual network modified), ten resources with recurring what-if noise not counted, one resource what-if cannot preview, and PASS](solutions/05-secure-microsoft/images/05-what-if-preview.png)
+
+   **Point out:** the preview lists every resource a deployment would create or modify, before anyone deploys.
+
+4. **Copilot reviews the same commit** (3 to 4 minutes; 2 minutes 55 seconds to 3 minutes 56 seconds in our runs). In the pull request's **Reviewers**, next to **Copilot**, select **Request**, or from the repository folder:
+
+   ```powershell
+   $pr = <pull request number>
+   gh pr edit $pr --add-reviewer "@copilot"
+   ```
+
+   By default Copilot leaves a comment, not an approval. With the GitHub solution's posture review instruction, [`secure-github-posture-review.instructions.md`](solutions/05-secure-github/.github/instructions/secure-github-posture-review.instructions.md), on the default branch, Copilot also reads Azure's preview of the same commit and compares it with the agent's expected changes. When the review arrives, show that both verdicts name one commit:
+
+   ```powershell
+   $sha = gh pr view $pr --json headRefOid -q .headRefOid
+   $sha.Substring(0, 7)
+   gh api "repos/{owner}/{repo}/commits/$sha/status" --jq '.statuses[] | "\(.context): \(.state), \(.description)"'
+   gh api "repos/{owner}/{repo}/pulls/$pr/reviews" --jq '.[] | "\(.user.login): \(.state) on \(.commit_id[0:7])"'
+   gh api "repos/{owner}/{repo}/pulls/$pr/comments" --jq '.[] | "\(.user.login) on \(.path):\(.line)\n\(.body)"'
+   ```
+
+   ![PowerShell output for pull request 293: head commit 3b0455c, the commit status posture/what-if success with PASS: 4 expected changes, Copilot's review COMMENTED on 3b0455c, and Copilot's comment on resources.bicep line 48 that removing the old lines would break the fixtures of the solution's predeploy tests, so later azd deploy runs would fail](solutions/05-secure-github/images/combo-04-copilot-review.png)
+
+   Copilot's comments differ from run to run. In the run shown, it found that merging the fix would break the solution's own predeploy tests. In another, it named the agent's expected changes that the preview doesn't show, both already in place, and the change the preview shows that the agent didn't expect.
+
+   **Point out:** Copilot reviewed the commit Azure previewed, and found what neither the Function's checks nor the preview could see.
+
+5. **The person decides and deploys** (5 to 7 minutes; `azd provision` took 5 minutes 22 seconds in ours). The person reads both verdicts. To deploy, follow 05-secure-microsoft's [step 6](solutions/05-secure-microsoft/README.md#run-the-demo): mark the pull request **Ready for review**, merge it, and run `azd provision` on an up-to-date `main`. To ask for a change instead, comment on the pull request; the preview runs again on the next commit.
+
+   ![azd provision deploying the merged fix in the solution folder: resource names masked, RequestHub's new Private Endpoint among the resources it deployed, and SUCCESS after 5 minutes 29 seconds](solutions/05-secure-microsoft/images/06-azd-provision.png)
+
+   **Point out:** a person deploys from their own terminal; neither Copilot nor the automation in Azure can.
+
+6. **Recheck the original finding on the storage account** (1 to 15 minutes, depending on Azure Policy; `verify`'s comment came 8 seconds after the command in ours). Start `verify` as in 05-secure-microsoft's [step 7](solutions/05-secure-microsoft/README.md#run-the-demo): it records the evidence on the posture Issue and closes it. Then, in the solution folder, run the starting-state checks again on the same account:
+
+   ```powershell
+   $rg = azd env get-value AZURE_RESOURCE_GROUP
+   $st = az storage account show -g $rg -n (azd env get-value STORAGE_ACCOUNT_NAME) --query id -o tsv
+   (az storage account show --ids $st --query privateEndpointConnections | ConvertFrom-Json).Count
+   az policy state list --resource $st --filter "policyAssignmentName eq 'requesthub-storage-private-link'" --query "[0].complianceState" -o tsv
+   az security assessment show -n cdc78c07-02b0-4af0-1cb2-cb7c672a8b0a --assessed-resource-id $st --query status.code -o tsv --only-show-errors
+   gh issue view <issue number> --json number,state,closedAt --jq '"#\(.number) \(.state) at \(.closedAt)"'
+   ```
+
+   ![PowerShell output of the starting-state checks after the fix: 1 private endpoint on RequestHub's storage account, the Azure Policy assignment requesthub-storage-private-link Compliant, Defender for Cloud still Unhealthy, and posture Issue #292 closed](solutions/05-secure-microsoft/images/combo-06-recheck.png)
+
+   **Point out:** the checks that showed the finding now show it fixed on the same resource. Defender for Cloud says Unhealthy until it reassesses, 30 minutes to a day later; its workflow automation then records that on the same Issue.
+
+**What to observe:** the AI's contribution (a Foundry agent drafts the Bicep fix in Azure; Copilot reviews the same commit against the repository and Azure's preview), the deterministic checks (the Function's checks of the edit, Azure's what-if status on the head commit, and Azure Policy's compliance on the storage account after deployment), and the human decision (a person deploys or asks for a change). Each accelerator also runs on its own: [05-secure-github](solutions/05-secure-github/) and [05-secure-microsoft](solutions/05-secure-microsoft/).
+
+### Operate: Azure recovers, a person files, Copilot proves the follow-up
+
+When an alert fires, the team needs the service back first, and then a test that keeps the failure from coming back unnoticed. Azure SRE Agent investigates the alert, proposes a fix that runs only after a person approves it, verifies the recovery, and drafts the incident record; a person files that record as a GitHub Issue, and GitHub's triage and Copilot turn it into a regression test that is proven to fail without its fix.
+
+- **When a customer uses both:** operations runs in Azure, where the alert, the telemetry, and the fix are, while the code and its tests live in GitHub. Recovering in Azure adds no test, and a test written days later from memory misses what the investigation found.
+- **What passes between them:** one incident record. Azure SRE Agent drafts it with placeholders instead of identifiers, and a person files it as one GitHub Issue with the `incident` label. The triage's follow-up Issue and Copilot's pull request both link back to that Issue.
+- **What the person decides:** an SRE Agent Administrator approves the fix and lends it their permissions. The on-call engineer reads the record and decides whether it goes to GitHub as an `incident`, which starts the triage: the agent can't apply that label, or write to GitHub at all. A person assigns the follow-up to Copilot, approves the workflow runs on its pull request, and reviews it.
+- **Evidence to show:** the alert and the investigation thread in Azure, then one incident Issue that links the triage comment, the follow-up Issue, Copilot's pull request, and the proof check on that pull request.
+- **Pilot metric:** time from an incident's record to a proven regression test: from the incident Issue's creation (`gh issue view <incident> --json createdAt`) to the proof check's PROVEN on its follow-up's pull request (`gh pr checks <pull request>`). Track alongside the share of incidents that get a follow-up at all, and the time to recover in Azure, from the alert's fired time to its resolved time in Azure Monitor. Compare it with similar work from before the pilot. Our rehearsal measured 16 minutes from the incident Issue to PROVEN (15 minutes 43 seconds, measured). A target is a goal the customer sets, never a result.
+
+**Prepare** (about 20 minutes): both solutions' **Set up** ([07-operate-github](solutions/07-operate-github/README.md#set-up), [07-operate-microsoft](solutions/07-operate-microsoft/README.md#set-up)) and **Before each session** checklists. About 10 minutes before the Operate segment, start the incident in `solutions/07-operate-microsoft`. It takes about 2 minutes (1 minute 44 seconds in our run). The alert fires about 6½ minutes after its requests (6 minutes 29 seconds), and the agent's report with its approval request follows about 2 minutes later (2 minutes 8 seconds).
+
+```powershell
+python incident.py start
+```
+
+1. **Follow the investigation** (3 minutes) — [07-operate-microsoft](solutions/07-operate-microsoft/README.md#run-the-demo), steps 3 and 4. In the SRE Agent portal, open **Incidents** and the new *RequestHub notification backlog* incident. The agent measured the backlog, found the configuration change on the worker, ruled out the database and the API, and reports its facts apart from its hypotheses, with the exact command it proposes.
+
+   ![The agent's report: impact, UTC timeline, confirmed facts with their evidence, hypotheses with their confidence, and the probable root cause and action, followed by the approval card](solutions/07-operate-microsoft/images/00-hero.png)
+
+   **Point out:** nobody opened a dashboard. The alert started the investigation, and the report already names the setting, the revision, and the time.
+
+2. **Approve the fix and watch it recover** (about 7 minutes) — [07-operate-microsoft](solutions/07-operate-microsoft/README.md#run-the-demo), steps 5 and 6. Select **Allow once**, then **Grant permissions**. A new worker revision starts without the fault, the backlog drains within about a minute and a half, and the agent waits for fresh telemetry and the resolved alert before it calls the incident recovered.
+
+   ![The approval card marked Approved, reading The action was completed using agent permissions; then Authorization required: the agent tried the command with its managed identity and received an authorization error, and Grant permissions re-runs it with your credentials](solutions/07-operate-microsoft/images/05-authorize.png)
+
+   **Point out:** two decisions, both a person's: this exact command, and lending it their permissions.
+
+3. **File the record as an incident** (2 minutes). The agent ends its last reply with the record ([07-operate-microsoft](solutions/07-operate-microsoft/README.md#run-the-demo), step 7). Its record skill, which `python configure_sre_agent.py --check` enforces, asks for every field the GitHub team's incident form requires: a **Status** table with the status, the environment, and the time the alert fired, then **Impact**, **Recent changes**, and **Timeline (UTC)** sections. Read the record with the audience and check that each one is there. Copy the body with the code block's copy button, and file it with the three labels the form applies:
+
+   ```powershell
+   Get-Clipboard -Raw | Set-Content $env:TEMP\record.md
+   gh issue create --title "Incident record: notification backlog, <YYYY-MM-DD>" --label incident --label ai-sdlc --label phase:operate --body-file $env:TEMP\record.md
+   ```
+
+   `gh` prints the new Issue's URL. To use the form instead (**New issue**, **Operate: report an incident**), fill each field from the part of the record with the same name: **Status**, **Environment**, and **Detected at (UTC)** from its Status table, **Impact**, **Recent changes**, and **Timeline (UTC)** from its sections, and **Mitigation so far** from its Mitigation.
+
+   ![Incident 294 as filed: a person applied the labels incident, ai-sdlc, and phase:operate, and the triage added area:worker and severity:3 four minutes later. The body has the record's sections, and its Status table gives the status Resolved, the environment, and the time the alert fired](solutions/07-operate-github/images/combo-03-incident.png)
+
+   In our rehearsal nobody approved the fix, so the agent drafted no record; we filed incident #294 from its investigation's facts, in the record's layout.
+
+   **Point out:** the person adds no fact; their decision is the `incident` label. The agent never applies it, so only a person hands an incident to the GitHub team's triage.
+
+4. **Read the triage** (about 5 minutes to the comment, 2 to read it) — like [07-operate-github](solutions/07-operate-github/README.md#run-the-demo), step 2A from "Within a minute or two", and step 3. While the run works, walk through its jobs under **Actions**, **Operate · GitHub · triage an incident**. The comment arrives on the incident 4 to 5 minutes after you file it (4 minutes 19 seconds in our run), with a severity and an area label and one follow-up Issue under the incident's **Sub-issues**.
+
+   ```powershell
+   gh issue view <incident> --comments
+   ```
+
+   ![The triage run's six jobs, all successful; the comment's first line, Severity 3, area worker, status Resolved; hypothesis H1 with high confidence: the delay is computed once per batch in NotificationProcessor.cs, lines 64 to 65, so a batch started before the expiry keeps delaying after it, supported by 14 tagged deliveries after 05:40:38; the one follow-up it opened and the candidates it did not create; and follow-up 295, labeled incident-followup](solutions/07-operate-github/images/combo-04-triage.png)
+
+   **Point out:** the triage checked the record against the code, and its one follow-up depends on what the record shows. In our run nobody approved the fix, so the fault switched itself off at its expiry: 14 deliveries still waited 10 seconds after it, and the triage traced that to the worker computing the delay once per batch, a failure in the incident's own recovery path.
+
+5. **Copilot writes the regression test** (about 8 minutes) — [07-operate-github](solutions/07-operate-github/README.md#run-the-demo), steps 5 and 6. Assign the follow-up to Copilot with the `operate-github` agent:
+
+   ```powershell
+   $repo = gh repo view --json nameWithOwner --jq .nameWithOwner
+   $followup = 0   # the follow-up Issue number
+   "{""assignees"":[""copilot-swe-agent[bot]""],""agent_assignment"":{""target_repo"":""$repo"",""base_branch"":""main"",""custom_agent"":""operate-github""}}" |
+     gh api -X POST "repos/$repo/issues/$followup/assignees" --input - --jq '[.assignees[].login] | join(", ")'
+   ```
+
+   It prints `Copilot` and your login. Copilot opens a draft pull request within seconds and finishes in about 8 minutes (7 minutes 51 seconds in our run), with the tests committed before the fix. Its workflow runs wait for a person: select **Approve workflows to run**, or run `gh run rerun <run-id>` for each run that `gh run list --branch <copilot-branch>` lists.
+
+   ![The merge box of Copilot's pull request: 3 workflows awaiting approval, with the Approve workflows to run button](solutions/07-operate-github/images/06-approve-workflows.png)
+
+   **Point out:** a person assigns the follow-up and starts the runs. Nothing in Actions runs on an agent's pull request before that.
+
+6. **One incident, one chain of evidence** (2 minutes; the proof took 1 minute 21 seconds and CI 1 minute 54 seconds in our run). Show the pull request's link to the follow-up and its checks, then open the **Operate · GitHub · prove the regression test** check: `Regression proof: PROVEN`, with each test that fails on the code before the change and passes with it.
+
+   ```powershell
+   gh pr view <pull request> --json title,closingIssuesReferences --jq '.title, (.closingIssuesReferences[] | "Fixes #\(.number)")'
+   gh pr checks <pull request>
+   ```
+
+   ![Copilot's pull request 296, Recheck worker delay fault before each delivery, fixes follow-up 295; all six checks pass, including the proof; the proof reads Regression proof PROVEN: the new test Worker_delay_fault_expiring_mid_batch_only_delays_deliveries_before_expiry failed before the change and passes with it, 70 passed and 1 failed before, 71 passed at the head](solutions/07-operate-github/images/combo-06-proof.png)
+
+   **Point out:** follow the numbers. The record became incident #294, its triage opened follow-up #295, and Copilot's pull request #296 fixes #295 with a test that fails without its two-line fix. A person still reviews it and decides.
+
+**What to observe:** the AI's contribution (Azure SRE Agent's investigation, proposed fix, recovery check, and draft record; the triage's sourced timeline, hypotheses, and one follow-up; Copilot's test and fix), the deterministic check (the proof workflow: the new test fails on the code before the change and passes with it), and the human decisions (approving the fix with the approver's permissions, filing the record as an incident, assigning Copilot, approving its runs, and reviewing its pull request). Each accelerator also runs on its own: [07-operate-github](solutions/07-operate-github/) and [07-operate-microsoft](solutions/07-operate-microsoft/).
 
 ## Follow one requirement from Plan to Test
 
