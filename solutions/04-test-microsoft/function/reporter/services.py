@@ -165,6 +165,18 @@ class GitHub:
     def open_issues(self, label: str) -> list[dict]:
         return self._call("GET", params={"state": "open", "labels": label, "per_page": 100})
 
+    def issue(self, number: int) -> dict | None:
+        """One Issue or pull request of this repository by number; None if it doesn't exist here (a transferred
+        Issue redirects to another repository, which doesn't count)."""
+        try:
+            found = self._call("GET", f"/{int(number)}")
+        except GitHubError as exc:
+            if exc.status in (404, 410):
+                return None
+            raise
+        own = self.base.rsplit("/issues", 1)[0].lower()
+        return found if str(found.get("repository_url") or "").lower() == own else None
+
     def comments(self, number: int, since: str | None = None) -> list[dict]:
         params = {"per_page": 100, **({"since": since} if since else {})}
         return self._call("GET", f"/{int(number)}/comments", params=params)
