@@ -291,9 +291,9 @@ A team that lets Copilot repair defects needs two answers before it accepts a re
 - **What passes between them:** the repair commit's SHA, the pull request head that GitHub's proof passed. Azure builds that commit, deploys it as API revision `c` plus the SHA's first 7 characters, and names both in the load test run.
 - **What the person decides:** the test lead approves the repair or requests changes on the pull request, with the proof and the load report in hand. Copilot can't approve its own pull request, and Azure only reports.
 - **Evidence to show:** for one SHA: the proof check on the pull request, `/api/meta` on the deployed revision, the load test run whose description names the SHA and the revision, and the function's report on the defect Issue, which names the run, the commit, and the revision, and confirms the revision from the API's telemetry.
-- **Pilot metric:** lead time from a defect report to a repair that is both proven and load-tested: from the Issue's creation to the function's report on it, both on the Issue's timeline. Track alongside it how many repairs miss a load criterion, the performance regressions caught before review. Compare it with similar work from before the pilot. Our rehearsal measured 51 minutes from the Issue to the report, 5 of them waiting for a database that a tenant policy had stopped (measured). A target is a goal the customer sets, never a result.
+- **Pilot metric:** lead time from a defect report to a repair that is both proven and load-tested: from the Issue's creation to the function's report on it, both on the Issue's timeline. Track alongside it how many repairs miss a load criterion, the performance regressions caught before review. Compare it with similar work from before the pilot. Our two rehearsals measured 51 and 32 minutes from the Issue to the report; in the first, 5 minutes went to waiting for a database that a tenant policy had stopped (measured). A target is a goal the customer sets, never a result.
 
-**Prepare** (about 35 minutes; 30 in our run, from filing the Issue to a passing proof): both solutions' **Set up** ([04-test-github](solutions/04-test-github/README.md#set-up), [04-test-microsoft](solutions/04-test-microsoft/README.md#set-up)) and **Before each session** checklists, then 04-test-github [steps 1 and 3](solutions/04-test-github/README.md#run-the-demo): rebuild the lab branch and hand the defect Issue to Copilot. Copilot worked 25 minutes in our run, and its tests-only commit came after 6. When its session ends, approve the latest commit's workflow runs (step 4): the proof took 1 minute 6 seconds and CI 2 minutes. Note the Issue and pull request numbers. Just before the session, check that the database is `Ready` again: in our rehearsal a tenant policy stopped it 35 minutes after we started it, and the candidate revision waited until we started it again.
+**Prepare** (about 35 minutes; 30 in our first run, from filing the Issue to a passing proof): both solutions' **Set up** ([04-test-github](solutions/04-test-github/README.md#set-up), [04-test-microsoft](solutions/04-test-microsoft/README.md#set-up)) and **Before each session** checklists, then 04-test-github [steps 1 and 3](solutions/04-test-github/README.md#run-the-demo): rebuild the lab branch and hand the defect Issue to Copilot. Copilot worked 25 minutes in our first run and 11 in our second, and its tests-only commit came after 6 and 8. When its session ends, approve the latest commit's workflow runs (step 4): the proof took about a minute and CI about 2 in both runs. Note the Issue and pull request numbers. Just before the session, check that the database is `Ready` again: in our first rehearsal a tenant policy stopped it 35 minutes after we started it, and the candidate revision waited until we started it again. The screenshots of steps 2 to 5 come from our second rehearsal: Issue #299 and pull request #300.
 
 1. **The proof names the repair** (2 minutes). Show the proof check, as in 04-test-github [step 5](solutions/04-test-github/README.md#run-the-demo). Then take the head SHA that the proof passed: it is the only thing that crosses to Azure.
 
@@ -304,11 +304,11 @@ A team that lets Copilot repair defects needs two answers before it accepts a re
 
    ![The proof check's summary: 5 of 7 selected tests fail at the tests-only commit, and 7 of 7 pass at the head](solutions/04-test-github/images/05-proof-check.png)
 
-   In our run, 3 of 3 selected tests failed at the tests-only commit `9c7d686aa` and passed at the head `de0f88739`.
+   In our second run, 3 of 3 selected tests failed at the tests-only commit `78908821d` and passed at the head `24bf08614`.
 
    **Point out:** the same tests fail at one known SHA and pass at the head. That head is the commit Azure tests next.
 
-2. **Azure deploys that commit** (about 4 minutes; the image build took 2 minutes 9 seconds in our run). In `solutions/04-test-microsoft`, build the commit and deploy it as its own revision ([Optional: load-test one commit](solutions/04-test-microsoft/README.md#optional-load-test-one-commit)):
+2. **Azure deploys that commit** (about 4 minutes; 3 minutes 40 seconds in our second run, 2 minutes 13 seconds of them building the image). In `solutions/04-test-microsoft`, build the commit and deploy it as its own revision ([Optional: load-test one commit](solutions/04-test-microsoft/README.md#optional-load-test-one-commit)):
 
    ```powershell
    cd solutions/04-test-microsoft
@@ -317,23 +317,23 @@ A team that lets Copilot repair defects needs two answers before it accepts a re
 
    The script first checks that the commit is on a branch of this repository: it refuses a fork's pull request commit, which never reaches Azure. Azure Container Registry builds the commit's API image with the SHA baked in, Container Apps deploys it as revision `c` plus the SHA's first 7 characters, and the script checks that the live API reports the SHA.
 
-   ![The hand-off in a terminal: the pull request's head SHA de0f887 goes to candidate.py deploy, which builds requesthub-api for that commit in Azure Container Registry in 129 seconds, deploys it as API revision cde0f887, deactivates the previous revision, and confirms that /api/meta reports build de0f887390a3](solutions/04-test-microsoft/images/combo-02-deploy-candidate.png)
+   ![The hand-off in a terminal: the head SHA of pull request 300 goes to candidate.py deploy, which builds requesthub-api for commit 24bf08614263 in Azure Container Registry in 133 seconds, deploys it as API revision c24bf086, deactivates the previous revision, and confirms that /api/meta reports build 24bf08614263](solutions/04-test-microsoft/images/combo-02-deploy-candidate.png)
 
    **Point out:** the revision is named after the commit, and `/api/meta` on the live API reports the SHA baked into its image, not a label someone typed.
 
-3. **Azure Load Testing exercises the candidate** (under a minute to start; the verdict came 8 minutes 41 seconds after the start in our run).
+3. **Azure Load Testing exercises the candidate** (under a minute to start; the verdict came 8 minutes 39 seconds after the start in our second run).
 
    ```powershell
    python candidate.py run --issue $issue
    ```
 
-   ![candidate.py run --issue 284: load test run candidate-de0f887-20261110-051549 started against API revision cde0f887, with the description Commit de0f887390a374379d3618188fa1c47dc9c3963a on API revision cde0f887 for Issue #284](solutions/04-test-microsoft/images/combo-03-run-candidate.png)
+   ![candidate.py run --issue 299: load test run candidate-24bf086-20261110-205403 started against API revision c24bf086, with the description Commit 24bf086142638763cb721ed9d698b4fedd1be7e8 on API revision c24bf086 for Issue #299, and when the verdict and the report on the Issue will come](solutions/04-test-microsoft/images/combo-03-run-candidate.png)
 
    While it runs, open the run in the portal, as in 04-test-microsoft [step 2](solutions/04-test-microsoft/README.md#2-run-the-baseline), then Copilot's concurrency test (04-test-github step 3) and the journey's criteria (04-test-microsoft [step 1](solutions/04-test-microsoft/README.md#1-show-the-test-in-azure)): the repair locks the request on every decision, and the `decide` criterion fails the run if its 95th percentile passes 1,500 ms.
 
    **Point out:** the run's id, display name, and description name the commit and the revision, so nobody mistakes which build it measured.
 
-4. **One SHA, three records** (2 minutes; the report arrives 2 minutes 4 seconds after the verdict).
+4. **One SHA, three records** (2 minutes; the report arrived 2 minutes 1 second after the verdict in our second run).
 
    ```powershell
    gh pr view $pr --json headRefOid,statusCheckRollup --jq '.headRefOid, (.statusCheckRollup[] | select(.name | startswith("Regression tests")) | "\(.name): \(.conclusion)")'
@@ -344,17 +344,23 @@ A team that lets Copilot repair defects needs two answers before it accepts a re
    gh api "repos/{owner}/{repo}/issues/$issue/comments" --jq '.[-1].body' | Select-String 'load-tested|^\*\*(PASSED|FAILED)|Build under test|decide p95'
    ```
 
-   ![One SHA in three records: the pull request's head de0f887 with its passing proof check, /api/meta on the live API reporting the same SHA, the load test run that names it and passed, and the function's comment on Issue #284: PASSED in run candidate-de0f887-20261110-051549, commit de0f887 on API revision cde0f887 with every server request from that revision, and decide at 193 ms against 1,500 ms at the 95th percentile](solutions/04-test-microsoft/images/combo-04-one-sha.png)
+   ![One SHA in three records: the head of pull request 300, 24bf086, with its passing proof check, /api/meta on the live API reporting the same SHA, the load test run that names it and passed, and the function's comment on Issue #299: PASSED in run candidate-24bf086-20261110-205403, commit 24bf086 on API revision c24bf086 with every server request in the run's window from that revision, and decide at 195 ms against 1,500 ms at the 95th percentile](solutions/04-test-microsoft/images/combo-04-one-sha.png)
 
    Open the Issue to show the whole report: the criteria, the client and server tables, and the revision check.
 
    **Point out:** three records name one SHA: the proof on the pull request, the run in Azure, and the report on the Issue. The report doesn't take the run's word for the revision: the API's telemetry shows every request came from it.
 
-5. **The test lead decides** (2 minutes). Read the tests, the proof, and the load report, then approve the pull request or request changes as a GitHub review, and record it with 04-test-github [step 7](solutions/04-test-github/README.md#run-the-demo). Don't merge: the lab branch is rebuilt for every run.
+5. **The test lead decides** (2 minutes; in our second run the test lead approved 1 minute 51 seconds after the report arrived, and recording the decision took 13 seconds). Read the tests, the proof, and the load report, then approve the pull request or request changes (`--request-changes`) as a GitHub review, and record it with 04-test-github [step 7](solutions/04-test-github/README.md#run-the-demo), from the repository root on the lab branch, never the pull request's branch. Don't merge: the lab branch is rebuilt for every run.
 
-   ![The review comments and reviewer decision sections: Copilot's finding is listed, no comments does not mean correct, and the decision is pending](solutions/04-test-github/images/07-evidence-review.png)
+   ```powershell
+   cd ../..
+   gh pr review $pr --approve --body "<what you checked: the proof and the load run, for the head SHA>"
+   python .github/skills/review-evidence/review_evidence.py --pr $pr --comment
+   ```
 
-   **Point out:** the decision is the test lead's, made on correctness and performance evidence for the same commit.
+   ![The evidence comment on pull request 300 after the test lead's review: every check passes, 3 of 3 selected tests fail at the tests-only commit 78908821d and pass at the head 24bf08614, no Copilot code review was requested, and the reviewer decision reads approved, naming the proof and the load run](solutions/04-test-github/images/combo-05-decision-recorded.png)
+
+   **Point out:** the decision is the test lead's, made on correctness and performance evidence for the same commit, and the evidence comment records who made it.
 
    Afterwards, put the API back on its normal image with `python candidate.py restore` (about a minute), and follow 04-test-github's [Reset and clean up](solutions/04-test-github/README.md#reset-and-clean-up).
 
