@@ -6,7 +6,7 @@ Design decisions often live in meeting notes and people's memories. Reviewers ca
 
 ## Where it fits
 
-**Phase 2 of 7: Design and architect.** The Microsoft counterpart is [02-design-microsoft](../02-design-microsoft/).
+**Phase 2 of 7: Design and architect.** The Microsoft counterpart is [02-design-microsoft](../02-design-microsoft/). To run both on one design question and one pull request, follow the [Design solution combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -43,6 +43,7 @@ flowchart LR
 02-design-github/
 ├── README.md
 ├── adr-task.md                         the task Copilot receives (CLI prompt; the issue template says the same)
+├── adr-from-advisor-task.md            the task for the Design solution combo: complete the Foundry advisor's draft into one ADR
 ├── images/                             screenshots from a live run, used in this README
 ├── inputs/
 │   └── reviewed-brief.md               synthetic reviewed requirements and the open design question
