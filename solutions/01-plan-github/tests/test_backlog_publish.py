@@ -1,4 +1,4 @@
-"""Tests for the backlog publisher's trust boundary: which Issues it treats as its own.
+"""Tests for the backlog publisher's trust boundary: which Issues it treats as its own, and which revision it publishes.
 
 The publisher finds the epic and the tasks it published before by a hidden marker in their body, then updates,
 reopens, closes, and links them. Anyone can open an Issue with the `phase:plan` label (this solution's issue form
@@ -8,6 +8,11 @@ have written it:
 - one that the workflow published with its GITHUB_TOKEN, as `github-actions[bot]`, is adopted;
 - one that the repository's owner, a member, or a collaborator opened, as a local run does, is adopted;
 - one that anyone else opened is ignored: a publish or a reset never updates, reopens, closes, or links it.
+
+In the Plan solution combo, Microsoft Foundry evaluates the pull request's brief first, and 01-plan-microsoft records
+the evaluation in an Issue. The publisher then publishes only the revision Foundry evaluated, once its gates passed and
+a person ticked every open item, and links the epic and the evaluation both ways. Only an evaluation Issue from the
+owner, a member, or a collaborator counts.
 
 They run offline in about a second, against a fake `gh` and synthetic Issues. Where a whole publish runs, the backlog
 validator is stubbed: it has its own checks, and these tests are about which Issues the publisher writes to. The live
@@ -76,6 +81,7 @@ class FakeGitHub:
     def __init__(self, *issues: dict):
         self.issues = list(issues)
         self.calls: list[tuple[str, str, dict | None]] = []
+        self.comments: dict[int, list[dict]] = {}
 
     def __call__(self, path, method="GET", body=None, paginate=False, ok404=False):
         route = path.split("?")[0].removeprefix(f"repos/{REPO}/")
@@ -98,7 +104,21 @@ class FakeGitHub:
             return issue
         if re.fullmatch(r"issues/\d+/(sub_issues|dependencies/blocked_by)", route):
             return [] if method == "GET" else {}
+        if re.fullmatch(r"issues/\d+/comments", route):
+            comments = self.comments.setdefault(int(route.split("/")[1]), [])
+            if method == "GET":
+                return list(comments)
+            comments.append({"body": body["body"], "user": {"login": WORKFLOW["login"], "type": WORKFLOW["type"]},
+                             "author_association": WORKFLOW["association"]})
+            return comments[-1]
         raise AssertionError(f"unexpected gh call: {method} {path}")
+
+    def writes(self) -> list[tuple[str, str, dict | None]]:
+        return [call for call in self.calls if call[0] != "GET"]
+
+    def created(self, title_prefix: str) -> dict:
+        """The Issue the publisher created with this title prefix, as it is now."""
+        return next(issue for issue in self.issues if issue["title"].startswith(title_prefix))
 
     def writes_about(self, issue: dict) -> list[tuple[str, str, dict | None]]:
         """Every write to the Issue, or that names it in its body (a sub-issue or a "blocked by" link)."""
@@ -200,6 +220,140 @@ class PublishAndResetTests(unittest.TestCase):
         self.assertIn("closed 1 issue(s)", out)
         self.assertEqual(fake.writes_about(outsider), [])
         self.assertIn(("PATCH", "issues/13"), [call[:2] for call in fake.calls])
+
+
+REVISION = "1" * 40
+OTHER_REVISION = "2" * 40
+RUN = "20261109-120000-abcd"
+
+
+def evaluation_issue(number: int, revision: str = REVISION, gates: str = "passed",
+                     items: tuple[str, ...] = ("[x] **C1**", "[x] **Q1**"), author: dict = OWNER,
+                     pull_request: int = 129) -> dict:
+    """A synthetic evaluation Issue as 01-plan-microsoft's Function app writes it: the scores, the open items as a
+    task list (ticked or not), and the marker that names the run, the pull request, the revision, and the verdict."""
+    body = "\n".join([
+        f"> Microsoft Foundry evaluated the requirements brief on 01-plan-github pull request #{pull_request}.", "",
+        "## Evaluation in Microsoft Foundry", "", "| Check | Role | Result |", "| --- | --- | --- |", "",
+        publish_backlog.OPEN_ITEMS_HEADING, "", *[f"- {item} · a synthetic open item" for item in items], "",
+        f"<!-- plan-microsoft evaluation: run {RUN}, pull request #{pull_request}, revision {revision}, gates {gates} -->",
+    ])
+    return {
+        "number": number, "id": 9000 + number, "node_id": f"I_synthetic{number}", "state": "open",
+        "html_url": f"https://github.com/{REPO}/issues/{number}", "title": f"Plan: Foundry evaluation {number}",
+        "body": body, "labels": [{"name": "phase:plan"}, {"name": "type:evaluation"}],
+        "user": {"login": author["login"], "type": author["type"]}, "author_association": author["association"],
+    }
+
+
+class FoundryEvaluationTests(unittest.TestCase):
+    """The Plan solution combo: when Microsoft Foundry evaluated the pull request's brief, the publisher publishes only
+    the revision it evaluated, once its gates passed and a person decided every open item, and links both ways."""
+
+    def publish(self, fake: FakeGitHub, *args: str) -> tuple[int, str, str, str | None]:
+        """Publishes revision REVISION of pull request #129, with a refusal file: (exit code, stdout, stderr, refusal)."""
+        with tempfile.TemporaryDirectory() as folder:
+            refusal = Path(folder) / "refused.md"
+            code, out, err = run(fake, "--revision", REVISION, "--pull-request", "129", "--refusal-file", str(refusal),
+                                 *args)
+            return code, out, err, refusal.read_text(encoding="utf-8") if refusal.exists() else None
+
+    def test_without_an_evaluation_the_epic_names_the_revision_it_was_published_from(self):
+        fake = FakeGitHub()
+        code, out, err, refusal = self.publish(fake, "--json")
+        self.assertEqual((code, refusal), (0, None), err)
+        body = fake.created("[Plan/Copilot] Synthetic epic")["body"]
+        self.assertIn(f"## Review\n\n- **Revision:** [`{REVISION[:7]}`](https://github.com/{REPO}/commit/{REVISION}) of ",
+                      body)
+        self.assertIn("approved in pull request #129.", body)
+        self.assertNotIn("Foundry", body)
+        self.assertIsNone(json.loads(out)["evaluation"])
+
+    def test_an_evaluated_revision_is_published_with_links_both_ways(self):
+        record = evaluation_issue(50)
+        fake = FakeGitHub(record)
+        code, out, err, refusal = self.publish(fake, "--json")
+        self.assertEqual((code, refusal), (0, None), err)
+        result = json.loads(out)
+        self.assertEqual(result["evaluation"]["issue"], 50)
+        epic = next(r["number"] for r in result["results"] if r["id"] == "EPIC-1")
+        task = next(r["number"] for r in result["results"] if r["id"] == "TASK-1")
+        body = fake.created("[Plan/Copilot] Synthetic epic")["body"]
+        self.assertIn(f"- **Evaluation:** Microsoft Foundry evaluated this revision in #50 (run `{RUN}` of "
+                      f"01-plan-microsoft), and its gates passed. The product owner decided its 2 open items there "
+                      f"before approving.", body)
+        comment = fake.comments[50][0]["body"]
+        self.assertIn(f"GitHub published revision `{REVISION[:7]}`", comment)
+        self.assertIn(f"- Epic: #{epic}\n- Tasks, linked to the epic as sub-issues: #{task}", comment)
+        self.assertEqual((record["state"], record["state_reason"]), ("closed", "completed"))
+
+    def test_publishing_again_comments_on_the_evaluation_only_once(self):
+        fake = FakeGitHub(evaluation_issue(50))
+        self.publish(fake)
+        code, out, err, _ = self.publish(fake)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(fake.comments[50]), 1)
+        self.assertEqual([call[:2] for call in fake.calls].count(("POST", "issues")), 2, "epic and task, created once")
+        self.assertIn("#50 already lists them", out)
+
+    def test_a_revision_foundry_did_not_evaluate_is_refused(self):
+        fake = FakeGitHub(evaluation_issue(50, revision=OTHER_REVISION))
+        code, _, err, refusal = self.publish(fake)
+        self.assertEqual(code, 1)
+        self.assertIn(f"at revision {OTHER_REVISION[:7]} (#50), not at revision {REVISION[:7]}, the one approved", refusal)
+        self.assertIn("`python runs.py start --evaluate-pull-request 129`", refusal)
+        self.assertIn("Refusing to publish", err)
+        self.assertEqual(fake.writes(), [], "nothing is written")
+
+    def test_a_revision_whose_gates_failed_is_refused(self):
+        fake = FakeGitHub(evaluation_issue(50, gates="failed"))
+        code, _, _, refusal = self.publish(fake)
+        self.assertEqual(code, 1)
+        self.assertIn(f"evaluation of revision {REVISION[:7]} (#50) didn't pass its gates", refusal)
+        self.assertEqual(fake.writes(), [])
+
+    def test_a_revision_with_open_items_nobody_decided_is_refused(self):
+        fake = FakeGitHub(evaluation_issue(50, items=("[x] **C1**", "[ ] **Q1**", "[ ] **@octocat**")))
+        code, _, _, refusal = self.publish(fake)
+        self.assertEqual(code, 1)
+        self.assertIn("2 open items in Microsoft Foundry's evaluation #50 are not decided yet: Q1, @\u200boctocat.",
+                      refusal)
+        self.assertNotIn("@octocat", refusal)
+        self.assertEqual(fake.writes(), [])
+
+    def test_the_newest_evaluation_of_the_approved_revision_counts(self):
+        fake = FakeGitHub(evaluation_issue(52, revision=OTHER_REVISION), evaluation_issue(51),
+                          evaluation_issue(50, gates="failed"))
+        code, out, err, refusal = self.publish(fake, "--json")
+        self.assertEqual((code, refusal), (0, None), err)
+        self.assertEqual(json.loads(out)["evaluation"]["issue"], 51)
+
+    def test_an_outsiders_evaluation_issue_neither_blocks_nor_vouches_for_a_publish(self):
+        code, _, err, refusal = self.publish(FakeGitHub(evaluation_issue(60, revision=OTHER_REVISION, author=OUTSIDER)))
+        self.assertEqual((code, refusal), (0, None), err)
+        code, _, _, refusal = self.publish(FakeGitHub(evaluation_issue(50, revision=OTHER_REVISION),
+                                                      evaluation_issue(61, author=OUTSIDER)))
+        self.assertEqual(code, 1)
+        self.assertIn(f"not at revision {REVISION[:7]}", refusal)
+
+    def test_an_evaluation_of_another_pull_request_does_not_count(self):
+        code, out, err, refusal = self.publish(FakeGitHub(evaluation_issue(50, revision=OTHER_REVISION,
+                                                                           pull_request=130)), "--json")
+        self.assertEqual((code, refusal), (0, None), err)
+        self.assertIsNone(json.loads(out)["evaluation"])
+
+    def test_a_dry_run_says_what_it_would_do_and_writes_nothing(self):
+        fake = FakeGitHub(evaluation_issue(50))
+        code, out, err, _ = self.publish(fake, "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("would comment the published issues on #50 and close it", out)
+        self.assertEqual(fake.writes(), [])
+
+    def test_a_pull_request_needs_the_full_revision(self):
+        for args in (["--pull-request", "129"], ["--revision", REVISION[:7], "--pull-request", "129"]):
+            with self.subTest(args=args), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+                publish_backlog.main([*args, "--backlog", "backlog.json", "--track", "github", "--repo", REPO])
+            self.assertEqual(raised.exception.code, 2)
 
 
 if __name__ == "__main__":
