@@ -63,6 +63,7 @@ Before a combo, complete both solutions' **Set up** and run both **Before each s
 | [Develop](#develop-copilot-writes-azure-reviews-a-person-decides) | Copilot writes the change; CI, the bounds check, and the reviewer's own test | A Function checks the team rules, builds the change in a sandbox, and asks a Foundry agent | The pull request's head commit | The reviewer approves or asks for changes |
 | [Test](#test-copilot-proves-the-repair-azure-load-tests-the-same-commit) | Copilot repairs a defect test-first; the proof check shows the tests fail before the repair and pass after it | Azure deploys that commit as its own revision, load-tests it, and reports on the defect Issue | The repair commit's SHA | The test lead approves the repair or asks for changes |
 | [Secure](#secure-azure-finds-and-fixes-copilot-reviews-a-person-deploys) | Copilot code review checks the Bicep fix against Azure's preview | Defender for Cloud and Azure Policy find the misconfiguration; a Foundry agent drafts the fix; what-if previews it; `verify` rechecks the resource | The fix's draft pull request and its head commit | A person deploys the fix or asks for a change |
+| [Release](#release-github-tests-one-image-azure-stages-that-digest-a-person-decides) | Actions build the API image once, test that image, and attach the evidence to its digest in a draft release; Copilot summarizes it | Azure imports that digest, stages it as a candidate revision with no traffic, and gates it | The image's digest | The release manager promotes, aborts, or rolls back |
 | [Operate](#operate-azure-recovers-a-person-files-copilot-proves-the-follow-up) | The triage and Copilot turn the incident into a regression test, proven to fail without its fix | Azure SRE Agent investigates, proposes the fix, verifies recovery, and drafts the record | One incident record, filed as an `incident` Issue | A person approves the fix, files the record, and reviews Copilot's pull request |
 
 ### Plan: Copilot drafts, Foundry evaluates, the product owner publishes
@@ -434,6 +435,92 @@ A security team wants a cloud misconfiguration fixed in code, reviewed like any 
    **Point out:** the checks that showed the finding now show it fixed on the same resource. Defender for Cloud says Unhealthy until it reassesses, 30 minutes to a day later; its workflow automation then records that on the same Issue.
 
 **What to observe:** the AI's contribution (a Foundry agent drafts the Bicep fix in Azure; Copilot reviews the same commit against the repository and Azure's preview), the deterministic checks (the Function's checks of the edit, Azure's what-if status on the head commit, and Azure Policy's compliance on the storage account after deployment), and the human decision (a person deploys or asks for a change). Each accelerator also runs on its own: [05-secure-github](solutions/05-secure-github/) and [05-secure-microsoft](solutions/05-secure-microsoft/).
+
+### Release: GitHub tests one image, Azure stages that digest, a person decides
+
+Teams that gate releases on GitHub and run production on Azure often ship a rebuild of the image they tested. Here GitHub builds the API image once and attaches its test evidence to the image's digest; Azure stages that exact digest as a candidate with no traffic, gates it, and waits for the release manager.
+
+- **When a customer uses both:** GitHub Actions already builds and tests release candidates, and production runs on Azure Container Apps. On its own, each track tests a different build: GitHub's evidence stops at a draft release, and Azure's release builds its own image from the commit.
+- **What passes between them:** one image digest. GitHub's release manifest names it next to the commit and the checksum of every test report. Azure's registry, the candidate revision, and the gate's verdict name the same digest, and promote moves traffic only to the revision and image the verdict names.
+- **What the person decides:** the release manager promotes the candidate (go) or aborts it (no-go), and rolls back if users report a problem. Azure's Activity log records who ran each step. No AI starts, promotes, or rolls back a release, and publishing GitHub's release stays a separate approval ([06-release-github](solutions/06-release-github/README.md#run-the-demo), step 7).
+- **Evidence to show:** for one digest: the candidate run and the draft release with its manifest and test reports (GitHub), then the image in Azure's registry, the release job the import started, the candidate revision and the gate's verdict (Azure), and who promoted or rolled back (the workbook).
+- **Pilot metric:** time from a tested candidate to users: from the candidate run's start (`gh run view <run id> --json createdAt`) to the end of the promote job, its row in the workbook's **Release steps**. Track alongside it how many promoted digests no GitHub release manifest names; it should stay at zero. Compare it with similar work from before the pilot. Our rehearsal measured 16 minutes 51 seconds, 7 minutes 42 of them between the gate's verdict and the promotion while we showed the evidence. The automated steps took 2 minutes 33 seconds (GitHub's candidate), 19 seconds (the import), 2 minutes 18 seconds (Azure's release job), and 51 seconds (the promotion) (measured). A target is a goal the customer sets, never a result.
+
+**Prepare** (start about 15 minutes before you present; GitHub's candidate took 2 minutes 33 seconds in our rehearsal, and Copilot's summary 6 minutes 4 seconds more): both solutions' **Set up** ([06-release-github](solutions/06-release-github/README.md#set-up), [06-release-microsoft](solutions/06-release-microsoft/README.md#set-up)). GitHub creates the `requesthub-api` package as private, even in a public repository, and Azure's registry imports it here without a credential, so make it public once: your profile → **Packages** → **requesthub-api** → **Package settings** → **Change visibility** → **Public**. GitHub can't make a public package private again. In a private repository, keep the package private: the import then needs a credential for GitHub's registry, which this combo doesn't cover. Then, in a PowerShell 7 terminal in `solutions/06-release-microsoft`, run [06-release-microsoft](solutions/06-release-microsoft/README.md#before-each-session)'s *Before each session* steps 1 and 2: the preflight and the starting state. So that the image is built once, by GitHub, turn Azure's own build off: define `Update-BuildTask` (06-release-microsoft *Set up*, step 3), then run the first command below; it prints `commit trigger: Disabled` (4 seconds in our run). The second starts GitHub's candidate, as in [06-release-github](solutions/06-release-github/README.md#run-the-demo), step 1.
+
+```powershell
+Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; status = 'Disabled' }) } }
+gh workflow run release-github-candidate.yml -f version=1.0.0
+```
+
+1. **GitHub built one image and tested it** (3 minutes). Open the finished candidate run, as in [06-release-github](solutions/06-release-github/README.md#run-the-demo), step 2: preflight, the tests, the two image builds, the deployment check on the pushed images, and the draft.
+
+   ![The finished candidate run: preflight, the image builds, the API and web tests, the deployment check, and the draft, all green in 3 minutes 25 seconds](solutions/06-release-github/images/02-candidate-run.png)
+
+   **Point out:** the smoke and browser tests ran against the image GitHub pushed, by its digest. From here on, nobody builds it again.
+
+2. **The evidence names the digest** (3 minutes). Open the draft release, as in [06-release-github](solutions/06-release-github/README.md#run-the-demo), step 4: the image digests, the four suites, and Copilot's summary for the approver. Then read the API image's digest from the release manifest, in the terminal from *Prepare*; the next two steps use the same terminal:
+
+   ```powershell
+   $draft = gh release list --json tagName,name --jq '.[] | select(.name == "RequestHub demo-v1.0.0 (demo)") | .tagName'
+   $manifest = gh release download $draft -p release-manifest.json -O - | ConvertFrom-Json
+   $api = $manifest.images | Where-Object service -eq api
+   "$($api.name)@$($api.digest), commit $($manifest.commit)"
+   $manifest.tests.suites | Format-Table name, tests, passed, failed
+   ```
+
+   ![The draft release: a Draft badge, the note that this is a demo release, the commit and candidate run, the two image digests, the four test suites, and Waiting for approval](solutions/06-release-github/images/04-draft-evidence.png)
+
+   ![The API image's digest and commit read from the draft's release manifest, and its four test suites: 67 API, 14 web, 9 smoke, and 6 browser tests, none failed](solutions/06-release-github/images/combo-02-digest.png)
+
+   **Point out:** `release-manifest.json` ties the digest to the commit and to the checksum of every test report. This digest is what Azure will run.
+
+3. **Hand the digest to Azure** (1 minute; the import took 19 seconds in our run). Import the image by its digest into Azure's registry, tagged with its commit and `main`, the two tags Azure's own build pushes. Then check the digest in the registry, and the release job that the push started:
+
+   ```powershell
+   az acr import --name (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --source "$($api.name)@$($api.digest)" `
+     --image "requesthub-api:$($manifest.commit)" --image requesthub-api:main --force
+   az acr repository show --name (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --image "requesthub-api:$($manifest.commit)" --query digest -o tsv
+   az containerapp job execution list -g (azd env get-value AZURE_RESOURCE_GROUP) -n (azd env get-value SERVICE_RELEASE_NAME) `
+     --query "[0].{execution:name, started:properties.startTime, status:properties.status, image:properties.template.containers[0].env[?name=='IMAGE'] | [0].value}" -o yaml
+   ```
+
+   The import prints nothing when it succeeds. The import is a push: Event Grid and the trigger function started the release job with that digest 12 seconds after the import began in our run. The function's **Invocations** list it too, as in [06-release-microsoft](solutions/06-release-microsoft/README.md#run-the-demo), step 2.
+
+   ![Azure's registry imports GitHub's image by its digest and reports the same digest for the commit's tag; the release job execution that the push started runs that digest and succeeded](solutions/06-release-microsoft/images/combo-03-import.png)
+
+   **Point out:** Azure builds nothing. The import keeps the digest, and the push starts Azure's own release, exactly as for a build of its own.
+
+4. **Azure gates the same digest** (about 2½ minutes; 2 minutes 18 seconds in our run). The release job adds the image as a candidate revision with 0% of traffic and gates it on its own URL: readiness, the build the image reports (GitHub's commit), the API used the way people use it, and a 60-second bake. Show the gate in the workbook, as in [06-release-microsoft](solutions/06-release-microsoft/README.md#run-the-demo), step 3, then the one digest across both tracks:
+
+   ```powershell
+   $rg = azd env get-value AZURE_RESOURCE_GROUP; $app = azd env get-value API_APP_NAME
+   $traffic = az containerapp show -g $rg -n $app --query properties.configuration.ingress.traffic -o json | ConvertFrom-Json
+   $candidate = ($traffic | Where-Object label -eq candidate).revisionName
+   $gate = (az containerapp show -g $rg -n $app --query tags -o json | ConvertFrom-Json).'requesthub-release-gate'
+   [ordered]@{
+     "GitHub's release evidence" = $api.digest
+     "Azure's registry" = az acr repository show --name (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --image "requesthub-api:$($manifest.commit)" --query digest -o tsv
+     "Candidate revision" = (az containerapp revision show -g $rg -n $app --revision $candidate --query "properties.template.containers[0].image" -o tsv).Split('@')[1]
+     "The gate's verdict" = $gate.Split('|')[1]
+   } | Format-Table -HideTableHeaders
+   ```
+
+   ![The workbook: the release steps, with the release job's gate selected, and its checks: readiness, build 74e59ec, sign-in required, signed in, submit, retry is safe, read, attachment, approval guard, history, and 24 of 24 calls during the bake, all passed](solutions/06-release-microsoft/images/03-workbook-release.png)
+
+   ![One digest in four records: GitHub's release evidence, Azure's registry, the candidate revision, and the gate's verdict all name the same sha256 digest](solutions/06-release-microsoft/images/combo-04-one-digest.png)
+
+   **Point out:** four records, one digest. The gate's verdict names the revision, its image, when it passed, and how long it baked; promote moves traffic only to the revision and image the verdict names.
+
+5. **The release manager decides** (about 3 minutes). Go: run the promote job, as in [06-release-microsoft](solutions/06-release-microsoft/README.md#run-the-demo), step 3 (51 seconds in our run): users then get GitHub's tested image. No-go: run the abort job. If users report a problem after the promotion, the rollback job moves traffic back to the previous revision, still running (step 6; 56 seconds in our run). The bottom of the workbook shows who started each step (step 7): in our run, a person for the promotion and the rollback, and the trigger function's managed identity for the release job.
+
+   ![The bottom of the workbook: the rollback, the drill, and the promotion, and an earlier rollback and drill, were started by a person; the release was started by the trigger function's managed identity; the traffic now is stable 100% and previous 0%, with the history of each label and weight change](solutions/06-release-microsoft/images/08-workbook-decisions.png)
+
+   **Point out:** the go, the no-go, and the rollback are a person's, and Azure records who ran them. The release job shows the trigger function's identity, because the import started it.
+
+   Afterwards, turn Azure's own build back on (`Update-BuildTask` with `status = 'Enabled'`), and follow both **Reset and clean up** sections.
+
+**What to observe:** the AI's contribution (Copilot's summary of GitHub's evidence for the approver; Azure Copilot to explain a candidate that fails the gate, [06-release-microsoft](solutions/06-release-microsoft/README.md#run-the-demo) step 5), the deterministic checks (GitHub's gate on the tests that ran against the image, Azure's gate on the same digest, and promote's check of the gate's verdict), and the human decision (the release manager's promote, abort, or rollback, which Azure's Activity log records). Each accelerator also runs on its own: [06-release-github](solutions/06-release-github/) and [06-release-microsoft](solutions/06-release-microsoft/).
 
 ### Operate: Azure recovers, a person files, Copilot proves the follow-up
 
