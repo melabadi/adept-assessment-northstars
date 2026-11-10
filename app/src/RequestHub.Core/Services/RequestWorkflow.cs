@@ -268,21 +268,7 @@ public sealed partial class RequestWorkflow(
 
         if (request.Decision is { } existingDecision)
         {
-            var existing = new DecisionDto(
-                existingDecision.Outcome.ToString(),
-                new PersonRef(existingDecision.DecidedById, existingDecision.DecidedBy!.DisplayName),
-                existingDecision.Comment,
-                existingDecision.DecidedAt);
-            if (key is not null && existingDecision.DecidedById == user.Id && existingDecision.IdempotencyKey == key)
-            {
-                return Result<DecisionDto>.Ok(existing, replayed: true);
-            }
-
-            return new WorkflowError(
-                "decision.already_decided",
-                $"{request.PublicId} has already been decided by {existingDecision.DecidedBy!.DisplayName}.",
-                409,
-                new { existingDecision = existing });
+            return ExistingDecisionOutcome(existingDecision, user, key);
         }
 
         var now = clock.GetUtcNow();
