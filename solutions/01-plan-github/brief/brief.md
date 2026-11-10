@@ -43,10 +43,10 @@ Requests wait in the wrong department and reviewers reroute them manually. The c
 
 ## Open questions
 
-- **Q1** What measurable response-time target and timeout behavior define 'fast', and under what load and measurement conditions? No numerical latency target was agreed. _(T12, T14)_
+- **Q1** (blocking) What measurable response-time target and timeout behavior define 'fast', and under what load and measurement conditions? No numerical latency target was agreed. _(T12, T14)_
 - **Q2** (blocking) Who may override a suggestion: reviewers only, or approvers too? This blocks any expansion of override permissions, not the already-decided reviewer-confirmation path. _(T21, T04, T19)_
 - **Q3** (blocking) How long must recommendations and their associated audit/tool results be retained, and what deletion obligations apply? The seven-year rule mentioned for decisions does not establish a suggestion-retention rule. _(T22, T13)_
-- **Q4** Should confidence be displayed, and is any hiding threshold desired? No threshold has been agreed; sorting and filtering on confidence are excluded for this release. _(T15)_
+- **Q4** (blocking) Should confidence be displayed, and is any hiding threshold desired? No threshold has been agreed; sorting and filtering on confidence are excluded for this release. _(T15)_
 - **Q5** (blocking) Where is estimated cost captured for the above-5,000 spend rule, in what currency, and how can it be evaluated within the AI-input allowlist? The existing request contract has no dedicated estimated-cost field; neither a new field nor additional AI input is authorized by these notes. _(T06, T09, POL-ROUTE-004)_
 - **Q6** (blocking) What event defines completion of triage, which requests form the denominator, and how are repeated reroutes counted for the success measure? What improvement target and post-enable observation period should be used? Only the two-week pre-enable baseline duration is agreed. _(T01, T23)_
 

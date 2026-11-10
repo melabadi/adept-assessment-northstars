@@ -189,7 +189,7 @@
       "id": "Q1",
       "question": "What measurable response-time target and timeout behavior define 'fast', and under what load and measurement conditions? No numerical latency target was agreed.",
       "sources": ["T12", "T14"],
-      "blocking": false
+      "blocking": true
     },
     {
       "id": "Q2",
@@ -207,7 +207,7 @@
       "id": "Q4",
       "question": "Should confidence be displayed, and is any hiding threshold desired? No threshold has been agreed; sorting and filtering on confidence are excluded for this release.",
       "sources": ["T15"],
-      "blocking": false
+      "blocking": true
     },
     {
       "id": "Q5",
