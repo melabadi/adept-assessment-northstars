@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -15,6 +16,15 @@ namespace RequestHub.Tests;
 
 public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
 {
+    private sealed class ManualTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset _utcNow = utcNow;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan by) => _utcNow = _utcNow.Add(by);
+    }
+
     private sealed class FlakySender(Guid target, int failuresBeforeSuccess) : INotificationSender
     {
         public int Calls;
@@ -27,22 +37,144 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
         }
     }
 
-    private NotificationProcessor Processor(RequestHubDbContext db, INotificationSender sender, int maxAttempts) => new(
-        db, sender, TimeProvider.System,
-        Options.Create(new WorkerOptions { BatchSize = 1, MaxAttempts = maxAttempts, BaseBackoffSeconds = 0 }),
-        new StaticOptionsMonitor<FaultOptions>(new FaultOptions()),
+    private sealed class RecordingSender(Action<Notification> onSend) : INotificationSender
+    {
+        public Task SendAsync(Notification notification, CancellationToken cancellationToken)
+        {
+            onSend(notification);
+            return Task.CompletedTask;
+        }
+    }
+
+    private NotificationProcessor Processor(
+        RequestHubDbContext db,
+        INotificationSender sender,
+        int maxAttempts,
+        TimeProvider? clock = null,
+        FaultOptions? fault = null,
+        int batchSize = 1) => new(
+        db, sender, clock ?? TimeProvider.System,
+        Options.Create(new WorkerOptions { BatchSize = batchSize, MaxAttempts = maxAttempts, BaseBackoffSeconds = 0 }),
+        new StaticOptionsMonitor<FaultOptions>(fault ?? new FaultOptions()),
         NullLogger<NotificationProcessor>.Instance);
 
-    private async Task<Guid> PendingNotificationAsync(RequestHubDbContext db)
+    private async Task<Guid> PendingNotificationAsync(RequestHubDbContext db, string type = "test.retry")
     {
         var n = new Notification
         {
-            Id = Guid.NewGuid(), Recipient = "u-ava", Type = "test.retry", CreatedAt = DateTimeOffset.UtcNow.AddYears(-1),
+            Id = Guid.NewGuid(), Recipient = "u-ava", Type = type, CreatedAt = DateTimeOffset.UtcNow.AddYears(-1),
             NextAttemptAt = DateTimeOffset.UtcNow.AddYears(-1),
         };
         db.Notifications.Add(n);
         await db.SaveChangesAsync();
         return n.Id;
+    }
+
+    private static ActivityListener ListenForDeliveryDelayTags(string type, List<object?> tags)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RequestHubTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                if (Equals(activity.GetTagItem("requesthub.notification.type"), type))
+                {
+                    tags.Add(activity.GetTagItem("requesthub.fault.worker_delay_ms"));
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
+    }
+
+    private static async Task ClearNotificationsAsync(RequestHubDbContext db)
+    {
+        db.Notifications.RemoveRange(await db.Notifications.ToListAsync());
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Worker_delay_fault_expiring_mid_batch_only_delays_deliveries_before_expiry()
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        await ClearNotificationsAsync(db);
+
+        const int delayMs = 50;
+        const string type = "test.worker-delay-expiry";
+        var now = DateTimeOffset.UtcNow;
+        var clock = new ManualTimeProvider(now);
+        var fault = new FaultOptions { WorkerDelayMs = delayMs, ExpiresAtUtc = now.AddSeconds(1) };
+        await PendingNotificationAsync(db, type);
+        await PendingNotificationAsync(db, type);
+        var sends = 0;
+        var sender = new RecordingSender(_ =>
+        {
+            if (++sends == 1) clock.Advance(TimeSpan.FromSeconds(2));
+        });
+        var tags = new List<object?>();
+        using var listener = ListenForDeliveryDelayTags(type, tags);
+        var processor = Processor(db, sender, maxAttempts: 3, clock, fault, batchSize: 2);
+
+        await processor.ProcessBatchAsync(CancellationToken.None);
+
+        Assert.Equal(2, sends);
+        Assert.Equal(2, tags.Count);
+        Assert.Equal(delayMs, tags[0]);
+        Assert.Null(tags[1]);
+    }
+
+    [Fact]
+    public async Task Active_worker_delay_fault_tags_each_delivery()
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        await ClearNotificationsAsync(db);
+
+        const int delayMs = 10;
+        const string type = "test.worker-delay-active";
+        var now = DateTimeOffset.UtcNow;
+        var clock = new ManualTimeProvider(now);
+        var fault = new FaultOptions { WorkerDelayMs = delayMs, ExpiresAtUtc = now.AddMinutes(1) };
+        await PendingNotificationAsync(db, type);
+        await PendingNotificationAsync(db, type);
+        var tags = new List<object?>();
+        using var listener = ListenForDeliveryDelayTags(type, tags);
+        var processor = Processor(db, new RecordingSender(_ => { }), maxAttempts: 3, clock, fault, batchSize: 2);
+
+        await processor.ProcessBatchAsync(CancellationToken.None);
+
+        Assert.Equal([delayMs, delayMs], tags);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Missing_or_expired_worker_delay_fault_does_not_tag_deliveries(bool alreadyExpired)
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        await ClearNotificationsAsync(db);
+
+        const string type = "test.worker-delay-inactive";
+        var now = DateTimeOffset.UtcNow;
+        var clock = new ManualTimeProvider(now);
+        var fault = new FaultOptions
+        {
+            WorkerDelayMs = 10,
+            ExpiresAtUtc = alreadyExpired ? now.AddTicks(-1) : null,
+        };
+        await PendingNotificationAsync(db, type);
+        await PendingNotificationAsync(db, type);
+        var tags = new List<object?>();
+        using var listener = ListenForDeliveryDelayTags(type, tags);
+        var processor = Processor(db, new RecordingSender(_ => { }), maxAttempts: 3, clock, fault, batchSize: 2);
+
+        await processor.ProcessBatchAsync(CancellationToken.None);
+
+        Assert.Equal(2, tags.Count);
+        Assert.All(tags, Assert.Null);
     }
 
     [Fact]
