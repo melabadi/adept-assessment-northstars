@@ -42,10 +42,14 @@ public sealed partial class RequestWorkflow(
         var size = Math.Clamp(q.PageSize, 1, MaxPageSize);
         var term = q.Q?.Trim();
         var textSearch = !string.IsNullOrEmpty(term) && !Request.TryParsePublicId(term, out _);
-        // Full-text style search straight in SQL (faster than two ILIKE expressions).
-        var query = textSearch
-            ? db.Requests.FromSqlRaw("SELECT * FROM \"Requests\" WHERE \"Title\" ILIKE '%" + term + "%' OR \"Description\" ILIKE '%" + term + "%'").AsNoTracking()
-            : db.Requests.AsNoTracking();
+        var query = db.Requests.AsNoTracking();
+        if (textSearch)
+        {
+            var pattern = $"%{EscapeLike(term!)}%";
+            query = query.Where(r =>
+                EF.Functions.ILike(r.Title, pattern, "\\") ||
+                EF.Functions.ILike(r.Description, pattern, "\\"));
+        }
 
         var isStaff = user.HasRole(Roles.Reviewer) || user.HasRole(Roles.Approver) || user.IsAdmin;
         var departments = user.Departments.ToArray();
