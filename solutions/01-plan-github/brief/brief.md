@@ -44,7 +44,7 @@ Requests reach the wrong department and wait for manual rerouting. The claim tha
 ## Open questions
 
 - **Q1** (blocking) What measurable response-time target defines fast, and what timeout should trigger the unavailable state? No numeric latency or timeout value was agreed; quantitative performance sign-off awaits a decision. _(T12, T14)_
-- **Q2** Should low-confidence suggestions ever be hidden, and if so at what threshold? No threshold was agreed; do not introduce one. Confidence sorting and filtering remain excluded. _(T15)_
+- **Q2** (blocking) Should low-confidence suggestions ever be hidden, and if so at what threshold? No threshold was agreed; do not introduce one. Confidence sorting and filtering remain excluded. _(T15)_
 - **Q3** (blocking) Who may override a suggestion: only reviewers, or approvers too? This blocks changes to override authorization, not the already-agreed reviewer confirmation flow. _(T21, T04, T19)_
 - **Q4** (blocking) How long must recommendations be retained? The seven-year rule mentioned for decisions does not establish a suggestion-retention period; final retention behavior requires a decision. _(T22)_
 - **Q5** (blocking) For computing equipment above 5,000, does Finance receive the request first for budget review or does IT retain initial ownership, and how should both responsibilities be represented? C2 has no recorded decision and blocks acceptance of that overlap case. _(T06, T07, POL-ROUTE-001, POL-ROUTE-004)_

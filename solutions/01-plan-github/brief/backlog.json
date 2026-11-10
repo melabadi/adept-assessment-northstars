@@ -204,7 +204,7 @@
       "id": "Q2",
       "question": "Should low-confidence suggestions ever be hidden, and if so at what threshold? No threshold was agreed; do not introduce one. Confidence sorting and filtering remain excluded.",
       "sources": ["T15"],
-      "blocking": false
+      "blocking": true
     },
     {
       "id": "Q3",
