@@ -373,7 +373,8 @@ def check_graders(local_only: bool) -> int:
                 break
             print("  Foundry couldn't grade some checks; grading the same reviews once more.")
     short = {name: name.removeprefix("pr_review_") for name in GRADERS}
-    print(f"\n{'Review':<24} {'Split':<9} " + " ".join(f"{s:<18}" for s in short.values()) + " Foundry")
+    width = max(len("Review"), *(len(row["id"]) for row in rows)) + 2
+    print(f"\n{'Review':<{width}} {'Split':<9} " + " ".join(f"{s:<18}" for s in short.values()) + " Foundry")
     wrong, differs, ungraded = [], [], []
     for row in rows:
         mine = local[row["id"]]
@@ -389,7 +390,7 @@ def check_graders(local_only: bool) -> int:
             differs.append(row["id"])
         else:
             column = "same"
-        print(f"{row['id']:<24} {row['split']:<9} " + " ".join(cells) + f" {column}")
+        print(f"{row['id']:<{width}} {row['split']:<9} " + " ".join(cells) + f" {column}")
     for split in ("paired", "held-out"):
         mine = [row for row in rows if row["split"] == split]
         right = sum(1 for row in mine if local[row["id"]] == row["expect"])
