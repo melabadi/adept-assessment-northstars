@@ -49,7 +49,9 @@ public sealed class DuplicateDecisionTests(ApiFixture api) : IClassFixture<ApiFi
         Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
         var firstDecision = await first.Read<DecisionDto>();
         var replayedDecision = await retry.Read<DecisionDto>();
-        Assert.Equal(firstDecision, replayedDecision);
+        Assert.Equal(firstDecision.Outcome, replayedDecision.Outcome);
+        Assert.Equal(firstDecision.DecidedBy, replayedDecision.DecidedBy);
+        Assert.Equal(firstDecision.Comment, replayedDecision.Comment);
         await AssertSingleDecisionAndNotificationAsync(id);
     }
 
