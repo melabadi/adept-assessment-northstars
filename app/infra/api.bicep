@@ -18,6 +18,10 @@ param apiClientId string
 param apiIdentifierUri string
 @description('Client id of the GitHub automation identity; its app-only tokens may call the API (load tests, workflows).')
 param automationClientId string = ''
+@description('Comma-separated client ids of load-test identities whose app-only tokens may also call the API (Test · Microsoft). Empty adds none.')
+param loadTestClientIds string = ''
+@description('Comma-separated RequestHub user ids (aad-<object id>) whose requests POST /api/admin/load-test/cleanup may delete. Empty disables the cleanup.')
+param loadTestRequesterIds string = ''
 param foundryProjectEndpoint string = ''
 @allowed(['SampleRules', 'Foundry'])
 param triageProvider string = 'SampleRules'
@@ -26,6 +30,8 @@ param industry string = 'general'
 param buildSha string = 'local'
 
 var azureCliAppId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'
+var loadTestApplications = empty(loadTestClientIds) ? [] : map(split(loadTestClientIds, ','), id => trim(id))
+var loadTestSettings = empty(loadTestRequesterIds) ? [] : [{ name: 'Demo__LoadTestRequesterIds', value: loadTestRequesterIds }]
 
 resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: containerRegistryName
@@ -68,7 +74,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'api'
           image: imageName
           resources: { cpu: json('0.5'), memory: '1Gi' }
-          env: [
+          env: concat([
             { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
             { name: 'ConnectionStrings__RequestHub', value: 'Host=${postgresHost};Database=${postgresDatabase};Username=${identityName};Ssl Mode=Require' }
             { name: 'Database__UseEntraAuth', value: 'true' }
@@ -84,7 +90,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Foundry__ProjectEndpoint', value: foundryProjectEndpoint }
             { name: 'Foundry__AgentName', value: triageAgentName }
             { name: 'BUILD_SHA', value: buildSha }
-          ]
+          ], loadTestSettings)
           probes: [
             { type: 'Startup', httpGet: { path: '/health/live', port: 8080 }, initialDelaySeconds: 2, periodSeconds: 3, failureThreshold: 30 }
             { type: 'Liveness', httpGet: { path: '/health/live', port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
@@ -122,9 +128,10 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
         }
         validation: {
           allowedAudiences: [apiClientId, apiIdentifierUri]
-          // Client apps whose tokens are accepted: the app's own sign-in, the Azure CLI (presenter scripts), and the automation identity.
+          // Client apps whose tokens are accepted: the app's own sign-in, the Azure CLI (presenter scripts), the automation
+          // identity, and any load-test identities.
           defaultAuthorizationPolicy: {
-            allowedApplications: concat([apiClientId, azureCliAppId], empty(automationClientId) ? [] : [automationClientId])
+            allowedApplications: concat([apiClientId, azureCliAppId], empty(automationClientId) ? [] : [automationClientId], loadTestApplications)
           }
         }
       }
