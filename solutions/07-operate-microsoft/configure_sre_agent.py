@@ -64,6 +64,7 @@ DATA_PLANE_SCOPE = "https://azuresre.dev/.default"
 ARM_SCOPE = "https://management.azure.com/.default"
 QUICKSTART_PLAN = "quickstart_handler"
 PLACEHOLDERS = (
+    "AZURE_ENV_NAME",
     "AZURE_SUBSCRIPTION_ID",
     "AZURE_RESOURCE_GROUP",
     "WORKER_APP_NAME",
@@ -78,6 +79,11 @@ PLACEHOLDERS = (
 )
 PLACEHOLDER = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
+# The skill that drafts the incident record, and what its record must state: every fact an incident form asks for
+# (status, environment, detection time, impact, recent changes, timeline), so the person who files it adds none.
+RECORD_SKILL = "draft-incident-record"
+RECORD_FIELDS = {"status": "| Status |", "environment": "| Environment |", "detection time": "| Detected at (UTC) |",
+                 "impact": "## Impact", "recent changes": "## Recent changes", "timeline": "## Timeline (UTC)"}
 # Tools that can change Azure resources or run arbitrary commands. None may run without a person's approval.
 WRITE_TOOLS = {"RunAzCliWriteCommands", "RunKubectlWriteCommand", "RunShellCommand", "RunInTerminal", "Terminal",
                "bash", "shell", "execute_bash"}
@@ -202,10 +208,13 @@ def guard_problems(script: str, deny_patterns: list[str]) -> list[str]:
     clean = {
         "owner": "contoso", "repo": "requesthub", "labels": ["ai-sdlc", "phase:operate"],
         "title": "Incident record: notification backlog, 2026-10-29",
-        "body": "The worker delivered notifications late from 14:03 to 14:31 UTC (peak oldest wait 1,020 s). Root cause: "
-                "the delay fault on the worker. Mitigation: `az containerapp update -n <worker> -g <resource group> "
-                "--remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc`, approved by an SRE Agent Administrator. "
-                "Evidence: the RequestHub notification backlog alert in portal.azure.com; requesthub-notification-backlog.",
+        "body": "The worker delivered notifications late from 14:03 to 14:31 UTC (peak oldest wait 1,020 s). Recent "
+                "changes: at 13:58 UTC a configuration change created the new worker revision with "
+                "`Faults__WorkerDelayMs`. Root cause: the delay fault on the worker. Mitigation: `az containerapp "
+                "update -n <worker> -g <resource group> --remove-env-vars Faults__WorkerDelayMs Faults__ExpiresAtUtc`, "
+                "approved by an SRE Agent Administrator. | Status | Resolved | | Environment | `ai-sdlc-operate` "
+                "(Azure) | | Detected at (UTC) | 2026-10-29T14:05Z | Evidence: the RequestHub notification backlog "
+                "alert in portal.azure.com; requesthub-notification-backlog.",
     }
     # An Issue tool the policy does not deny takes the hook's ask path. If every Issue tool were denied, none would.
     open_tool = next((t for t in GITHUB_ISSUE_SAMPLES if not matches(t, deny_patterns)), None)
@@ -222,6 +231,7 @@ def guard_problems(script: str, deny_patterns: list[str]) -> list[str]:
         "a tenant domain": "signed in to contoso.onmicrosoft.com",
         "this deployment's suffix": f"registry cr{suffix}",
         "a suffixed name": "worker ca-worker-z9y8x7w6v5u4t",
+        "a revision name in the recent changes": "Recent changes: revision ca-worker-z9y8x7w6v5u4t--0000015 became active",
         "a GUID split by a zero-width space": "thread 12345678-1234\u200b-1234-1234-123456789abc",
         "a suffix split by a soft hyphen": f"registry cr{suffix[:6]}\u00ad{suffix[6:]}",
         "a GUID in fullwidth digits": "thread \uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18-1234-1234-1234-123456789abc",
@@ -278,6 +288,22 @@ def guard_problems(script: str, deny_patterns: list[str]) -> list[str]:
     return problems
 
 
+def record_problems(record: Skill | None) -> list[str]:
+    """The incident record must state every fact an incident form asks for, so the person who files it adds none.
+    Its labels must never include the ones that start the GitHub team's automation: a person decides that."""
+    if record is None:
+        return [f"the skill {RECORD_SKILL} must draft the incident record for a person to file"]
+    problems = [f"{RECORD_SKILL}: the record must state the {fact} ({marker}), so the person who files it into an "
+                "incident form adds no fact of their own" for fact, marker in RECORD_FIELDS.items()
+                if marker not in record.content]
+    labels = re.search(r"`Labels: ([^`]+)`", record.content)
+    if (not labels or {label.strip() for label in labels.group(1).split(",")} != {"ai-sdlc", "phase:operate"}
+            or "never `incident`" not in record.content):
+        problems.append(f"{RECORD_SKILL}: the record's labels must be ai-sdlc and phase:operate, never incident or "
+                        "incident-followup: a person decides whether the record starts another team's triage")
+    return problems
+
+
 def check(config: Config) -> list[str]:
     """The rules every change to sre-agent/ must keep. Returns the problems found."""
     problems = []
@@ -292,6 +318,9 @@ def check(config: Config) -> list[str]:
              **config.knowledge, **{s.name: s.content for s in config.skills}}
     for source, text in texts.items():
         problems += [f"{source}: unknown placeholder {{{{{p}}}}}" for p in PLACEHOLDER.findall(text) if p not in PLACEHOLDERS]
+
+    record = next((s for s in config.skills if s.name == RECORD_SKILL), None)
+    problems += record_problems(record)
 
     if plan.get("agentMode") != "Review":
         problems.append("the response plan must use agentMode Review: a person approves every change")
