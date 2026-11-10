@@ -2,9 +2,11 @@
 """Evaluate the Azure pull request reviewer on labelled pull requests (Develop phase, Microsoft track).
 
 What this script does:
-  1. Reads eval_cases.jsonl: real pull requests of this repository, each labelled known-good, flagged (a good change that
-     a rule rightly flags for a person), or known-bad, with the rules that should fail and the findings the commentary
-     must state: what the problem is, and the file where it is.
+  1. Reads eval_cases.jsonl: labelled changes to RequestHub, each known-good, flagged (a good change that a rule rightly
+     flags for a person), or known-bad, with the rules that should fail and the findings the commentary must state: what
+     the problem is, and the file where it is. Each came from a pull request of the original repository (its number is
+     the case's "example"), and is recreated as a closed pull request in your repository by --setup (eval_prs.py), which
+     keeps their numbers and reuses them.
   2. Runs the deployed reviewer on each one in dry-run mode: it posts {"pr": <number>} to the Function's dry-runs route,
      which queues a review that does everything a real review does (rule checker, sandbox build and tests, agent,
      review formatter) but posts nothing to GitHub. The script polls the route until the review's result is ready.
@@ -15,33 +17,37 @@ What this script does:
      step 3 are the fallback. The report keeps Foundry's first grading apart from the one it repeated.
 
 Grader checks: --check-graders grades the fixed reviews in grader_checks.jsonl instead, without any dry run: a right and
-a wrong commentary for labelled pull requests, and for held-out changes the checks were never tuned on, that use the
-same words and point at the same file and line, and differ only in what they conclude. It scores them here and, unless
---local, with the evaluators in Foundry, and shows that both tell the two apart and agree with each other.
+a wrong commentary for labelled cases, and for held-out changes the checks were never tuned on, that use the same words
+and point at the same file and line, and differ only in what they conclude. It scores them here and, unless --local,
+with the evaluators in Foundry, and shows that both tell the two apart and agree with each other.
 
 The dry-runs route needs the Function's key, so the script reads it from Azure Resource Manager each time, sends it in a
 header, and never prints or saves it. Results go to out/eval/ (results.jsonl and report.md), which git ignores.
 
 Configuration: this solution's azd environment (after `azd up`) or environment variables: AZURE_SUBSCRIPTION_ID,
-AZURE_RESOURCE_GROUP, REVIEWER_FUNCTION_APP, REVIEWER_FUNCTION_HOST, FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL_DEPLOYMENT.
-You need Contributor (or Website Contributor) on the resource group, to read the Function's key, and the Foundry User
-role on the Foundry account; `azd up` gives you both as the person who runs it. The Function needs GITHUB_REVIEW_TOKEN,
-as for a real review.
+AZURE_RESOURCE_GROUP, REVIEWER_FUNCTION_APP, REVIEWER_FUNCTION_HOST, FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL_DEPLOYMENT,
+GITHUB_REPOSITORY, and REVIEWER_EVAL_PRS (written by --setup). You need Contributor (or Website Contributor) on the
+resource group, to read the Function's key, and the Foundry User role on the Foundry account; `azd up` gives you both as
+the person who runs it. --setup and --cleanup use your git and GitHub CLI. The Function needs GITHUB_REVIEW_TOKEN, as for
+a real review.
 
 Usage
-  python eval_reviewer.py                    # every case: dry runs, local scores, then a Foundry evaluation
-  python eval_reviewer.py --cases 36 99      # only these pull requests
-  python eval_reviewer.py --reuse            # score the results of the last dry runs again, without new runs
-  python eval_reviewer.py --local            # skip the Foundry evaluation
-  python eval_reviewer.py --check-graders    # grade the fixed right and wrong reviews in grader_checks.jsonl
-  python eval_reviewer.py --parallel 5       # dry runs at a time (default 4; each uses two of the pools' ten sessions)
-  python eval_reviewer.py --show-url         # also print the Foundry report link (it contains resource ids)
+  python eval_reviewer.py --setup                  # once per repository: create the evaluation's pull requests, or reuse them
+  python eval_reviewer.py                          # every case: dry runs, local scores, then a Foundry evaluation
+  python eval_reviewer.py --cases admins-decide    # only these cases (ids from eval_cases.jsonl)
+  python eval_reviewer.py --reuse                  # score the results of the last dry runs again, without new runs
+  python eval_reviewer.py --local                  # skip the Foundry evaluation
+  python eval_reviewer.py --check-graders          # grade the fixed right and wrong reviews in grader_checks.jsonl
+  python eval_reviewer.py --parallel 5             # dry runs at a time (default 4; each uses two of the pools' ten sessions)
+  python eval_reviewer.py --show-url               # also print the Foundry report link (it contains resource ids)
+  python eval_reviewer.py --cleanup                # close the evaluation's pull requests and delete their branches
 
-Exit codes: 0 every check passed for every pull request; 1 at least one check failed (a pull request without a result
-fails every check); 2 configuration or service error, a check that COULD NOT GRADE, or a Foundry evaluation that is
-incomplete, has errored items, has a check that didn't grade every item (even when graded once more), or disagrees
-with the local scores. With --check-graders: 0 every fixed review was graded as labelled here and Foundry graded it the
-same way; 1 a grade differs from its label or Foundry's differs from the local one; 2 Foundry could not grade.
+Exit codes: 0 every check passed for every case; 1 at least one check failed (a case without a result fails every
+check); 2 configuration or service error, the evaluation's pull requests not set up, a check that COULD NOT GRADE, or a
+Foundry evaluation that is incomplete, has errored items, has a check that didn't grade every item (even when graded once
+more), or disagrees with the local scores. With --check-graders: 0 every fixed review was graded as labelled here and
+Foundry graded it the same way; 1 a grade differs from its label or Foundry's differs from the local one; 2 Foundry could
+not grade. With --setup or --cleanup: 0 done, 2 git or GitHub refused a step.
 """
 from __future__ import annotations
 
@@ -62,6 +68,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from azd_env import setting, utf8_stdout  # noqa: E402
 from review_graders import GRADERS  # noqa: E402
+import eval_prs  # noqa: E402
 
 OUT = HERE / "out" / "eval"
 ARM = "https://management.azure.com"
@@ -73,7 +80,7 @@ PREVIEW = {"Foundry-Features": "Evaluations=V1Preview"}
 ITEM_SCHEMA = {
     "type": "object",
     "properties": {
-        "pr": {"type": "integer"}, "kind": {"type": "string"}, "why": {"type": "string"},
+        "pr": {"type": "integer"}, "id": {"type": "string"}, "kind": {"type": "string"}, "why": {"type": "string"},
         "expected_failures": {"type": "string"}, "expect_findings": {"type": "string"}, "rules": {"type": "string"},
         "review": {"type": "string"}, "agent": {"type": "string"}, "sandbox": {"type": "string"},
     },
@@ -136,8 +143,8 @@ class Reviewer:
         return {"state": "TimedOut"}
 
 
-def review_case(reviewer: Reviewer, case: dict) -> dict:
-    pr = case["pr"]
+def review_case(reviewer: Reviewer, case: dict, pr: int) -> dict:
+    """Dry-run the reviewer on the case's pull request in this repository (pr, from eval_prs) and keep its result."""
     started = time.time()
     try:
         review_id = reviewer.start_dry_run(pr)
@@ -148,9 +155,9 @@ def review_case(reviewer: Reviewer, case: dict) -> dict:
         result = result if result.get("state") == "done" else {}
     except (RuntimeError, OSError) as exc:
         review_id, state, result = None, f"error: {exc}", {}
-    print(f"  #{pr:<4} {state:<10} {int(time.time() - started):>4} s", flush=True)
+    print(f"  {case['id']:<22} #{pr:<5} {state:<10} {int(time.time() - started):>4} s", flush=True)
     return {
-        "pr": pr, "kind": case["kind"], "why": case["why"],
+        "pr": pr, "id": case["id"], "kind": case["kind"], "why": case["why"],
         "expected_failures": json.dumps(case["expected_failures"]), "expect_findings": json.dumps(case["expect_findings"]),
         "rules": json.dumps(result.get("rules") or []), "review": result.get("review") or "",
         "agent": json.dumps(result.get("agent")), "sandbox": result.get("sandbox") or "",
@@ -158,11 +165,11 @@ def review_case(reviewer: Reviewer, case: dict) -> dict:
     }
 
 
-def missing_result(case: dict, status: str) -> dict:
+def missing_result(case: dict, status: str, pr: int = 0) -> dict:
     """A labelled case without a reviewer result: every check scores it 0, so it can never pass."""
-    return {"pr": case["pr"], "kind": case["kind"], "why": case["why"], "expected_failures": json.dumps(case["expected_failures"]),
-            "expect_findings": json.dumps(case["expect_findings"]), "rules": "[]", "review": "", "agent": "null", "sandbox": "",
-            "_run": None, "_status": status}
+    return {"pr": pr, "id": case["id"], "kind": case["kind"], "why": case["why"],
+            "expected_failures": json.dumps(case["expected_failures"]), "expect_findings": json.dumps(case["expect_findings"]),
+            "rules": "[]", "review": "", "agent": "null", "sandbox": "", "_run": None, "_status": status}
 
 
 def score(items: list[dict]) -> list[dict]:
@@ -181,14 +188,14 @@ def score(items: list[dict]) -> list[dict]:
 def report(items: list[dict]) -> str:
     """The scores as a Markdown table, for out/eval/report.md."""
     names = list(GRADERS)
-    lines = ["| PR | Kind | " + " | ".join(GRADERS[n][1] for n in names) + " | Dry run |",
-             "| --- | --- | " + " | ".join("---" for _ in names) + " | --- |"]
+    lines = ["| Case | PR | Kind | " + " | ".join(GRADERS[n][1] for n in names) + " | Dry run |",
+             "| --- | --- | --- | " + " | ".join("---" for _ in names) + " | --- |"]
     for item in items:
         cells = ["⚠️ COULD NOT GRADE" if item["_scores"][n] is None else "✅" if item["_scores"][n] >= 1
                  else f"❌ {item['_scores'][n]:.2f}" for n in names]
-        lines.append(f"| #{item['pr']} | {item['kind']} | " + " | ".join(cells) + f" | {item['_status']} |")
+        lines.append(f"| {item.get('id', '')} | #{item['pr']} | {item['kind']} | " + " | ".join(cells) + f" | {item['_status']} |")
     passed = [sum(1 for i in items if (i["_scores"][n] or 0) >= 1) for n in names]
-    lines.append("| **Passed** | | " + " | ".join(f"**{p}/{len(items)}**" for p in passed) + " | |")
+    lines.append("| **Passed** | | | " + " | ".join(f"**{p}/{len(items)}**" for p in passed) + " | |")
     return "\n".join(lines)
 
 
@@ -201,10 +208,11 @@ def terminal_report(items: list[dict]) -> str:
     def cell(score: float | None) -> str:
         return "COULD NOT GRADE" if score is None else "pass" if score >= 1 else "FAIL" if score <= 0 else f"FAIL {score:.2f}"
 
-    rows = [["PR", "Kind", *short, "Dry run"]]
-    rows += [[f"#{i['pr']}", str(i["kind"]), *(cell(i["_scores"][n]) for n in names), str(i["_status"])] for i in items]
+    rows = [["Case", "PR", "Kind", *short, "Dry run"]]
+    rows += [[str(i.get("id", "")), f"#{i['pr']}", str(i["kind"]), *(cell(i["_scores"][n]) for n in names), str(i["_status"])]
+             for i in items]
     passed = [sum(1 for i in items if (i["_scores"][n] or 0) >= 1) for n in names]
-    rows.append(["Passed", "", *(f"{p}/{len(items)}" for p in passed), ""])
+    rows.append(["Passed", "", "", *(f"{p}/{len(items)}" for p in passed), ""])
     widths = [max(len(row[c]) for row in rows) for c in range(len(rows[0]))]
     lines = ["  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip() for row in rows]
     legend = [f"{s.ljust(max(map(len, short)))}  {GRADERS[n][1]}" for s, n in zip(short, names)]
@@ -399,9 +407,23 @@ def check_graders(local_only: bool) -> int:
     return 1 if wrong or differs else 0
 
 
+def save_pulls(value: str) -> None:
+    """Keep the evaluation's pull request numbers in this solution's azd environment (REVIEWER_EVAL_PRS)."""
+    import shutil
+    import subprocess
+
+    if shutil.which("azd") and subprocess.run(["azd", "env", "set", eval_prs.SETTING, value], cwd=HERE,
+                                              capture_output=True).returncode == 0:
+        return
+    print(f"  azd isn't set up here: to keep these numbers, set {eval_prs.SETTING}={value or '(empty)'} in your environment.")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--cases", type=int, nargs="+", metavar="PR", help="Evaluate only these pull requests")
+    parser.add_argument("--setup", action="store_true",
+                        help="Create the evaluation's pull requests in GITHUB_REPOSITORY, or reuse the ones made before")
+    parser.add_argument("--cleanup", action="store_true", help="Close the evaluation's pull requests and delete their branches")
+    parser.add_argument("--cases", nargs="+", metavar="ID", help="Evaluate only these cases (ids from eval_cases.jsonl)")
     parser.add_argument("--reuse", action="store_true", help="Score out/eval/results.jsonl again instead of running the reviewer")
     parser.add_argument("--local", action="store_true", help="Score locally only; skip the Foundry evaluation")
     parser.add_argument("--check-graders", action="store_true",
@@ -418,25 +440,43 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     cases = [json.loads(line) for line in (HERE / "eval_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     if args.cases:
-        cases = [c for c in cases if c["pr"] in args.cases]
+        unknown = set(args.cases) - {c["id"] for c in cases}
+        if unknown:
+            parser.error(f"unknown case id(s): {', '.join(sorted(unknown))}; see eval_cases.jsonl")
+        cases = [c for c in cases if c["id"] in args.cases]
     OUT.mkdir(parents=True, exist_ok=True)
     results = OUT / "results.jsonl"
     if args.reuse:
-        stored = {i["pr"]: i for i in (json.loads(line) for line in results.read_text(encoding="utf-8").splitlines() if line.strip())}
-        items = [stored.get(c["pr"]) or missing_result(c, "no stored result") for c in cases]
+        stored = {i.get("id"): i for i in (json.loads(line) for line in results.read_text(encoding="utf-8").splitlines() if line.strip())}
+        items = [stored.get(c["id"]) or missing_result(c, "no stored result") for c in cases]
     else:
-        print(f"Dry-running the reviewer on {len(cases)} labelled pull requests, {args.parallel} at a time:")
+        repository = setting("GITHUB_REPOSITORY")
+        github, kept = eval_prs.GitHub(repository), eval_prs.stored(setting(eval_prs.SETTING, "{}"), repository)
+        try:
+            if args.setup or args.cleanup:
+                print(f"{'Setting up' if args.setup else 'Removing'} the evaluation's pull requests in {repository}:")
+                action = eval_prs.setup if args.setup else eval_prs.cleanup
+                action(cases, github, eval_prs.Git(repository), kept, save_pulls)
+                return 0
+            pulls = eval_prs.require(cases, github, kept)
+        except eval_prs.SetupMissing as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"Dry-running the reviewer on {len(cases)} labelled cases in {repository}, {args.parallel} at a time:")
         reviewer = Reviewer(DefaultAzureCredential())
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.parallel)) as pool:
-            items = list(pool.map(lambda case: review_case(reviewer, case), cases))
+            items = list(pool.map(lambda case: review_case(reviewer, case, pulls[case["id"]]), cases))
         results.write_text("".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items), encoding="utf-8")
     if not cases or len(items) != len(cases):
-        print(f"error: {len(items)} results for {len(cases)} labelled pull requests", file=sys.stderr)
+        print(f"error: {len(items)} results for {len(cases)} labelled cases", file=sys.stderr)
         return 2
     items = score(items)
     (OUT / "report.md").write_text(f"# Azure pull request reviewer: labelled pull requests\n\n{report(items)}\n", encoding="utf-8")
     print("\n" + terminal_report(items) + "\n")
-    ungraded = [f"#{i['pr']} ({', '.join(i['_errors'])})" for i in items if i.get("_errors")]
+    ungraded = [f"{i.get('id')} ({', '.join(i['_errors'])})" for i in items if i.get("_errors")]
     if ungraded:
         print(f"error: COULD NOT GRADE {', '.join(ungraded)}", file=sys.stderr)
         return 2

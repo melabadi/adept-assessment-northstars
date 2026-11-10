@@ -141,20 +141,148 @@ class JunitTests(unittest.TestCase):
 
 
 class ReplayWorkflowTests(unittest.TestCase):
-    def test_midnight_eastern_schedule_defaults_to_recorded_repair(self):
+    def test_midnight_eastern_schedule_replays_the_configured_repair(self):
         workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
         self.assertRegex(workflow, r"schedule:\s*\n\s*- cron: '0 0 \* \* \*'\s*\n\s*timezone: America/New_York")
-        self.assertIn("PR: ${{ inputs.pr || '105' }}", workflow)
+        self.assertIn("PR: ${{ inputs.pr || vars.SECURE_REPLAY_PR }}", workflow)
+        self.assertNotRegex(workflow, r"inputs\.pr \|\| '\d+'", "no pull request number of another repository")
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("required: true", workflow)
+        self.assertIn("required: false", workflow)
         self.assertIn("group: secure-github-replay-${{ github.repository }}", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
+
+    def test_an_unconfigured_replay_says_what_setup_is_missing(self):
+        workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
+        self.assertIn('if [[ -z "$PR" ]]; then', workflow)
+        self.assertIn("python solutions/05-secure-github/replay_setup.py", workflow)
+        self.assertIn("if: always() && steps.pr.outputs.head != ''", workflow)
+
+    def test_the_lab_boundary_checks_stay(self):
+        workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
+        self.assertIn('pr["head"]["repo"]["full_name"] != os.environ["REPO"]', workflow)
+        self.assertIn('not pr["base"]["ref"].startswith("lab/secure-")', workflow)
+        self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
 
     def test_replay_remains_read_only_and_never_publishes_repo_changes(self):
         workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
         permissions = re.search(r"^permissions:\n((?:  .*\n)+)", workflow, re.MULTILINE).group(1)
         self.assertEqual(["  contents: read", "  pull-requests: read"], permissions.strip("\n").splitlines())
         self.assertNotRegex(workflow, r": write\b|\bsecrets\.|\bgit push\b|\bgit commit\b|\bgh pr comment\b")
+
+
+replay = load("replay_setup", "replay_setup.py")
+REPO = "octo/requesthub"
+
+
+def repair_pull(number, *, repo=REPO, author="OWNER", head=None, base=None, state="closed", body=None):
+    return {"number": number, "state": state, "author_association": author,
+            "body": replay.MARKER if body is None else body,
+            "head": {"ref": head or replay.REPAIR, "repo": {"full_name": repo}}, "base": {"ref": base or replay.LAB}}
+
+
+class FakeTools(replay.Tools):
+    """git and gh as dictionaries: pull requests, remote branches, and the repository variable."""
+
+    def __init__(self, pulls=(), branches=(), variable=""):
+        super().__init__(REPO, run=None)
+        self.pulls = {p["number"]: p for p in pulls}
+        self.branches, self.value, self.commits = set(branches), variable, []
+
+    def git(self, *args, cwd=None):
+        if args[:2] == ("worktree", "add"):
+            (Path(args[-2]) / "app/tests/RequestHub.Tests").mkdir(parents=True)
+        if args[0] == "push" and "--delete" in args:
+            self.branches -= set(args[args.index("--delete") + 1:])
+        elif args[0] == "push":
+            self.branches.add(args[-1].removeprefix("HEAD:refs/heads/"))
+        elif args[0] == "commit":
+            self.commits.append(args[-1])
+        elif args[0] == "show":
+            return "// regression"
+        elif args[0] == "rev-parse":
+            return "b" * 40
+        return ""
+
+    def api(self, path, method="GET", fields=None):
+        if method == "POST":
+            number = max(self.pulls, default=300) + 1
+            self.pulls[number] = repair_pull(number, state="open", body=fields["body"])
+            return self.pulls[number]
+        if method == "PATCH":
+            self.pulls[int(path.split("/")[1])].update(fields)
+            return None
+        if path.startswith("pulls?"):
+            return sorted(self.pulls.values(), key=lambda p: -p["number"])
+        number = int(path.split("/")[1])
+        if number not in self.pulls:
+            raise RuntimeError("not found")
+        return self.pulls[number]
+
+    def variable(self):
+        return self.value
+
+    def set_variable(self, value):
+        self.value = value
+
+    def delete_variable(self):
+        self.value = ""
+
+    def remote_branches(self):
+        return self.branches & {replay.BASE, replay.LAB, replay.REPAIR}
+
+
+class ReplaySetupTests(unittest.TestCase):
+    def test_a_fresh_copy_gets_a_closed_reference_repair_and_the_variable(self):
+        tools, said = FakeTools(), []
+        number = replay.setup(tools, said.append)
+        self.assertEqual(tools.value, str(number))
+        self.assertEqual(tools.pulls[number]["state"], "closed")
+        self.assertEqual(tools.branches, {replay.BASE, replay.LAB, replay.REPAIR})
+        self.assertEqual(len(tools.commits), 3)  # the unsafe lab commit, the tests-only commit, the repair
+        self.assertTrue(all("[skip ci]" in message for message in tools.commits))
+        self.assertIn("regression", tools.commits[1])
+
+    def test_a_second_setup_reuses_the_same_pull_request(self):
+        tools = FakeTools([repair_pull(321)], {replay.BASE, replay.LAB, replay.REPAIR}, variable="321")
+        self.assertEqual(replay.setup(tools, lambda _: None), 321)
+        self.assertEqual(tools.commits, [])
+        self.assertEqual(list(tools.pulls), [321])
+        lost_variable = FakeTools([repair_pull(321)], {replay.BASE, replay.LAB, replay.REPAIR})
+        self.assertEqual(replay.setup(lost_variable, lambda _: None), 321)
+        self.assertEqual(lost_variable.value, "321")
+
+    def test_only_this_repositorys_lab_pull_requests_by_trusted_authors_are_found(self):
+        for stranger in (repair_pull(5, repo="mallory/requesthub"), repair_pull(5, author="NONE"),
+                         repair_pull(5, body="no marker"), repair_pull(5, base="main")):
+            self.assertIsNone(replay.find(FakeTools([stranger])))
+
+    def test_adopting_follows_the_workflows_own_boundary(self):
+        tools = FakeTools([repair_pull(105, author="NONE", head="copilot/fix-search", body=""),
+                           repair_pull(7, repo="mallory/requesthub"), repair_pull(8, base="main")])
+        self.assertEqual(replay.adopt(tools, 105, lambda _: None), 105)
+        self.assertEqual(tools.value, "105")
+        for refused in (7, 8, 999):
+            with self.assertRaises(RuntimeError):
+                replay.adopt(tools, refused, lambda _: None)
+
+    def test_status_names_what_is_missing(self):
+        pull, why = replay.current(FakeTools())
+        self.assertIsNone(pull)
+        self.assertIn("SECURE_REPLAY_PR", why)
+        pull, why = replay.current(FakeTools([repair_pull(8, base="main")], variable="8"))
+        self.assertIsNone(pull)
+        self.assertIn("lab/secure-", why)
+
+    def test_cleanup_removes_only_what_setup_made(self):
+        tools = FakeTools([repair_pull(321, state="open")], {replay.BASE, replay.LAB, replay.REPAIR, "main"}, variable="321")
+        replay.cleanup(tools, lambda _: None)
+        self.assertEqual(tools.pulls[321]["state"], "closed")
+        self.assertEqual(tools.branches, {"main"})
+        self.assertEqual(tools.value, "")
+        adopted = FakeTools([repair_pull(105, author="NONE", head="copilot/fix-search", body="", state="open")], set(),
+                            variable="105")  # a live run's repair, adopted: cleanup unsets the variable, never touches it
+        replay.cleanup(adopted, lambda _: None)
+        self.assertEqual((adopted.value, adopted.pulls[105]["state"]), ("", "open"))
 
 
 if __name__ == "__main__":

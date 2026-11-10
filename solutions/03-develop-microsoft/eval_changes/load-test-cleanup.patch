@@ -1,0 +1,436 @@
+diff --git a/app/README.md b/app/README.md
+index 838f5cc..0cdf30e 100644
+--- a/app/README.md
++++ b/app/README.md
+@@ -81,6 +81,7 @@ Settings use standard ASP.NET Core configuration (`appsettings.json`, or environ
+ | `Auth:Mode` | `Development`, `EasyAuth` | Persona switcher locally; Microsoft Entra ID through Container Apps authentication in Azure. |
+ | `Storage:Provider` | `Local`, `Blob` | Where attachments are stored. |
+ | `Demo:AllowReset` | `true`, `false` | Lets an Admin reseed the demo data with `POST /api/admin/reset`. |
++| `Demo:LoadTestRequesterIds` | comma-separated user ids, for example `aad-<object id>` | Lets `POST /api/admin/load-test/cleanup` delete only the requests these load-test identities submitted. An Admin cleans up all of them; a listed identity cleans up its own. Empty (the default) disables the cleanup. |
+ 
+ ### Fault injection
+ 
+diff --git a/app/contracts/openapi.json b/app/contracts/openapi.json
+index 3ff15f5..7e7daed 100644
+--- a/app/contracts/openapi.json
++++ b/app/contracts/openapi.json
+@@ -963,6 +963,36 @@
+         }
+       }
+     },
++    "/api/admin/load-test/cleanup": {
++      "post": {
++        "tags": [
++          "Admin"
++        ],
++        "summary": "Delete only the requests submitted by the configured load-test identities (Demo:LoadTestRequesterIds). An admin cleans up every load-test identity; a load-test identity cleans up its own requests.",
++        "responses": {
++          "200": {
++            "description": "OK",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/LoadTestCleanupDto"
++                }
++              }
++            }
++          },
++          "403": {
++            "description": "Forbidden",
++            "content": {
++              "application/problem\u002Bjson": {
++                "schema": {
++                  "$ref": "#/components/schemas/ProblemDetails"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/admin/reset": {
+       "post": {
+         "tags": [
+@@ -1330,6 +1360,29 @@
+         "format": "binary"
+       },
+       "JsonElement": {},
++      "LoadTestCleanupDto": {
++        "required": [
++          "deleted",
++          "owners"
++        ],
++        "type": "object",
++        "properties": {
++          "deleted": {
++            "pattern": "^-?(?:0|[1-9]\\d*)$",
++            "type": [
++              "integer",
++              "string"
++            ],
++            "format": "int32"
++          },
++          "owners": {
++            "type": "array",
++            "items": {
++              "type": "string"
++            }
++          }
++        }
++      },
+       "MeDto": {
+         "required": [
+           "id",
+diff --git a/app/infra/api.bicep b/app/infra/api.bicep
+index 3500150..c099b31 100644
+--- a/app/infra/api.bicep
++++ b/app/infra/api.bicep
+@@ -18,6 +18,10 @@ param apiClientId string
+ param apiIdentifierUri string
+ @description('Client id of the GitHub automation identity; its app-only tokens may call the API (load tests, workflows).')
+ param automationClientId string = ''
++@description('Comma-separated client ids of load-test identities whose app-only tokens may also call the API (Test · Microsoft). Empty adds none.')
++param loadTestClientIds string = ''
++@description('Comma-separated RequestHub user ids (aad-<object id>) whose requests POST /api/admin/load-test/cleanup may delete. Empty disables the cleanup.')
++param loadTestRequesterIds string = ''
+ param foundryProjectEndpoint string = ''
+ @allowed(['SampleRules', 'Foundry'])
+ param triageProvider string = 'SampleRules'
+@@ -26,6 +30,8 @@ param industry string = 'general'
+ param buildSha string = 'local'
+ 
+ var azureCliAppId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'
++var loadTestApplications = empty(loadTestClientIds) ? [] : map(split(loadTestClientIds, ','), id => trim(id))
++var loadTestSettings = empty(loadTestRequesterIds) ? [] : [{ name: 'Demo__LoadTestRequesterIds', value: loadTestRequesterIds }]
+ 
+ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+   name: containerRegistryName
+@@ -68,7 +74,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
+           name: 'api'
+           image: imageName
+           resources: { cpu: json('0.5'), memory: '1Gi' }
+-          env: [
++          env: concat([
+             { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
+             { name: 'ConnectionStrings__RequestHub', value: 'Host=${postgresHost};Database=${postgresDatabase};Username=${identityName};Ssl Mode=Require' }
+             { name: 'Database__UseEntraAuth', value: 'true' }
+@@ -84,7 +90,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
+             { name: 'Foundry__ProjectEndpoint', value: foundryProjectEndpoint }
+             { name: 'Foundry__AgentName', value: triageAgentName }
+             { name: 'BUILD_SHA', value: buildSha }
+-          ]
++          ], loadTestSettings)
+           probes: [
+             { type: 'Startup', httpGet: { path: '/health/live', port: 8080 }, initialDelaySeconds: 2, periodSeconds: 3, failureThreshold: 30 }
+             { type: 'Liveness', httpGet: { path: '/health/live', port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
+@@ -122,9 +128,10 @@ resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
+         }
+         validation: {
+           allowedAudiences: [apiClientId, apiIdentifierUri]
+-          // Client apps whose tokens are accepted: the app's own sign-in, the Azure CLI (presenter scripts), and the automation identity.
++          // Client apps whose tokens are accepted: the app's own sign-in, the Azure CLI (presenter scripts), the automation
++          // identity, and any load-test identities.
+           defaultAuthorizationPolicy: {
+-            allowedApplications: concat([apiClientId, azureCliAppId], empty(automationClientId) ? [] : [automationClientId])
++            allowedApplications: concat([apiClientId, azureCliAppId], empty(automationClientId) ? [] : [automationClientId], loadTestApplications)
+           }
+         }
+       }
+diff --git a/app/infra/api.parameters.json b/app/infra/api.parameters.json
+index 00c0879..8a390e6 100644
+--- a/app/infra/api.parameters.json
++++ b/app/infra/api.parameters.json
+@@ -18,6 +18,8 @@
+     "apiClientId": { "value": "${API_CLIENT_ID}" },
+     "apiIdentifierUri": { "value": "${API_IDENTIFIER_URI}" },
+     "automationClientId": { "value": "${AUTOMATION_CLIENT_ID=}" },
++    "loadTestClientIds": { "value": "${LOAD_TEST_CLIENT_IDS=}" },
++    "loadTestRequesterIds": { "value": "${LOAD_TEST_REQUESTER_IDS=}" },
+     "foundryProjectEndpoint": { "value": "${FOUNDRY_PROJECT_ENDPOINT=}" },
+     "triageProvider": { "value": "${TRIAGE_PROVIDER=SampleRules}" },
+     "triageAgentName": { "value": "${TRIAGE_AGENT_NAME=requesthub-triage}" },
+diff --git a/app/src/RequestHub.Api/Endpoints/ApiEndpoints.cs b/app/src/RequestHub.Api/Endpoints/ApiEndpoints.cs
+index 387fbcc..7f26866 100644
+--- a/app/src/RequestHub.Api/Endpoints/ApiEndpoints.cs
++++ b/app/src/RequestHub.Api/Endpoints/ApiEndpoints.cs
+@@ -63,6 +63,11 @@ public static class ApiEndpoints
+         admin.MapPost("/reset", ResetDemo).WithSummary("Delete and reseed all demo data in this environment's database (Demo:AllowReset must be true).")
+             .Produces(StatusCodes.Status200OK).ProducesProblem(StatusCodes.Status403Forbidden);
+         admin.MapGet("/notifications/backlog", Backlog).WithSummary("Pending notification count and oldest pending age.");
++
++        // Not in the Admin-only group: a configured load-test identity may also clean up, but only its own requests.
++        api.MapPost("/admin/load-test/cleanup", CleanupLoadTestData).WithTags("Admin")
++            .WithSummary("Delete only the requests submitted by the configured load-test identities (Demo:LoadTestRequesterIds). An admin cleans up every load-test identity; a load-test identity cleans up its own requests.")
++            .Produces<LoadTestCleanupDto>().ProducesProblem(StatusCodes.Status403Forbidden);
+     }
+ 
+     private static Ok<MetaDto> GetMeta(IConfiguration config, IHostEnvironment env, ITriageProvider triage, RequestWorkflow workflow) =>
+@@ -243,6 +248,26 @@ public static class ApiEndpoints
+         return TypedResults.Ok(new { reset = true, industry = industry ?? "general", requests = DemoSeeder.SeedRequestCount });
+     }
+ 
++    private static async Task<IResult> CleanupLoadTestData(HttpContext ctx, IConfiguration config, DemoSeeder seeder, ILoggerFactory logs, CancellationToken ct)
++    {
++        var configured = (config["Demo:LoadTestRequesterIds"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
++        if (configured.Length == 0)
++        {
++            return Problem(new WorkflowError("demo.load_test_cleanup_disabled", "No load-test identities are configured (Demo:LoadTestRequesterIds).", 403));
++        }
++
++        var user = ctx.User.ToAppUser();
++        string[] owners = user.IsAdmin ? configured : configured.Contains(user.Id, StringComparer.Ordinal) ? [user.Id] : [];
++        if (owners.Length == 0)
++        {
++            return Problem(new WorkflowError("demo.load_test_cleanup_forbidden", "Only an admin or a configured load-test identity can delete load-test requests.", 403));
++        }
++
++        var deleted = await seeder.DeleteRequestsOwnedByAsync(owners, user.Id, ct);
++        logs.CreateLogger("RequestHub.Admin").LogWarning("Load-test cleanup by {UserId} deleted {Count} requests owned by {Owners}", user.Id, deleted, owners);
++        return TypedResults.Ok(new LoadTestCleanupDto(deleted, owners));
++    }
++
+     private static async Task<Ok<BacklogSnapshot>> Backlog(NotificationProcessor processor, CancellationToken ct) =>
+         TypedResults.Ok(await processor.GetBacklogAsync(ct));
+ 
+diff --git a/app/src/RequestHub.Core/Services/DemoSeeder.cs b/app/src/RequestHub.Core/Services/DemoSeeder.cs
+index dc09e42..8e1b972 100644
+--- a/app/src/RequestHub.Core/Services/DemoSeeder.cs
++++ b/app/src/RequestHub.Core/Services/DemoSeeder.cs
+@@ -60,6 +60,31 @@ public sealed class DemoSeeder(RequestHubDbContext db, TimeProvider clock)
+         await tx.CommitAsync(ct);
+     }
+ 
++    /// <summary>
++    /// Deletes only the requests submitted by the given owners (load-test identities), with their decisions, comments,
++    /// attachments, recommendations, audit entries, and notifications, and records the cleanup itself in the audit log.
++    /// Everything else stays untouched.
++    /// </summary>
++    public async Task<int> DeleteRequestsOwnedByAsync(IReadOnlyCollection<string> requesterIds, string actor, CancellationToken ct = default)
++    {
++        await using var tx = await db.Database.BeginTransactionAsync(ct);
++        var ids = await db.Requests.Where(r => requesterIds.Contains(r.RequesterId)).Select(r => r.Id).ToListAsync(ct);
++        await db.AuditEvents.Where(a => a.RequestId != null && ids.Contains(a.RequestId.Value)).ExecuteDeleteAsync(ct);
++        await db.Notifications.Where(n => n.RequestId != null && ids.Contains(n.RequestId.Value)).ExecuteDeleteAsync(ct);
++        var deleted = await db.Requests.Where(r => ids.Contains(r.Id)).ExecuteDeleteAsync(ct);
++        db.AuditEvents.Add(new AuditEvent
++        {
++            Actor = actor,
++            Action = "loadtest.cleanup",
++            Details = JsonSerializer.Serialize(new { deleted, owners = requesterIds }),
++            CorrelationId = RequestHubTelemetry.CorrelationId,
++            OccurredAt = clock.GetUtcNow(),
++        });
++        await db.SaveChangesAsync(ct);
++        await tx.CommitAsync(ct);
++        return deleted;
++    }
++
+     private async Task SeedAsync(IndustryProfile profile, CancellationToken ct)
+     {
+         await using var tx = await db.Database.BeginTransactionAsync(ct);
+diff --git a/app/src/RequestHub.Core/Services/Dtos.cs b/app/src/RequestHub.Core/Services/Dtos.cs
+index 5ab50a4..2246a9a 100644
+--- a/app/src/RequestHub.Core/Services/Dtos.cs
++++ b/app/src/RequestHub.Core/Services/Dtos.cs
+@@ -88,6 +88,8 @@ public sealed record CommentInput(string Body);
+ 
+ public sealed record RoutingInput(string DepartmentId, string? Reason);
+ 
++public sealed record LoadTestCleanupDto(int Deleted, IReadOnlyList<string> Owners);
++
+ public sealed record RequestQuery(
+     string Scope = "queue",
+     string? Status = null,
+diff --git a/app/tests/RequestHub.Tests/ApiFixture.cs b/app/tests/RequestHub.Tests/ApiFixture.cs
+index 251330d..f1c2007 100644
+--- a/app/tests/RequestHub.Tests/ApiFixture.cs
++++ b/app/tests/RequestHub.Tests/ApiFixture.cs
+@@ -33,6 +33,9 @@ public class ApiFixture : IAsyncLifetime
+     {
+     }
+ 
++    /// <summary>Extra configuration settings for a derived fixture.</summary>
++    protected virtual IReadOnlyDictionary<string, string> Settings { get; } = new Dictionary<string, string>();
++
+     public async ValueTask InitializeAsync()
+     {
+         await using (var conn = new NpgsqlConnection($"{ServerConnectionString};Database=postgres"))
+@@ -49,6 +52,11 @@ public class ApiFixture : IAsyncLifetime
+             b.UseSetting("Storage:LocalPath", storagePath);
+             b.UseSetting("Auth:Mode", "Development");
+             b.UseSetting("Demo:AllowReset", "true");
++            foreach (var (key, value) in Settings)
++            {
++                b.UseSetting(key, value);
++            }
++
+             b.ConfigureTestServices(ConfigureTestServices);
+         });
+ 
+diff --git a/app/tests/RequestHub.Tests/FaultInjectionTests.cs b/app/tests/RequestHub.Tests/FaultInjectionTests.cs
+new file mode 100644
+index 0000000..0b6ea9e
+--- /dev/null
++++ b/app/tests/RequestHub.Tests/FaultInjectionTests.cs
+@@ -0,0 +1,53 @@
++using System.Diagnostics;
++using System.Net;
++
++namespace RequestHub.Tests;
++
++public sealed class ActiveQueueDelayFixture : ApiFixture
++{
++    protected override IReadOnlyDictionary<string, string> Settings { get; } = new Dictionary<string, string>
++    {
++        ["Faults:QueueDelayMs"] = "1500",
++        ["Faults:ExpiresAtUtc"] = DateTimeOffset.UtcNow.AddMinutes(30).ToString("O"),
++    };
++}
++
++public sealed class ExpiredQueueDelayFixture : ApiFixture
++{
++    protected override IReadOnlyDictionary<string, string> Settings { get; } = new Dictionary<string, string>
++    {
++        ["Faults:QueueDelayMs"] = "10000",
++        ["Faults:ExpiresAtUtc"] = DateTimeOffset.UtcNow.AddMinutes(-1).ToString("O"),
++    };
++}
++
++/// <summary>The Test · Microsoft load test relies on this fault to rehearse a slowdown, and on its expiry to recover.</summary>
++public sealed class ActiveQueueDelayTests(ActiveQueueDelayFixture api) : IClassFixture<ActiveQueueDelayFixture>
++{
++    [Fact]
++    public async Task Active_queue_delay_slows_the_request_list_but_not_request_details()
++    {
++        var client = api.As("u-ben");
++        var list = Stopwatch.StartNew();
++        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/requests?scope=queue")).StatusCode);
++        list.Stop();
++        Assert.True(list.ElapsedMilliseconds >= 1500, $"list took {list.ElapsedMilliseconds} ms");
++
++        var detail = Stopwatch.StartNew();
++        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/requests/REQ-1001")).StatusCode);
++        detail.Stop();
++        Assert.True(detail.ElapsedMilliseconds < 1500, $"detail took {detail.ElapsedMilliseconds} ms");
++    }
++}
++
++public sealed class ExpiredQueueDelayTests(ExpiredQueueDelayFixture api) : IClassFixture<ExpiredQueueDelayFixture>
++{
++    [Fact]
++    public async Task Expired_queue_delay_is_ignored()
++    {
++        var watch = Stopwatch.StartNew();
++        Assert.Equal(HttpStatusCode.OK, (await api.As("u-ben").GetAsync("/api/requests?scope=queue")).StatusCode);
++        watch.Stop();
++        Assert.True(watch.ElapsedMilliseconds < 10000, $"list took {watch.ElapsedMilliseconds} ms");
++    }
++}
+diff --git a/app/tests/RequestHub.Tests/LoadTestCleanupTests.cs b/app/tests/RequestHub.Tests/LoadTestCleanupTests.cs
+new file mode 100644
+index 0000000..56910c8
+--- /dev/null
++++ b/app/tests/RequestHub.Tests/LoadTestCleanupTests.cs
+@@ -0,0 +1,102 @@
++using System.Net;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.DependencyInjection;
++using RequestHub.Core.Data;
++using RequestHub.Core.Services;
++
++namespace RequestHub.Tests;
++
++public sealed class LoadTestCleanupFixture : ApiFixture
++{
++    // u-ben and u-chloe play the load-test identities in this isolated database; neither owns a seeded request.
++    protected override IReadOnlyDictionary<string, string> Settings { get; } = new Dictionary<string, string> { ["Demo:LoadTestRequesterIds"] = "u-ben, u-chloe" };
++}
++
++public sealed class LoadTestCleanupTests(LoadTestCleanupFixture api) : IClassFixture<LoadTestCleanupFixture>
++{
++    private async Task<string> Submit(string persona, string title)
++    {
++        var response = await api.As(persona).PostJson("/api/requests", new { title, description = "Synthetic load-test request.", category = "equipment", departmentId = "IT" });
++        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
++        return (await response.Read<RequestDetailDto>()).Id;
++    }
++
++    private async Task<HttpStatusCode> Open(string id) => (await api.As("u-dan").GetAsync($"/api/requests/{id}")).StatusCode;
++
++    [Fact]
++    public async Task Admin_cleanup_deletes_only_requests_owned_by_load_test_identities()
++    {
++        var ben = await Submit("u-ben", "Load test request A");
++        var chloe = await Submit("u-chloe", "Load test request B");
++        var kept = await Submit("u-ava", "Real request that must be kept");
++        // The decision, its audit entry, and its notification belong to the load-test request and go with it.
++        Assert.Equal(HttpStatusCode.Created, (await api.As("u-chloe").PostJson($"/api/requests/{ben}/decisions", new { outcome = "Approved" })).StatusCode);
++
++        var response = await api.As("u-dan").PostAsync("/api/admin/load-test/cleanup", new StringContent(""));
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        var result = await response.Read<LoadTestCleanupDto>();
++        Assert.True(result.Deleted >= 2);
++        Assert.Equal(["u-ben", "u-chloe"], result.Owners);
++
++        Assert.Equal(HttpStatusCode.NotFound, await Open(ben));
++        Assert.Equal(HttpStatusCode.NotFound, await Open(chloe));
++        Assert.Equal(HttpStatusCode.OK, await Open(kept));
++
++        using var scope = api.Factory.Services.CreateScope();
++        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
++        var seeded = RequestHubDbContext.FirstRequestNumber + DemoSeeder.SeedRequestCount;
++        Assert.Equal(DemoSeeder.SeedRequestCount, await db.Requests.CountAsync(r => r.Number < seeded));
++        Assert.False(await db.Requests.AnyAsync(r => r.RequesterId == "u-ben" || r.RequesterId == "u-chloe"));
++        Assert.False(await db.AuditEvents.AnyAsync(a => a.RequestId != null && !db.Requests.Any(r => r.Id == a.RequestId)));
++        Assert.False(await db.Notifications.AnyAsync(n => n.RequestId != null && !db.Requests.Any(r => r.Id == n.RequestId)));
++        Assert.True(await db.AuditEvents.AnyAsync(a => a.Action == "loadtest.cleanup" && a.Actor == "u-dan" && a.RequestId == null));
++    }
++
++    [Fact]
++    public async Task A_load_test_identity_cleans_up_only_its_own_requests()
++    {
++        var ben = await Submit("u-ben", "Load test request C");
++        var chloe = await Submit("u-chloe", "Load test request D");
++
++        var response = await api.As("u-ben").PostAsync("/api/admin/load-test/cleanup", new StringContent(""));
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        Assert.Equal(["u-ben"], (await response.Read<LoadTestCleanupDto>()).Owners);
++
++        Assert.Equal(HttpStatusCode.NotFound, await Open(ben));
++        Assert.Equal(HttpStatusCode.OK, await Open(chloe));
++        Assert.Equal(HttpStatusCode.OK, await Open("REQ-1002"));
++    }
++
++    [Theory]
++    [InlineData("u-ava")]
++    [InlineData("u-grace")]
++    public async Task Callers_who_are_neither_admin_nor_a_load_test_identity_are_refused(string persona)
++    {
++        var loadTestRequest = await Submit("u-ben", "Load test request E");
++
++        var response = await api.As(persona).PostAsync("/api/admin/load-test/cleanup", new StringContent(""));
++        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
++        Assert.Equal("demo.load_test_cleanup_forbidden", await response.Code());
++        Assert.Equal(HttpStatusCode.OK, await Open(loadTestRequest));
++    }
++
++    [Fact]
++    public async Task Anonymous_cleanup_is_rejected()
++    {
++        var client = api.Factory.CreateClient();
++        client.DefaultRequestHeaders.Add("X-RequestHub-Client", "tests");
++        var response = await client.PostAsync("/api/admin/load-test/cleanup", new StringContent(""));
++        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
++    }
++}
++
++public sealed class LoadTestCleanupDisabledTests(ApiFixture api) : IClassFixture<ApiFixture>
++{
++    [Fact]
++    public async Task Cleanup_is_refused_when_no_load_test_identity_is_configured()
++    {
++        var response = await api.As("u-dan").PostAsync("/api/admin/load-test/cleanup", new StringContent(""));
++        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
++        Assert.Equal("demo.load_test_cleanup_disabled", await response.Code());
++    }
++}
