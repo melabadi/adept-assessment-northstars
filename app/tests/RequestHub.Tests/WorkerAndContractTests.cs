@@ -27,9 +27,15 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
         }
     }
 
-    private NotificationProcessor Processor(RequestHubDbContext db, INotificationSender sender, int maxAttempts) => new(
+    private sealed class TimeoutSender(Guid target) : INotificationSender
+    {
+        public Task SendAsync(Notification notification, CancellationToken cancellationToken) =>
+            notification.Id == target ? throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout") : Task.CompletedTask;
+    }
+
+    private NotificationProcessor Processor(RequestHubDbContext db, INotificationSender sender, int maxAttempts, int batchSize = 1) => new(
         db, sender, TimeProvider.System,
-        Options.Create(new WorkerOptions { BatchSize = 1, MaxAttempts = maxAttempts, BaseBackoffSeconds = 0 }),
+        Options.Create(new WorkerOptions { BatchSize = batchSize, MaxAttempts = maxAttempts, BaseBackoffSeconds = 0 }),
         new StaticOptionsMonitor<FaultOptions>(new FaultOptions()),
         NullLogger<NotificationProcessor>.Instance);
 
@@ -80,6 +86,55 @@ public sealed class WorkerTests(ApiFixture api) : IClassFixture<ApiFixture>
         Assert.Equal(NotificationStatus.Failed, n.Status);
         Assert.Equal(3, n.Attempts);
         Assert.Contains("SMTP", n.LastError);
+    }
+
+    [Fact]
+    public async Task Timed_out_delivery_is_retried_without_rolling_back_the_batch()
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var ok = await PendingNotificationAsync(db);
+        var slow = await PendingNotificationAsync(db);
+        var processor = Processor(db, new TimeoutSender(slow), maxAttempts: 5, batchSize: 1000);
+        var before = DateTimeOffset.UtcNow;
+
+        await processor.ProcessBatchAsync(CancellationToken.None);
+
+        db.ChangeTracker.Clear();
+        Assert.Equal(NotificationStatus.Sent, (await db.Notifications.SingleAsync(x => x.Id == ok)).Status);
+        var n = await db.Notifications.SingleAsync(x => x.Id == slow);
+        Assert.Equal(NotificationStatus.Pending, n.Status);
+        Assert.Equal(1, n.Attempts);
+        Assert.True(n.NextAttemptAt >= before);
+    }
+
+    [Fact]
+    public async Task Delivery_that_always_times_out_ends_as_failed()
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var id = await PendingNotificationAsync(db);
+        var processor = Processor(db, new TimeoutSender(id), maxAttempts: 3);
+
+        for (var i = 0; i < 5; i++) await processor.ProcessBatchAsync(CancellationToken.None);
+
+        db.ChangeTracker.Clear();
+        var n = await db.Notifications.SingleAsync(x => x.Id == id);
+        Assert.Equal(NotificationStatus.Failed, n.Status);
+        Assert.Equal(3, n.Attempts);
+    }
+
+    [Fact]
+    public async Task Cancelled_token_still_propagates()
+    {
+        await using var scope = api.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<RequestHubDbContext>();
+        var id = await PendingNotificationAsync(db);
+        var processor = Processor(db, new TimeoutSender(id), maxAttempts: 3);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => processor.ProcessBatchAsync(cts.Token));
     }
 
     [Fact]
