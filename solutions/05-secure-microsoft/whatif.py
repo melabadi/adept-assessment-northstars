@@ -6,9 +6,12 @@ Two ways to run it
     python whatif.py
     python whatif.py --expect Microsoft.Storage/storageAccounts --expect "Microsoft.Network/private*"
   In Azure, for a pull request. The posture-whatif Container Apps job runs it for every open pull request that changes
-  solutions/05-secure-microsoft/infra/ (the posture Function app's preview function starts the job), when the pull
-  request's branch is in this repository and its author is the repository's owner, a member, or a collaborator. A fork's
-  pull request, or one opened by anyone else, is refused before anything is read from it or written to it:
+  solutions/05-secure-microsoft/infra/, when the pull request's branch is in this repository and its author is the
+  repository's owner, a member, or a collaborator. A fork's pull request, or one opened by anyone else, is refused before
+  anything is read from it or written to it. The posture Function app's preview function sets the pull request's
+  posture/what-if status to pending and starts the job as it is defined, which previews every pull request in that state
+  (the Function cannot choose what the job runs: overriding a job's template at start needs write access on the job):
+    python whatif.py --pending
     python whatif.py --pull-request 123
 
 What it does
@@ -633,21 +636,70 @@ def outside_pull_request(pull: dict, repository: str) -> str | None:
     return None
 
 
-def preview_pull_request(number: int, expect: list[str], baseline_deployment: str) -> int:
-    # Read the token once, erase it from the process's initial environment block, and drop it from the environment, so
-    # no child process can inherit or read it.
+def connect() -> tuple[GitHub | None, str, str]:
+    """The GitHub client and the resource group from the job's environment, or (None, "", why not). Reads the token once,
+    erases it from the process's initial environment block, and drops it from the environment, so no child process can
+    inherit or read it."""
     token = os.environ.get(TOKEN_VARIABLE, "")
     erased = erase_from_initial_environment(TOKEN_VARIABLE)
     os.environ.pop(TOKEN_VARIABLE, None)
     if sys.platform.startswith("linux") and token and not erased:
-        print("error: the GitHub token could not be erased from the process environment; refusing to compile", file=sys.stderr)
-        return 2
+        return None, "", "the GitHub token could not be erased from the process environment; refusing to compile"
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     resource_group = os.environ.get("AZURE_RESOURCE_GROUP", "")
     if not token or token == "not-set" or not repository or not resource_group:
-        print("error: POSTURE_GITHUB_TOKEN, GITHUB_REPOSITORY, and AZURE_RESOURCE_GROUP must be set", file=sys.stderr)
+        return None, "", "POSTURE_GITHUB_TOKEN, GITHUB_REPOSITORY, and AZURE_RESOURCE_GROUP must be set"
+    return GitHub(repository, token), resource_group, ""
+
+
+def preview_pull_request(number: int, expect: list[str], baseline_deployment: str) -> int:
+    github, resource_group, problem = connect()
+    if github is None:
+        print(f"error: {problem}", file=sys.stderr)
         return 2
-    github = GitHub(repository, token)
+    return preview_one(github, number, expect, baseline_deployment, resource_group)
+
+
+def pending_pull_requests(github: GitHub) -> list[int]:
+    """Open pull requests whose head commit waits for a preview: its latest posture/what-if status is pending. The posture
+    Function sets that status, then starts this job as it is defined, and only people with write access can set a commit
+    status. A fork's pull request, or one opened by anyone outside the repository, is skipped before its statuses are
+    read."""
+    numbers = []
+    for pull in github.call("GET", "pulls?state=open&per_page=100") or []:
+        if outside_pull_request(pull, github.repository):
+            continue
+        sha = (pull.get("head") or {}).get("sha") or ""
+        statuses = github.call("GET", f"commits/{sha}/statuses?per_page=100") or []
+        latest = next((s for s in statuses if s.get("context") == STATUS_CONTEXT), None)
+        if latest and latest.get("state") == "pending":
+            numbers.append(pull["number"])
+    return sorted(numbers)
+
+
+def preview_pending(expect: list[str], baseline_deployment: str) -> int:
+    """Preview every pull request that waits for a preview, each read and checked again as with --pull-request. Returns
+    the worst exit code."""
+    github, resource_group, problem = connect()
+    if github is None:
+        print(f"error: {problem}", file=sys.stderr)
+        return 2
+    try:
+        numbers = pending_pull_requests(github)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not numbers:
+        print("no pull request waits for a preview")
+        return 0
+    worst = 0
+    for number in numbers:
+        worst = max(worst, preview_one(github, number, expect, baseline_deployment, resource_group))
+    return worst
+
+
+def preview_one(github: GitHub, number: int, expect: list[str], baseline_deployment: str, resource_group: str) -> int:
+    repository = github.repository
     pull = github.call("GET", f"pulls/{number}")
     refused = outside_pull_request(pull, repository)
     if refused:
@@ -773,11 +825,16 @@ def preview_checkout(args: argparse.Namespace, expect: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--pull-request", type=int, metavar="NUMBER",
-                        help="preview this pull request's Bicep in Azure and report on the pull request, if its branch "
-                             "is in this repository and its author is the owner, a member, or a collaborator (needs "
-                             "POSTURE_GITHUB_TOKEN, GITHUB_REPOSITORY, and AZURE_RESOURCE_GROUP; the posture-whatif job "
-                             "sets them)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--pull-request", type=int, metavar="NUMBER",
+                      help="preview this pull request's Bicep in Azure and report on the pull request, if its branch "
+                           "is in this repository and its author is the owner, a member, or a collaborator (needs "
+                           "POSTURE_GITHUB_TOKEN, GITHUB_REPOSITORY, and AZURE_RESOURCE_GROUP; the posture-whatif job "
+                           "sets them)")
+    mode.add_argument("--pending", action="store_true",
+                      help="preview, as --pull-request does, every open pull request whose head commit has a pending "
+                           f"{STATUS_CONTEXT} status: the posture Function sets that status, then starts the "
+                           "posture-whatif job, which runs with this option")
     parser.add_argument("--expect", action="append", metavar="TYPE",
                         help="resource type the change is meant to touch; * matches any characters, so "
                              "Microsoft.Network/private* covers private endpoints and private DNS zones (repeat for "
@@ -798,6 +855,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
     expect = args.expect or DEFAULT_EXPECT
+    if args.pending:
+        return preview_pending(expect, args.baseline_deployment)
     if args.pull_request is not None:
         return preview_pull_request(args.pull_request, expect, args.baseline_deployment)
     try:

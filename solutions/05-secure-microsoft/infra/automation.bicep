@@ -44,7 +44,8 @@ var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, 
 var roles = {
   // Foundry User (formerly Azure AI User): call agents and models in the project.
   foundryUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
-  // Container Apps Jobs Operator: start and read job executions, nothing else.
+  // Container Apps Jobs Operator: start and read job executions. Starting the job with a template override would need
+  // write access on the job, which the Function's identity does not have.
   jobsOperator: 'b9a307c4-5aa3-4b52-ba60-2b17c136cd7b'
   reader: 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
   // Query compliance and start an evaluation (see resources.bicep for everything else this role allows).
@@ -64,7 +65,10 @@ var names = {
   function: 'func-posture-${resourceToken}'
 }
 // The job runs whatif.py from the default branch, never from the pull request it previews: the pull request's Bicep is
-// untrusted input, its code is not run. WHATIF_REF exists only to test a branch before it merges.
+// untrusted input, its code is not run. WHATIF_REF exists only to test a branch before it merges. The Function starts the
+// job as it is defined, never with a template override (that needs write access on the job, which the Function's identity
+// does not have), so the job finds its work itself: with --pending, it previews every open pull request whose head commit
+// the Function marked with a pending posture/what-if status.
 var jobBootstrap = '''
 import os, sys, runpy, tempfile, urllib.parse, urllib.request
 repo = os.environ["GITHUB_REPOSITORY"]
@@ -164,6 +168,7 @@ resource whatifJob 'Microsoft.App/jobs@2025-07-01' = {
           name: 'whatif'
           image: 'mcr.microsoft.com/azure-cli:2.91.0'
           command: ['python3', '-c', jobBootstrap]
+          args: ['--pending']
           env: [
             { name: 'POSTURE_GITHUB_TOKEN', secretRef: 'github-token' }
             { name: 'GITHUB_REPOSITORY', value: githubRepository }

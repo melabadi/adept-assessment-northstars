@@ -163,6 +163,7 @@ class PullRequestStatus(unittest.TestCase):
 
     class FakeGitHub:
         def __init__(self, fail_on: str | None = None, **pull) -> None:
+            self.repository = "o/r"
             self.fail_on, self.statuses, self.comments, self.calls = fail_on, [], [], []
             self.pull = {"state": "open", "head": {"sha": "a" * 40, "repo": {"full_name": "o/r"}},
                          "author_association": "OWNER", **pull}
@@ -261,6 +262,106 @@ class PullRequestGate(unittest.TestCase):
                                          head={"sha": "a" * 40, "repo": {"full_name": "O/R"}})
                 self.assertEqual(self.run_preview(github, lambda *a, **k: self.PASS), 0)
                 self.assertEqual(github.statuses[-1][0], "success")
+
+
+class PendingPreviews(unittest.TestCase):
+    """The posture-whatif job runs `whatif.py --pending`: the Function marks a pull request's head commit with a pending
+    posture/what-if status and starts the job as it is defined, so the job finds its work in GitHub. The gate still holds
+    for every pull request it finds."""
+
+    SHA = {number: f"{number:x}" * 40 for number in range(7, 14)}
+
+    class FakeGitHub:
+        def __init__(self, pulls: list[dict], statuses: dict[str, list[dict]]) -> None:
+            self.repository = "o/r"
+            self.pulls, self.statuses_by_sha, self.calls = {p["number"]: p for p in pulls}, statuses, []
+            self.statuses, self.comments = [], []
+
+        def call(self, method, path, body=None):
+            self.calls.append((method, path))
+            route = path.split("?", 1)[0]
+            if route == "pulls" and method == "GET":
+                return list(self.pulls.values())
+            if route.startswith("commits/") and route.endswith("/statuses"):
+                return self.statuses_by_sha.get(route.split("/")[1], [])
+            if route.startswith("pulls/") and "/files" not in route:
+                return self.pulls[int(route.split("/")[1])]
+            if route.startswith("statuses/"):
+                self.statuses.append((route.split("/")[1], body["state"]))
+                return {}
+            if route.startswith("issues/") and method == "POST":
+                self.comments.append((route, body["body"]))
+                return {}
+            return []
+
+    def pull(self, number: int, repository: str | None = "o/r", association: str = "OWNER") -> dict:
+        head = {"sha": self.SHA[number], "repo": {"full_name": repository} if repository else None}
+        return {"number": number, "state": "open", "head": head, "author_association": association}
+
+    @staticmethod
+    def status(state: str, context: str = whatif.STATUS_CONTEXT) -> dict:
+        return {"context": context, "state": state}
+
+    def github(self) -> "PendingPreviews.FakeGitHub":
+        pending = [self.status("pending")]
+        return self.FakeGitHub(
+            [self.pull(7), self.pull(8), self.pull(9, "someone/r"), self.pull(10, association="NONE"), self.pull(11),
+             self.pull(12), self.pull(13, association="COLLABORATOR")],
+            {self.SHA[7]: pending, self.SHA[8]: [self.status("success"), self.status("pending")],
+             self.SHA[9]: pending, self.SHA[10]: pending,
+             self.SHA[11]: [self.status("error"), self.status("pending")],
+             self.SHA[12]: [self.status("pending", "ci/other")], self.SHA[13]: pending})
+
+    def test_only_trusted_pull_requests_whose_latest_preview_status_is_pending(self):
+        github = self.github()
+        self.assertEqual(whatif.pending_pull_requests(github), [7, 13])
+        read = [path for _, path in github.calls]
+        for outside in (9, 10):  # a fork, an outside author: not even their statuses are read
+            self.assertFalse(any(self.SHA[outside] in path for path in read))
+        self.assertEqual([c for c in github.calls if c[0] != "GET"], [])
+
+    def run_pending(self, github, preview) -> int:
+        def fetch(gh, sha, sandbox):
+            target = sandbox / whatif.ENTRY
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("param p string = 'x'\n", encoding="utf-8")
+
+        environment = {"POSTURE_GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "o/r", "AZURE_RESOURCE_GROUP": "rg"}
+        with mock.patch.dict(os.environ, environment), \
+                mock.patch.object(whatif, "GitHub", lambda repository, token: github), \
+                mock.patch.object(whatif, "fetch_templates", fetch), mock.patch.object(whatif, "sign_in", lambda: None), \
+                mock.patch.object(whatif, "erase_from_initial_environment", lambda name: True), \
+                mock.patch.object(whatif, "preview", preview):
+            return whatif.main(["--pending"])
+
+    def test_each_waiting_pull_request_is_previewed_and_reported(self):
+        github = self.github()
+        self.assertEqual(self.run_pending(github, lambda *a, **k: PullRequestStatus.PASS), 0)
+        self.assertEqual(github.statuses, [(self.SHA[7], "success"), (self.SHA[13], "success")])
+        self.assertEqual([route for route, _ in github.comments], ["issues/7/comments", "issues/13/comments"])
+
+    def test_the_worst_result_is_the_jobs_exit_code(self):
+        unexpected = dict(PullRequestStatus.PASS, unexpected=[{"type": "Microsoft.Sql/servers"}])
+        outcomes = iter([PullRequestStatus.PASS, unexpected])
+        github = self.github()
+        self.assertEqual(self.run_pending(github, lambda *a, **k: next(outcomes)), 1)
+        self.assertEqual(github.statuses, [(self.SHA[7], "success"), (self.SHA[13], "failure")])
+
+    def test_nothing_waiting_writes_nothing(self):
+        github = self.FakeGitHub([self.pull(8)], {self.SHA[8]: [self.status("success")]})
+
+        def reached_azure(*args, **kwargs):
+            raise AssertionError("nothing waits for a preview")
+        self.assertEqual(self.run_pending(github, reached_azure), 0)
+        self.assertEqual((github.statuses, github.comments), ([], []))
+
+    def test_the_job_runs_with_pending_and_names_no_pull_request(self):
+        bicep = (Path(__file__).resolve().parent / "infra" / "automation.bicep").read_text(encoding="utf-8")
+        job = bicep[bicep.index("resource whatifJob"):bicep.index("// ---------- Network")]
+        self.assertIn("args: ['--pending']", job)
+        with self.assertRaises(SystemExit):  # one mode at a time
+            with mock.patch("sys.stderr"):
+                whatif.main(["--pending", "--pull-request", "7"])
 
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "the job runs on Linux; /proc is Linux-only")
