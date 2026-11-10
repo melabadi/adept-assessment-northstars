@@ -68,7 +68,9 @@ export function TriagePanel({ detail, onChanged }: DetailPanelProps) {
     }
   };
 
-  const stale = recommendation !== null && recommendation.departmentAtRecommendation !== detail.departmentId;
+  const stale = recommendation !== null
+    && recommendation.status === 'Proposed'
+    && recommendation.departmentAtRecommendation !== detail.departmentId;
   const canConfirm = recommendation !== null
     && recommendation.status === 'Proposed'
     && !stale
