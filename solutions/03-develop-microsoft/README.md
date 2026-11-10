@@ -103,9 +103,11 @@ solutions/03-develop-microsoft/
 ├── demo/
 │   ├── fast-track.patch        the demo change: approvers may approve their own low-priority requests
 │   └── keep-the-guard.patch    the follow-up: keep the guard and add a regression test
-├── eval_cases.jsonl            ten labelled pull requests of this repository
+├── eval_cases.jsonl            ten labelled pull requests of this repository, each with the findings its review must state
+├── grader_checks.jsonl         a right and a wrong review per finding, same words and same file: only the conclusion differs
 ├── review_graders.py           the five checks that score the reviewer (Foundry code-based evaluators)
-├── eval_reviewer.py            dry-runs the reviewer on the labelled pull requests and evaluates the results in Foundry
+├── eval_reviewer.py            dry-runs the reviewer on the labelled pull requests and evaluates the results in Foundry;
+│                               --check-graders grades the fixed reviews in grader_checks.jsonl instead
 ├── test_eval_reviewer.py       tests for the scoring rules (python -m unittest)
 ├── test_configure_github.py    tests for the hooks: which webhook they touch, and that they never print its URL
 ├── test_reviewer_function.py   tests for the Function: the judge runs first, results travel as files, reviews only
@@ -189,7 +191,7 @@ Run these once, in PowerShell 7. You create one GitHub token and store it; `azd 
   - Azure portal: the resource group `rg-ai-sdlc-develop` > its Application Insights resource (`appi-…`) > **Monitoring** > **Logs**, in **KQL mode**, with the query from step 3.
   - Foundry portal: your project > **Agents** > `requesthub-pr-reviewer`, and **Evaluation** with the last run of *Azure pull request reviewer: labelled pull requests*.
   - PowerShell 7 at the repository root, on `main`, with this README's demo commands.
-- [ ] **Start early:** for fresh evaluation results, run `python eval_reviewer.py` (in `solutions/03-develop-microsoft`) about 20 minutes before; otherwise show the last run.
+- [ ] **Start early:** for fresh evaluation results, run `python eval_reviewer.py` (in `solutions/03-develop-microsoft`) about 20 minutes before; otherwise show the last run. Show its table as it came out: it is the first grading of these reviews. If Foundry graded once more, the script says so and why, apart from the table. Don't run it again until every row passes: a failed check is a result.
 - [ ] **Timings:** about 20 minutes on stage. Each review takes about two and a half minutes from the label or the push; talk through the Function's log while it works.
 
 ## Run the demo
@@ -287,6 +289,12 @@ python eval_reviewer.py
 
 **Point out:** pull request #99 pastes the search term into a SQL query. The rules only see that the code changed without a test, and the sandbox only sees one search test fail; the agent names the SQL injection. The labels are the team's judgement of real pull requests, so any change to the rules, the agent, or the model is measured the same way.
 
+Then show that the commentary check reads conclusions, not keywords: `python eval_reviewer.py --check-graders` grades a right and a wrong review for each finding, which use the same words and point at the same file and line. No dry run is needed; Foundry grades them in about 5 minutes, 10 when it has to grade once more, so start it before the session, and on stage run `python eval_reviewer.py --check-graders --local`, which grades the same reviews on your machine in a second. `99/reported` is the review "There is no SQL injection here." on #99: it mentions injection and points at `RequestWorkflow.cs`, so it earns the evidence half of the credit and fails. The held-out reviews are for changes outside the ten pull requests, written after the check was frozen.
+
+![python eval_reviewer.py --check-graders: Foundry graded 17 fixed reviews, twice because it couldn't grade advisory_only on the first run and sandbox_ran on the second. Every right review passes all five checks, and every wrong one, including 99/reported, fails only useful_commentary; paired 11 of 11 and held-out 6 of 6 graded as labelled, and Foundry graded every one the same way as the local checks](images/10-check-graders.png)
+
+**Point out:** a known-bad finding counts only when a concern asserts it, at the place it happens. Right words with the wrong conclusion fail, and Foundry's evaluators run the same code as the local check.
+
 ## What to observe
 
 - **Minutes, not hours.** The first review arrives about two and a half minutes after the label, and again after every push.
@@ -294,7 +302,7 @@ python eval_reviewer.py
 - **Evidence without pulling the branch.** The change was built and 81 tests ran in an isolated Azure session; the review says what passed and what was flaky.
 - **Attention where it matters.** The agent explains the failures and points at what no rule catches: SQL built from user input in #99, or a pull request whose code no longer matches its title.
 - **A person decides.** The Function posts every review as a comment (`COMMENT`), never as an approval or a change request, and its token can't merge (it can't write code). The token's Pull requests permission could approve a pull request, so the guard is the Function's code, and a test fails if `APPROVE` or `REQUEST_CHANGES` appears anywhere in it. Change it only through a reviewed pull request, like any other code.
-- **Measured, not anecdotal.** Ten labelled pull requests and five checks in Foundry's Evaluation view, run again after every change to the rules, the agent, or the model.
+- **Measured, not anecdotal.** Ten labelled pull requests and five checks in Foundry's Evaluation view, run again after every change to the rules, the agent, or the model. The commentary check scores what the agent concludes and where it points, not the words it uses: "There is no SQL injection here" on #99 earns half the credit for pointing at the right file, and fails. The AI writes the commentary, deterministic checks score the rules and the commentary, and a person decides the pull request.
 
 ## Reset and clean up
 
@@ -321,7 +329,7 @@ Copy this folder and change:
 - **The agent:** the instructions in [`reviewer-agent.yaml`](reviewer-agent.yaml) describe RequestHub; describe your application instead. `python publish_reviewer_agent.py` publishes a new version.
 - **Where the scripts live:** the `REVIEW_SCRIPTS_PATH` app setting in [`infra/resources.bicep`](infra/resources.bicep) (default `solutions/03-develop-microsoft/sandbox`), and `REVIEW_CHECKER_REF` in the azd environment (default `main`) for the branch the Function reads them from.
 - **The review's steps:** [`function/reviewer/pipeline.py`](function/reviewer/pipeline.py), with the tests in [`test_reviewer_function.py`](test_reviewer_function.py) that keep the judge first, the token away from the sessions, and the review a comment. `azd deploy` runs them first and stops if one fails.
-- **The evaluation:** replace [`eval_cases.jsonl`](eval_cases.jsonl) with your own labelled pull requests.
+- **The evaluation:** replace [`eval_cases.jsonl`](eval_cases.jsonl) with your own labelled pull requests. For each flagged or known-bad one, list the findings its review must state: a few positive words that say the problem (`sql injection`, `alter* the query`) and the file where it is. A known-bad finding counts only as a concern. Add a right and a wrong review per finding to [`grader_checks.jsonl`](grader_checks.jsonl), with the same words and the same file, and run `python eval_reviewer.py --check-graders`: it shows, here and in Foundry, that the check tells them apart.
 - **For a team, prefer a GitHub App to a personal token:** a GitHub App's installation token isn't tied to a person and can be limited to the same two permissions.
 - **What Azure keeps:** the Function logs one line per step to Application Insights, with the review's id, the commit, and counts, but no code, diff, or review; Log Analytics keeps it for 30 days. A dry run's result, including the review it would have posted, stays in the storage account's `dry-runs` container for 7 days, then a lifecycle rule deletes it. Only the Function's identity has a data role on that storage account, which has no public network access.
 

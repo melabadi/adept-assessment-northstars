@@ -20,23 +20,26 @@ import eval_reviewer  # noqa: E402
 import review_graders  # noqa: E402
 
 CASES = [json.loads(line) for line in (HERE / "eval_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+GRADER_CHECKS = [json.loads(line) for line in (HERE / "grader_checks.jsonl").read_text(encoding="utf-8").splitlines()
+                 if line.strip()]
 RULE_IDS = ["approval-authority", "authorization-in-workflow", "contract-additive", "tests-with-changes", "synthetic-data"]
 TITLES = ["Approval authority is untouched", "Authorization stays in RequestWorkflow", "The API contract changes only additively",
           "Behavior changes come with tests", "Data is synthetic"]
 
 
 def good_item(case: dict) -> dict:
-    """A result that passes every check for this case."""
+    """A result that passes every check for this case: each labelled finding stated where it is, as a concern."""
     rules = [{"id": rid, "title": title, "result": "FAIL" if rid in case["expected_failures"] else "PASS"}
              for rid, title in zip(RULE_IDS, TITLES)]
     failed = sum(r["result"] == "FAIL" for r in rules)
     header = "✅ all 5 passed" if not failed else f"❌ {failed} of 5 failed"
     table = "\n".join(f"| {r['title']} | {'❌ FAIL' if r['result'] == 'FAIL' else '✅ PASS'} | x |" for r in rules)
-    words = " ".join(group[0] for group in case["expect_mentions"])
-    agent = {"summary": f"The change. {words}", "tests_note": "Tests ran.", "for_the_person": "Decide.",
-             "observations": [], "rule_notes": []}
+    observations = [{"severity": "concern", "file": finding["file"], "line": 1,
+                     "text": f"Here: {finding['states'][0].replace('*', '')}."} for finding in case["expect_findings"]]
+    agent = {"summary": "The change.", "tests_note": "Tests ran.", "for_the_person": "Decide.",
+             "observations": observations, "rule_notes": []}
     return {"pr": case["pr"], "kind": case["kind"], "why": case["why"],
-            "expected_failures": json.dumps(case["expected_failures"]), "expect_mentions": json.dumps(case["expect_mentions"]),
+            "expected_failures": json.dumps(case["expected_failures"]), "expect_findings": json.dumps(case["expect_findings"]),
             "rules": json.dumps(rules), "review": f"**Team rules: {header}.**\n\n{table}\n\n**Commentary from the reviewer agent**",
             "agent": json.dumps(agent), "sandbox": json.dumps({"api": {"status": "passed"}, "web": {"status": "passed"}}),
             "_run": "test", "_status": "Succeeded"}
@@ -85,6 +88,40 @@ class GraderTests(unittest.TestCase):
                               "text": "There is no SQL injection here."}]}))
         self.assertLess(review_graders.grade_useful_commentary({}, denial), 1.0)
 
+    def test_every_flagged_or_known_bad_case_labels_a_finding_with_a_file(self):
+        for case in CASES:
+            with self.subTest(pr=case["pr"]):
+                self.assertEqual(bool(case["expect_findings"]), case["kind"] != "known-good")
+                for finding in case["expect_findings"]:
+                    self.assertTrue(finding["states"] and finding["file"].startswith("app/"))
+                    for claim in finding["states"]:
+                        self.assertFalse(set(claim.replace("*", "").split()) & {"not", "no", "never", "without", "cannot"},
+                                         f"{claim!r}: claims are positive statements")
+
+    def test_paired_reviews_share_their_words_and_evidence(self):
+        """Each right review has a wrong twin that points at the same file and line and differs in what it concludes."""
+        by_id = {row["id"]: row for row in GRADER_CHECKS}
+        for row in GRADER_CHECKS:
+            if not row["id"].endswith("/right"):
+                continue
+            with self.subTest(review=row["id"]):
+                twin = by_id[row["id"].replace("/right", "/wrong")]
+                where = lambda r: [(o["file"], o["line"]) for o in json.loads(r["item"]["agent"])["observations"]]  # noqa: E731
+                self.assertEqual(where(row), where(twin))
+                self.assertTrue(all(row["expect"].values()))
+                self.assertFalse(twin["expect"]["pr_review_useful_commentary"])
+        self.assertTrue(any(row["split"] == "held-out" for row in GRADER_CHECKS))
+
+    def test_every_grader_check_is_graded_as_labelled(self):
+        """grader_checks.jsonl: right reviews pass every check; wrong ones fail only the commentary check. A wrong review
+        that points at the right place earns the evidence half (0.5), never the whole."""
+        for row in GRADER_CHECKS:
+            with self.subTest(review=row["id"]):
+                graded = {name: fn({}, row["item"]) for name, (fn, _) in review_graders.GRADERS.items()}
+                self.assertEqual({name: score >= 1 for name, score in graded.items()}, row["expect"])
+                if not row["expect"]["pr_review_useful_commentary"] and row["item"]["kind"] != "known-good":
+                    self.assertEqual(graded["pr_review_useful_commentary"], 0.5)
+
 
 class ReportingTests(unittest.TestCase):
     def test_every_case_passing_exits_0(self):
@@ -121,6 +158,15 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("COULD NOT GRADE", out)
 
+    def test_the_grader_check_runs_here_without_azure(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = eval_reviewer.main(["--check-graders", "--local"])
+        printed = stdout.getvalue() + stderr.getvalue()
+        self.assertEqual(code, 0, printed)
+        self.assertRegex(printed, r"paired: (\d+)/\1 reviews graded as labelled")
+        self.assertRegex(printed, r"held-out: (\d+)/\1 reviews graded as labelled")
+
     def test_no_code_is_compiled_or_executed(self):
         for name in ("eval_reviewer.py", "review_graders.py"):
             source = (HERE / name).read_text(encoding="utf-8")
@@ -150,6 +196,19 @@ class FoundryRunTests(unittest.TestCase):
         problem = eval_reviewer.foundry_verdict(self.run_with(passed={"pr_review_rule_verdicts": 0}), self.items)
         self.assertIn("COULD NOT GRADE", problem)
         self.assertIn(f"pr_review_rule_verdicts on 0 of {len(self.items)}", problem)
+
+    def test_two_gradings_of_the_same_results_complete_each_other(self):
+        # Seen live: the first grading lost every item of rule_verdicts, the second every item of useful_commentary.
+        graded: dict = {}
+        first = eval_reviewer.foundry_verdict(self.run_with(passed={"pr_review_rule_verdicts": 0}), self.items, graded)
+        self.assertIn("COULD NOT GRADE", first)
+        self.assertIsNone(eval_reviewer.foundry_verdict(self.run_with(passed={"pr_review_useful_commentary": 0}),
+                                                        self.items, graded))
+        # Both gradings missing the same check still can't be trusted.
+        graded = {}
+        eval_reviewer.foundry_verdict(self.run_with(passed={"pr_review_rule_verdicts": 0}), self.items, graded)
+        self.assertIn("COULD NOT GRADE", eval_reviewer.foundry_verdict(
+            self.run_with(passed={"pr_review_rule_verdicts": 0}), self.items, graded))
 
     def test_a_check_missing_from_the_run_is_could_not_grade(self):
         problem = eval_reviewer.foundry_verdict(self.run_with(drop="pr_review_sandbox_ran"), self.items)
