@@ -241,7 +241,7 @@ public sealed partial class RequestWorkflow(
             return WorkflowError.NotFound(publicId);
         }
 
-        if (!user.HasRole(Roles.Approver))
+        if (!user.HasRole(Roles.Approver) && !user.IsAdmin)
         {
             return new WorkflowError("decision.not_approver", "Only approvers can record a decision.", 403);
         }
@@ -541,7 +541,7 @@ public sealed partial class RequestWorkflow(
         var terminal = request.Status.IsTerminal();
         var canView = CanView(user, request);
         string? blocked = null;
-        if (!user.HasRole(Roles.Approver)) blocked = "not_approver";
+        if (!user.HasRole(Roles.Approver) && !user.IsAdmin) blocked = "not_approver";
         else if (!user.CanAccessDepartment(request.DepartmentId)) blocked = "department";
         else if (request.RequesterId == user.Id) blocked = "self_approval";
         else if (terminal) blocked = "terminal";
