@@ -19,7 +19,8 @@ What this script does:
 Grader checks: --check-graders grades the fixed reviews in grader_checks.jsonl instead, without any dry run: a right and
 a wrong commentary for labelled cases, and for held-out changes the checks were never tuned on, that use the same words
 and point at the same file and line, and differ only in what they conclude. It scores them here and, unless --local,
-with the evaluators in Foundry, and shows that both tell the two apart and agree with each other.
+with the evaluators in Foundry, and shows that both tell the two apart and agree with each other. A review the checks
+misread is recorded in grader_checks.jsonl as a known miss, with the reason, and listed under the table.
 
 The dry-runs route needs the Function's key, so the script reads it from Azure Resource Manager each time, sends it in a
 header, and never prints or saves it. Results go to out/eval/ (results.jsonl and report.md), which git ignores.
@@ -45,9 +46,10 @@ Usage
 Exit codes: 0 every check passed for every case; 1 at least one check failed (a case without a result fails every
 check); 2 configuration or service error, the evaluation's pull requests not set up, a check that COULD NOT GRADE, or a
 Foundry evaluation that is incomplete, has errored items, has a check that didn't grade every item (even when graded once
-more), or disagrees with the local scores. With --check-graders: 0 every fixed review was graded as labelled here and
-Foundry graded it the same way; 1 a grade differs from its label or Foundry's differs from the local one; 2 Foundry could
-not grade. With --setup or --cleanup: 0 done, 2 git or GitHub refused a step.
+more), or disagrees with the local scores. With --check-graders: 0 every fixed review was graded as labelled here (or as
+its recorded known miss) and Foundry graded it the same way; 1 a grade differs from its label, a known miss no longer
+misses, or Foundry's grade differs from the local one; 2 Foundry could not grade. With --setup or --cleanup: 0 done,
+2 git or GitHub refused a step.
 """
 from __future__ import annotations
 
@@ -378,8 +380,13 @@ def check_graders(local_only: bool) -> int:
     wrong, differs, ungraded = [], [], []
     for row in rows:
         mine = local[row["id"]]
-        cells = [f"{('pass' if mine[n] else 'FAIL') + ('' if mine[n] == row['expect'][n] else '!'):<18}" for n in GRADERS]
-        wrong += [f"{row['id']} {short[n]}" for n in GRADERS if mine[n] != row["expect"][n]]
+        known = row.get("knownMiss", "").split(":")[0]
+        cells = []
+        for n in GRADERS:
+            mark = "" if mine[n] == row["expect"][n] else "*" if short[n] == known else "!"
+            cells.append(f"{('pass' if mine[n] else 'FAIL') + mark:<18}")
+            if mark == "!" or (short[n] == known and not mark):  # a known miss that no longer misses is news too
+                wrong.append(f"{row['id']} {short[n]}")
         if foundry is None:
             column = "-"
         elif any(grade is None for grade in foundry[row["id"]].values()):
@@ -391,6 +398,11 @@ def check_graders(local_only: bool) -> int:
         else:
             column = "same"
         print(f"{row['id']:<{width}} {row['split']:<9} " + " ".join(cells) + f" {column}")
+    known_misses = [row for row in rows if row.get("knownMiss")]
+    if known_misses:
+        print("\n* a known miss of the checks, recorded in grader_checks.jsonl:")
+        for row in known_misses:
+            print(f"  {row['id']}: {row['knownMiss']}")
     for split in ("paired", "held-out"):
         mine = [row for row in rows if row["split"] == split]
         right = sum(1 for row in mine if local[row["id"]] == row["expect"])
