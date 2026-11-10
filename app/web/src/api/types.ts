@@ -130,6 +130,7 @@ export interface Recommendation {
   createdBy: PersonRef;
   createdAt: string;
   providerTraceId: string | null;
+  confirmedBy: PersonRef | null;
 }
 
 export interface Permissions {
