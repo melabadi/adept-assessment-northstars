@@ -340,6 +340,19 @@ class EvaluatorTests(unittest.TestCase):
         row["sample"] = {"output_text": "", "output_items": []}
         self.assertEqual(self.grade("citations", row), 0.0)
 
+    def test_a_correct_quote_with_the_opposite_conclusion_earns_citation_credit_only(self):
+        """E05, as reported: the answer quotes STD-AI-001 word for word, then recommends automatic approval above 95%
+        confidence. The quote is real, so the citation passes; the conclusion contradicts it, so the answer isn't grounded."""
+        quote = {"standardId": "STD-AI-001", "version": "1.0", "requirement": "Approvals require a human decision.",
+                 "excerpt": "Approvals, rejections, payments, and access grants always require a human decision."}
+        wrong = answer(summary="Yes. Above 95% confidence the triage agent can approve low-risk requests automatically.",
+                       recommendation="Let the triage agent approve low-risk requests automatically when its confidence "
+                                      "is above 95%; below that, approvals require a human decision.",
+                       options=[], constraints=[quote])
+        row = self.item("E05", wrong, ("STD-AI-001",))
+        self.assertEqual(self.grade("citations", row), 1.0)
+        self.assertEqual(self.grade("grounding", row), 0.0)
+
 
 class ReportTests(unittest.TestCase):
     sample = {"issue": 12, "question": "Where should the triage provider run?", "profile": "small-team",
