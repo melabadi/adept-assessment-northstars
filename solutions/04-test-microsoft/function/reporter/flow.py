@@ -12,7 +12,8 @@ step()    The queue trigger calls it for each step. A step that has to wait queu
             telemetry  Application Insights receives the API's requests a few minutes late: check every minute, up to
                        8 times, then report with what has arrived (the verdict says when nothing has);
             report     build the report, then take the GitHub lock (one report at a time, so two runs never both open
-                       an Issue), and open, comment on, or close the test's Issue.
+                       an Issue), and open, comment on, or close the test's Issue. A candidate run whose description
+                       names an Issue (candidate.py run --issue) also gets its report on that Issue.
 """
 from __future__ import annotations
 
@@ -162,6 +163,11 @@ def step(raw, services, settings: Settings, now: datetime) -> str:
     markdown = report.render(run, rows, verdict, settings.resource_group)
     log.info("%s: %s, verdict %s (%s server requests, %s with the injected delay).", name, run.get("testResult"),
              verdict, sum(int(r.get("requests") or 0) for r in rows), sum(int(r.get("delayed") or 0) for r in rows))
+    claim = report.candidate(run)
+    if claim:
+        log.info("%s: candidate run for commit %s on API revision %s; the API's telemetry shows revision %s.", name,
+                 claim["commit"][:12], claim.get("revision", "(not named)"),
+                 ", ".join(report.revisions(rows)) or "(none yet)")
     if services.github is None:
         log.warning("No GitHub token configured, so the report was built but not posted. Set GITHUB_ISSUES_TOKEN in "
                     "the azd environment and run azd provision.")
@@ -187,6 +193,29 @@ def _again(services, test_run_id: str, phase: str, checks: int, delay: int) -> N
 
 
 def _post(run: dict, verdict: str, markdown: str, github, settings: Settings) -> str:
+    result = _post_test_issue(run, verdict, markdown, github, settings)
+    number = issues.named_issue(run)
+    if number is None:
+        return result
+    return f"{result}; {_post_named_issue(run, verdict, markdown, github, settings, number)}"
+
+
+def _post_named_issue(run: dict, verdict: str, markdown: str, github, settings: Settings, number: int) -> str:
+    """Comment the report on the Issue a candidate run names (issues.comment_on_named says when)."""
+    name = run.get("displayName") or run["testRunId"]
+    issue = github.issue(number)
+    comments = github.comments(number, since=run.get("startDateTime")) if issues.can_comment(issue) else []
+    action = issues.comment_on_named(run, verdict, markdown, issue, issues.earlier_texts(issue, comments),
+                                     settings.resource_group)
+    if action.kind == "comment":
+        github.comment(action.number, action.body)
+        log.info("%s: commented on Issue #%s (%s).", name, action.number, action.reason)
+        return f"commented #{action.number}"
+    log.info("%s: no comment on #%s: %s.", name, number, action.reason)
+    return f"no-comment #{number}"
+
+
+def _post_test_issue(run: dict, verdict: str, markdown: str, github, settings: Settings) -> str:
     name = run.get("displayName") or run["testRunId"]
     issue = issues.choose(github.open_issues(issues.LABEL), settings.test_id)
     comments = github.comments(issue["number"], since=run.get("startDateTime")) if issue is not None else []

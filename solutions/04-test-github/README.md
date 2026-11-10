@@ -6,7 +6,7 @@ Defects that only show up under retries or simultaneous clicks slip through revi
 
 ## Where it fits
 
-**Phase 4 of 7: Test and review.** The Microsoft counterpart is [04-test-microsoft](../04-test-microsoft/).
+**Phase 4 of 7: Test and review.** The Microsoft counterpart is [04-test-microsoft](../04-test-microsoft/). To load-test the repair that this solution proves, on one change, follow the [Test solution combo](../../PRESENTING.md#test-copilot-proves-the-repair-azure-load-tests-the-same-commit).
 
 | | Today | With this solution |
 | --- | --- | --- |
