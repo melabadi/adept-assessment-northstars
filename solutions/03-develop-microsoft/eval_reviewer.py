@@ -3,8 +3,8 @@
 
 What this script does:
   1. Reads eval_cases.jsonl: real pull requests of this repository, each labelled known-good, flagged (a good change that
-     a rule rightly flags for a person), or known-bad, with the rules that should fail and what the commentary should
-     mention.
+     a rule rightly flags for a person), or known-bad, with the rules that should fail and the findings the commentary
+     must state: what the problem is, and the file where it is.
   2. Runs the deployed reviewer on each one in dry-run mode: it posts {"pr": <number>} to the Function's dry-runs route,
      which queues a review that does everything a real review does (rule checker, sandbox build and tests, agent,
      review formatter) but posts nothing to GitHub. The script polls the route until the review's result is ready.
@@ -12,7 +12,12 @@ What this script does:
   4. Registers the same checks in Microsoft Foundry as code-based evaluators (preview) and runs a Foundry evaluation over
      the same results, so they appear in the project's Evaluation view. Foundry sometimes fails every item of one check
      ("An error occurred during grading"); such a run is graded once more. --local skips this step; the local scores in
-     step 3 are the fallback.
+     step 3 are the fallback. The report keeps Foundry's first grading apart from the one it repeated.
+
+Grader checks: --check-graders grades the fixed reviews in grader_checks.jsonl instead, without any dry run: a right and
+a wrong commentary for labelled pull requests, and for held-out changes the checks were never tuned on, that use the
+same words and point at the same file and line, and differ only in what they conclude. It scores them here and, unless
+--local, with the evaluators in Foundry, and shows that both tell the two apart and agree with each other.
 
 The dry-runs route needs the Function's key, so the script reads it from Azure Resource Manager each time, sends it in a
 header, and never prints or saves it. Results go to out/eval/ (results.jsonl and report.md), which git ignores.
@@ -28,13 +33,15 @@ Usage
   python eval_reviewer.py --cases 36 99      # only these pull requests
   python eval_reviewer.py --reuse            # score the results of the last dry runs again, without new runs
   python eval_reviewer.py --local            # skip the Foundry evaluation
+  python eval_reviewer.py --check-graders    # grade the fixed right and wrong reviews in grader_checks.jsonl
   python eval_reviewer.py --parallel 5       # dry runs at a time (default 4; each uses two of the pools' ten sessions)
   python eval_reviewer.py --show-url         # also print the Foundry report link (it contains resource ids)
 
 Exit codes: 0 every check passed for every pull request; 1 at least one check failed (a pull request without a result
 fails every check); 2 configuration or service error, a check that COULD NOT GRADE, or a Foundry evaluation that is
 incomplete, has errored items, has a check that didn't grade every item (even when graded once more), or disagrees
-with the local scores.
+with the local scores. With --check-graders: 0 every fixed review was graded as labelled here and Foundry graded it the
+same way; 1 a grade differs from its label or Foundry's differs from the local one; 2 Foundry could not grade.
 """
 from __future__ import annotations
 
@@ -67,10 +74,10 @@ ITEM_SCHEMA = {
     "type": "object",
     "properties": {
         "pr": {"type": "integer"}, "kind": {"type": "string"}, "why": {"type": "string"},
-        "expected_failures": {"type": "string"}, "expect_mentions": {"type": "string"}, "rules": {"type": "string"},
+        "expected_failures": {"type": "string"}, "expect_findings": {"type": "string"}, "rules": {"type": "string"},
         "review": {"type": "string"}, "agent": {"type": "string"}, "sandbox": {"type": "string"},
     },
-    "required": ["pr", "kind", "expected_failures", "expect_mentions", "rules", "review", "agent", "sandbox"],
+    "required": ["pr", "kind", "expected_failures", "expect_findings", "rules", "review", "agent", "sandbox"],
 }
 
 
@@ -144,7 +151,7 @@ def review_case(reviewer: Reviewer, case: dict) -> dict:
     print(f"  #{pr:<4} {state:<10} {int(time.time() - started):>4} s", flush=True)
     return {
         "pr": pr, "kind": case["kind"], "why": case["why"],
-        "expected_failures": json.dumps(case["expected_failures"]), "expect_mentions": json.dumps(case["expect_mentions"]),
+        "expected_failures": json.dumps(case["expected_failures"]), "expect_findings": json.dumps(case["expect_findings"]),
         "rules": json.dumps(result.get("rules") or []), "review": result.get("review") or "",
         "agent": json.dumps(result.get("agent")), "sandbox": result.get("sandbox") or "",
         "_run": review_id, "_status": state,
@@ -154,7 +161,7 @@ def review_case(reviewer: Reviewer, case: dict) -> dict:
 def missing_result(case: dict, status: str) -> dict:
     """A labelled case without a reviewer result: every check scores it 0, so it can never pass."""
     return {"pr": case["pr"], "kind": case["kind"], "why": case["why"], "expected_failures": json.dumps(case["expected_failures"]),
-            "expect_mentions": json.dumps(case["expect_mentions"]), "rules": "[]", "review": "", "agent": "null", "sandbox": "",
+            "expect_findings": json.dumps(case["expect_findings"]), "rules": "[]", "review": "", "agent": "null", "sandbox": "",
             "_run": None, "_status": status}
 
 
@@ -209,9 +216,10 @@ def grader_source(fn) -> str:
     return re.sub(r"^def \w+\(", "def grade(", inspect.getsource(fn), count=1)
 
 
-def foundry_evaluation(items: list[dict], show_url: bool) -> str | None:
-    """Register the checks as code-based evaluators, then evaluate the same items in Foundry. Returns None when Foundry's
-    results are complete and agree with the local scores, otherwise why they can't be trusted."""
+def foundry_setup() -> tuple:
+    """Register the checks as code-based evaluators (a new version only when a check's code changed) and return
+    (OpenAI client, evaluation). A new evaluator version gets a new evaluation, so a run is never scored by an older
+    version of a check."""
     from azure.ai.projects import AIProjectClient
 
     model = setting("FOUNDRY_MODEL_DEPLOYMENT")
@@ -240,31 +248,46 @@ def foundry_evaluation(items: list[dict], show_url: bool) -> str | None:
         criteria.append({"type": "azure_ai_evaluator", "name": name, "evaluator_name": name,
                          "initialization_parameters": {"deployment_name": model, "pass_threshold": 1.0}})
     client = project.get_openai_client()
-    # A new evaluator version gets a new evaluation, so a run is never scored by an older version of a check.
     existing = None if registered else next((e for e in client.evals.list(limit=100) if e.name == EVAL_NAME
                                              and sorted(c.name for c in e.testing_criteria) == sorted(GRADERS)), None)
     evaluation = existing or client.evals.create(
         name=EVAL_NAME, data_source_config={"type": "custom", "item_schema": ITEM_SCHEMA, "include_sample_schema": False},
         testing_criteria=criteria)
-    versions = sorted({m.group(1) for i in items for m in [re.search(r"`requesthub-pr-reviewer` v(\d+)", i["review"])] if m})
+    return client, evaluation
+
+
+def foundry_grade(client, evaluation, items: list[dict], name: str):
+    """One Foundry run over these items (their fields, without the script's own "_" keys), once it finished."""
     content = [{"item": {k: v for k, v in item.items() if not k.startswith("_")}} for item in items]
+    run = client.evals.runs.create(eval_id=evaluation.id, name=name,
+                                   data_source={"type": "jsonl", "source": {"type": "file_content", "content": content}})
+    print(f"  Foundry evaluation run started: {run.name}")
+    while run.status not in ("completed", "failed", "canceled"):
+        time.sleep(10)
+        run = client.evals.runs.retrieve(run_id=run.id, eval_id=evaluation.id)
+    print(f"  Foundry evaluation run {run.status}.")
+    for result in run.per_testing_criteria_results or []:
+        print(f"    {result.testing_criteria:<40} passed {result.passed}, failed {result.failed}")
+    return run
+
+
+def foundry_evaluation(items: list[dict], show_url: bool) -> str | None:
+    """Register the checks as code-based evaluators, then evaluate the same items in Foundry. Returns None when Foundry's
+    results are complete and agree with the local scores, otherwise why they can't be trusted."""
+    client, evaluation = foundry_setup()
+    versions = sorted({m.group(1) for i in items for m in [re.search(r"`requesthub-pr-reviewer` v(\d+)", i["review"])] if m})
+    graded: dict = {}
     for attempt in (1, 2):
-        run = client.evals.runs.create(
-            eval_id=evaluation.id,
-            name=f"{len(items)} labelled pull request{'s' if len(items) != 1 else ''} · agent v{', v'.join(versions) or '?'} · "
-                 f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC",
-            data_source={"type": "jsonl", "source": {"type": "file_content", "content": content}})
-        print(f"  Foundry evaluation run started: {run.name}")
-        while run.status not in ("completed", "failed", "canceled"):
-            time.sleep(10)
-            run = client.evals.runs.retrieve(run_id=run.id, eval_id=evaluation.id)
-        print(f"  Foundry evaluation run {run.status}.")
-        for result in run.per_testing_criteria_results or []:
-            print(f"    {result.testing_criteria:<40} passed {result.passed}, failed {result.failed}")
-        problem = foundry_verdict(run, items)
+        run = foundry_grade(client, evaluation, items,
+                            f"{len(items)} labelled pull request{'s' if len(items) != 1 else ''} · agent "
+                            f"v{', v'.join(versions) or '?'} · {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC")
+        problem = foundry_verdict(run, items, graded)
         if attempt == 2 or not grade_again(problem):
             break
-        print(f"  {problem}. Grading the same results in Foundry once more.")
+        print(f"  First grading: {problem}. Grading the same results in Foundry once more; a check graded on every item "
+              "in either grading counts.")
+    if not problem and attempt == 2:
+        print("  Across the two gradings, Foundry graded every check on every item, and its pass counts match the local ones.")
     if show_url and run.report_url:
         print(f"  Report: {run.report_url}")
     else:
@@ -278,9 +301,11 @@ def grade_again(problem: str | None) -> bool:
     return bool(problem) and problem.startswith("COULD NOT GRADE")
 
 
-def foundry_verdict(run, items: list[dict]) -> str | None:
+def foundry_verdict(run, items: list[dict], graded_before: dict | None = None) -> str | None:
     """None when a finished Foundry run graded every item with every check and agrees with the local scores,
-    otherwise why it can't be trusted."""
+    otherwise why it can't be trusted. graded_before ({check: items passed}, updated in place) carries the checks an
+    earlier grading of the same results graded on every item: the results and the code are the same, so a check graded
+    in either grading counts."""
     counts = run.result_counts
     if run.status != "completed":
         return f"the run ended {run.status}"
@@ -291,14 +316,87 @@ def foundry_verdict(run, items: list[dict]) -> str | None:
     # An item can count as passed while one of its checks errored ("An error occurred during grading"): that check
     # then neither passes nor fails it. Every check must have graded every item.
     graded = {r.testing_criteria: (r.passed or 0) + (r.failed or 0) for r in run.per_testing_criteria_results or []}
-    short = [f"{name} on {graded.get(name, 0)} of {len(items)}" for name in GRADERS if graded.get(name, 0) != len(items)]
+    known = graded_before if graded_before is not None else {}
+    for result in run.per_testing_criteria_results or []:
+        if graded.get(result.testing_criteria) == len(items):
+            known.setdefault(result.testing_criteria, result.passed)
+    short = [f"{name} on {graded.get(name, 0)} of {len(items)}" for name in GRADERS if name not in known]
     if short:
         return f"COULD NOT GRADE: Foundry graded {', '.join(short)} items"
     local = {n: sum(1 for i in items if (i["_scores"][n] or 0) >= 1) for n in GRADERS}
-    foundry = {r.testing_criteria: r.passed for r in run.per_testing_criteria_results or []}
+    foundry = {n: known[n] for n in GRADERS}
     if any(foundry.get(n) != local[n] for n in GRADERS):
         return f"its pass counts {foundry} differ from the local ones {local}"
     return None
+
+
+def fixed_grades(client, evaluation, run) -> dict[str, dict[str, bool | None]]:
+    """Each fixed review's grade per check in a finished run: True, False, or None when Foundry couldn't grade it. A
+    jsonl run reports the item's fields flattened ("item.check")."""
+    graded = {}
+    for output in client.evals.runs.output_items.list(run_id=run.id, eval_id=evaluation.id):
+        data = output.model_dump() if hasattr(output, "model_dump") else dict(output)
+        source = data.get("datasource_item") or {}
+        check = source.get("check") or source.get("item.check") or (source.get("item") or {}).get("check") or "?"
+        results = {r.get("name"): r for r in data.get("results") or []}
+        graded[check] = {name: None if name not in results or (results[name].get("sample") or {}).get("error")
+                         or results[name].get("passed") is None else bool(results[name]["passed"]) for name in GRADERS}
+    return graded
+
+
+def check_graders(local_only: bool) -> int:
+    """Grade grader_checks.jsonl's fixed reviews here and, unless local_only, in Foundry; compare both with the labels.
+    The reviews are fixed, so when Foundry can't grade a check the same reviews are graded once more."""
+    rows = [json.loads(line) for line in (HERE / "grader_checks.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    items = score([dict(row["item"]) for row in rows])
+    local = {item["check"]: {name: (item["_scores"][name] or 0) >= 1 for name in GRADERS} for item in items}
+    foundry = None
+    if not local_only:
+        client, evaluation = foundry_setup()
+        foundry = {row["id"]: dict.fromkeys(GRADERS) for row in rows}
+        for attempt in (1, 2):
+            run = foundry_grade(client, evaluation, items, f"{len(items)} fixed reviews (grader checks) · run {attempt} · "
+                                                           f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC")
+            for check, grades in fixed_grades(client, evaluation, run).items():
+                for name, grade in grades.items():
+                    if check in foundry and foundry[check][name] is None:
+                        foundry[check][name] = grade
+            if all(grade is not None for grades in foundry.values() for grade in grades.values()):
+                break
+            print("  Foundry couldn't grade some checks; grading the same reviews once more.")
+    short = {name: name.removeprefix("pr_review_") for name in GRADERS}
+    print(f"\n{'Review':<24} {'Split':<9} " + " ".join(f"{s:<18}" for s in short.values()) + " Foundry")
+    wrong, differs, ungraded = [], [], []
+    for row in rows:
+        mine = local[row["id"]]
+        cells = [f"{('pass' if mine[n] else 'FAIL') + ('' if mine[n] == row['expect'][n] else '!'):<18}" for n in GRADERS]
+        wrong += [f"{row['id']} {short[n]}" for n in GRADERS if mine[n] != row["expect"][n]]
+        if foundry is None:
+            column = "-"
+        elif any(grade is None for grade in foundry[row["id"]].values()):
+            column = "COULD NOT GRADE"
+            ungraded.append(row["id"])
+        elif foundry[row["id"]] != mine:
+            column = "differs: " + ", ".join(short[n] for n in GRADERS if foundry[row["id"]][n] != mine[n])
+            differs.append(row["id"])
+        else:
+            column = "same"
+        print(f"{row['id']:<24} {row['split']:<9} " + " ".join(cells) + f" {column}")
+    for split in ("paired", "held-out"):
+        mine = [row for row in rows if row["split"] == split]
+        right = sum(1 for row in mine if local[row["id"]] == row["expect"])
+        same = "" if foundry is None else f"; Foundry graded {sum(1 for r in mine if foundry[r['id']] == local[r['id']])}" \
+                                         f"/{len(mine)} the same way"
+        print(f"{split}: {right}/{len(mine)} reviews graded as labelled{same}")
+    sys.stdout.flush()
+    if wrong:
+        print(f"error: graded differently from the labels: {', '.join(wrong)}", file=sys.stderr)
+    if differs:
+        print(f"error: Foundry graded differently from the local checks: {', '.join(differs)}", file=sys.stderr)
+    if ungraded:
+        print(f"error: Foundry could not grade {', '.join(ungraded)}; run --check-graders again", file=sys.stderr)
+        return 2
+    return 1 if wrong or differs else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -306,10 +404,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cases", type=int, nargs="+", metavar="PR", help="Evaluate only these pull requests")
     parser.add_argument("--reuse", action="store_true", help="Score out/eval/results.jsonl again instead of running the reviewer")
     parser.add_argument("--local", action="store_true", help="Score locally only; skip the Foundry evaluation")
+    parser.add_argument("--check-graders", action="store_true",
+                        help="Grade the fixed right and wrong reviews in grader_checks.jsonl (no dry runs), here and in Foundry")
     parser.add_argument("--parallel", type=int, default=4, help="Dry runs at a time (default 4)")
     parser.add_argument("--show-url", action="store_true", help="Print the Foundry report link (it contains resource ids)")
     args = parser.parse_args(argv)
     utf8_stdout()
+    if args.check_graders:
+        try:
+            return check_graders(args.local)
+        except Exception as exc:  # preview service: say what failed without its message, which can name resources
+            print(f"error: the Foundry grader check didn't run ({type(exc).__name__})", file=sys.stderr)
+            return 2
     cases = [json.loads(line) for line in (HERE / "eval_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     if args.cases:
         cases = [c for c in cases if c["pr"] in args.cases]
