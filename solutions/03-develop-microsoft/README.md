@@ -6,7 +6,7 @@ Every pull request to RequestHub waits for a person to check the same team rules
 
 ## Where it fits
 
-**Phase 3 of 7: Develop.** The GitHub counterpart is [03-develop-github](../03-develop-github/), where the Copilot cloud agent writes a change. Here, Azure reviews one.
+**Phase 3 of 7: Develop.** The GitHub counterpart is [03-develop-github](../03-develop-github/), where the Copilot cloud agent writes a change. Here, Azure reviews one. To run both on one pull request, follow the [Develop solution combo](../../PRESENTING.md#develop-copilot-writes-azure-reviews-a-person-decides).
 
 | | Today | With this solution |
 | --- | --- | --- |

@@ -6,7 +6,7 @@ Design reviews stall when nobody can find the standard that applies, when two st
 
 ## Where it fits
 
-**Phase 2 of 7: Design and architect.** The GitHub counterpart is [02-design-github](../02-design-github/). Both answer the same question from the same [reviewed brief](inputs/reviewed-brief.md): how should RequestHub add a live AI triage provider while keeping access controls, human approval, observability, and a simple deployment?
+**Phase 2 of 7: Design and architect.** The GitHub counterpart is [02-design-github](../02-design-github/). Both answer the same question from the same [reviewed brief](inputs/reviewed-brief.md): how should RequestHub add a live AI triage provider while keeping access controls, human approval, observability, and a simple deployment? To run both on one design question and one pull request, follow the [Design solution combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr).
 
 | | Today | With this solution |
 | --- | --- | --- |
