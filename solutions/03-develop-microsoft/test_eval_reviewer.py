@@ -75,6 +75,16 @@ class GraderTests(unittest.TestCase):
             for name in ("pr_review_advisory_only", "pr_review_useful_commentary"):
                 self.assertEqual(review_graders.GRADERS[name][0]({}, blank_agent), 0.0, f"#{case['pr']} {name} on blank commentary")
 
+    def test_a_denial_that_names_the_problem_earns_no_commentary_credit(self):
+        """#99, as reported: "There is no SQL injection here." mentions injection, yet concludes the opposite."""
+        case = next(c for c in CASES if c["pr"] == 99)
+        denial = dict(good_item(case), agent=json.dumps({
+            "summary": "ListAsync now searches with FromSqlRaw.", "tests_note": "One search test failed.",
+            "for_the_person": "Look at the failing search test.", "rule_notes": [],
+            "observations": [{"severity": "info", "file": "app/src/RequestHub.Core/Services/RequestWorkflow.cs", "line": 48,
+                              "text": "There is no SQL injection here."}]}))
+        self.assertLess(review_graders.grade_useful_commentary({}, denial), 1.0)
+
 
 class ReportingTests(unittest.TestCase):
     def test_every_case_passing_exits_0(self):
