@@ -82,7 +82,7 @@ public sealed class NotificationProcessor(
                 notification.LastError = null;
                 RequestHubTelemetry.NotificationsProcessed.Add(1, new KeyValuePair<string, object?>("outcome", "sent"));
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 notification.LastError = ex.Message.Length > 900 ? ex.Message[..900] : ex.Message;
                 if (notification.Attempts >= settings.MaxAttempts)
