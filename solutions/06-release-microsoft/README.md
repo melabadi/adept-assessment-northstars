@@ -6,7 +6,7 @@ Most release incidents start the same way: a new build replaces the one users ar
 
 ## Where it fits
 
-**Phase 6 of 7: Release.** The GitHub counterpart is [06-release-github](../06-release-github/): release evidence and approval on GitHub. This solution covers how a new build reaches users on Azure, with the release orchestrated in Azure itself.
+**Phase 6 of 7: Release.** The GitHub counterpart is [06-release-github](../06-release-github/): release evidence and approval on GitHub. This solution covers how a new build reaches users on Azure, with the release orchestrated in Azure itself. To release the exact image whose test evidence GitHub recorded, instead of a build of its own, follow the [Release solution combo](../../PRESENTING.md#release-github-tests-one-image-azure-stages-that-digest-a-person-decides).
 
 | | Today | With this solution |
 | --- | --- | --- |

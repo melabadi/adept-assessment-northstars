@@ -6,7 +6,7 @@ Getting a release out the door usually means chasing test results, writing notes
 
 ## Where it fits
 
-**Phase 6 of 7: Release and deploy.** The Microsoft counterpart is [06-release-microsoft](../06-release-microsoft/), which promotes and rolls back Container Apps revisions. This solution prepares and approves the release; it does not deploy to Azure.
+**Phase 6 of 7: Release and deploy.** The Microsoft counterpart is [06-release-microsoft](../06-release-microsoft/), which promotes and rolls back Container Apps revisions. This solution prepares and approves the release; it does not deploy to Azure. To have Azure stage and promote the exact image this solution tested, follow the [Release solution combo](../../PRESENTING.md#release-github-tests-one-image-azure-stages-that-digest-a-person-decides).
 
 | | Today | With this solution |
 | --- | --- | --- |
