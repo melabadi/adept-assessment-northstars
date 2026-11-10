@@ -396,7 +396,7 @@ A security team wants a cloud misconfiguration fixed in code, reviewed like any 
 
    **Point out:** the preview lists every resource a deployment would create or modify, before anyone deploys.
 
-4. **Copilot reviews the same commit** (3 to 4 minutes; 2 minutes 55 seconds to 3 minutes 56 seconds in our runs). In the pull request's **Reviewers**, next to **Copilot**, select **Request**, or from the repository folder:
+4. **Copilot reviews the same commit** (3 to 4 minutes; 2 minutes 55 seconds to 4 minutes in our runs). Once `posture/what-if` reads success, in the pull request's **Reviewers**, next to **Copilot**, select **Request**, or from the repository folder:
 
    ```powershell
    $pr = <pull request number>
@@ -413,9 +413,9 @@ A security team wants a cloud misconfiguration fixed in code, reviewed like any 
    gh api "repos/{owner}/{repo}/pulls/$pr/comments" --jq '.[] | "\(.user.login) on \(.path):\(.line)\n\(.body)"'
    ```
 
-   ![PowerShell output for pull request 293: head commit 3b0455c, the commit status posture/what-if success with PASS: 4 expected changes, Copilot's review COMMENTED on 3b0455c, and Copilot's comment on resources.bicep line 48 that removing the old lines would break the fixtures of the solution's predeploy tests, so later azd deploy runs would fail](solutions/05-secure-github/images/combo-04-copilot-review.png)
+   ![PowerShell output for pull request 308: head commit e2adeca, the commit status posture/what-if success with PASS: 4 expected changes, nothing else, two reviews by Copilot COMMENTED on e2adeca, and Copilot's comment on resources.bicep line 48: the preview passed but omits two changes the agent listed, a modified storage account and a new private DNS zone, and shows a virtual network change the agent didn't list, so reconcile the list with the preview and check the subnet's capacity and the DNS links before deploying](solutions/05-secure-github/images/combo-04-copilot-review.png)
 
-   Copilot's comments differ from run to run. In the run shown, it found that merging the fix would break the solution's own predeploy tests. In another, it named the agent's expected changes that the preview doesn't show, both already in place, and the change the preview shows that the agent didn't expect.
+   Copilot's comments differ from run to run. In the run shown, after #298 put the instruction on `main`, it compared Azure's preview with the agent's expected changes: two expected changes the preview doesn't show, and one change the preview shows that the agent didn't list. Its first review of the same commit came while the preview was still pending, and said only that the preview wasn't available yet, so request the review once `posture/what-if` reads success, or request it again. In an earlier run, before the instruction was on `main`, it found that merging the fix would break the solution's own predeploy tests.
 
    **Point out:** Copilot reviewed the commit Azure previewed, and found what neither the Function's checks nor the preview could see.
 
