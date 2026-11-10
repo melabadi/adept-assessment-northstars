@@ -660,18 +660,30 @@ def preview_pull_request(number: int, expect: list[str], baseline_deployment: st
     return preview_one(github, number, expect, baseline_deployment, resource_group)
 
 
+def listing(github: GitHub, path: str, limit_pages: int = 100):
+    """Every item of a GitHub listing, read 100 at a time, page after page, as the caller consumes them: a caller that
+    stops early reads no further page. Gives up with ConfigError past limit_pages pages (10,000 items)."""
+    separator = "&" if "?" in path else "?"
+    for page in range(1, limit_pages + 1):
+        items = github.call("GET", f"{path}{separator}per_page=100&page={page}") or []
+        yield from items
+        if len(items) < 100:
+            return
+    raise ConfigError(f"GitHub listed more than {limit_pages * 100} items for {path.split('?')[0]}")
+
+
 def pending_pull_requests(github: GitHub) -> list[int]:
     """Open pull requests whose head commit waits for a preview: its latest posture/what-if status is pending. The posture
     Function sets that status, then starts this job as it is defined, and only people with write access can set a commit
     status. A fork's pull request, or one opened by anyone outside the repository, is skipped before its statuses are
-    read."""
+    read. Every page of open pull requests is read, and each commit's statuses (newest first) up to its newest
+    posture/what-if status."""
     numbers = []
-    for pull in github.call("GET", "pulls?state=open&per_page=100") or []:
+    for pull in listing(github, "pulls?state=open"):
         if outside_pull_request(pull, github.repository):
             continue
         sha = (pull.get("head") or {}).get("sha") or ""
-        statuses = github.call("GET", f"commits/{sha}/statuses?per_page=100") or []
-        latest = next((s for s in statuses if s.get("context") == STATUS_CONTEXT), None)
+        latest = next((s for s in listing(github, f"commits/{sha}/statuses") if s.get("context") == STATUS_CONTEXT), None)
         if latest and latest.get("state") == "pending":
             numbers.append(pull["number"])
     return sorted(numbers)
