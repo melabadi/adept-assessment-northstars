@@ -182,7 +182,7 @@ The screenshots come from the live run with Issue #100 and pull request #101. Yo
 
    ![The pull request's merge box: four workflows awaiting approval, with the Approve workflows to run button](images/04-approve-workflows.png)
 
-   Select **Approve workflows to run**, or re-run the waiting runs of the latest commit from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids and commits). The two to watch are **CI** and **Test · GitHub · prove the fix test-first**; checks from other solutions may run and pass or skip. Runs that waited on an earlier commit are cancelled when the latest commit's runs start, because they share a concurrency group. *Under a minute; the proof then takes about 2 minutes and CI about 4.* **Point out:** nothing Copilot wrote runs in Actions until a person approves it.
+   Select **Approve workflows to run**, or re-run the waiting runs of the latest commit from a terminal with `gh run rerun <run-id>` (`gh run list --branch <copilot-branch>` shows the ids and commits). The two to watch are **CI** and **Test · GitHub · prove the fix test-first**; checks from other solutions may run and pass or skip. Runs that waited on an earlier commit need no approval: most are cancelled when the latest commit's runs start, because they share a concurrency group, and the feature bounds check on Copilot's first commit, *Initial plan*, stays waiting until the pull request closes. *Under a minute; the proof then takes about 2 minutes and CI about 4.* **Point out:** nothing Copilot wrote runs in Actions until a person approves it.
 
 5. **Watch the deterministic gate.** Open the **Regression tests fail before the fix and pass after it** check and its summary:
 
