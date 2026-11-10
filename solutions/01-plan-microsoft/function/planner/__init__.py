@@ -1,6 +1,6 @@
 """The Plan · Microsoft run in plain Python: no Azure Functions import, so the unit tests in ../../tests run anywhere.
 
-  brief.py    what the run writes to GitHub: the review Issue, the epic, the tasks, and the comments
+  brief.py    what the run writes to GitHub: the review Issue, the epic, the tasks, the comments, and the evaluation Issue
   checks.py   the evaluation's gates and score rows
   clients.py  Microsoft Foundry and GitHub over HTTPS (standard library only)
   store.py    one JSON record per run: in memory for the tests, in a private blob container in Azure
