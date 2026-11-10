@@ -355,6 +355,35 @@ class PendingPreviews(unittest.TestCase):
         self.assertEqual(self.run_pending(github, reached_azure), 0)
         self.assertEqual((github.statuses, github.comments), ([], []))
 
+    class PagedGitHub(FakeGitHub):
+        """GitHub's listings: at most per_page items (30 when the query doesn't say), from the page the query asks for."""
+
+        def call(self, method, path, body=None):
+            result = super().call(method, path, body)
+            route, _, query = path.partition("?")
+            if method == "GET" and (route == "pulls" or route.endswith("/statuses")):
+                params = dict(part.split("=", 1) for part in query.split("&") if "=" in part)
+                size, page = int(params.get("per_page", 30)), int(params.get("page", 1))
+                return result[(page - 1) * size:page * size]
+            return result
+
+    def test_work_beyond_the_first_page_is_found(self):
+        """150 open pull requests: #140, on the second page, waits, and its newest posture/what-if status (pending) comes
+        after 120 newer statuses of other checks. #3's newest preview finished, behind 130 other statuses, though an
+        older one was pending: the scan stops at the newest posture/what-if status."""
+        sha = {number: f"{number:040x}" for number in range(1, 151)}
+        pulls = [{"number": n, "state": "open", "head": {"sha": sha[n], "repo": {"full_name": "o/r"}},
+                  "author_association": "MEMBER"} for n in range(1, 151)]
+        others = lambda count: [self.status("success", f"ci/check-{i}") for i in range(count)]  # noqa: E731
+        github = self.PagedGitHub(pulls, {
+            sha[140]: others(120) + [self.status("pending"), self.status("success")],
+            sha[3]: others(130) + [self.status("success"), self.status("pending")]})
+        self.assertEqual(whatif.pending_pull_requests(github), [140])
+        read = [path for _, path in github.calls]
+        self.assertTrue(any(path.startswith("pulls?") and "page=2" in path for path in read))
+        self.assertTrue(any(path.startswith(f"commits/{sha[140]}/statuses") and "page=2" in path for path in read))
+        self.assertFalse(any(path.startswith(f"commits/{sha[140]}/statuses") and "page=3" in path for path in read))
+
     def test_the_job_runs_with_pending_and_names_no_pull_request(self):
         bicep = (Path(__file__).resolve().parent / "infra" / "automation.bicep").read_text(encoding="utf-8")
         job = bicep[bicep.index("resource whatifJob"):bicep.index("// ---------- Network")]
