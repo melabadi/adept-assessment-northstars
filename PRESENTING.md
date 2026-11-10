@@ -672,12 +672,12 @@ flowchart LR
 
    **Point out:** T19 holds (a person confirmed the routing), and T04 holds (the request still waits for an approver).
 
-6. **Decide** (2 minutes). The reviewer approves the pull request or asks for changes, as in the [Develop combo](#develop-copilot-writes-azure-reviews-a-person-decides)'s step 5.
+6. **Decide** (2 minutes). The reviewer approves the pull request or asks for changes, as in the [Develop combo](#develop-copilot-writes-azure-reviews-a-person-decides)'s step 5. In our run the reviewer approved `3e200b3`, answering Azure's warning in the review: the API test checks the confirmer's name after a confirmation, so a change in the audit details' format fails that test instead of hiding the name.
 
    **Point out:** the first human decision in this chain was the product owner's approval of the brief; the last is the reviewer's.
 
 7. **Measure** (3 minutes). For each accepted change in the pilot, record the reviewer's minutes (from the reviewer's own time log: GitHub doesn't record effort) and the rework: review rounds and commits after ready for review (`gh pr view <number> --json reviews,commits`). Record the same for five to ten similar changes merged before the pilot, and compare the two. Keep measured results apart from targets:
-   - **Measured in our rehearsal (one change, not a trend):** 14 minutes of Copilot's unattended work; 7 minutes for the reviewer's test and Copilot CLI's fix, before the pull request was ready; Azure's review 10 minutes after the label. The reviewer's own minutes are recorded when the decision is made.
+   - **Measured in our rehearsal (one change, not a trend):** 14 minutes of Copilot's unattended work; 7 minutes for the reviewer's test and Copilot CLI's fix, before the pull request was ready; Azure's review 10 minutes after the label. No time log was kept for the reviewer's decision, so this rehearsal gives no reviewer-minutes figure.
    - **Historical evidence:** [#3](https://github.com/melabadi/adept-assessment-northstars/pull/3), Copilot's first run of the same feature on 26 October, produced three commits in 20 minutes and is still a draft with no review or decision.
    - **A target** such as "a third fewer reviewer minutes per accepted change, with no more rework" is the customer's goal, never a result to report.
 
