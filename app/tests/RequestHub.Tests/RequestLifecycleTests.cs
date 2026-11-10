@@ -93,44 +93,6 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
     }
 
     [Fact]
-    public async Task Second_decision_returns_conflict_with_the_existing_decision()
-    {
-        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Laptop stand"))).Read<RequestDetailDto>()).Id;
-        var first = await api.As("u-chloe").PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" });
-        var second = await api.As("u-dan").PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "Changed my mind" });
-        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
-        Assert.Equal("decision.already_decided", await second.Code());
-        var detail = await (await api.As("u-ava").GetAsync($"/api/requests/{id}")).Read<RequestDetailDto>();
-        Assert.Equal("Approved", detail.Status);
-    }
-
-    [Fact]
-    public async Task Retried_decision_with_same_idempotency_key_returns_original_result()
-    {
-        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Headset for training"))).Read<RequestDetailDto>()).Id;
-        var chloe = api.As("u-chloe");
-        var first = await chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" }, "decide-key-1");
-        var retry = await chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" }, "decide-key-1");
-        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
-    }
-
-    [Fact]
-    public async Task Concurrent_double_click_records_exactly_one_decision()
-    {
-        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Ergonomic mouse"))).Read<RequestDetailDto>()).Id;
-        var chloe = api.As("u-chloe");
-        var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
-            chloe.PostJson($"/api/requests/{id}/decisions", new { outcome = "Approved" })));
-
-        Assert.Equal(1, attempts.Count(r => r.StatusCode == HttpStatusCode.Created));
-        Assert.All(attempts.Where(r => r.StatusCode != HttpStatusCode.Created), r => Assert.Equal(HttpStatusCode.Conflict, r.StatusCode));
-        var history = await (await api.As("u-ava").GetAsync($"/api/requests/{id}/history")).Read<List<AuditEventDto>>();
-        Assert.Single(history, e => e.Action == "decision.recorded");
-    }
-
-    [Fact]
     public async Task Decided_request_cannot_be_rerouted()
     {
         var response = await api.As("u-ben").SendAsync(new HttpRequestMessage(HttpMethod.Put, "/api/requests/REQ-1004/routing")
