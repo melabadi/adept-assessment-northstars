@@ -6,7 +6,7 @@ After an incident, the follow-up is where teams lose the most. The timeline gets
 
 ## Where it fits
 
-**Phase 7 of 7: Operate and improve.** The Microsoft counterpart is [07-operate-microsoft](../07-operate-microsoft/).
+**Phase 7 of 7: Operate and improve.** The Microsoft counterpart is [07-operate-microsoft](../07-operate-microsoft/). To follow one incident from Azure SRE Agent's recovery to the regression test Copilot proves here, run the [Operate solution combo](../../PRESENTING.md#operate-azure-recovers-a-person-files-copilot-proves-the-follow-up).
 
 | | Today | With this solution |
 | --- | --- | --- |

@@ -16,9 +16,11 @@ They cover what a reviewer must be able to trust without a live run:
     repository set once, in infra/release.bicep;
   - azd runs these tests before every deploy, and connects Event Grid to the function only after every service is
     deployed;
-  - the preflight fails when the function isn't deployed or running, when anything else may start the release job (a
-    Logic App left from the earlier trigger, or another principal with Container Apps Jobs Operator), or when Event
-    Grid's topic or subscription differs from what the trigger expects.
+  - the preflight fails when the function isn't deployed or running, when it may not start the release job with a
+    build's digest (Azure requires write permission on a job to start it with settings of its own, so it needs Container
+    Apps Jobs Contributor on that job), when anything else may start the release job (a Logic App left from the
+    earlier trigger, or another principal with Container Apps Jobs Operator or Jobs Contributor), or when Event Grid's
+    topic or subscription differs from what the trigger expects.
 
 Run them from this folder (Python 3.12+, standard library only; function_app.py itself needs Azure Functions, so it is
 read, not imported):
@@ -348,6 +350,20 @@ class Wiring(unittest.TestCase):
         for name in trigger.SETTINGS:
             self.assertIn(f"{{ name: '{name}', value: ", bicep)
 
+    def test_the_function_may_start_and_write_the_release_job_alone(self):
+        # Azure requires Microsoft.App/jobs/write to start a job with settings of its own, as the trigger does with
+        # IMAGE and COMMIT: Container Apps Jobs Contributor has it, Jobs Operator doesn't.
+        import preflight
+        bicep = self.read("infra/jobs.bicep")
+        steps = bicep.split("var steps = [", 1)[1].split("]", 1)[0]
+        self.assertTrue(steps.strip().startswith("{ name: 'release',"), "jobs[0] is the release job")
+        assignment = bicep.split("resource triggerStartsRelease ", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("scope: jobs[0]", assignment)
+        self.assertIn("roleDefinitions', jobsContributor)", assignment)
+        self.assertIn("var jobsContributor = '4e3d2b60-56ae-4dc6-a233-09c8e5a82e68'", bicep)
+        self.assertEqual(bicep.count("Microsoft.Authorization/roleAssignments@"), 1, "the function's is the only grant")
+        self.assertEqual(preflight.TRIGGER_ROLE, "Container Apps Jobs Contributor")
+
     def test_azd_tests_before_every_deploy_and_connects_event_grid_after_every_service(self):
         services, separator, hooks = self.read("azure.yaml").partition("\nhooks:\n")
         self.assertTrue(separator, "the project's own hooks, which run once for the whole deploy")
@@ -369,20 +385,23 @@ class Wiring(unittest.TestCase):
 
 class TriggerCheck(unittest.TestCase):
     """preflight.py, check Trigger: the function is deployed and running; it alone may start the release job, with
-    Container Apps Jobs Operator on that job only, so a Logic App left from the earlier trigger, or any other role
-    assignment of Jobs Operator on the job or its resource group, fails, even when the function app is missing; and
-    Event Grid's topic watches this registry and its subscription sends the function each push of the API's repository
-    except :main, one event per call. Any other subscription fails."""
+    Container Apps Jobs Contributor on that job only (Azure requires write permission on a job to start it with the
+    build's digest, so Jobs Operator from an earlier deployment is not enough), so a Logic App left from the earlier
+    trigger, or any other role assignment of Jobs Operator or Jobs Contributor on the job or its resource group, fails,
+    even when the function app is missing; and Event Grid's topic watches this registry and its subscription sends the
+    function each push of the API's repository except :main, one event per call. Any other subscription fails."""
 
     RG_ID = "/subscriptions/0/resourceGroups/rg"
     APP_ID = RG_ID + "/providers/Microsoft.Web/sites/func-release-x"
     JOB_ID = RG_ID + "/providers/Microsoft.App/jobs/caj-release-x"
     REGISTRY_ID = RG_ID + "/providers/Microsoft.ContainerRegistry/registries/crx"
     FUNCTION = "principal-of-the-function"
+    CONTRIBUTOR = "Container Apps Jobs Contributor"
+    NO_DIGEST = "the function may not start the release job with a build's digest (Container Apps Jobs Contributor on it)"
 
     def setUp(self) -> None:
         self.state, self.deployed, self.workflows, self.app_missing = "Running", True, [], False
-        self.assignments = [self.operator(self.FUNCTION, self.JOB_ID)]
+        self.assignments = [self.operator(self.FUNCTION, self.JOB_ID, self.CONTRIBUTOR)]
         self.topic: dict | None = {"name": "evgt-x", "topicType": "Microsoft.ContainerRegistry.Registries",
                                    "source": self.REGISTRY_ID.lower()}
         self.subscription: dict | None = {
@@ -395,7 +414,7 @@ class TriggerCheck(unittest.TestCase):
 
     @staticmethod
     def operator(principal: str, scope: str, role: str = "Container Apps Jobs Operator") -> dict:
-        return {"id": f"{scope}/providers/Microsoft.Authorization/roleAssignments/{principal}-{role[:4]}",
+        return {"id": f"{scope}/providers/Microsoft.Authorization/roleAssignments/{principal}-{role.replace(' ', '')}",
                 "principalId": principal, "roleDefinitionName": role, "scope": scope}
 
     def check(self) -> list[tuple[str, str]]:
@@ -460,26 +479,44 @@ class TriggerCheck(unittest.TestCase):
         self.assertEqual(self.failures(), ["Logic App logic-release-x, the earlier trigger, still exists"])
 
     def test_fails_when_another_role_assignment_may_start_the_release_job(self):
-        for scope in (self.JOB_ID, self.RG_ID, self.JOB_ID.upper()):
-            with self.subTest(scope=scope):
-                other = self.operator("principal-of-a-logic-app", scope)
-                self.assignments = [self.operator(self.FUNCTION, self.JOB_ID), other]
-                failures = [(message, fix) for level, message, fix in self.check_with_fixes() if level != "PASS"]
-                self.assertEqual([message for message, _ in failures],
-                                 ["1 other role assignment may start the release job too (Container Apps Jobs Operator)"])
-                self.assertTrue(failures[0][1].endswith(f"az role assignment delete --ids {other['id']}"), failures[0][1])
+        for role in ("Container Apps Jobs Operator", self.CONTRIBUTOR):
+            for scope in (self.JOB_ID, self.RG_ID, self.JOB_ID.upper()):
+                with self.subTest(role=role, scope=scope):
+                    other = self.operator("principal-of-a-logic-app", scope, role)
+                    self.assignments = [self.operator(self.FUNCTION, self.JOB_ID, self.CONTRIBUTOR), other]
+                    failures = [(message, fix) for level, message, fix in self.check_with_fixes() if level != "PASS"]
+                    self.assertEqual([message for message, _ in failures],
+                                     [f"1 other role assignment may start the release job too ({role})"])
+                    self.assertTrue(failures[0][1].endswith(f"az role assignment delete --ids {other['id']}"), failures[0][1])
 
     def test_the_function_may_start_the_release_job_only(self):
-        # Jobs Operator on the resource group would let it start promote, abort, rollback, and drill too.
-        broad = self.operator(self.FUNCTION, self.RG_ID)
+        # Jobs Contributor on the resource group would let it start promote, abort, rollback, and drill too.
+        broad = self.operator(self.FUNCTION, self.RG_ID, self.CONTRIBUTOR)
         self.assignments = [broad]
-        self.assertEqual(self.failures(), ["the function may not start the release job (Container Apps Jobs Operator on it)",
-                                           "1 other role assignment may start the release job too (Container Apps Jobs Operator)"])
-        self.assignments = [self.operator(self.FUNCTION, self.JOB_ID), broad]
-        self.assertEqual(self.failures(), ["1 other role assignment may start the release job too (Container Apps Jobs Operator)"])
+        self.assertEqual(self.failures(), [self.NO_DIGEST,
+                                           f"1 other role assignment may start the release job too ({self.CONTRIBUTOR})"])
+        self.assignments = [self.operator(self.FUNCTION, self.JOB_ID, self.CONTRIBUTOR), broad]
+        self.assertEqual(self.failures(), [f"1 other role assignment may start the release job too ({self.CONTRIBUTOR})"])
+
+    def test_jobs_operator_alone_no_longer_starts_the_release_job_with_a_build(self):
+        # What deployments made before Azure required write permission for a start with settings gave the function.
+        self.assignments = [self.operator(self.FUNCTION, self.JOB_ID)]
+        failures = [(message, fix) for level, message, fix in self.check_with_fixes() if level != "PASS"]
+        self.assertEqual([message for message, _ in failures], [self.NO_DIGEST])
+        self.assertIn("azd deploy release", failures[0][1])
+        self.assertIn("write permission", failures[0][1])
+
+    def test_jobs_operator_left_from_an_earlier_deployment_is_reported_for_removal(self):
+        earlier = self.operator(self.FUNCTION, self.JOB_ID)
+        self.assignments = [self.operator(self.FUNCTION, self.JOB_ID, self.CONTRIBUTOR), earlier]
+        reports = [(level, message, fix) for level, message, fix in self.check_with_fixes() if "release job" in message]
+        self.assertEqual([(level, message) for level, message, _ in reports], [
+            ("WARN", "the function also keeps Container Apps Jobs Operator on the release job, from an earlier deployment"),
+            ("PASS", f"only the function may start the release job ({self.CONTRIBUTOR})")])
+        self.assertTrue(reports[0][2].endswith(f"az role assignment delete --ids {earlier['id']}"), reports[0][2])
 
     def test_principal_ids_are_compared_ignoring_case(self):
-        self.assignments = [self.operator(self.FUNCTION.upper(), self.JOB_ID.lower())]
+        self.assignments = [self.operator(self.FUNCTION.upper(), self.JOB_ID.lower(), self.CONTRIBUTOR)]
         self.assertEqual(self.failures(), [])
 
     def test_a_missing_function_app_still_checks_what_else_may_start_releases(self):
@@ -490,18 +527,19 @@ class TriggerCheck(unittest.TestCase):
         self.assertTrue(failures[0].startswith("function app func-release-x not found"), failures)
         self.assertEqual(failures[1:], [
             "Logic App logic-release-x, the earlier trigger, still exists",
-            "the function may not start the release job (Container Apps Jobs Operator on it)",
+            self.NO_DIGEST,
             "1 other role assignment may start the release job too (Container Apps Jobs Operator)",
             "Event Grid's subscription release-on-push sends events elsewhere (AzureFunction)"])
 
     def test_other_roles_and_grants_outside_the_resource_group_are_not_this_checks_business(self):
-        self.assignments = [self.operator(self.FUNCTION, self.JOB_ID), self.operator("someone", "/subscriptions/0"),
+        self.assignments = [self.operator(self.FUNCTION, self.JOB_ID, self.CONTRIBUTOR),
+                            self.operator("someone", "/subscriptions/0"),
                             self.operator("release-identity", self.RG_ID, role="Container Apps Contributor")]
         self.assertEqual(self.failures(), [])
 
     def test_fails_when_the_function_may_not_start_the_job(self):
         self.assignments = [self.operator(self.FUNCTION, self.JOB_ID, role="Reader")]
-        self.assertEqual(self.failures(), ["the function may not start the release job (Container Apps Jobs Operator on it)"])
+        self.assertEqual(self.failures(), [self.NO_DIGEST])
 
     def test_fails_when_the_topic_is_missing_or_watches_another_registry(self):
         self.topic["source"] = self.REGISTRY_ID.replace("crx", "crx2")

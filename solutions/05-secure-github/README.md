@@ -12,7 +12,8 @@ AI review is not code scanning, and a passing review does not prove a vulnerabil
 ## Where it fits
 
 **Phase 5 of 7: Secure.** The [Microsoft counterpart](../05-secure-microsoft/) addresses deployed cloud posture.
-This solution addresses source-code risk, without deploying the training defect.
+This solution addresses source-code risk, without deploying the training defect. Its Copilot code review also checks
+the counterpart's cloud posture fix in the [Secure solution combo](../../PRESENTING.md#secure-azure-finds-and-fixes-copilot-reviews-a-person-deploys).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -63,9 +64,12 @@ pull request with a read-only token and no secrets, once someone with write acce
 ├── remediate-task.md                      acceptance criteria copied into the remediation Issue
 ├── lab/code-finding.patch                 deliberately unsafe query, stored as data only on main
 ├── regression/SearchSecurityTests.cs      identical regression used before and after repair
+├── replay_setup.py                        once per repository: the repair pull request the nightly replay uses
 ├── tests/test_security_tools.py           parser/guard unit tests, NOT demo evidence
 └── .github/
     ├── agents/secure-github.agent.md
+    ├── instructions/
+    │   └── secure-github-posture-review.instructions.md   Copilot code review of a cloud posture fix (Secure solution combo)
     ├── skills/
     │   ├── finding-triage/                evidence procedure, entitlement and SARIF reporter
     │   └── verified-remediation/          bounded two-snapshot replay with JUnit evidence
@@ -114,6 +118,24 @@ $repo = gh repo view --json nameWithOwner -q .nameWithOwner
 ```
 
 No Azure provisioning, access-policy changes, package installation or deployment is needed.
+
+For the [nightly replay](#nightly-replay-and-lasting-evidence), give it a repair pull request to replay, once per
+repository. In a copy without one, the script makes a reference repair from this folder's files on three `lab/secure-replay*`
+branches, opens and closes the pull request, and stores its number in the repository variable `SECURE_REPLAY_PR`:
+
+```powershell
+python solutions/05-secure-github/replay_setup.py
+```
+
+```text
+Created #1: lab/secure-replay-repair -> lab/secure-replay, closed.
+SECURE_REPLAY_PR = 1: the nightly replay uses it.
+```
+
+Run it again and it reuses the same pull request;
+`--status` says what the nightly run will use. After a live run of the demo, `--adopt <repair PR>` replays Copilot's
+own repair instead, as this repository does with `--adopt 105`. Its commits are marked `[skip ci]`, so no workflow runs on
+those branches.
 Before preparing a lab in an adopter's repo, check that **all deployment/release workflows exclude `lab/secure-*`
 and `copilot/*`**. Do not dispatch any deployment from those refs. In this repository, app CI only builds/tests,
 and release-candidate preflight requires `main`; the security workflows never deploy.
@@ -122,7 +144,8 @@ and release-candidate preflight requires `main`; the security workflows never de
 
 - Confirm the previous run's lab and repair PRs are closed **without merging**, its Issue is closed, and its temporary
   branches are gone. Use `gh pr list --state open`, `gh issue list --label phase:secure --state open` and
-  `git ls-remote --heads origin 'lab/secure-*'`; do not close or delete another presenter's work.
+  `git ls-remote --heads origin 'lab/secure-*'`; do not close or delete another presenter's work. The three
+  `lab/secure-replay*` branches belong to the nightly replay and stay.
 - Fetch `origin/main`, confirm a clean worktree with `git status --short`, and verify that the default branch contains
   the `secure-github` agent, the regression reference and `secure-github-verify.yml`. The lab must start from safe
   `main`, not a previous unsafe or repaired branch.
@@ -280,9 +303,15 @@ Use your new run's numbers in the commands, not those historical examples.
 ## Nightly replay and lasting evidence
 
 The replay workflow runs at **midnight Eastern** (`America/New_York`): 05:00 UTC in winter and 04:00 UTC in summer.
-It runs from the default branch and replays the recorded repair **PR #105** against real PostgreSQL.
-It fetches the commits from the PR record, so the deleted lab branches do not need to be recreated.
-Manual dispatch still accepts another same-repository repair PR targeting `lab/secure-*`.
+It runs from the default branch and replays the repair pull request whose number is in the repository variable
+`SECURE_REPLAY_PR` ([Set up](#set-up)) against real PostgreSQL. Here that is the recorded repair **PR #105**, Copilot's
+repair from the screenshot run; in a fresh copy, `replay_setup.py` makes a reference repair instead. Either way the
+workflow first checks that the pull request's branch is in this repository and that it targets a `lab/secure-*` branch.
+It fetches the commits from the PR record, so deleted lab branches do not need to be recreated.
+Manual dispatch still accepts another same-repository repair PR targeting `lab/secure-*`. A run with neither the
+variable nor a `pr` input fails at once and says what setup is missing. In a copy with no pull request history, the
+reference repair replayed in 87 seconds: 6 of the 10 regression cases failed before the repair and all 10 passed after,
+as with #105.
 
 This is a deterministic replay, **not a new Copilot demo**: no new Issue, PR, review, agent session, token or secret.
 Permissions remain read-only, runs share a concurrency group, and the workflow never pushes, commits or comments.
@@ -375,6 +404,10 @@ Do not delete the downloaded evidence when resetting the demo.
 Keep the evidence on the delivery PR. The next run uses a new timestamp and clean `origin/main`, so no existing
 branch or Issue is overwritten. Do not delete another session's branches, worktrees, databases or artifacts.
 
+The nightly replay's pull request stays between sessions. To remove it too, run
+`python solutions/05-secure-github/replay_setup.py --cleanup`: it closes the reference repair, deletes its three
+`lab/secure-replay*` branches, and removes `SECURE_REPLAY_PR`; it never touches an adopted pull request.
+
 ## Use it in your own repository
 
 Copy this folder's `.github/` files into your root `.github/`. Keep workflow/action pins, replace RequestHub paths,
@@ -382,7 +415,10 @@ test commands and the API fixture with your own, and write a **small, undeployed
 Update `SOURCE`, `TEST`, `WORKFLOW`, method boundaries and the ten-case expectation in the two Python tools.
 Replace the supplied regression with assertions for your actual behavior and negative authorization cases.
 Require detection before remediation and keep tests-only and fix commits separate. Never place the training defect
-on the default branch. Configure branch rulesets so deployment workflows cannot run lab refs.
+on the default branch. Configure branch rulesets so deployment workflows cannot run lab refs. For the nightly replay,
+run `replay_setup.py` once in your repository, or `--adopt` a repair pull request of your own.
+The posture review instruction applies only to the Microsoft counterpart's Bicep: point its `applyTo` at the folder
+where your infrastructure fixes land, or leave it out.
 
 For tooling changes, run:
 
