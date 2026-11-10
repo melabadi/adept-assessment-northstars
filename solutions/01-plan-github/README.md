@@ -6,7 +6,7 @@ Turning workshop notes into a backlog is slow, and it is easy to lose track of w
 
 ## Where it fits
 
-**Phase 1 of 7: Plan and specify.** The Microsoft counterpart is [01-plan-microsoft](../01-plan-microsoft/).
+**Phase 1 of 7: Plan and specify.** The Microsoft counterpart is [01-plan-microsoft](../01-plan-microsoft/). To run it with its Microsoft counterpart on one brief, follow the [Plan solution combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ flowchart LR
 - **GitHub Actions** runs [`plan-github-brief.yml`](.github/workflows/plan-github-brief.yml). It validates every change to the brief. After approval it publishes the Issues, using scripts from the base branch and only the data from the pull request.
 - **A person** approves the workflow runs on Copilot's pull requests, reviews the brief, owns the unresolved decisions, and applies the `brief-approved` label.
 
-**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. A fork's pull request that changes `brief/` gets the validation, with a read-only token and no secrets, once someone with write access approves the run. Publishing needs the `brief-approved` label, which only people with triage access can apply, and a fork's pull request never gets a token that can write, so nothing is published from it. The publisher recognizes the Issues it published before only when GitHub Actions' bot (the workflow) or the owner, a member, or a collaborator (a local run) opened them, so an Issue that someone else opens with the same hidden marker is never updated, reopened, closed, or linked as the epic or a task.
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. A fork's pull request that changes `brief/` gets the validation, with a read-only token and no secrets, once someone with write access approves the run. Publishing needs the `brief-approved` label, which only people with triage access can apply, and a fork's pull request never gets a token that can write, so nothing is published from it. The publisher recognizes the Issues it published before only when GitHub Actions' bot (the workflow) or the owner, a member, or a collaborator (a local run) opened them, so an Issue that someone else opens with the same hidden marker is never updated, reopened, closed, or linked as the epic or a task. In the [Plan solution combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes), it also reads Microsoft Foundry's evaluation Issue, and counts one only when the owner, a member, or a collaborator opened it: an outsider's copy can neither block nor vouch for a publish.
 
 ## What's in this folder
 
@@ -41,7 +41,7 @@ flowchart LR
 ├── refine-task.md                      the task Copilot receives (Issue body or CLI prompt)
 ├── requirements.txt                    Python packages for the skill scripts
 ├── images/                             screenshots for this README, from a live run
-├── tests/test_backlog_publish.py       unit tests: the publisher adopts only Issues it could have opened (offline, fake gh)
+├── tests/test_backlog_publish.py       unit tests: the publisher adopts only Issues it could have opened, and publishes only a revision Foundry evaluated, when it did (offline, fake gh)
 ├── inputs/
 │   ├── stakeholder-transcript.md       synthetic workshop notes, paragraphs [T01]–[T24]
 │   └── routing-policies.md             the routing policies the workshop refers to

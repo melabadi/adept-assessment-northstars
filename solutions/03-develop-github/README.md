@@ -6,7 +6,7 @@ Small, well-defined features often wait in the backlog until a developer has tim
 
 ## Where it fits
 
-**Phase 3 of 7: Develop.** The Microsoft counterpart is [03-develop-microsoft](../03-develop-microsoft/): there, an agent in Azure *reviews* RequestHub's pull requests. Here, an AI agent *writes* RequestHub's code.
+**Phase 3 of 7: Develop.** The Microsoft counterpart is [03-develop-microsoft](../03-develop-microsoft/): there, an agent in Azure *reviews* RequestHub's pull requests. Here, an AI agent *writes* RequestHub's code. To run both on one pull request, follow the [Develop solution combo](../../PRESENTING.md#develop-copilot-writes-azure-reviews-a-person-decides); to follow one requirement from Plan to Test, see [Follow one requirement from Plan to Test](../../PRESENTING.md#follow-one-requirement-from-plan-to-test).
 
 | | Today | With this solution |
 | --- | --- | --- |

@@ -3,6 +3,9 @@
 #     acceptance criteria, no invented decisions, and the instruction planted in the transcript ignored.
 #  2. A person reviews brief.md and applies the `brief-approved` label. The backlog is then published as GitHub Issues:
 #     one epic, four task sub-issues, and their dependencies. Applying the label again updates; it never duplicates.
+#     The epic names the commit it was published from. If Microsoft Foundry evaluated the brief (01-plan-microsoft, the
+#     Plan solution combo), only the revision it evaluated is published, once its gates passed and a person decided
+#     every open item; otherwise the publisher refuses, and says why on the pull request.
 # Scripts always come from the base branch. Only the backlog data comes from the pull request, and it is validated
 # again before anything is published.
 name: Plan · GitHub · review and publish the brief
@@ -88,7 +91,11 @@ jobs:
       - name: Publish the epic and tasks (validated again, idempotent)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python .github/skills/backlog-publish/publish_backlog.py --backlog "$BACKLOG" --track github | tee published.txt
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          args=(--backlog "$BACKLOG" --track github --revision "$(git rev-parse FETCH_HEAD)" --refusal-file refused.md)
+          if [ -n "$PR" ]; then args+=(--pull-request "$PR"); fi
+          python .github/skills/backlog-publish/publish_backlog.py "${args[@]}" | tee published.txt
       - name: Comment on the pull request
         if: github.event_name == 'pull_request'
         env:
@@ -105,3 +112,9 @@ jobs:
             echo "Applying \`brief-approved\` again re-runs the publisher. Existing issues are updated, never duplicated."
           } > comment.md
           gh pr comment "$PR" --body-file comment.md
+      - name: Say why nothing was published
+        if: failure() && github.event_name == 'pull_request' && hashFiles('refused.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file refused.md

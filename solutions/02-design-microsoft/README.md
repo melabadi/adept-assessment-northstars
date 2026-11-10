@@ -6,7 +6,7 @@ Design reviews stall when nobody can find the standard that applies, when two st
 
 ## Where it fits
 
-**Phase 2 of 7: Design and architect.** The GitHub counterpart is [02-design-github](../02-design-github/). Both answer the same question from the same [reviewed brief](inputs/reviewed-brief.md): how should RequestHub add a live AI triage provider while keeping access controls, human approval, observability, and a simple deployment?
+**Phase 2 of 7: Design and architect.** The GitHub counterpart is [02-design-github](../02-design-github/). Both answer the same question from the same [reviewed brief](inputs/reviewed-brief.md): how should RequestHub add a live AI triage provider while keeping access controls, human approval, observability, and a simple deployment? To run both on one design question and one pull request, follow the [Design solution combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ flowchart LR
   - **The gate** decides what reaches GitHub. Every citation must exist in the index, be inside the profile's scope, have the indexed version, and be quoted word for word, and the knowledge base must not have returned anything outside the profile. A quote may shorten a sentence of the standard, but it may not skip a negation such as "not", "never", or "unless": "API keys … be stored in configuration" is rejected, because the standard says "must not be stored".
   - The **standards run** starts when a change to the standards, `agent.yaml`, or the cases merges to `main`: it re-indexes the standards of that commit, publishes new agent versions if the definition changed, and starts a new evaluation.
 - **Application Insights** gets one line per step of each run, starting with the run's id; the issue comment and the pull request show the same id. Connected to the Foundry project, it also traces every agent run: duration, tokens, estimated cost, and the evaluation scores attached to it.
-- **The Foundry evaluation** sends the ten labelled cases in [`eval_cases.jsonl`](eval_cases.jsonl) to the agents and scores every answer with five code-based evaluators that embed `checks.py`, one report column each: citations, access, grounding, abstention, conflicts.
+- **The Foundry evaluation** sends the ten labelled cases in [`eval_cases.jsonl`](eval_cases.jsonl) to the agents and scores every answer with five code-based evaluators that embed `checks.py`, one report column each: citations, access, grounding, abstention, conflicts. Grounding reads what the answer concludes, not only what it quotes: its summary and recommendation must state the conclusion the case is labelled with, never its opposite, and quote the sentence of the standard that supports it. An answer that quotes STD-AI-001 word for word and still recommends automatic approval passes citations and fails grounding.
 - **GitHub** holds the code, the issue form, and the ADR pull requests. No GitHub Actions workflow and no GitHub Copilot take part.
 - **People** decide. An architect reviews the ADR draft, gives each conflict and unknown an owner, and accepts it (merge) or rejects it (close). A person authorizes GitHub once.
 
@@ -89,7 +89,9 @@ This build runs the preferred path of both preview features: the agents retrieve
 ├── README.md
 ├── agent.yaml                     the advisor: instructions, model settings, knowledge tool, operating profiles, output schema
 ├── standards/                     twelve synthetic approved standards with ids, versions, and scopes
-├── eval_cases.jsonl               ten labelled cases: grounding, access, conflict, abstention
+├── eval_cases.jsonl               ten labelled cases: grounding, access, conflict, abstention, and the conclusion each answer must state
+├── eval_heldout.jsonl             six held-out labelled cases, never used to tune the checks (`evaluate.py --held-out`)
+├── grader_checks.jsonl            a right and a wrong answer per labelled question, same quotes, opposite conclusions (`--check-graders`)
 ├── inputs/reviewed-brief.md       the reviewed brief behind the design question
 ├── function/                      the Azure Function (Python 3.12, Flex Consumption)
 │   ├── function_app.py            the webhook, the two queue functions, and connecting GitHub
@@ -114,7 +116,7 @@ This build runs the preferred path of both preview features: the agents retrieve
 │   └── main.parameters.json
 ├── azure.yaml                     azd project: the Function and the hooks
 ├── setup_azure.py                 the azd hooks, and `github`, which connects GitHub
-├── evaluate.py                    start the Foundry evaluation now and print the result (--local: the fallback)
+├── evaluate.py                    start the Foundry evaluation now and print the result (--local: the fallback; --check-graders, --held-out)
 ├── test_advisor.py                offline tests; azd runs them before every deploy
 ├── azd_env.py                     settings from the environment or the azd environment
 ├── requirements.txt               Python packages for the scripts and tests
@@ -229,7 +231,7 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
      ```
 
   6. The Foundry project: **Build** → **Evaluations**.
-- [ ] **Start early.** About 15 minutes before step 8, run the evaluation from this folder, in the activated environment: `python evaluate.py`. It takes 3 to 6 minutes and should end with `10/10 cases passed`. Foundry's preview grader sometimes fails to score one evaluator of a run; `evaluate.py` then starts that profile's run again by itself, up to three runs, which adds 3 to 5 minutes each time ([Troubleshooting](#troubleshooting)). If it still ends with `COULD NOT GRADE`, plan to show the fallback in step 8. If it reports a failed case, an answer broke one of the gate's rules: run the evaluation again for new answers, or show that case in step 8 as the evaluation doing its job.
+- [ ] **Start early.** About 15 minutes before step 8, run the evaluation from this folder, in the activated environment: `python evaluate.py`. It takes 3 to 7 minutes. Its summary keeps three things apart: the **first attempt** (how many cases passed, failed, and could not be graded), each **retry** (a profile's run started again because Foundry's preview grader couldn't score it, with the agent answering again), and the **last run** of each profile. Show the first attempt as it is. A failed case is a result: `evaluate.py` never retries it, and running the evaluation again until every case passes would hide it. Show it in step 8 as the evaluation doing its job. If the last run still reports `COULD NOT GRADE`, plan to show the fallback in step 8 ([Troubleshooting](#troubleshooting)).
 
 | Step | What | Time |
 | --- | --- | --- |
@@ -298,15 +300,19 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
    ![Foundry portal, the small-team evaluation run: 100% on advisor_citations, advisor_access, advisor_grounding, advisor_abstention, and advisor_conflicts, and every case passing](images/09-evaluation-run.png)
 
-   The same result in the terminal, from `python evaluate.py`:
+   The same evaluation in the terminal, from `python evaluate.py`. Its summary keeps the first attempt apart from any retry: in this run, Foundry's preview grader couldn't score the enterprise run's `access` evaluator, so `evaluate.py` started that run again, and the agent's new answers passed.
 
-   ![python evaluate.py: both agents completed, every evaluator 5 of 5 for each profile, every case passing, 10 of 10 in 166 seconds](images/09-evaluate.png)
+   ![python evaluate.py: the small-team agent passed 5 of 5; Foundry could not grade the enterprise agent's first run, so run 2 started by itself and passed 5 of 5. The summary reads: first attempt 5 passed, 0 failed, 5 could not be graded, the five enterprise cases listed; the retry and why; the last run of each profile 10 of 10 cases in 520 seconds](images/09-evaluate.png)
 
-   If a column has no score, Foundry's preview grader failed on that evaluator: its items say *An error occurred during grading*, and the run's totals still count them as passed. `python evaluate.py` never counts such a run as passed: it starts that profile's run again, up to three runs, so the newest run is the one it reports. If the last one couldn't be graded either, it reports `COULD NOT GRADE`. Then show the fallback: `python evaluate.py --local` asks the same agent versions the same questions and scores the answers on your machine with the same checks, in about 3 minutes.
+   If a column has no score, Foundry's preview grader failed on that evaluator: its items say *An error occurred during grading*, and the run's totals still count them as passed. `python evaluate.py` never counts such a run as passed: it starts that profile's run again, up to three runs, and reports each retry under the first attempt it replaced. If the last one couldn't be graded either, it reports `COULD NOT GRADE`. Then show the fallback: `python evaluate.py --local` asks the same agent versions the same questions and scores the answers on your machine with the same checks, in about 3 minutes.
 
    ![python evaluate.py --local: all ten cases pass, each with its profile, the agent version that answered, and 11 to 21 seconds per answer](images/09-evaluate-local.png)
 
-   **Point out:** the evaluators run the gate's own code (`checks.py`), so the cases measure exactly what protects GitHub, and the scope and abstention cases prove the advisor says "the standards don't say" rather than inventing a budget.
+   Then show that the checks read what an answer concludes, not just what it quotes (about 2 minutes, no agent asked): `python evaluate.py --check-graders` grades a right and a wrong answer to every labelled question, which quote the same sentences of the same standards. The wrong answer to E05 quotes STD-AI-001's *Approvals, rejections, payments, and access grants always require a human decision* and still recommends automatic approval above 95% confidence.
+
+   ![python evaluate.py --check-graders: 30 fixed answers. Every wrong answer passes citations and fails grounding (E07's also fails conflicts); every right answer passes all five checks, except held-out H06's, a known misread listed under the table. Paired: 18 of 18 graded as labelled, and Foundry graded 18 of 18 exactly as checks.py did; held-out: 11 of 12, and Foundry graded 12 of 12 the same way](images/09-check-graders.png)
+
+   **Point out:** the evaluators run the gate's own code (`checks.py`), so the cases measure exactly what protects GitHub, and the scope and abstention cases prove the advisor says "the standards don't say" rather than inventing a budget. A correct quote earns the citation check only: the conclusion must match what the standard says, and the held-out answers, written after the checks were frozen, show where the checks still misread.
 
 9. **Optional: merge a change to a standard.** Merge a pull request that edits a file in `standards/` (for example, add a keyword). The push reaches the Function, which queues a standards run within 2 seconds of the merge. In the **Logs** tab, select **Run** again: its lines start with `standards run`. In about 20 seconds it checks that the commit is on `main`, re-indexes that commit's standards, publishes new agent versions only if `agent.yaml` changed, and starts a new evaluation run, which appears in step 8's list a few minutes later, named after the commit. It only publishes commits that are on the default branch, so an unmerged proposal never reaches the index or the agents.
 
@@ -318,7 +324,7 @@ Use this only if your organization doesn't allow GitHub Apps. Comments and pull 
 
 - **Grounded or silent.** Every recommendation cites standards by id, version, and verbatim sentence, and the advisor abstains when the standards are silent (case E08 asks for a token budget no standard sets).
 - **Access by design.** The two profiles get different answers to the same question because their knowledge bases return different standards, and the gate and the `access` evaluator prove nothing leaked.
-- **Trust is measured, not assumed.** The gate stops a bad answer before GitHub sees it, and the evaluation shows the same checks across ten cases, per profile, every time the standards change.
+- **Trust is measured, not assumed.** The gate stops a bad answer before GitHub sees it, and the evaluation shows the same checks across ten cases, per profile, every time the standards change. The AI drafts the answer; deterministic checks decide whether its citations are real and whether it concludes what the cited standard says; an architect decides what to build.
 - **The decision stays human.** The advisor only proposes: the ADR is a pull request an architect merges or closes.
 - **AI helps the people in the SDLC.** The architect gets a cited first draft in under a minute instead of a search through wikis, and the team gets a decision record by default.
 
@@ -363,7 +369,7 @@ try {
 1. Copy this folder. Keep `inputs/reviewed-brief.md` for the same scenario, or write your own.
 2. Replace `standards/` with your standards: one Markdown file per standard, with `id`, `version`, `title`, `scope`, `category`, `keywords`, and `status: approved` in the front matter.
 3. Edit `agent.yaml`: the instructions (describe your system), the operating profiles and the scopes each may see, and the model settings.
-4. Write labelled cases in `eval_cases.jsonl` for your standards: at least one each for grounding, access, a known contradiction, and a known gap.
+4. Write labelled cases in `eval_cases.jsonl` for your standards: at least one each for grounding, access, a known contradiction, and a known gap. Give every answerable case an `expectConclusion`: the claims a right answer states (`states`), the claims that would be the opposite conclusion (`rejects`), and the words of the standard that support it (`evidence`). Claims are a few positive words in order, such as `approv* automat*`. Add a right and a wrong answer per case to `grader_checks.jsonl`, using the same quotes, and keep a few questions in `eval_heldout.jsonl` that you never tune the labels on. `python evaluate.py --check-graders` then shows, here and in Foundry, that the checks tell the two answers apart.
 5. If your folder isn't `solutions/02-design-microsoft/`, change `SOLUTION` in [`webhook.py`](function/advisor_core/webhook.py), `ADR_DIR` in [`github.py`](function/advisor_core/github.py), and `SOURCE_DIR` in [`standards.py`](function/advisor_core/standards.py).
 6. Copy the issue form to `.github/ISSUE_TEMPLATE/`, create the `design-advisor` label, then run [Set up](#set-up).
 
@@ -378,5 +384,7 @@ try {
 - **`python evaluate.py` reports `COULD NOT GRADE` and exits with code 2.** Foundry's code-based evaluators are a preview, and the service sometimes fails to grade every item of one evaluator in a run. Those items say *An error occurred during grading*, yet the Foundry portal counts them as passed, so trust `evaluate.py` here. It happened in 7 of the 20 runs measured over three days, to a different evaluator from one run to the next. The checks take milliseconds, far inside Foundry's limit of 2 minutes per grading call, and turn any error into a fail, so the error comes from the service. `evaluate.py` starts such a run again by itself, up to three runs per profile (`--attempts`), so `COULD NOT GRADE` means the last of them failed too: run the evaluation again later, or use `python evaluate.py --local`. `no answer to grade` means the agent call itself failed, and `no result for this case` means Foundry returned no result for it; open the run in Foundry for the details.
 - **`python evaluate.py` reports a case as `FAIL: citations`.** An excerpt the agent quoted isn't one the gate accepts, so the gate would have kept that answer from GitHub too. Once in 100 answers, the agent quoted the last five words of a longer sentence of STD-AI-001 (*every tool call is audited*): the check wants a whole sentence or at least six words in a row, so a shortened quote can't drop a *not*. `evaluate.py` never starts a run with a failed case again, because that would hide the result. Run the evaluation again for new answers.
 - **A case fails every evaluator at once.** The agent's run ended without an answer: in Foundry, the item's output has no final message. It happened once in more than 100 answers, after 80 seconds instead of the usual 15. Run the evaluation again; if the same case keeps failing, read that case's trace in the agent's **Traces** tab.
+- **Every case fails every evaluator, in every run.** The evaluators can't find the answers. In November 2026, Foundry began handing a code-based evaluator the agent's answer in its `sample` argument instead of the evaluation item; evaluators that read only the item then failed all 50 checks of a run. [`evaluation.py`](function/advisor_core/evaluation.py) reads the answer from either place. If your copy predates that change, update it and run `python evaluate.py`: it registers the new evaluator versions.
+- **`python evaluate.py` reports a case as `FAIL: grounding` although the answer looks right.** The check reads the answer's conclusion as short claims with their negations, conditions, and comparisons; it isn't a reader. In 80 answers to the ten labelled questions it failed two, both genuine: they reported the STD-OBS-002 and STD-SEC-002 conflict but quoted a sentence of STD-SEC-002 that doesn't say what conflicts. In 90 answers to the six held-out questions (84 asked directly and 6 in a Foundry run with `--held-out`), it misread three right answers, in two ways: one described the rejected tool as a sentence's subject, and two put "extending the existing service and avoiding new queues" in a single clause. `python evaluate.py --check-graders` lists the known misreads. Read the case's answer in Foundry before you call it wrong.
 - **`DefaultAzureCredential failed to retrieve a token` from a script.** The Azure CLI took too long to return a token. Run `az account get-access-token --resource https://ai.azure.com` to check that it responds, then run the script again.
 - **The Foundry portal opens another project.** It reopens the project you used last. Pick `design` in the project switcher next to **Microsoft Foundry**, at the top left.

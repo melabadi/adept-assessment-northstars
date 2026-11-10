@@ -22,6 +22,24 @@ MIN_EXCERPT_WORDS = 6
 NEGATIONS = {"not", "no", "never", "nor", "neither", "none", "without", "unless", "except", "cannot", "avoid"}
 SENTENCE_BREAK = r"(?<=[.!?])\s+|\n+"
 CLAUSE_BREAK = r"(?<=[.!?;])\s+|\n+"
+# The stated conclusion (case_misses). A labelled case lists claims a right answer asserts ("states") and claims it never
+# asserts ("rejects"), read in the summary and the recommendation only: the options name the wrong choice too. A claim is
+# a few words in order, each at most CLAIM_GAP words after the one before; a trailing * matches any ending
+# ("approv* automat*" matches "approve low-risk requests automatically"). Text is cut into clauses at punctuation and
+# before the words in CLAIM_BREAK. A clause that starts with a word in UNASSERTED asserts nothing: a condition ("if you
+# want auto-approval") or the losing side of a comparison ("better than a direct call"). A clause with an odd number of
+# NEGATION_CUES denies what it says: "There is no automatic approval" denies the claim, "Nothing prevents automatic
+# approval" asserts it.
+CLAIM_GAP = 3
+CLAIM_BREAK = (r"[.!?]+(?=\s|$)|[;:,()\n–—]+|\s-+\s|\s+(?=(?:but|however|unless|except|while|whereas|although|though|"
+               r"because|since|so|if|otherwise|until|before|than|which|without|rather|instead|over|against)\b)")
+UNASSERTED = ("if", "unless", "whether", "until", "before", "than")
+# A sentence that compares numbered options ("Compared options: (1) send attachments, or (2) send only the fields")
+# names the wrong choice too, like the options themselves, so it asserts none of them.
+ALTERNATIVES = r"\b(?:options?|alternatives?|compared)\b[^.!?]*?\(?\b1\)"
+NEGATION_CUES = ("not", "no", "never", "nor", "neither", "none", "nothing", "without", "cannot", "rather", "instead",
+                 "over", "against", "avoid*", "forbid*", "prohibit*", "disallow*", "exclud*", "violat*", "prevent*",
+                 "break*")
 
 
 def words(text: str) -> list:
@@ -82,6 +100,64 @@ def excerpt_found(excerpt: str, source: str, check_negations: bool = True) -> bo
         return False
 
     return place(0, 0)
+
+
+def _word_matches(word: str, pattern: str) -> bool:
+    """A claim's or a cue's word: exact, or any ending when it ends with *."""
+    return word.startswith(pattern[:-1]) if pattern.endswith("*") else word == pattern
+
+
+def _claim_in(found: list, claim: list) -> bool:
+    """Whether the claim's words appear in found in order, each at most CLAIM_GAP words after the one before."""
+    def place(index: int, start: int) -> bool:
+        if index == len(claim):
+            return True
+        end = len(found) if index == 0 else min(len(found), start + CLAIM_GAP + 1)
+        return any(_word_matches(found[at], claim[index]) and place(index + 1, at + 1) for at in range(start, end))
+
+    return bool(claim) and place(0, 0)
+
+
+def asserts(text: str, claim: str) -> bool:
+    """Whether the text asserts the claim: a clause holds the claim's words, isn't UNASSERTED, and doesn't deny them
+    (an odd number of NEGATION_CUES). Sentences that compare numbered ALTERNATIVES assert nothing. Claims are written as
+    positive statements; a test keeps cues out of the labels."""
+    pattern = str(claim).lower().split()
+    for sentence in re.split(SENTENCE_BREAK, str(text).lower()):
+        if re.search(ALTERNATIVES, sentence):
+            continue
+        for clause in re.split(CLAIM_BREAK, sentence):
+            found = words(clause)
+            if not found or found[0] in UNASSERTED or not _claim_in(found, pattern):
+                continue
+            if sum(1 for w in found if any(_word_matches(w, c) for c in NEGATION_CUES)) % 2 == 0:
+                return True
+    return False
+
+
+def conclusion_misses(expected: dict, answer: dict) -> list[str]:
+    """What the answer's stated conclusion and its evidence got wrong against a labelled case's expectConclusion:
+      states    the claims the summary or the recommendation must assert: each entry is a claim, or a list of
+                alternative claims of which one is enough, and every entry must be asserted;
+      rejects   claims neither may assert: the opposite conclusion, even when the answer's quotes are right;
+      evidence  {standard id: words, or a list of alternatives}: one of the answer's excerpts of that standard must
+                contain them, so the answer quotes a sentence that supports its conclusion.
+    A correct quote alone passes the citations check; it earns nothing here."""
+    misses = []
+    stated = "\n".join(str(answer.get(key) or "") for key in ("summary", "recommendation"))
+    for entry in expected.get("states") or []:
+        claims = [entry] if isinstance(entry, str) else list(entry)
+        if not any(asserts(stated, claim) for claim in claims):
+            misses.append(f"conclusion: states none of {', '.join(repr(c) for c in claims)}")
+    misses += [f"conclusion: asserts {claim!r}, which the case rules out"
+               for claim in expected.get("rejects") or [] if asserts(stated, claim)]
+    for standard, phrases in (expected.get("evidence") or {}).items():
+        phrases = [phrases] if isinstance(phrases, str) else list(phrases)
+        quoted = [words(c.get("excerpt", "")) for c in answer.get("constraints", [])
+                  if re.findall(STANDARD_ID, str(c.get("standardId", ""))) == [standard]]
+        if not any(_position(excerpt, words(phrase), 0) >= 0 for excerpt in quoted for phrase in phrases):
+            misses.append(f"evidence: no excerpt of {standard} quotes {' or '.join(repr(p) for p in phrases)}")
+    return misses
 
 
 def strip_markers(node):
@@ -228,6 +304,8 @@ def case_misses(case: dict, answer: dict) -> list[str]:
     expected = set(case.get("expectConflict") or [])
     if expected and not any(expected <= set(re.findall(STANDARD_ID, " ".join(c.get("standards", [])))) for c in answer.get("conflicts", [])):
         misses.append(f"did not flag the conflict {' vs '.join(case['expectConflict'])}")
+    if case.get("expectConclusion"):
+        misses += conclusion_misses(case["expectConclusion"], answer)
     return misses
 
 
@@ -245,7 +323,8 @@ def evaluate_item(item: dict) -> dict:
     retrieved = retrieved_ids(sample.get("output_items"))
     problems = check(answer, item.get("question", ""), retrieved, _field(item, "standards"), _field(item, "permitted"),
                      item.get("profile", ""))
-    case = {key: _field(item, key) for key in ("expectAnswerable", "expectStandards", "forbidStandards", "expectConflict")}
+    case = {key: _field(item, key) for key in ("expectAnswerable", "expectStandards", "forbidStandards", "expectConflict",
+                                               "expectConclusion")}
     return {"problems": problems, "misses": case_misses(case, answer), "retrieved": retrieved}
 
 
@@ -261,7 +340,7 @@ def verdict(result: dict, kind: str) -> bool:
     if kind == "access":
         return not has(problems, "access:") and not has(misses, "cited out-of-scope")
     if kind == "grounding":
-        return not has(problems, "grounding:") and not has(misses, "did not cite")
+        return not has(problems, "grounding:") and not has(misses, "did not cite", "conclusion:", "evidence:")
     if kind == "abstention":
         return not has(problems, "abstention:") and not has(misses, "expected answerable=")
     if kind == "conflicts":

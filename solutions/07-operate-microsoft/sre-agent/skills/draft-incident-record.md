@@ -7,7 +7,9 @@ description: Draft the record of a RequestHub notification backlog incident in y
 
 The team keeps one GitHub Issue per incident as its record. People outside the team can read it, so it describes
 resources by their role and never identifies the deployment. You draft it in your reply; a person reads it and files
-it. You have no GitHub tool, and you never write to GitHub.
+it. You have no GitHub tool, and you never write to GitHub. The record states every fact the team's incident form asks
+for (status, environment, detection time, impact, recent changes, and timeline), so the person who files it never has
+to add one.
 
 ## Placeholders, never identifiers
 
@@ -21,8 +23,8 @@ worker revision", "the new worker revision". Never write:
 - a subscription or tenant name, an account name, or an e-mail address. Say "an SRE Agent Administrator approved it",
   not who.
 
-UTC times, durations, counts, metric values, setting names (`Faults__WorkerDelayMs`), and the alert rule's display
-name (`RequestHub notification backlog`) are fine.
+UTC times, durations, counts, metric values, setting names (`Faults__WorkerDelayMs`), the alert rule's display name
+(`RequestHub notification backlog`), and the environment's name (`{{AZURE_ENV_NAME}}`) are fine.
 
 ## The record
 
@@ -53,6 +55,11 @@ End your last reply with the record, in this layout, with nothing after it:
 | --- | --- | --- |
 | <time> | <event> | <the telemetry, log, or Activity Log entry that shows it> |
 
+## Recent changes
+<Every deployment or configuration change to the worker or the API in the investigation window, with its UTC time and
+evidence, for example a configuration change at <time> that created the new worker revision with
+`Faults__WorkerDelayMs`. Name revisions by role, never by name. Write "None in the Activity Log" if there were none.>
+
 ## Root cause
 <The confirmed cause and the evidence for it, for example the delay fault set on the worker at <time> by a
 configuration change that created a new worker revision.>
@@ -64,6 +71,13 @@ approver's permissions.>
 
 ## Follow-up
 <One bounded change that would prevent a repeat or detect it sooner, with how to verify it.>
+
+## Status
+| Field | Value |
+| --- | --- |
+| Status | <Resolved once the alert resolved; Mitigated while it is still active> |
+| Environment | `{{AZURE_ENV_NAME}}` (Azure) |
+| Detected at (UTC) | <the time the alert fired, as YYYY-MM-DDTHH:MMZ> |
 
 ---
 Drafted by Azure SRE Agent from its investigation of the alert, and filed by a person who read it. All data comes from

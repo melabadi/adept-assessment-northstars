@@ -16,7 +16,9 @@ param apiIdentifierUri string
 param triggerPrincipalId string = ''
 
 var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, environmentName))
-var jobsOperator = 'b9a307c4-5aa3-4b52-ba60-2b17c136cd7b'
+// Container Apps Jobs Contributor: start a job and write it. Azure requires write permission on a job to start it with
+// settings of its own, as the trigger does with each build's digest (IMAGE and COMMIT); Jobs Operator only starts it.
+var jobsContributor = '4e3d2b60-56ae-4dc6-a233-09c8e5a82e68'
 
 // A release builds, gates, and may wait for another step: up to 30 minutes. The others finish in a few minutes.
 var steps = [
@@ -72,14 +74,14 @@ resource jobs 'Microsoft.App/jobs@2025-07-01' = [for step in steps: {
   }
 }]
 
-// The release trigger function may start the release job, and only that job.
+// The release trigger function may start the release job with a build's digest, and only that job.
 resource triggerStartsRelease 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(triggerPrincipalId)) {
   scope: jobs[0]
-  name: guid(jobs[0].id, triggerPrincipalId, jobsOperator)
+  name: guid(jobs[0].id, triggerPrincipalId, jobsContributor)
   properties: {
     principalId: triggerPrincipalId
     principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', jobsOperator)
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', jobsContributor)
   }
 }
 

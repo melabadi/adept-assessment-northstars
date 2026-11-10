@@ -1,14 +1,17 @@
-"""What the run writes to GitHub: the review Issue, the epic, its tasks, and the comments on the review Issue.
+"""What the run writes to GitHub: the review Issue, the epic, its tasks, and the comments on the review Issue; or, for a
+pull request's brief (the Plan solution combo), the evaluation Issue.
 
 The agent's answer is untrusted text. parse_brief() decodes the JSON first, so an @ the model wrote as \\u0040 is an @ by
 then, and then puts a zero-width space after every @ in every string, so nothing the model writes can mention a person
 or a team. The quoted sources get the same treatment. Table cells escape | and line breaks so a value can't break the
-table. The evaluation scores the agent's unchanged text; only what reaches GitHub is neutralized.
+table. The evaluation scores the agent's unchanged text; only what reaches GitHub is neutralized. A pull request's brief
+gets the same treatment, and the evaluation Issue puts each value from it on one line without HTML (inline()), so the
+brief can't add a task list item or imitate the marker that 01-plan-github's publisher reads.
 
-Every Issue the run creates ends with an HTML comment marker (review_marker(), backlog_marker()). Before it creates an
-Issue, the run looks for one that already ends with the same marker, so a retried step never creates an Issue twice.
-Only an Issue opened by the repository's owner, a member, or a collaborator counts (steps.existing_issue()): anyone can
-copy a marker into an Issue of their own.
+Every Issue the run creates ends with an HTML comment marker (review_marker(), backlog_marker(), evaluation_marker()).
+Before it creates an Issue, the run looks for one that already ends with the same marker, so a retried step never
+creates an Issue twice. Only an Issue opened by the repository's owner, a member, or a collaborator counts
+(steps.existing_issue()): anyone can copy a marker into an Issue of their own.
 """
 from __future__ import annotations
 
@@ -22,8 +25,12 @@ INPUTS_HINT = "see solutions/01-plan-microsoft/inputs/"
 REVIEW_LABELS = ["ai-sdlc", "phase:plan", "track:microsoft", "type:brief"]
 EPIC_LABELS = ["ai-sdlc", "phase:plan", "track:microsoft", "type:epic"]
 TASK_LABELS = ["ai-sdlc", "phase:plan", "track:microsoft", "type:task"]
+EVALUATION_LABELS = ["ai-sdlc", "phase:plan", "track:microsoft", "type:evaluation"]
 APPROVAL_LABEL = "brief-approved"
 REVIEW_TITLE = "Plan: requirements brief for review (Foundry)"
+# 01-plan-github's publisher reads the evaluation Issue: its marker (evaluation_marker()) and the task list under this
+# heading. Change them together with that publisher (publish_backlog.py, EVALUATION_MARKER and OPEN_ITEMS_HEADING).
+OPEN_ITEMS_HEADING = "## Open items for the product owner"
 
 
 def neutralize(value):
@@ -86,6 +93,11 @@ def review_marker(run_id: str) -> str:
 
 def backlog_marker(review_issue: int, item: str) -> str:
     return f"<!-- plan-microsoft: review #{review_issue}, {item} -->"
+
+
+def evaluation_marker(run_id: str, pull_request: int, sha: str, passed: bool) -> str:
+    gates = "passed" if passed else "failed"
+    return f"<!-- plan-microsoft evaluation: run {run_id}, pull request #{pull_request}, revision {sha}, gates {gates} -->"
 
 
 def task_section(task: dict) -> str:
@@ -156,6 +168,82 @@ def review_issue_body(*, run_id: str, agent: str, response_id: str, evaluation: 
         f"{epic.get('summary')} _({cites(epic)})_\n\n"
         f"{tasks}\n\n"
         f"{review_marker(run_id)}\n"
+    )
+
+
+def inline(value) -> str:
+    """A value from the brief on one line, without HTML: a line break can't start a task list item of its own, and a
+    "<" can't open a comment that hides the rest of the Issue or imitates its marker."""
+    return " ".join(str(value if value is not None else "").split()).replace("<", "&lt;")
+
+
+def entries(value) -> list[dict]:
+    """The objects in a list from the brief. A pull request's brief isn't checked by a schema here, so anything else
+    is skipped instead of failing the step."""
+    return [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else []
+
+
+def sources_of(item: dict) -> str:
+    sources = item.get("sources")
+    return inline(", ".join(str(source) for source in sources)) if isinstance(sources, list) else ""
+
+
+def open_items(brief: dict, results: list[dict]) -> list[str]:
+    """What the product owner decides before the revision is published: the conflicts the brief leaves unresolved,
+    its open questions, and each reported check that didn't pass or wasn't scored."""
+    items = []
+    for conflict in entries(brief.get("conflicts")):
+        if not conflict.get("resolution"):
+            items.append(f"**{inline(conflict.get('id'))}** · unresolved conflict: {inline(conflict.get('summary'))} "
+                         f"_({sources_of(conflict)})_")
+    for question in entries(brief.get("openQuestions")):
+        blocking = " (blocking)" if question.get("blocking") is True else ""
+        items.append(f"**{inline(question.get('id'))}** · open question{blocking}: {inline(question.get('question'))} "
+                     f"_({sources_of(question)})_")
+    for result in results:
+        name = result.get("name")
+        if name in checks.REPORTED and (result.get("errored") or not result.get("passed")):
+            finding = "not scored, check it yourself" if result.get("errored") else "a gap the evaluation found"
+            items.append(f"**{name}** · {finding}: {checks.CHECK_NAMES[name]}, {checks.result_cell(result)}")
+    return items
+
+
+def evaluation_title(revision: dict) -> str:
+    return f"Plan: Foundry evaluation of pull request #{revision['pullRequest']} at {revision['sha'][:7]}"
+
+
+def evaluation_issue_body(*, run_id: str, repository: str, revision: dict, evaluation: str, run_names: list[str],
+                          results: list[dict], not_passed: list[str], brief: dict) -> str:
+    """The evaluation of a pull request's brief, for the product owner: which revision, which evaluation run, the
+    verdict, the scores, and the open items to decide. The marker at the end is what 01-plan-github's publisher reads."""
+    pull_request, sha, path = revision["pullRequest"], revision["sha"], revision["path"]
+    base = f"https://github.com/{repository}"
+    named = ", ".join(f"`{name}`" for name in run_names) or "none"
+    if not_passed:
+        verdict = (f"❌ **These gates didn't pass: {', '.join(not_passed)}.** 01-plan-github refuses to publish this "
+                   f"revision. Fix the brief in the pull request, then evaluate the new revision.")
+    else:
+        verdict = "✅ **The four gates passed.** Once a person has decided every open item below, this revision can be published."
+    checklist = "\n".join(f"- [ ] {item}" for item in open_items(brief, results)) or "- None."
+    return (
+        f"> Microsoft Foundry evaluated the requirements brief on 01-plan-github pull request #{pull_request} at revision "
+        f"[`{sha[:7]}`]({base}/commit/{sha}) ([`{path}`]({base}/blob/{sha}/{path})), with the evaluation "
+        f"**{evaluation}** ({'evaluation run' if len(run_names) == 1 else 'evaluation runs'} {named}), in run "
+        f"`{run_id}` of the Azure Function app. The checks are code: this revision always gets the same scores.\n\n"
+        f"{verdict}\n\n"
+        f"**To publish this revision**, decide each open item below, write your decision in a comment here, and tick the "
+        f"item. Then apply the `{APPROVAL_LABEL}` label to pull request #{pull_request}. 01-plan-github publishes revision "
+        f"`{sha[:7]}` only, and refuses while an item here is unticked. If the brief changes, evaluate the new revision: "
+        f"`python runs.py start --evaluate-pull-request {pull_request}`.\n\n"
+        f"## Evaluation in Microsoft Foundry\n\n"
+        f"Gates must pass before a revision can be published. The other checks are reported, and one that didn't pass "
+        f"is an open item below. A check marked not scored hit an error in the preview grading sandbox, which says "
+        f"nothing about the brief.\n\n"
+        f"| Check | Role | Result |\n| --- | --- | --- |\n"
+        f"{chr(10).join(checks.score_rows(results))}\n\n"
+        f"{OPEN_ITEMS_HEADING}\n\n"
+        f"{checklist}\n\n"
+        f"{evaluation_marker(run_id, pull_request, sha, not not_passed)}\n"
     )
 
 

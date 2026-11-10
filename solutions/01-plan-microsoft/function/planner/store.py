@@ -9,7 +9,8 @@ raises Conflict otherwise. A step and a cancel can't overwrite each other.
 
 States, in order: queued → drafting → evaluating → awaiting_review → publishing → published. A run can also end as
 rejected (the person closed the review Issue), timed_out (no decision within 2 hours), cancelled (runs.py cancel), or
-failed (with an error code and message in the record).
+failed (with an error code and message in the record). A run that evaluates a pull request's brief starts at evaluating
+and ends as evaluated, once its evaluation Issue is open.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import json
 import threading
 
 ACTIVE = ("queued", "drafting", "evaluating", "awaiting_review", "publishing")
-FINISHED = ("published", "rejected", "timed_out", "cancelled", "failed")
+FINISHED = ("published", "evaluated", "rejected", "timed_out", "cancelled", "failed")
 
 
 class Conflict(Exception):
