@@ -61,10 +61,10 @@ public sealed class NotificationProcessor(
                 """)
             .ToListAsync(ct);
 
-        var fault = faults.CurrentValue;
-        var delay = fault.IsActive(clock) && fault.WorkerDelayMs > 0 ? fault.WorkerDelayMs : 0;
         foreach (var notification in batch)
         {
+            var fault = faults.CurrentValue;
+            var delay = fault.IsActive(clock) && fault.WorkerDelayMs > 0 ? fault.WorkerDelayMs : 0;
             using var activity = RequestHubTelemetry.ActivitySource.StartActivity("notification.deliver");
             activity?.SetTag("requesthub.notification.type", notification.Type);
             if (delay > 0)
