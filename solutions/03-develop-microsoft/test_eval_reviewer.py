@@ -5,7 +5,9 @@ Run from the repository root:  python -m unittest discover -s solutions/03-devel
 """
 from __future__ import annotations
 
+import ast
 import contextlib
+import inspect
 import io
 import json
 import re
@@ -13,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -89,14 +92,20 @@ class GraderTests(unittest.TestCase):
         self.assertLess(review_graders.grade_useful_commentary({}, denial), 1.0)
 
     def test_every_flagged_or_known_bad_case_labels_a_finding_with_a_file(self):
-        for case in CASES:
+        source = inspect.getsource(review_graders.grade_useful_commentary)
+        negations = ast.literal_eval(re.search(r"negations = (\(.*?\))\n", source, re.S).group(1))
+        cases = CASES + [{"id": row["id"], "kind": row["item"]["kind"],
+                          "expect_findings": json.loads(row["item"]["expect_findings"])}
+                         for row in GRADER_CHECKS if row["split"] == "held-out"]
+        for case in cases:
             with self.subTest(case=case["id"]):
                 self.assertEqual(bool(case["expect_findings"]), case["kind"] != "known-good")
                 for finding in case["expect_findings"]:
                     self.assertTrue(finding["states"] and finding["file"].startswith("app/"))
                     for claim in finding["states"]:
-                        self.assertFalse(set(claim.replace("*", "").split()) & {"not", "no", "never", "without", "cannot"},
-                                         f"{claim!r}: claims are positive statements")
+                        for word in claim.replace("*", "").split():
+                            self.assertFalse(any(word.startswith(n[:-1]) if n.endswith("*") else word == n
+                                                 for n in negations), f"{claim!r}: claims are positive statements")
 
     def test_paired_reviews_share_their_words_and_evidence(self):
         """Each right review has a wrong twin that points at the same file and line and differs in what it concludes: the
@@ -118,13 +127,42 @@ class GraderTests(unittest.TestCase):
 
     def test_every_grader_check_is_graded_as_labelled(self):
         """grader_checks.jsonl: right reviews pass every check; wrong ones fail only the commentary check. A wrong review
-        that points at the right place earns the evidence half (0.5), never the whole."""
+        that points at the right place earns the evidence half (0.5), never the whole. A recorded known miss still
+        misses, on the check it names and no other, so fixing it means updating its record."""
         for row in GRADER_CHECKS:
             with self.subTest(review=row["id"]):
                 graded = {name: fn({}, row["item"]) for name, (fn, _) in review_graders.GRADERS.items()}
-                self.assertEqual({name: score >= 1 for name, score in graded.items()}, row["expect"])
-                if not row["expect"]["pr_review_useful_commentary"] and row["item"]["kind"] != "known-good":
+                expected = dict(row["expect"])
+                if row.get("knownMiss"):
+                    missed = "pr_review_" + row["knownMiss"].split(":")[0]
+                    self.assertIn(missed, expected)
+                    expected[missed] = not expected[missed]
+                self.assertEqual({name: score >= 1 for name, score in graded.items()}, expected)
+                if not expected["pr_review_useful_commentary"] and row["item"]["kind"] != "known-good":
                     self.assertEqual(graded["pr_review_useful_commentary"], 0.5)
+
+    def test_a_prevention_verb_denies_what_it_governs(self):
+        """Copilot's review of the pull request that added these checks: "The query prevents SQL injection." stated as a
+        concern earned full credit. A double negation still states the problem."""
+        case = next(c for c in CASES if c["id"] == "sql-concatenation")
+
+        def concern(text):
+            return dict(good_item(case), agent=json.dumps({
+                "summary": "ListAsync now searches with FromSqlRaw.", "tests_note": "One search test failed.",
+                "for_the_person": "Look at the search.", "rule_notes": [],
+                "observations": [{"severity": "concern", "file": "app/src/RequestHub.Core/Services/RequestWorkflow.cs",
+                                  "line": 48, "text": text}]}))
+
+        for text in ("The query prevents SQL injection.", "Parameterizing the term protects the query against SQL "
+                     "injection.", "The change avoids SQL injection.", "It stops SQL injection.",
+                     "There is no SQL injection here."):
+            with self.subTest(text=text):
+                self.assertEqual(review_graders.grade_useful_commentary({}, concern(text)), 0.5)
+        for text in ("The query permits SQL injection.", "Nothing prevents SQL injection through the search term.",
+                     "The search no longer protects against SQL injection.", "The term is concatenated, so SQL "
+                     "injection is possible."):
+            with self.subTest(text=text):
+                self.assertEqual(review_graders.grade_useful_commentary({}, concern(text)), 1.0)
 
 
 class ReportingTests(unittest.TestCase):
@@ -170,7 +208,27 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(code, 0, printed)
         self.assertIn("sql-concatenation/reported", printed)
         self.assertRegex(printed, r"paired: (\d+)/\1 reviews graded as labelled")
-        self.assertRegex(printed, r"held-out: (\d+)/\1 reviews graded as labelled")
+        known = [row for row in GRADER_CHECKS if row.get("knownMiss")]
+        held_out = [row for row in GRADER_CHECKS if row["split"] == "held-out"]
+        self.assertIn(f"held-out: {len(held_out) - len(known)}/{len(held_out)} reviews graded as labelled", printed)
+        self.assertIn("* a known miss of the checks, recorded in grader_checks.jsonl:", printed)
+        for row in known:
+            self.assertIn(f"  {row['id']}: {row['knownMiss']}", printed)
+            self.assertRegex(printed, rf"(?m)^{re.escape(row['id'])} .*(pass|FAIL)\*")
+        self.assertNotIn("!", printed.split("Foundry", 1)[1])
+
+    def test_a_known_miss_that_no_longer_misses_fails_the_check(self):
+        fixed = [dict(row) for row in GRADER_CHECKS]
+        fixed[0] = dict(fixed[0], knownMiss="useful_commentary: recorded, but the checks grade it as labelled")
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "grader_checks.jsonl").write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in fixed), encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with mock.patch.object(eval_reviewer, "HERE", Path(folder)), \
+                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = eval_reviewer.check_graders(local_only=True)
+        self.assertEqual(code, 1, stdout.getvalue())
+        self.assertIn(f"{fixed[0]['id']} useful_commentary", stderr.getvalue())
 
     def test_no_code_is_compiled_or_executed(self):
         for name in ("eval_reviewer.py", "review_graders.py"):

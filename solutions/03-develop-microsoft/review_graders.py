@@ -76,7 +76,10 @@ def grade_useful_commentary(sample, item) -> float:
 
     A claim is a few words in order, at most three words apart; a trailing * matches any ending. A clause (text between
     punctuation, or before but, because, if, which, without, ...) asserts it unless the clause starts with a condition
-    or a comparison (if, unless, until, before, than, ...) or holds an odd number of negations (not, no, never, ...)."""
+    or a comparison (if, unless, until, before, than, ...) or holds an odd number of negations: not, no, never, ..., and
+    the verbs that deny what they govern (prevents, avoids, stops, protects, guards, forbids, excludes, ...). So "The
+    query prevents SQL injection" states no injection, like "There is no SQL injection here", and "Nothing prevents SQL
+    injection" states it."""
     import json
     import re
 
@@ -93,7 +96,9 @@ def grade_useful_commentary(sample, item) -> float:
     everything = ([str(agent.get(k) or "") for k in ("summary", "tests_note", "for_the_person")]
                   + [str(o.get("text") or "") for o in observations] + notes)
     concerns = [str(o.get("text") or "") for o in observations if o.get("severity") == "concern"]
-    negations = ("not", "no", "never", "nor", "neither", "none", "nothing", "without", "cannot", "rather", "instead")
+    negations = ("not", "no", "never", "nor", "neither", "none", "nothing", "without", "cannot", "rather", "instead",
+                 "prevent*", "avoid*", "forbid*", "prohibit*", "disallow*", "exclud*", "stop*", "protect*", "mitigat*",
+                 "eliminat*", "guard", "guards", "guarded", "guarding")
     unasserted = ("if", "unless", "whether", "until", "before", "than")
     breaks = (r"[.!?]+(?=\s|$)|[;:,()\n–—]+|\s-+\s|\s+(?=(?:but|however|unless|except|while|whereas|although|though|"
               r"because|since|so|if|otherwise|until|before|than|which|without|rather|instead)\b)")
