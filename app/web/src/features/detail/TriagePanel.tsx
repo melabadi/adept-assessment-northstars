@@ -9,21 +9,22 @@ import { Icon } from '../../components/Icon';
 import { useI18n } from '../../i18n/I18nProvider';
 import { findById } from '../../lib/labels';
 import { useFocusReturn } from '../../lib/useFocusReturn';
-import { useReadySession } from '../../session/SessionProvider';
+import { canAccessDepartment, useReadySession } from '../../session/SessionProvider';
 import type { DetailPanelProps } from './types';
 
 /**
- * Advisory triage recommendation. Deliberately has no "apply" action: routing changes stay a
- * human decision (see the Routing panel), and only approvers can approve or reject.
+ * Recommendations remain advisory. Reviewers can explicitly confirm a proposed route;
+ * approving or rejecting the request remains exclusively an approver action.
  */
 export function TriagePanel({ detail, onChanged }: DetailPanelProps) {
   const { t, localName, formatPercent } = useI18n();
-  const { departments, policies } = useReadySession();
+  const { departments, policies, me } = useReadySession();
   const announce = useAnnounce();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const pendingRef = useRef(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusTo = useFocusReturn(pending);
 
   const recommendation = detail.latestRecommendation;
@@ -47,7 +48,33 @@ export function TriagePanel({ detail, onChanged }: DetailPanelProps) {
     }
   };
 
+  const confirmRecommendation = async () => {
+    if (!recommendation || pendingRef.current) return;
+    pendingRef.current = true;
+    returnFocusTo(confirmButtonRef.current);
+    setPending(true);
+    setError(null);
+    try {
+      await api.confirmRecommendation(detail.id, recommendation.id);
+      await onChanged();
+      announce(t('triage.confirmed', {
+        department: localName(findById(departments, recommendation.suggestedDepartmentId), recommendation.suggestedDepartmentId),
+      }));
+    } catch (err) {
+      setError(toApiError(err));
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  };
+
   const stale = recommendation !== null && recommendation.departmentAtRecommendation !== detail.departmentId;
+  const canConfirm = recommendation !== null
+    && recommendation.status === 'Proposed'
+    && !stale
+    && detail.requester.id !== me.id
+    && detail.permissions.canRoute
+    && canAccessDepartment(me, recommendation.suggestedDepartmentId);
   const confidence = recommendation ? Math.min(1, Math.max(0, recommendation.confidence)) : 0;
   const confidenceLevel = confidence >= 0.7 ? 'high' : confidence >= 0.5 ? 'medium' : 'low';
 
@@ -83,6 +110,9 @@ export function TriagePanel({ detail, onChanged }: DetailPanelProps) {
             <Notice tone="warning" icon="route">
               <p>{t('triage.stale')}</p>
             </Notice>
+          ) : null}
+          {recommendation.status === 'Confirmed' && recommendation.confirmedBy ? (
+            <p className="panel-meta">{t('triage.confirmedBy', { name: recommendation.confirmedBy.displayName })}</p>
           ) : null}
           {recommendation.needsHumanReview ? (
             <Notice tone="warning" title={t('triage.needsReview')}>
@@ -176,6 +206,19 @@ export function TriagePanel({ detail, onChanged }: DetailPanelProps) {
       )}
 
       {error ? <ErrorAlert title={t('triage.failed')} error={error} /> : null}
+
+      {canConfirm ? (
+        <button
+          ref={confirmButtonRef}
+          type="button"
+          className="button button--primary button--block"
+          onClick={() => void confirmRecommendation()}
+          disabled={pending}
+        >
+          {pending ? <Spinner /> : <Icon name="route" />}
+          {pending ? t('triage.confirming') : t('triage.confirmRoute')}
+        </button>
+      ) : null}
 
       {detail.permissions.canTriage ? (
         <button

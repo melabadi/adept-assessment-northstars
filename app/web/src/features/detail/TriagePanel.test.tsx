@@ -70,6 +70,130 @@ describe('TriagePanel', () => {
     expect(within(panel).queryByRole('button')).not.toBeInTheDocument();
   });
 
+  it('lets an authorized reviewer confirm a current recommendation and shows the confirmer and history label', async () => {
+    let confirmed = false;
+    const currentRecommendation = recommendation({ departmentAtRecommendation: 'FAC' });
+    const confirmedRecommendation = {
+      ...currentRecommendation,
+      status: 'Confirmed',
+      confirmedBy: { id: 'u-ben', displayName: 'Ben Okafor' },
+    };
+    const fetchMock = mockApi({
+      'GET /api/requests/REQ-1001': () => detail({
+        departmentId: 'FAC',
+        latestRecommendation: confirmed ? confirmedRecommendation : currentRecommendation,
+        permissions: { ...noPermissions, canRoute: true, canTriage: true },
+      }),
+      'GET /api/requests/REQ-1001/history': () => confirmed
+        ? [{ id: 20, action: 'triage.confirmed', actor: { id: 'u-ben', displayName: 'Ben Okafor' }, occurredAt: '2026-10-26T06:30:00Z', details: { to: 'FAC' }, correlationId: null }]
+        : [],
+      'POST /api/requests/REQ-1001/triage-recommendations/7d2c1f00-0000-4000-8000-000000000001/confirm': () => {
+        confirmed = true;
+        return detail({
+          departmentId: 'FAC',
+          latestRecommendation: confirmedRecommendation,
+          permissions: { ...noPermissions, canRoute: true, canTriage: true },
+        });
+      },
+    });
+    const user = userEvent.setup();
+
+    renderApp('/requests/REQ-1001', { persona: 'u-ben' });
+
+    const panel = await screen.findByRole('region', { name: 'Triage assistant' });
+    await user.click(within(panel).getByRole('button', { name: 'Confirm routing' }));
+
+    expect(await within(panel).findByText('Confirmed by Ben Okafor')).toBeInTheDocument();
+    expect(await screen.findByText('Routing confirmed: Facilities')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/requests/REQ-1001/triage-recommendations/7d2c1f00-0000-4000-8000-000000000001/confirm'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(within(panel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
+  });
+
+  it('does not offer confirmation for stale, already-confirmed, or inaccessible recommendations', async () => {
+    const stale = recommendation({ departmentAtRecommendation: 'IT' });
+    mockApi({
+      'GET /api/requests/REQ-1001': () => detail({
+        departmentId: 'FAC',
+        latestRecommendation: stale,
+        permissions: { ...noPermissions, canRoute: true },
+      }),
+      'GET /api/requests/REQ-1001/history': () => [],
+    });
+    const { unmount } = renderApp('/requests/REQ-1001', { persona: 'u-ben' });
+    const stalePanel = await screen.findByRole('region', { name: 'Triage assistant' });
+    expect(within(stalePanel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
+    unmount();
+
+    mockApi({
+      'GET /api/requests/REQ-1001': () => detail({
+        departmentId: 'FAC',
+        latestRecommendation: recommendation({
+          status: 'Confirmed',
+          departmentAtRecommendation: 'FAC',
+          confirmedBy: { id: 'u-dan', displayName: 'Dan Rivera' },
+        }),
+        permissions: { ...noPermissions, canRoute: true },
+      }),
+      'GET /api/requests/REQ-1001/history': () => [],
+    });
+    const { unmount: unmountConfirmed } = renderApp('/requests/REQ-1001', { persona: 'u-ben' });
+    const confirmedPanel = await screen.findByRole('region', { name: 'Triage assistant' });
+    expect(within(confirmedPanel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
+    unmountConfirmed();
+
+    mockApi({
+      'GET /api/requests/REQ-1001': () => detail({
+        departmentId: 'FAC',
+        latestRecommendation: recommendation({ departmentAtRecommendation: 'FAC', suggestedDepartmentId: 'FIN' }),
+        permissions: { ...noPermissions, canRoute: true },
+      }),
+      'GET /api/requests/REQ-1001/history': () => [],
+    });
+    renderApp('/requests/REQ-1001', { persona: 'u-ben' });
+    const inaccessiblePanel = await screen.findByRole('region', { name: 'Triage assistant' });
+    expect(within(inaccessiblePanel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
+  });
+
+  it('does not offer confirmation to the requester even when they also have reviewer access', async () => {
+    mockApi({
+      'GET /api/requests/REQ-1001': () => detail({
+        requester: { id: 'u-ben', displayName: 'Ben Okafor' },
+        departmentId: 'FAC',
+        latestRecommendation: recommendation({ departmentAtRecommendation: 'FAC' }),
+        permissions: { ...noPermissions, canRoute: true },
+      }),
+      'GET /api/requests/REQ-1001/history': () => [],
+    });
+
+    renderApp('/requests/REQ-1001', { persona: 'u-ben' });
+
+    const panel = await screen.findByRole('region', { name: 'Triage assistant' });
+    expect(within(panel).queryByRole('button', { name: 'Confirm routing' })).not.toBeInTheDocument();
+  });
+
+  it('renders the routing confirmation history label in French', async () => {
+    mockApi({
+      'GET /api/requests/REQ-1001': () => detail(),
+      'GET /api/requests/REQ-1001/history': () => [
+        {
+          id: 21,
+          action: 'triage.confirmed',
+          actor: { id: 'u-ben', displayName: 'Ben Okafor' },
+          occurredAt: '2026-10-26T06:30:00Z',
+          details: { to: 'FAC' },
+          correlationId: null,
+        },
+      ],
+    });
+
+    renderApp('/requests/REQ-1001', { locale: 'fr', persona: 'u-ava' });
+
+    expect(await screen.findByText('Acheminement confirmé vers Installations')).toBeInTheDocument();
+  });
+
   it('shows a translated, accessible error when the triage provider is unavailable', async () => {
     mockApi({
       'GET /api/requests/REQ-1001': () => detail({ permissions: { ...noPermissions, canTriage: true } }),
