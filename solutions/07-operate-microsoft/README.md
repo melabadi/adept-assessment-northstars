@@ -13,7 +13,9 @@ the alert, the agent, its configuration, and its guardrails. GitHub holds the co
 
 ## Where it fits
 
-**Phase 7 of 7: Operate and improve.** The GitHub counterpart is [07-operate-github](../07-operate-github/).
+**Phase 7 of 7: Operate and improve.** The GitHub counterpart is [07-operate-github](../07-operate-github/). To follow
+one incident from this agent's recovery to a regression test that Copilot proves, run the
+[Operate solution combo](../../PRESENTING.md#operate-azure-recovers-a-person-files-copilot-proves-the-follow-up).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -94,6 +96,7 @@ tool asks a person first.
 ├── images/                            screenshots from live runs of the drill, used in this README
 ├── incident.py                        the drill harness: start (fault with an expiry, synthetic requests) and reset
 ├── configure_sre_agent.py             applies sre-agent/ to the live agent, or checks it offline (--check)
+├── test_configure_sre_agent.py        offline tests: the record states every fact an incident form asks for
 ├── azd_env.py                         reads settings from this solution's azd environment
 ├── requirements.txt                   Python packages
 ├── azure.yaml                         azd project: infra plus the shared app's api and worker, and the postprovision hook
