@@ -1,20 +1,24 @@
 """Azure Functions app of the Design · Microsoft solution (Python, Flex Consumption, inside the solution's VNet).
 
 Routes (all under /api):
-  POST github/webhook          The GitHub App's webhook. Verifies the signature, ignores a repeated delivery
-                               (X-GitHub-Delivery) and a repeated question (one advisor run per issue), then starts the
-                               advisor or the standards Logic App. Anonymous: the signature is the authentication.
+  POST github/webhook          The GitHub App's webhook. Anonymous: GitHub's signature (X-Hub-Signature-256, made with
+                               the webhook secret) is the authentication. Ignores a repeated delivery
+                               (X-GitHub-Delivery), an Issue from anyone but the repository's owner, members, and
+                               collaborators, and a second question about the same issue. Then it queues an advisor run
+                               or a standards run, and answers within GitHub's 10 seconds.
   GET  github/setup            Connect GitHub (function key required): the app-manifest page with a one-time state.
   GET  github/setup/complete   GitHub's redirect once the app exists: stores the app id, private key, and webhook
                                secret in Key Vault, nothing else. Answers 409 once an app is connected.
   GET  github/status           Whether GitHub is connected, and how (function key required; no secret is returned).
-  POST advisor/check           The gate: deterministic checks of an advisor answer against the standards index.
-  POST repo/{operation}        The advisor's only GitHub writes: branch, commit, pull-request, comment.
-  POST standards/sync          Push path: re-index the standards of a merged commit.
-  POST agents/publish          Push path: update the knowledge bases, publish new agent versions if agent.yaml changed.
-  POST evaluations/start       Push path: start one Foundry evaluation run per profile.
-The last six accept only the advisor's Logic App identity (advisor_core.auth). Nothing here logs a token, a key, a
-secret, a webhook body, or what GitHub returns when the app is created.
+Queues (in the Function's own storage, reached through a private endpoint):
+  advisor-runs                 One message per question. advise() asks the profile's agent, runs the gate, and only
+                               then writes the ADR draft and comments (advisor_core/runs.py).
+  standards-runs               One message per merged change to the standards. publish_standards() re-indexes,
+                               publishes the agents if their definition changed, and starts an evaluation.
+
+Each step logs one line to Application Insights that starts with the run's id; the issue comment shows the same id.
+Nothing here logs a token, a key, a secret, a webhook body, the question, the answer, or what GitHub returns when the
+app is created.
 """
 import hmac
 import json
@@ -28,17 +32,20 @@ from datetime import datetime, timezone
 
 import azure.functions as func
 
-from advisor_core import auth, checks, github, report, setup_flow, webhook
+from advisor_core import foundry, github, runs, setup_flow, webhook
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 log = logging.getLogger("advisor")
+logging.getLogger("azure").setLevel(logging.WARNING)  # the SDKs' request logs name storage hosts; not needed
 STATE_CONTAINER = "advisor-state"
-SOLUTION = "solutions/02-design-microsoft"
+ADVISOR_QUEUE = "advisor-runs"
+STANDARDS_QUEUE = "standards-runs"
+RUN_ID = re.compile(r"[0-9a-f]{12}")
 _cache: dict = {}
 _lock = threading.Lock()
 
 
-class NotConnected(RuntimeError):
+class NotConnected(runs.StepError):
     """GitHub is not connected yet: no app and no token in Key Vault."""
 
 
@@ -99,6 +106,15 @@ def store_secret(name: str, value: str) -> None:
     forget(("secret", name))
 
 
+def new_id() -> str:
+    return token_generator.token_hex(6)
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ---------------------------------------------------------------- markers: handled deliveries and asked issues
 def state_container():
     from azure.storage.blob import ContainerClient
     return ContainerClient(account_url=env("STORAGE_BLOB_ENDPOINT"), container_name=STATE_CONTAINER, credential=credential())
@@ -123,6 +139,79 @@ def release(*names: str) -> None:
             log.warning("could not remove marker %s", name)
 
 
+def read_marker(name: str) -> tuple[dict | None, str | None]:
+    """A marker's content and ETag, or (None, None) when there is none."""
+    from azure.core.exceptions import ResourceNotFoundError
+    try:
+        download = state_container().get_blob_client(name).download_blob()
+    except ResourceNotFoundError:
+        return None, None
+    return json.loads(download.readall()), download.properties.etag
+
+
+def swap_marker(name: str, data: dict, etag: str) -> bool:
+    """Replace a marker only if nobody changed it since it was read (its ETag). False when someone did."""
+    from azure.core import MatchConditions
+    from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+    try:
+        state_container().get_blob_client(name).upload_blob(json.dumps(data), overwrite=True, etag=etag,
+                                                             match_condition=MatchConditions.IfNotModified)
+        return True
+    except (ResourceModifiedError, ResourceNotFoundError):
+        return False
+
+
+def issue_marker(issue) -> str:
+    return f"issues/{int(issue)}.json"
+
+
+def reserve_issue(issue: int, run_id: str, delivery: str) -> str | None:
+    """Reserve the issue for one advisor run: None when reserved, otherwise why not. A question gets one run; a new
+    run may take over only when the last one couldn't finish (runs.retryable), which is how a maintainer asks again:
+    remove the design-advisor label and add it back."""
+    name, record = issue_marker(issue), {"state": "queued", "run": run_id, "delivery": delivery, "since": time.time(),
+                                         "at": now()}
+    if claim(name, record):
+        return None
+    current, etag = read_marker(name)
+    if current is None:  # released in between
+        return None if claim(name, record) else f"issue #{issue} already has an advisor run"
+    if not runs.retryable(current, time.time()):
+        return f"issue #{issue} already has an advisor run ({current.get('state', 'answered')})"
+    return None if swap_marker(name, record, etag) else f"issue #{issue} already has an advisor run"
+
+
+def mark_issue(issue: int, run_id: str, state: str) -> bool:
+    """Record the run's state on its issue's marker, only while the marker names this run: False when a newer run took
+    the issue over. A lost marker is written again."""
+    name = issue_marker(issue)
+    record = {"state": state, "run": run_id, "since": time.time(), "at": now()}
+    current, etag = read_marker(name)
+    if current is None:
+        return claim(name, record)
+    if current.get("run") != run_id:
+        return False
+    return swap_marker(name, dict(current, **record), etag)
+
+
+def begin_run(issue: int, run_id: str) -> bool:
+    """Whether a queued advisor run may start: only when its issue's marker names this run and still says queued, which
+    the webhook wrote when it queued the run. The swap to running is conditional, so a second copy of the message, or
+    one the webhook never wrote, never asks the agent or writes to GitHub."""
+    name = issue_marker(issue)
+    current, etag = read_marker(name)
+    if current is None or current.get("run") != run_id or current.get("state") != "queued":
+        return False
+    return swap_marker(name, dict(current, state="running", since=time.time(), at=now()), etag)
+
+
+def enqueue(queue: str, message: dict) -> None:
+    """Add a run to one of the Function's queues (Base64, as the queue trigger reads it)."""
+    from azure.storage.queue import QueueClient, TextBase64EncodePolicy
+    QueueClient(account_url=env("STORAGE_QUEUE_ENDPOINT"), queue_name=queue, credential=credential(),
+                message_encode_policy=TextBase64EncodePolicy()).send_message(json.dumps(message))
+
+
 def respond(data, status: int = 200) -> func.HttpResponse:
     return func.HttpResponse(json.dumps(data, ensure_ascii=False), status_code=status, mimetype="application/json")
 
@@ -132,6 +221,7 @@ def page(result: tuple[int, str]) -> func.HttpResponse:
     return func.HttpResponse(text, status_code=status, mimetype="text/html", headers={"Cache-Control": "no-store"})
 
 
+# ---------------------------------------------------------------- GitHub and Azure clients
 def connected() -> bool:
     return bool(secret("github-app-id") or secret("github-token"))
 
@@ -150,41 +240,57 @@ def github_client() -> github.GitHub:
     return github.GitHub(repo, tokens)
 
 
-def start_workflow(secret_name: str, payload: dict) -> None:
-    """Start a Logic App run through its trigger URL, which only Key Vault holds. The URL carries a signature, so an
-    error never includes it: requests puts the full URL in its exception messages."""
-    import requests
-    url = secret(secret_name)
-    if not url:
-        raise RuntimeError(f"Key Vault has no {secret_name}; run azd provision")
-    try:
-        response = requests.post(url, json=payload, timeout=30)
-    except requests.RequestException as exc:
-        raise RuntimeError(f"could not reach the Logic App ({type(exc).__name__})") from None
-    if response.status_code >= 300:
-        raise RuntimeError(f"the Logic App refused the run: HTTP {response.status_code}")
+def project_client():
+    def make():
+        from azure.ai.projects import AIProjectClient
+        return AIProjectClient(endpoint=env("FOUNDRY_PROJECT_ENDPOINT"), credential=credential())
+    return cached("project", float("inf"), make)
 
 
-def logic_app_only(handler):
-    """Accept only the advisor's Logic App identity, and turn known errors into clear responses."""
-    def wrapper(req: func.HttpRequest) -> func.HttpResponse:
-        try:
-            auth.caller(req.headers.get("Authorization"), env("AZURE_TENANT_ID"), env("LOGIC_APP_CLIENT_ID"),
-                        env("LOGIC_APP_PRINCIPAL_ID"))
-        except auth.Unauthorized as exc:
-            return respond({"error": str(exc)}, 401)
-        try:
-            return handler(req)
-        except github.GuardError as exc:
-            log.warning("guard refused a write: %s", exc)
-            return respond({"error": str(exc)}, 403)
-        except NotConnected as exc:
-            return respond({"error": str(exc)}, 409)
-        except (github.GitHubError, ValueError, KeyError) as exc:
-            log.warning("%s failed: %s", req.url.split("?")[0].rsplit("/api/", 1)[-1], exc)
-            return respond({"error": str(exc)}, 502 if isinstance(exc, github.GitHubError) else 400)
-    wrapper.__name__ = handler.__name__
-    return wrapper
+def standards_snapshot(search_filter: str | None = None) -> dict:
+    """The index as it is now: read on every check (two cheap queries), so a re-indexed standard counts at once."""
+    from advisor_core import standards
+    return standards.snapshot(env("SEARCH_ENDPOINT"), credential(), env("SEARCH_INDEX", "architecture-standards"),
+                              search_filter)
+
+
+def agent_scope(name: str, version: str) -> tuple[str, str]:
+    """(profile, scope filter) recorded on an agent version when it was published; versions never change."""
+    from advisor_core import agents
+    return cached(("scope", name, version), 3600, lambda: agents.scope_filter_of(project_client(), name, version))
+
+
+def ask_agent(question: str, profile: str) -> dict:
+    return foundry.ask(env("FOUNDRY_PROJECT_ENDPOINT"), f"{env('ADVISOR_AGENT_NAME', 'architecture-advisor')}-{profile}",
+                       question, lambda: credential().get_token(foundry.SCOPE).token)
+
+
+def advisor_tools() -> runs.AdvisorTools:
+    index = env("SEARCH_INDEX", "architecture-standards")
+    return runs.AdvisorTools(
+        ask=ask_agent,
+        check=lambda response, job: runs.check_answer(response, job, scope_of=agent_scope, snapshot=standards_snapshot,
+                                                      index=index),
+        github=github_client)
+
+
+def publish_agents(spec: dict) -> dict:
+    """Update each profile's knowledge base, then publish the agents: a new version only if the definition changed."""
+    from advisor_core import agents, knowledge
+    if spec["knowledge"] == "foundry-iq":
+        knowledge.sync(env("SEARCH_ENDPOINT"), credential(), spec, spec["search"]["index"])
+    return agents.publish(project_client(), spec, env("FOUNDRY_MODEL_DEPLOYMENT"), env("SEARCH_ENDPOINT"))
+
+
+def standards_tools() -> runs.StandardsTools:
+    from advisor_core import evaluation, standards
+    return runs.StandardsTools(
+        github=github_client,
+        reindex=lambda docs, spec: standards.sync(env("SEARCH_ENDPOINT"), credential(), spec["search"]["index"], docs, spec),
+        publish=publish_agents,
+        evaluate=lambda spec, cases, published, label: evaluation.start(
+            project_client(), env("FOUNDRY_MODEL_DEPLOYMENT"), cases, env("SEARCH_ENDPOINT"), credential(),
+            spec["search"]["index"], published, label))
 
 
 # ---------------------------------------------------------------- GitHub webhook
@@ -200,30 +306,94 @@ def github_webhook(req: func.HttpRequest) -> func.HttpResponse:
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", delivery):
         return respond({"error": "missing delivery id"}, 400)
     marker = f"deliveries/{delivery}.json"
-    if not claim(marker, {"event": event, "at": datetime.now(timezone.utc).isoformat()}):
+    if not claim(marker, {"event": event, "at": now()}):
         log.info("delivery %s ignored: already handled", delivery)
         return respond({"result": "duplicate delivery ignored"})
-    decision = webhook.classify(event, json.loads(body), env("GITHUB_REPOSITORY"))
-    log.info("delivery %s (%s): %s", delivery, event, decision["route"] if decision["route"] != "ignore" else decision["reason"])
+    payload = json.loads(body)
+    decision = webhook.classify(event, payload, env("GITHUB_REPOSITORY"))
+    if decision["route"] == "ignore":
+        log.info("delivery %s (%s) ignored: %s", delivery, event, decision["reason"])
+        return respond({"result": "ignored", "reason": decision["reason"]})
+    run_id = new_id()
     try:
         if decision["route"] == "advisor":
-            question = f"issues/{decision['issue']}.json"
-            if not claim(question, {"delivery": delivery, "at": datetime.now(timezone.utc).isoformat()}):
-                return respond({"result": f"issue #{decision['issue']} already has an advisor run"})
+            issue = decision["issue"]
+            busy = reserve_issue(issue, run_id, delivery)
+            if busy:
+                log.info("delivery %s ignored: %s", delivery, busy)
+                return respond({"result": busy})
             try:
-                start_workflow("advisor-workflow-url", {k: decision[k] for k in ("issue", "title", "profile", "question")})
+                enqueue(ADVISOR_QUEUE, {"id": run_id, **{k: decision[k] for k in ("issue", "title", "profile", "question")}})
             except Exception:
-                release(question)
+                release(issue_marker(issue))
                 raise
-            return respond({"result": f"advisor started for issue #{decision['issue']}"}, 202)
-        if decision["route"] == "standards":
-            start_workflow("standards-workflow-url", {"sha": decision["sha"], "files": decision["files"]})
-            return respond({"result": f"standards workflow started for {decision['sha'][:7]}"}, 202)
-    except Exception as exc:
+            log.info("advisor run %s: #%s queued (issues.%s, %s profile)", run_id, issue, payload.get("action"),
+                     decision["profile"])
+            return respond({"result": f"advisor run {run_id} queued for issue #{issue}"}, 202)
+        enqueue(STANDARDS_QUEUE, {"id": run_id, "sha": decision["sha"], "files": decision["files"]})
+        log.info("standards run %s: %s queued (push to the default branch, %d file(s) in the solution)", run_id,
+                 decision["sha"][:7], len(decision["files"]))
+        return respond({"result": f"standards run {run_id} queued for {decision['sha'][:7]}"}, 202)
+    except Exception as exc:  # the type only: a storage error's message names hosts
         release(marker)
-        log.error("delivery %s: could not start the workflow: %s", delivery, exc)
-        return respond({"error": "could not start the workflow; redeliver to retry"}, 500)
-    return respond({"result": "ignored", "reason": decision["reason"]})
+        log.error("delivery %s: could not queue the run: %s", delivery, type(exc).__name__)
+        return respond({"error": "could not queue the run; redeliver to retry"}, 500)
+
+
+# ---------------------------------------------------------------- the advisor run (from the queue)
+def advisor_job(message: func.QueueMessage) -> dict | None:
+    """The queued question, or None if the message isn't one the webhook wrote."""
+    try:
+        job = message.get_json()
+        valid = (isinstance(job, dict) and RUN_ID.fullmatch(str(job.get("id", ""))) and int(job["issue"]) > 0
+                 and job.get("profile") in webhook.PROFILES and isinstance(job.get("question"), str) and job["question"].strip())
+    except (ValueError, TypeError, KeyError):
+        valid = False
+    return job if valid else None
+
+
+@app.queue_trigger(arg_name="message", queue_name=ADVISOR_QUEUE, connection="AzureWebJobsStorage")
+def advise(message: func.QueueMessage) -> None:
+    job = advisor_job(message)
+    if job is None:
+        log.error("advisor queue: dropped a message that isn't an advisor run")
+        return
+    run_id, issue = job["id"], int(job["issue"])
+    try:
+        started = begin_run(issue, run_id)
+    except Exception as exc:  # without the marker, this run can't prove the webhook queued it
+        log.error("advisor run %s: #%s dropped: couldn't read the issue's marker: %s", run_id, issue, type(exc).__name__)
+        return
+    if not started:
+        log.info("advisor run %s: #%s dropped: the issue isn't waiting for this run", run_id, issue)
+        return
+    try:
+        result = runs.advise(job, advisor_tools(), log.info)
+    except Exception as exc:  # runs.advise handles its own errors; this is a configuration error
+        log.error("advisor run %s: #%s couldn't start: %s", run_id, issue, runs.describe(exc))
+        result = {"state": "unavailable"}
+    try:
+        if not mark_issue(issue, run_id, result["state"]):
+            log.warning("advisor run %s: #%s ended %s, but a newer run took the issue over", run_id, issue, result["state"])
+    except Exception as exc:
+        log.warning("advisor run %s: #%s couldn't record its state: %s", run_id, issue, type(exc).__name__)
+
+
+# ---------------------------------------------------------------- the standards run (from the queue)
+@app.queue_trigger(arg_name="message", queue_name=STANDARDS_QUEUE, connection="AzureWebJobsStorage")
+def publish_standards(message: func.QueueMessage) -> None:
+    try:
+        job = message.get_json()
+        valid = isinstance(job, dict) and RUN_ID.fullmatch(str(job.get("id", "")))
+    except ValueError:
+        valid = False
+    if not valid:
+        log.error("standards queue: dropped a message that isn't a standards run")
+        return
+    try:
+        runs.publish_standards(job, standards_tools(), log.info)
+    except Exception as exc:  # runs.publish_standards handles its own errors; this is a configuration error
+        log.error("standards run %s: couldn't start: %s", job["id"], runs.describe(exc))
 
 
 # ---------------------------------------------------------------- connect GitHub (app-manifest flow)
@@ -287,159 +457,3 @@ def github_setup_complete(req: func.HttpRequest) -> func.HttpResponse:
     del data, exchange
     log.info("GitHub App connected")
     return page(setup_flow.done_page(env("GITHUB_REPOSITORY"), slug))
-
-
-# ---------------------------------------------------------------- the gate
-def standards_snapshot(search_filter: str | None = None) -> dict:
-    """The index as it is now: read on every check (two cheap queries), so a re-indexed standard counts at once."""
-    from advisor_core import standards
-    return standards.snapshot(env("SEARCH_ENDPOINT"), credential(), env("SEARCH_INDEX", "architecture-standards"),
-                              search_filter)
-
-
-def project_client():
-    def make():
-        from azure.ai.projects import AIProjectClient
-        return AIProjectClient(endpoint=env("FOUNDRY_PROJECT_ENDPOINT"), credential=credential())
-    return cached("project", float("inf"), make)
-
-
-@app.route(route="advisor/check", methods=["POST"])
-@logic_app_only
-def advisor_check(req: func.HttpRequest) -> func.HttpResponse:
-    from advisor_core import agents
-
-    body = req.get_json()
-    response, profile, question = body["response"], body["profile"], body["question"]
-    agent = response.get("agent_reference") or {}
-    run = {"issue": body.get("issue"), "question": question, "profile": profile, "workflowRun": body.get("workflowRun", ""),
-           "agent": {"name": agent.get("name", "?"), "version": str(agent.get("version", "?"))},
-           "model": response.get("model", ""), "responseId": response.get("id", ""),
-           "index": env("SEARCH_INDEX", "architecture-standards")}
-    created, completed = response.get("created_at"), response.get("completed_at")
-    run["startedAt"] = datetime.fromtimestamp(created or time.time(), timezone.utc).isoformat(timespec="seconds")
-    run["durationSeconds"] = round(completed - created, 1) if created and completed else None
-    output = [item for item in response.get("output") or [] if isinstance(item, dict)]
-    run["knowledgeCalls"] = sum(item.get("type") in ("mcp_call", "azure_ai_search_call") for item in output)
-    run["retrievedStandards"] = checks.retrieved_ids([item for item in output if item.get("type") != "message"])
-    usage = response.get("usage") or {}
-    run["usage"] = {"inputTokens": usage.get("input_tokens"), "outputTokens": usage.get("output_tokens")}
-
-    problems = []
-    answer = None
-    if response.get("status") != "completed":
-        problems.append(f"response: the agent's response ended with status {response.get('status')}")
-    try:
-        answer = checks.parse_answer(checks.answer_text(response))
-    except ValueError as exc:
-        problems.append(f"format: {exc}")
-    try:
-        agent_profile, scope = cached(("scope", run["agent"]["name"], run["agent"]["version"]), 3600, lambda: agents.scope_filter_of(
-            project_client(), run["agent"]["name"], run["agent"]["version"]))
-    except Exception as exc:  # unknown agent version: nothing can be checked against its scope
-        agent_profile, scope = None, ""
-        problems.append(f"access: could not read the scope of agent {run['agent']['name']} v{run['agent']['version']} "
-                        f"({type(exc).__name__})")
-    if agent_profile and agent_profile != profile:
-        problems.append(f"access: agent {run['agent']['name']} serves the '{agent_profile}' profile, not '{profile}'")
-    run["scopes"] = re.findall(r"scope eq '([^']+)'", scope)
-    if answer is not None and scope:
-        problems += checks.check(answer, question, run["retrievedStandards"], standards_snapshot(),
-                                 list(standards_snapshot(scope)), profile)
-    run["result"] = answer or {"answerable": False, "summary": "", "recommendation": None, "options": [],
-                               "constraints": [], "conflicts": [], "unknowns": []}
-    run["checks"] = problems
-    log.info("issue %s: %s with %d problem(s), response %s", run["issue"], "passed" if not problems else "failed",
-             len(problems), run["responseId"])
-    return respond({"passed": not problems, "problems": problems, "run": run})
-
-
-# ---------------------------------------------------------------- GitHub writes (guarded)
-@app.route(route="repo/{operation}", methods=["POST"])
-@logic_app_only
-def repo_write(req: func.HttpRequest) -> func.HttpResponse:
-    operation, body = req.route_params.get("operation"), req.get_json()
-    issue = int(body["issue"])
-    client = github_client()
-    if operation == "branch":
-        result = client.ensure_branch(issue)
-    elif operation == "commit":
-        result = client.put_adr(issue, report.adr_markdown(body["run"]), f"Design: Foundry advisor ADR draft for #{issue}")
-    elif operation == "pull-request":
-        title, text = report.pull_request_text(body["run"], github.adr_path_for(issue))
-        result = client.open_pull_request(issue, title, text)
-    elif operation == "comment":
-        kind = body.get("kind")
-        if kind == "unavailable":
-            text = report.unavailable_markdown(body.get("workflowRun", ""))
-        elif kind == "incomplete":
-            text = report.incomplete_markdown(body.get("workflowRun", ""))
-        else:
-            text = report.comment_markdown(body["run"], body.get("pullRequest"))
-        result = client.comment(issue, text)
-    else:
-        return respond({"error": f"unknown operation {operation}"}, 404)
-    log.info("issue %s: %s done", issue, operation)
-    return respond(result)
-
-
-# ---------------------------------------------------------------- push path (optional step)
-def merged_spec(client: github.GitHub, sha: str) -> dict:
-    from advisor_core import agents
-    text = client.read_text(f"{SOLUTION}/agent.yaml", sha)
-    if text is None:
-        raise ValueError(f"agent.yaml not found at {sha[:7]}")
-    return agents.load_spec(text)
-
-
-def merged_commit(client: github.GitHub, body: dict) -> str:
-    """The commit to publish from: a full commit id that is already on the default branch. Unmerged commits are
-    proposals; only reviewed and merged standards reach the index and the agents."""
-    sha = str(body.get("sha", ""))
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise ValueError("sha must be a full commit id")
-    if not client.on_default_branch(sha):
-        raise ValueError(f"commit {sha[:7]} is not on the default branch; only merged changes are published")
-    return sha
-
-
-@app.route(route="standards/sync", methods=["POST"])
-@logic_app_only
-def standards_sync(req: func.HttpRequest) -> func.HttpResponse:
-    from advisor_core import standards
-
-    client = github_client()
-    sha = merged_commit(client, req.get_json())
-    spec = merged_spec(client, sha)
-    docs, skipped = standards.parse(client.read_folder(standards.SOURCE_DIR, sha), spec)
-    result = standards.sync(env("SEARCH_ENDPOINT"), credential(), env("SEARCH_INDEX", "architecture-standards"), docs, spec)
-    return respond({"commit": sha, "skipped": skipped, "summary": standards.summary_lines(result), "result": result})
-
-
-@app.route(route="agents/publish", methods=["POST"])
-@logic_app_only
-def agents_publish(req: func.HttpRequest) -> func.HttpResponse:
-    from advisor_core import agents, knowledge
-
-    client = github_client()
-    sha = merged_commit(client, req.get_json())
-    spec = merged_spec(client, sha)
-    lines = knowledge.sync(env("SEARCH_ENDPOINT"), credential(), spec, spec["search"]["index"]) if spec["knowledge"] == "foundry-iq" else []
-    published = agents.publish(project_client(), spec, env("FOUNDRY_MODEL_DEPLOYMENT"), env("SEARCH_ENDPOINT"))
-    return respond({"commit": sha, "knowledge": lines, "agents": published})
-
-
-@app.route(route="evaluations/start", methods=["POST"])
-@logic_app_only
-def evaluations_start(req: func.HttpRequest) -> func.HttpResponse:
-    from advisor_core import agents, evaluation
-
-    client = github_client()
-    sha = merged_commit(client, req.get_json())
-    spec = merged_spec(client, sha)
-    cases_text = client.read_text(f"{SOLUTION}/eval_cases.jsonl", sha) or ""
-    cases = [json.loads(line) for line in cases_text.splitlines() if line.strip()]
-    published = agents.publish(project_client(), spec, env("FOUNDRY_MODEL_DEPLOYMENT"), env("SEARCH_ENDPOINT"))
-    runs = evaluation.start(project_client(), env("FOUNDRY_MODEL_DEPLOYMENT"), cases, env("SEARCH_ENDPOINT"), credential(),
-                            spec["search"]["index"], published, f"commit {sha[:7]}")
-    return respond({"commit": sha, "runs": runs})

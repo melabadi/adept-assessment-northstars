@@ -1,7 +1,8 @@
 # The pull request reviewer agent in Microsoft Foundry (Develop phase, Microsoft track).
 # Publish with: python solutions/03-develop-microsoft/publish_reviewer_agent.py (azd up runs it for you).
-# The reviewer's Logic App calls this agent once per pull request, after the team's rules were checked and the change was
-# built and tested in a sandbox. The agent writes commentary; the Logic App posts it next to the checker's verdicts.
+# The reviewer's Azure Function calls this agent once per pull request, after the team's rules were checked and the
+# change was built and tested in a sandbox. The agent writes commentary; the Function posts it next to the checker's
+# verdicts.
 name: requesthub-pr-reviewer
 description: Reviews RequestHub pull requests against the team's rules, with evidence from a sandbox run. Advisory only; it never approves.
 reasoning_effort: low

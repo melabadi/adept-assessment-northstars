@@ -13,7 +13,9 @@ the alert, the agent, its configuration, and its guardrails. GitHub holds the co
 
 ## Where it fits
 
-**Phase 7 of 7: Operate and improve.** The GitHub counterpart is [07-operate-github](../07-operate-github/).
+**Phase 7 of 7: Operate and improve.** The GitHub counterpart is [07-operate-github](../07-operate-github/). To follow
+one incident from this agent's recovery to a regression test that Copilot proves, run the
+[Operate solution combo](../../PRESENTING.md#operate-azure-recovers-a-person-files-copilot-proves-the-follow-up).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -81,6 +83,11 @@ sequenceDiagram
 - **azd** deploys everything. Its `postprovision` hook, [`configure_sre_agent.py`](configure_sre_agent.py), applies
   the agent's configuration from [`sre-agent/`](sre-agent/) through the agent's own API and reads it back.
 
+**Outside contributions.** Nothing here listens to GitHub. Azure Monitor alerts start the investigations, and the agent's
+GitHub access is a read-only token for this repository's code. On a public repository, nobody outside it can start an
+investigation; an Issue or a comment from outside reaches the agent only if a person asks it to read one, and every Issue
+tool asks a person first.
+
 ## What's in this folder
 
 ```text
@@ -89,6 +96,7 @@ sequenceDiagram
 ├── images/                            screenshots from live runs of the drill, used in this README
 ├── incident.py                        the drill harness: start (fault with an expiry, synthetic requests) and reset
 ├── configure_sre_agent.py             applies sre-agent/ to the live agent, or checks it offline (--check)
+├── test_configure_sre_agent.py        offline tests: the record states every fact an incident form asks for
 ├── azd_env.py                         reads settings from this solution's azd environment
 ├── requirements.txt                   Python packages
 ├── azure.yaml                         azd project: infra plus the shared app's api and worker, and the postprovision hook
@@ -270,7 +278,7 @@ About 5 minutes, at least 15 minutes before you present.
 ## Run the demo
 
 Run the commands in this folder. The screenshots of steps 2 to 6 come from one live run of this drill, and those of
-step 7 from a second run, so the times in the record differ from those in the earlier screenshots.
+step 7 from later runs, so the times in the record differ from those in the earlier screenshots.
 
 1. **Show the starting state and the guardrails** (3 minutes). The workbook's **Ready for a drill** table is all
    **Ready** (see [Before each session](#before-each-session)). In the SRE Agent portal, open **Incidents**, then
@@ -400,7 +408,7 @@ step 7 from a second run, so the times in the record differ from those in the ea
    `gh` prints the new Issue's URL. You can also paste the title and body into **New issue** in GitHub and add the two
    labels.
 
-   ![The GitHub Issue filed from the draft: Incident record: notification backlog, 2026-10-30, with the summary, the impact table, the UTC timeline with its evidence, the root cause, the mitigation written with placeholders, one follow-up, and the closing line that the agent drafted it for a person to file](images/07-issue.png)
+   ![The GitHub Issue filed from the draft: Incident record: notification backlog, 2026-11-10, with the summary, the impact table, the UTC timeline with its evidence, the recent changes, the root cause, the mitigation written with placeholders, one follow-up, the Status table with the status Resolved, the environment, and the time the alert fired, and the closing line that the agent drafted it and a person who read it filed it](images/07-issue.png)
 
    **Point out:** the agent wrote the record from its own investigation, in its own words and with its evidence, but a
    person decided what went into GitHub.

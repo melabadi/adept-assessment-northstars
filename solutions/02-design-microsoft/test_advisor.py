@@ -5,9 +5,13 @@ They prove the parts that must never depend on the model:
   - the gate (function/advisor_core/checks.py) rejects invented, out-of-scope, misversioned, or misquoted citations,
     and reads the retrieved standards from every shape Azure reports them in;
   - the code Foundry runs as evaluators is the gate's code, uses the standard library only, and scores items right;
-  - the Function's guards: webhook signatures, one run per delivery and per issue, writes only to
-    refs/heads/design/advisor-*, only the Logic App identity on the work routes, and a one-time app-manifest setup
-    that stores exactly three secrets and answers 409 once connected.
+  - the advisor run and the standards run (function/advisor_core/runs.py): nothing reaches GitHub before the gate
+    passed, a rejected answer gets only its failed checks, the advisor is never silent when Foundry or a GitHub step
+    fails, and only a commit on the default branch is re-indexed, published, and evaluated, step by step;
+  - the Function's guards: webhook signatures, Issues only from the owner, members, and collaborators, one run per
+    delivery and per issue (a run that couldn't finish may be retried), writes only to refs/heads/design/advisor-*,
+    two queues as the only way to start work, and a one-time app-manifest setup that stores exactly three secrets and
+    answers 409 once connected.
 The answers and payloads below are hand-written fixtures; the live demo never uses them.
 
 Run from this folder (azd runs them before every deploy):
@@ -24,12 +28,13 @@ import json
 import sys
 import time
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "function"))
-from advisor_core import agents, auth, checks, evaluation, github, knowledge, report, setup_flow, standards, webhook  # noqa: E402
+from advisor_core import agents, checks, evaluation, foundry, github, knowledge, report, runs, setup_flow, standards, webhook  # noqa: E402
 
 SPEC = agents.load_spec((HERE / "agent.yaml").read_text(encoding="utf-8"))
 FILES = {path.name: path.read_text(encoding="utf-8") for path in (HERE / "standards").glob("STD-*.md")}
@@ -37,6 +42,9 @@ DOCS, SKIPPED = standards.parse(FILES, SPEC)
 BY_ID = {doc["id"]: doc for doc in DOCS}
 EVERY = {d["id"]: {"version": d["version"], "text": f"{d['title']}\n{d['content']}"} for d in DOCS}
 CASES = [json.loads(line) for line in (HERE / "eval_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+HELD_OUT = [json.loads(line) for line in (HERE / "eval_heldout.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+GRADER_CHECKS = [json.loads(line) for line in (HERE / "grader_checks.jsonl").read_text(encoding="utf-8").splitlines()
+                 if line.strip()]
 
 
 def visible(profile: str) -> list[str]:
@@ -124,13 +132,34 @@ class EvaluationCaseTests(unittest.TestCase):
         self.assertEqual(len({c["id"] for c in CASES}), 10)
 
     def test_labels_match_the_profile_scopes(self):
-        for case in CASES:
+        for case in CASES + HELD_OUT:
             with self.subTest(case=case["id"]):
                 seen = set(visible(case["profile"]))
                 self.assertTrue(set(case["expectStandards"]) <= seen, "expected standards must be retrievable")
                 self.assertTrue(set(case["expectConflict"]) <= seen, "conflicting standards must be retrievable")
                 self.assertFalse(set(case["forbidStandards"]) & seen, "forbidden standards must be out of scope")
                 self.assertTrue(set(case["forbidStandards"]) <= set(BY_ID), "forbidden standards must exist")
+
+    def test_every_answerable_case_labels_its_conclusion_with_positive_claims_and_real_evidence(self):
+        """A claim with a negation in it could never be asserted, and evidence must be words the standard really has."""
+        self.assertEqual({c["id"] for c in HELD_OUT} & {c["id"] for c in CASES}, set())
+        for case in CASES + HELD_OUT:
+            with self.subTest(case=case["id"]):
+                label = case.get("expectConclusion")
+                self.assertEqual(bool(label), case["expectAnswerable"], "label the conclusion of every answerable case")
+                if not label:
+                    continue
+                claims = [c for entry in label.get("states", []) for c in ([entry] if isinstance(entry, str) else entry)]
+                claims += label.get("rejects", [])
+                for claim in claims:
+                    for word in claim.split():
+                        self.assertFalse(any(checks._word_matches(word.rstrip("*"), cue) for cue in checks.NEGATION_CUES),
+                                         f"{claim!r} holds the negation cue {word!r}")
+                self.assertTrue(set(label.get("evidence", {})) <= set(case["expectStandards"]))
+                for standard, phrases in label.get("evidence", {}).items():
+                    for phrase in [phrases] if isinstance(phrases, str) else phrases:
+                        self.assertGreaterEqual(checks._position(checks.words(EVERY[standard]["text"]), checks.words(phrase), 0), 0,
+                                                f"{standard} doesn't say {phrase!r}")
 
     def test_suite_covers_every_behaviour(self):
         self.assertTrue(any(c["forbidStandards"] for c in CASES))
@@ -248,6 +277,46 @@ class GateTests(unittest.TestCase):
         self.assertIn("grounding: an answer must cite at least one standard", gate(answer(constraints=[], options=[])))
 
 
+class ConclusionTests(unittest.TestCase):
+    """How checks.asserts reads a stated conclusion: claims in clauses, with their negations, conditions, and comparisons."""
+
+    def test_a_claim_is_its_words_in_order_a_few_words_apart(self):
+        self.assertTrue(checks.asserts("Approve low-risk requests automatically.", "approv* automat*"))
+        self.assertTrue(checks.asserts("The agent can auto-approve them.", "auto approv*"))
+        self.assertFalse(checks.asserts("Approve requests from the shared queue on Fridays automatically.", "approv* automat*"))
+        self.assertFalse(checks.asserts("Automatically route; approve later.", "approv* automat*"))
+
+    def test_a_negation_denies_its_clause_and_two_negations_cancel(self):
+        self.assertFalse(checks.asserts("There is no automatic approval, whatever the confidence.", "automat* approv*"))
+        self.assertFalse(checks.asserts("Direct calls from applications are not allowed in production.", "direct* call*"))
+        self.assertFalse(checks.asserts("The standard forbids automatic approval.", "automat* approv*"))
+        self.assertTrue(checks.asserts("Nothing prevents automatic approval above 95%.", "automat* approv*"))
+        self.assertTrue(checks.asserts("Do not wait: approvals require a human decision.", "human decision*"))
+
+    def test_a_negation_reaches_only_its_own_clause(self):
+        self.assertTrue(checks.asserts("Do not auto-approve, because approvals require a human decision.", "human decision*"))
+        self.assertTrue(checks.asserts("Keep it inside the existing API rather than in a new service.", "inside* existing"))
+        self.assertFalse(checks.asserts("Keep it in a new service rather than inside the existing API.", "inside* existing"))
+        self.assertFalse(checks.asserts("No — not as a tool that can change any request.", "chang* any request*"))
+
+    def test_conditions_and_comparisons_assert_nothing(self):
+        self.assertFalse(checks.asserts("If you want true auto-approval, the board must approve an exception.", "auto approv*"))
+        self.assertFalse(checks.asserts("Change the standard before direct calls could be allowed.", "direct* call*"))
+        self.assertFalse(checks.asserts("The gateway meets the standards better than a direct endpoint call.", "direct* call*"))
+        # Seen live on E04: the recommendation listed both options before choosing the second.
+        self.assertFalse(checks.asserts("Compared options: (1) send full request data including attachments, or (2) send "
+                                        "only the minimum structured fields.", "includ* attachment*"))
+        self.assertTrue(checks.asserts("Release with two bundles: (1) telemetry, and (2) an evaluation dataset.",
+                                       "evaluation dataset"))
+
+    def test_only_the_summary_and_the_recommendation_state_the_conclusion(self):
+        """The options name the wrong choice too, so they never count as the answer's conclusion."""
+        wrong_option = answer(summary="Keep approvals human.", recommendation="An approver decides every request.",
+                              options=[{"name": "Approve automatically above 95%", "description": "", "pros": [], "cons": [],
+                                        "standards": ["STD-AI-001"]}])
+        self.assertEqual(checks.conclusion_misses({"rejects": ["approv* automat*"]}, wrong_option), [])
+
+
 class ResponseParsingTests(unittest.TestCase):
     def test_retrieval_is_read_from_a_foundry_iq_response(self):
         response = {"output": [{"type": "mcp_list_tools", "tools": []},
@@ -282,7 +351,7 @@ class EvaluatorTests(unittest.TestCase):
 
     @staticmethod
     def item(case_id: str, data: dict, retrieved: tuple[str, ...]) -> dict:
-        case = next(c for c in CASES if c["id"] == case_id)
+        case = next(c for c in CASES + HELD_OUT if c["id"] == case_id)
         row = evaluation.items([case], EVERY, visible(case["profile"]))[0]["item"]
         row["sample"] = {"output_text": json.dumps(data),
                          "output_items": [{"type": "tool_result", "tool_result": iq_output(*retrieved)}]}
@@ -302,11 +371,13 @@ class EvaluatorTests(unittest.TestCase):
         self.assertLess(len(code.encode()), 256 * 1024)
 
     def test_a_correct_conflict_answer_passes_every_evaluator(self):
-        data = answer(constraints=[
+        data = answer(summary="The standards conflict, so an architect must resolve it before anything is stored.",
+                      recommendation="Persist only structured results until an architect resolves the conflict.",
+                      constraints=[
             {"standardId": "STD-OBS-002", "version": "1.0", "requirement": "Log prompts.",
              "excerpt": "log the full prompt and completion of every AI call for 30 days"},
             {"standardId": "STD-SEC-002", "version": "1.1", "requirement": "Do not persist raw prompts.",
-             "excerpt": "Send AI services only the fields the use case needs."}],
+             "excerpt": "Do not persist raw prompts or completions that contain free text entered by users"}],
             options=[], conflicts=[{"standards": ["STD-OBS-002", "STD-SEC-002"], "description": "log vs do not persist"}])
         row = self.item("E07", data, ("STD-OBS-002", "STD-SEC-002"))
         self.assertEqual({kind: self.grade(kind, row) for kind in evaluation.EVALUATORS}, dict.fromkeys(evaluation.EVALUATORS, 1.0))
@@ -335,13 +406,67 @@ class EvaluatorTests(unittest.TestCase):
         row["sample"] = {"output_text": "", "output_items": []}
         self.assertEqual(self.grade("citations", row), 0.0)
 
+    def test_the_answer_is_graded_wherever_foundry_puts_it(self):
+        """Fixed answers ride in item["sample"]. When Foundry asks an agent, the answer comes in the sample argument
+        (seen live in November 2026: every check of every case failed while the graders read only item["sample"]),
+        or as flattened sample.* fields."""
+        row = self.item("E01", answer(), ("STD-ARCH-001",))
+        answer_sample = row.pop("sample")
+        scope: dict = {}
+        exec(compile(evaluation.evaluator_code("citations"), "advisor_citations", "exec"), scope)  # noqa: S102 - our own code
+        self.assertEqual(scope["grade"](answer_sample, dict(row)), 1.0)
+        flattened = dict(row, **{"sample.output_text": answer_sample["output_text"],
+                                 "sample.output_items": answer_sample["output_items"]})
+        self.assertEqual(scope["grade"]({}, flattened), 1.0)
+        self.assertEqual(scope["grade"]({}, dict(row, sample=answer_sample)), 1.0)
+        self.assertEqual(scope["grade"]({}, dict(row)), 0.0)
+
+    def test_a_correct_quote_with_the_opposite_conclusion_earns_citation_credit_only(self):
+        """E05, as reported: the answer quotes STD-AI-001 word for word, then recommends automatic approval above 95%
+        confidence. The quote is real, so the citation passes; the conclusion contradicts it, so the answer isn't grounded."""
+        quote = {"standardId": "STD-AI-001", "version": "1.0", "requirement": "Approvals require a human decision.",
+                 "excerpt": "Approvals, rejections, payments, and access grants always require a human decision."}
+        wrong = answer(summary="Yes. Above 95% confidence the triage agent can approve low-risk requests automatically.",
+                       recommendation="Let the triage agent approve low-risk requests automatically when its confidence "
+                                      "is above 95%; below that, approvals require a human decision.",
+                       options=[], constraints=[quote])
+        row = self.item("E05", wrong, ("STD-AI-001",))
+        self.assertEqual(self.grade("citations", row), 1.0)
+        self.assertEqual(self.grade("grounding", row), 0.0)
+
+    def test_paired_answers_share_their_keywords_and_evidence(self):
+        """Every labelled case has a right and a wrong answer that quote the same excerpts and offer the same options;
+        only the stated conclusion differs."""
+        by_id = {row["id"]: row for row in GRADER_CHECKS}
+        for case in [c for c in CASES + HELD_OUT if c["expectAnswerable"]]:
+            with self.subTest(case=case["id"]):
+                right, wrong = by_id[f"{case['id']}/right"], by_id[f"{case['id']}/wrong"]
+                self.assertEqual(right["split"], "held-out" if case in HELD_OUT else "paired")
+                self.assertEqual(right["answer"]["constraints"], wrong["answer"]["constraints"])
+                self.assertEqual(right["answer"]["options"], wrong["answer"]["options"])
+                self.assertTrue(all(right["expect"].values()))
+                self.assertFalse(wrong["expect"]["grounding"])
+                self.assertTrue(wrong["expect"]["citations"], "the wrong answer's quotes are real: citation credit only")
+
+    def test_every_grader_check_is_graded_as_labelled_by_the_code_foundry_runs(self):
+        """grader_checks.jsonl: the paired answers must all be graded right. A held-out answer the checks get wrong is
+        recorded with knownMiss ("<check>: why"), and must stay wrong until the checks improve and the label changes."""
+        for row in GRADER_CHECKS:
+            with self.subTest(row=row["id"]):
+                item = self.item(row["case"], row["answer"], tuple(row["retrieved"]))
+                graded = {kind: self.grade(kind, item) == 1.0 for kind in evaluation.EVALUATORS}
+                missed = {kind for kind in graded if graded[kind] != row["expect"][kind]}
+                known = {row["knownMiss"].split(":")[0]} if row.get("knownMiss") else set()
+                self.assertEqual(missed, known)
+                self.assertTrue(not known or row["split"] == "held-out", "a paired answer can't be a known miss")
+
 
 class ReportTests(unittest.TestCase):
     sample = {"issue": 12, "question": "Where should the triage provider run?", "profile": "small-team",
            "startedAt": "2026-01-01T00:00:00+00:00", "durationSeconds": 12.5, "responseId": "resp_example",
            "agent": {"name": "architecture-advisor-small-team", "version": "3"}, "model": "gpt-5.4-mini",
            "knowledgeCalls": 2, "retrievedStandards": ["STD-ARCH-001", "STD-OPS-001"], "checks": [],
-           "index": "architecture-standards", "scopes": ["all", "small-team"], "workflowRun": "08584000000000000000",
+           "index": "architecture-standards", "scopes": ["all", "small-team"], "runId": "3f2a9c1b7d4e",
            "result": answer()}
 
     def test_adr_metadata_is_a_list_and_keeps_the_timestamp_apart(self):
@@ -387,8 +512,17 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report.quiet("user@example.com"), "user@example.com")
 
     def test_a_failed_github_step_still_answers_the_issue(self):
-        self.assertIn("could not be completed", report.incomplete_markdown("08584"))
-        self.assertIn("could not answer", report.unavailable_markdown("08584"))
+        incomplete, unavailable = report.incomplete_markdown("3f2a9c1b7d4e"), report.unavailable_markdown("3f2a9c1b7d4e")
+        self.assertIn("could not be completed", incomplete)
+        self.assertIn("could not answer", unavailable)
+        for text in (incomplete, unavailable):  # how to ask again, and where the details are
+            self.assertIn("removes the `design-advisor` label and adds it back", text)
+            self.assertIn("advisor run `3f2a9c1b7d4e`", text)
+
+    def test_the_evidence_names_the_advisor_run(self):
+        self.assertIn("advisor run `3f2a9c1b7d4e`", report.comment_markdown(self.sample, 34))
+        self.assertIn("advisor run `3f2a9c1b7d4e`", report.pull_request_text(self.sample, "x")[1])
+        self.assertNotIn("Logic App", report.comment_markdown(self.sample, 34) + report.pull_request_text(self.sample, "x")[1])
 
     def test_pull_request_closes_the_issue(self):
         title, body = report.pull_request_text(self.sample, github.adr_path_for(12))
@@ -406,10 +540,18 @@ class WebhookTests(unittest.TestCase):
     repo = "octo/requesthub"
 
     def payload(self, **issue) -> dict:
+        """The issues.labeled event GitHub sends when the design-advisor label is added, at creation or later."""
         body = "### Operating profile\n\nsmall-team\n\n### Question\n\nShould triage run in-process?"
-        return {"action": "opened", "repository": {"full_name": self.repo, "default_branch": "main"},
+        return {"action": "labeled", "label": {"name": "design-advisor"},
+                "repository": {"full_name": self.repo, "default_branch": "main"},
                 "issue": {"number": 7, "title": "Architecture question", "state": "open", "body": body,
-                          "labels": [{"name": "design-advisor"}], **issue}}
+                          "labels": [{"name": "design-advisor"}], "author_association": "OWNER", **issue}}
+
+    def opened(self, **issue) -> dict:
+        """The issues.opened event that comes with the labeled event for an Issue filed with the label."""
+        event = self.payload(**issue)
+        del event["label"]
+        return dict(event, action="opened")
 
     def test_signature(self):
         body = b'{"zen": "Keep it logically awesome."}'
@@ -426,17 +568,31 @@ class WebhookTests(unittest.TestCase):
     def test_routes(self):
         asked = webhook.classify("issues", self.payload(), self.repo)
         self.assertEqual((asked["route"], asked["issue"], asked["profile"]), ("advisor", 7, "small-team"))
-        labeled = dict(self.payload(), action="labeled", label={"name": "design-advisor"})
-        self.assertEqual(webhook.classify("issues", labeled, self.repo)["route"], "advisor")
         for name, event, payload in (
-                ("other label", "issues", dict(self.payload(), action="labeled", label={"name": "bug"})),
-                ("no label", "issues", self.payload(labels=[])),
+                ("opened: the labeled event that comes with it starts the run", "issues", self.opened()),
+                ("other label", "issues", dict(self.payload(), label={"name": "bug"})),
+                ("label removed", "issues", dict(self.payload(), action="unlabeled")),
                 ("closed", "issues", self.payload(state="closed")),
                 ("pull request", "issues", self.payload(pull_request={})),
                 ("other repo", "issues", dict(self.payload(), repository={"full_name": "octo/other"})),
                 ("comment", "issue_comment", self.payload())):
             with self.subTest(name):
                 self.assertEqual(webhook.classify(event, payload, self.repo)["route"], "ignore")
+
+    def test_only_the_owner_members_and_collaborators_start_the_advisor(self):
+        # On a public repository anyone can use the issue form, which applies the label for them: the author decides.
+        for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+            with self.subTest(association=association):
+                payload = self.payload(author_association=association)
+                self.assertEqual(webhook.classify("issues", payload, self.repo)["route"], "advisor")
+        for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE", "", None, "owner"):
+            with self.subTest(association=association):
+                decision = webhook.classify("issues", self.payload(author_association=association), self.repo)
+                self.assertEqual(decision["route"], "ignore")
+                self.assertIn("outside contributor", decision["reason"])
+        missing = self.payload()
+        del missing["issue"]["author_association"]
+        self.assertEqual(webhook.classify("issues", missing, self.repo)["route"], "ignore")
 
     def test_push_routes_only_merged_standards(self):
         push = {"ref": "refs/heads/main", "after": "a" * 40, "repository": {"full_name": self.repo, "default_branch": "main"},
@@ -478,9 +634,10 @@ class FakeSession:
             self.files[(path[len("/contents/"):], json["branch"])] = json["content"]
             return FakeResponse(201, {"commit": {"sha": "commit-sha"}})
         if method == "GET" and path == "/pulls":
-            return FakeResponse(200, [p for p in self.pulls if p["head"] == params["head"]])
+            return FakeResponse(200, [p for p in self.pulls if p["head"]["label"] == params["head"]])
         if method == "POST" and path == "/pulls":
-            self.pulls.append({"head": f"octo:{json['head']}", "number": 34, "html_url": "https://github.com/octo/requesthub/pull/34"})
+            self.pulls.append({"head": {"label": f"octo:{json['head']}", "repo": {"full_name": "octo/requesthub"}},
+                               "number": 34 + len(self.pulls), "html_url": "https://github.com/octo/requesthub/pull/34"})
             return FakeResponse(201, self.pulls[-1])
         if method == "POST" and path.endswith("/comments"):
             return FakeResponse(201, {"id": 1, "html_url": "https://github.com/octo/requesthub/issues/7#issuecomment-1"})
@@ -521,6 +678,16 @@ class GitHubGuardTests(unittest.TestCase):
         self.assertEqual(sum(1 for m, p, _ in self.session.calls if (m, p) == ("POST", "/git/refs")), 1)
         self.assertEqual(sum(1 for m, p, _ in self.session.calls if (m, p) == ("POST", "/pulls")), 1)
 
+    def test_a_pull_request_from_a_fork_is_never_reused(self):
+        # Only a branch in this repository counts: only writers and the app can push one.
+        self.session.pulls.append({"head": {"label": "octo:design/advisor-issue-12", "repo": {"full_name": "outsider/requesthub"}},
+                                   "number": 99, "html_url": "https://github.com/octo/requesthub/pull/99"})
+        pull = self.client.open_pull_request(12, "t", "b")
+        self.assertTrue(pull["created"])
+        self.assertNotEqual(pull["number"], 99)
+        self.assertFalse(github.same_repository({"head": {"repo": None}}, "octo/requesthub"))
+        self.assertTrue(github.same_repository({"head": {"repo": {"full_name": "Octo/RequestHub"}}}, "octo/requesthub"))
+
     def test_any_other_write_is_refused_before_a_request_is_sent(self):
         for method, path, body in (("PUT", "/contents/README.md", {"branch": "design/advisor-issue-1"}),
                                    ("PUT", "/contents/solutions/02-design-microsoft/adr/x.md", {"branch": "main"}),
@@ -554,40 +721,293 @@ class GitHubGuardTests(unittest.TestCase):
         self.assertLessEqual(claims["exp"] - claims["iat"], 600)
 
 
-class CallerTests(unittest.TestCase):
-    """Only the Logic Apps' managed identity may call the Function's work routes."""
+def foundry_response(data=None, retrieved=("STD-ARCH-001",), status="completed", agent="architecture-advisor-small-team",
+                     version="2") -> dict:
+    """A Responses API result as Foundry returns it for the advisor: one Foundry IQ call, then the JSON answer."""
+    return {"id": "resp_test", "status": status, "model": "gpt-5.4-mini", "created_at": 1_700_000_000,
+            "completed_at": 1_700_000_012, "agent_reference": {"type": "agent_reference", "name": agent, "version": version},
+            "usage": {"input_tokens": 900, "output_tokens": 700},
+            "output": [{"type": "mcp_call", "name": "knowledge_base_retrieve", "output": iq_output(*retrieved)},
+                       {"type": "message", "content": [{"type": "output_text", "text": json.dumps(data or answer())}]}]}
 
-    tenant, client_id, principal = "tenant-id", "logic-client-id", "logic-object-id"
 
-    @classmethod
-    def setUpClass(cls):
-        from cryptography.hazmat.primitives.asymmetric import rsa
-        cls.key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+def scope_of(name: str, version: str) -> tuple[str, str]:
+    """What an agent version records when it is published: its profile and its knowledge tool's scope filter."""
+    profile = name.split("architecture-advisor-", 1)[1]
+    return profile, standards.scope_filter(SPEC, profile)
 
-    def token(self, **overrides) -> str:
-        import jwt
-        now = int(time.time())
-        claims = {"aud": auth.CALLER_AUDIENCE, "iss": f"https://sts.windows.net/{self.tenant}/", "oid": self.principal,
-                  "appid": self.client_id, "iat": now, "nbf": now, "exp": now + 600}
-        claims.update(overrides)
-        return "Bearer " + jwt.encode(claims, self.key, algorithm="RS256")
 
-    def caller(self, header):
-        return auth.caller(header, self.tenant, self.client_id, self.principal, signing_key=self.key.public_key())
+def snapshot(search_filter: str | None) -> dict:
+    """The index: every standard, or those a profile's scope filter returns."""
+    if search_filter is None:
+        return EVERY
+    return {key: EVERY[key] for key in visible("small-team" if "small-team" in search_filter else "enterprise")}
 
-    def test_the_logic_app_identity_is_accepted(self):
-        self.assertEqual(self.caller(self.token())["oid"], self.principal)
 
-    def test_everyone_else_is_refused(self):
-        for name, header in (("no token", None), ("basic", "Basic abc"),
-                             ("other identity", self.token(oid="someone-else")),
-                             ("other client", self.token(appid="another-app")),
-                             ("other audience", self.token(aud="https://management.azure.com/")),
-                             ("other tenant", self.token(iss="https://sts.windows.net/other/")),
-                             ("expired", self.token(exp=int(time.time()) - 60))):
-            with self.subTest(name), self.assertRaises(auth.Unauthorized):
-                self.caller(header)
+def check_with_fakes(response: dict, job: dict) -> dict:
+    return runs.check_answer(response, job, scope_of=scope_of, snapshot=snapshot, index="architecture-standards")
 
+
+class FoundryTests(unittest.TestCase):
+    """advisor_core/foundry.py asks the agent the way the Logic App did: by name, through the Responses API."""
+
+    class Session:
+        def __init__(self, *answers):
+            self.answers, self.calls = list(answers), []
+
+        def post(self, url, json=None, headers=None, timeout=None):
+            self.calls.append((url, json, headers))
+            reply = self.answers.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+    def ask(self, *answers):
+        self.session, self.slept = self.Session(*answers), []
+        return foundry.ask("https://aif.example/api/projects/design/", "architecture-advisor-small-team", "Q?",
+                           lambda: "token-SECRET", session=self.session, sleep=self.slept.append)
+
+    def test_the_agent_is_asked_by_name_through_the_responses_api(self):
+        self.assertEqual(self.ask(FakeResponse(200, {"id": "resp_1"})), {"id": "resp_1"})
+        url, body, headers = self.session.calls[0]
+        self.assertEqual(url, "https://aif.example/api/projects/design/openai/v1/responses")
+        self.assertEqual(body["agent_reference"], {"type": "agent_reference", "name": "architecture-advisor-small-team"})
+        self.assertEqual((body["input"], body["max_output_tokens"]), ("Q?", 8000))
+        self.assertEqual(headers["Authorization"], "Bearer token-SECRET")
+
+    def test_throttling_is_retried_and_a_refusal_is_not(self):
+        self.assertEqual(self.ask(FakeResponse(429, {}), FakeResponse(503, {}), FakeResponse(200, {"id": "r"}))["id"], "r")
+        self.assertEqual(self.slept, [10, 20])
+        with self.assertRaises(foundry.FoundryError) as refused:
+            self.ask(FakeResponse(400, {}))
+        self.assertEqual(len(self.session.calls), 1)
+        self.assertIn("HTTP 400", str(refused.exception))
+
+    def test_errors_never_carry_the_url_or_the_token(self):
+        import requests
+        failure = requests.ConnectionError("Max retries exceeded with url: https://aif.example/api/x (token-SECRET)")
+        with self.assertRaises(foundry.FoundryError) as raised:
+            self.ask(failure, failure, failure)
+        self.assertIn("ConnectionError", str(raised.exception))
+        for secret in ("aif.example", "token-SECRET"):
+            self.assertNotIn(secret, str(raised.exception))
+        self.assertEqual(runs.describe(ConnectionError("https://stsecret.queue.example")), "ConnectionError")
+
+
+class CheckAnswerTests(unittest.TestCase):
+    """runs.check_answer: the gate's run record, built from Foundry's response and the index."""
+    job = {"id": "3f2a9c1b7d4e", "issue": 12, "profile": "small-team", "question": "Should triage run in-process?"}
+
+    def test_a_grounded_answer_passes_with_its_evidence(self):
+        run = check_with_fakes(foundry_response(), self.job)
+        self.assertEqual(run["checks"], [])
+        self.assertEqual((run["runId"], run["agent"]["version"], run["knowledgeCalls"], run["retrievedStandards"],
+                          run["scopes"], run["durationSeconds"]),
+                         ("3f2a9c1b7d4e", "2", 1, ["STD-ARCH-001"], ["all", "small-team"], 12))
+
+    def test_an_answer_from_another_profiles_agent_is_rejected(self):
+        run = check_with_fakes(foundry_response(agent="architecture-advisor-enterprise"), self.job)
+        self.assertTrue(any("serves the 'enterprise' profile" in problem for problem in run["checks"]))
+
+    def test_an_unknown_agent_an_unfinished_answer_or_a_non_json_answer_is_rejected(self):
+        def unknown(name, version):
+            raise KeyError(version)
+        run = runs.check_answer(foundry_response(), self.job, scope_of=unknown, snapshot=snapshot, index="i")
+        self.assertTrue(any(problem.startswith("access: could not read the scope") for problem in run["checks"]))
+        run = check_with_fakes(foundry_response(status="incomplete"), self.job)
+        self.assertTrue(any(problem.startswith("response:") for problem in run["checks"]))
+        broken = foundry_response()
+        broken["output"][-1]["content"][0]["text"] = "not json"
+        run = check_with_fakes(broken, self.job)
+        self.assertTrue(any(problem.startswith("format:") for problem in run["checks"]))
+        self.assertFalse(run["result"]["answerable"])
+
+
+class FakeGitHub:
+    """The guarded client's four writes, recorded. fail_on names the write that fails, as GitHub would fail it."""
+
+    def __init__(self, fail_on=None):
+        self.calls, self.fail_on = [], fail_on
+
+    def _do(self, name, *args):
+        self.calls.append((name, *args))
+        if name == self.fail_on:
+            raise github.GitHubError(502, f"{name}: Bad Gateway")
+
+    def ensure_branch(self, issue):
+        self._do("branch", issue)
+        return {"branch": github.branch_for(issue), "sha": "base-sha", "created": True}
+
+    def put_adr(self, issue, content, message):
+        self._do("commit", issue, content)
+        return {"path": github.adr_path_for(issue), "branch": github.branch_for(issue), "commit": "abc1234def", "created": True}
+
+    def open_pull_request(self, issue, title, body):
+        self._do("pull", issue, body)
+        return {"number": 34, "url": "https://github.com/octo/requesthub/pull/34", "created": True}
+
+    def comment(self, issue, body):
+        self._do("comment", issue, body)
+        return {"id": 1}
+
+
+class AdvisorRunTests(unittest.TestCase):
+    """runs.advise, the advisor Logic App's steps as Python: ask, check, then GitHub, or one comment that says why not."""
+    job = {"id": "3f2a9c1b7d4e", "issue": 12, "title": "Architecture question", "profile": "small-team",
+           "question": "Should triage run in-process?"}
+
+    def advise(self, ask=None, client=None, check=None) -> dict:
+        self.client, self.lines = client or FakeGitHub(), []
+        tools = runs.AdvisorTools(ask=ask or (lambda question, profile: foundry_response()), check=check or check_with_fakes,
+                                  github=lambda: self.client)
+        return runs.advise(dict(self.job), tools, self.lines.append)
+
+    def steps(self) -> list[str]:
+        return [call[0] for call in self.client.calls]
+
+    def comments(self) -> list[str]:
+        return [call[2] for call in self.client.calls if call[0] == "comment"]
+
+    def test_a_checked_answer_becomes_an_adr_draft_a_pull_request_and_a_comment(self):
+        result = self.advise()
+        self.assertEqual((result["state"], result["pullRequest"]), ("answered", 34))
+        self.assertEqual(self.steps(), ["branch", "commit", "pull", "comment"])
+        self.assertIn("**ADR draft: #34.**", self.comments()[0])
+        self.assertIn("advisor run `3f2a9c1b7d4e`", self.comments()[0])
+        self.assertTrue(all(line.startswith("advisor run 3f2a9c1b7d4e: #12 ") for line in self.lines))
+        self.assertTrue(any("the gate passed the answer" in line for line in self.lines))
+
+    def test_a_rejected_answer_gets_only_its_failed_checks(self):
+        invented = answer()
+        invented["constraints"][0]["standardId"] = "STD-SEC-009"
+        result = self.advise(ask=lambda question, profile: foundry_response(invented))
+        self.assertEqual(result["state"], "rejected")
+        self.assertEqual(self.steps(), ["comment"])
+        self.assertIn("❌ The deterministic checks rejected this answer", self.comments()[0])
+        self.assertNotIn(invented["recommendation"], self.comments()[0])
+
+    def test_the_advisor_is_never_silent_when_foundry_or_the_index_is_down(self):
+        def foundry_down(question, profile):
+            raise foundry.FoundryError("Foundry didn't answer after 3 attempts: HTTP 503")
+
+        def index_down(response, job):
+            raise ConnectionError("https://srch-secret.search.example unreachable")
+
+        for name, kwargs in (("Foundry", {"ask": foundry_down}), ("the index", {"check": index_down})):
+            with self.subTest(name):
+                result = self.advise(**kwargs)
+                self.assertEqual(result["state"], "unavailable")
+                self.assertEqual(self.steps(), ["comment"])  # no branch, no draft, no pull request
+                self.assertIn("could not answer", self.comments()[0])
+                self.assertNotIn("srch-secret", "\n".join(self.lines + self.comments()))
+
+    def test_a_failed_github_step_after_the_gate_says_so_on_the_issue(self):
+        result = self.advise(client=FakeGitHub(fail_on="pull"))
+        self.assertEqual(result["state"], "incomplete")
+        self.assertEqual(self.steps(), ["branch", "commit", "pull", "comment"])
+        self.assertIn("could not be completed", self.comments()[0])
+        self.assertTrue(any("a GitHub step failed: GitHub returned HTTP 502" in line for line in self.lines))
+
+    def test_a_github_outage_is_logged_and_never_raises(self):
+        result = self.advise(client=FakeGitHub(fail_on="comment"), ask=lambda question, profile: foundry_response(status="failed"))
+        self.assertEqual(result["state"], "incomplete")
+        self.assertTrue(any("couldn't comment that the ADR draft is incomplete" in line for line in self.lines))
+
+    def test_the_log_never_holds_the_question_or_the_answer(self):
+        self.advise()
+        text = "\n".join(self.lines)
+        self.assertNotIn(self.job["question"], text)
+        self.assertNotIn(answer()["recommendation"], text)
+
+
+class FakeRepository:
+    """The guarded client's reads at one commit, for the standards run."""
+
+    def __init__(self, merged=True, agent_yaml=True):
+        self.merged, self.agent_yaml, self.reads = merged, agent_yaml, []
+
+    def on_default_branch(self, sha):
+        return self.merged
+
+    def default_branch(self):
+        return "main"
+
+    def read_text(self, path, ref):
+        self.reads.append(path)
+        if path.endswith("agent.yaml"):
+            return (HERE / "agent.yaml").read_text(encoding="utf-8") if self.agent_yaml else None
+        return (HERE / "eval_cases.jsonl").read_text(encoding="utf-8") if path.endswith("eval_cases.jsonl") else None
+
+    def read_folder(self, folder, ref):
+        self.reads.append(folder)
+        return dict(FILES)
+
+
+class StandardsRunTests(unittest.TestCase):
+    """runs.publish_standards, the standards Logic App's steps as Python: merged only, then re-index, publish, evaluate."""
+    sha = "a" * 40
+
+    def publish(self, repository=None, reindex=None) -> dict:
+        self.repository, self.steps, self.lines = repository or FakeRepository(), [], []
+
+        def default_reindex(docs, spec):
+            self.steps.append(("re-index", len(docs)))
+            return {"index": "architecture-standards", "approved": len(docs), "new": [], "changed": ["STD-API-001 v1.0"],
+                    "removed": [], "failed": []}
+
+        def publish_agents(spec):
+            self.steps.append(("publish",))
+            return {profile: {"name": f"architecture-advisor-{profile}", "version": "2", "reused": True}
+                    for profile in spec["profiles"]}
+
+        def evaluate(spec, cases, published, label):
+            self.steps.append(("evaluate", len(cases), label))
+            return [{"cases": [case["id"] for case in cases if case["profile"] == profile]} for profile in published]
+
+        tools = runs.StandardsTools(github=lambda: self.repository, reindex=reindex or default_reindex,
+                                    publish=publish_agents, evaluate=evaluate)
+        job = {"id": "5b7e1d0c9a2f", "sha": self.sha, "files": ["solutions/02-design-microsoft/standards/STD-API-001.md"]}
+        return runs.publish_standards(job, tools, self.lines.append)
+
+    def test_a_merged_change_is_reindexed_published_and_evaluated_in_order(self):
+        result = self.publish()
+        self.assertEqual(result["state"], "done")
+        self.assertEqual(self.steps, [("re-index", len(DOCS)), ("publish",), ("evaluate", len(CASES), "commit aaaaaaa")])
+        self.assertTrue(all(line.startswith("standards run 5b7e1d0c9a2f: ") for line in self.lines))
+        self.assertTrue(any("1 changed" in line for line in self.lines))
+        self.assertTrue(any("(reused)" in line for line in self.lines))
+
+    def test_an_unmerged_commit_is_refused_before_anything_is_read(self):
+        result = self.publish(FakeRepository(merged=False))
+        self.assertEqual((result["state"], result["step"]), ("stopped", "check the commit"))
+        self.assertEqual((self.repository.reads, self.steps), ([], []))
+        self.assertIn("only merged changes are published", self.lines[-1])
+        for sha in ("main", "a" * 39, "A" * 40, ""):
+            with self.subTest(sha=sha), self.assertRaises(runs.StepError):
+                runs.merged_commit(FakeRepository(), sha)
+
+    def test_a_failed_step_stops_the_ones_after_it(self):
+        def index_down(docs, spec):
+            raise ConnectionError("https://srch-secret.search.example unreachable")
+
+        result = self.publish(reindex=index_down)
+        self.assertEqual((result["state"], result["step"]), ("stopped", "re-index the standards"))
+        self.assertEqual(self.steps, [])  # never published nor evaluated from a partly indexed commit
+        self.assertNotIn("srch-secret", self.lines[-1])
+        result = self.publish(FakeRepository(agent_yaml=False))
+        self.assertEqual((result["state"], result["step"]), ("stopped", "read the commit"))
+        self.assertEqual(self.steps, [])
+
+    def test_a_partly_indexed_commit_is_never_published(self):
+        def some_refused(docs, spec):
+            self.steps.append(("re-index", len(docs)))
+            return {"index": "architecture-standards", "approved": len(docs), "new": [], "changed": [], "removed": [],
+                    "failed": ["STD-API-001"]}
+
+        result = self.publish(reindex=some_refused)
+        self.assertEqual((result["state"], result["step"]), ("stopped", "re-index the standards"))
+        self.assertEqual(self.steps, [("re-index", len(DOCS))])  # neither published nor evaluated
+        self.assertIn("1 standard(s) were not indexed: STD-API-001", self.lines[-1])
 
 class SetupFlowTests(unittest.TestCase):
     def test_the_manifest_asks_only_for_what_the_advisor_uses(self):
@@ -608,8 +1028,38 @@ class SetupFlowTests(unittest.TestCase):
         self.assertNotIn("<tags>", html_user)
 
 
+class FakeMarkers:
+    """The Function's marker blobs, in memory: claim creates once, swap replaces only a marker nobody changed."""
+
+    def __init__(self):
+        self.blobs, self.version = {}, 0
+
+    def put(self, name, data):
+        self.version += 1
+        self.blobs[name] = (json.loads(json.dumps(data)), f"etag-{self.version}")
+
+    def claim(self, name, data):
+        if name in self.blobs:
+            return False
+        self.put(name, data)
+        return True
+
+    def read(self, name):
+        return self.blobs.get(name, (None, None))
+
+    def swap(self, name, data, etag):
+        if name not in self.blobs or self.blobs[name][1] != etag:
+            return False
+        self.put(name, data)
+        return True
+
+    def release(self, *names):
+        for name in names:
+            self.blobs.pop(name, None)
+
+
 class FunctionRouteTests(unittest.TestCase):
-    """The Function's routes, with Azure and GitHub replaced by fakes."""
+    """The Function's routes and queue functions, with Azure and GitHub replaced by fakes."""
 
     @classmethod
     def setUpClass(cls):
@@ -618,75 +1068,158 @@ class FunctionRouteTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": "octo/requesthub"}):
             import function_app
         cls.app = function_app
-        cls.routes = {f.get_function_name(): f for f in function_app.app.get_functions()}
+        cls.functions = {f.get_function_name(): f for f in function_app.app.get_functions()}
 
     def setUp(self):
         self.secrets = {"github-webhook-secret": "s3cret"}
-        self.markers, self.started, self.stored = set(), [], {}
+        self.markers, self.queued, self.stored = FakeMarkers(), [], {}
         patches = [
-            mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": "octo/requesthub", "AZURE_TENANT_ID": "t",
-                                           "LOGIC_APP_CLIENT_ID": "c", "LOGIC_APP_PRINCIPAL_ID": "p"}),
+            mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": "octo/requesthub"}),
             mock.patch.object(self.app, "secret", side_effect=lambda name: self.secrets.get(name)),
-            mock.patch.object(self.app, "claim", side_effect=self.claim),
-            mock.patch.object(self.app, "release", side_effect=lambda *names: self.markers.difference_update(names)),
-            mock.patch.object(self.app, "start_workflow", side_effect=lambda name, payload: self.started.append((name, payload))),
+            mock.patch.object(self.app, "claim", side_effect=self.markers.claim),
+            mock.patch.object(self.app, "release", side_effect=self.markers.release),
+            mock.patch.object(self.app, "read_marker", side_effect=self.markers.read),
+            mock.patch.object(self.app, "swap_marker", side_effect=self.markers.swap),
+            mock.patch.object(self.app, "enqueue", side_effect=lambda queue, message: self.queued.append((queue, message))),
             mock.patch.object(self.app, "store_secret", side_effect=lambda name, value: self.stored.__setitem__(name, value)),
         ]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
 
-    def claim(self, name, data):
-        if name in self.markers:
-            return False
-        self.markers.add(name)
-        return True
-
     def call(self, name, method="POST", url="https://func.example/api/x", body=b"", headers=None, params=None):
         request = self.func.HttpRequest(method, url, body=body, headers=headers or {}, params=params or {})
-        return self.routes[name].get_user_function()(request)
+        return self.functions[name].get_user_function()(request)
 
-    def deliver(self, payload: dict, delivery: str, event: str = "issues"):
+    def deliver(self, payload: dict, delivery: str | None = None, event: str = "issues"):
         body = json.dumps(payload).encode()
         signature = "sha256=" + hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
         return self.call("github_webhook", body=body, headers={"X-Hub-Signature-256": signature, "X-GitHub-Event": event,
-                                                               "X-GitHub-Delivery": delivery})
+                                                               "X-GitHub-Delivery": delivery or str(uuid.uuid4())})
 
-    def test_routes_and_their_protection(self):
-        levels = {name: next(b for b in f.get_bindings() if b.type == "httpTrigger").auth_level for name, f in self.routes.items()}
-        self.assertEqual(levels["github_setup"], self.func.AuthLevel.FUNCTION)
-        self.assertEqual(levels["github_status"], self.func.AuthLevel.FUNCTION)
-        self.assertEqual(set(self.routes), {"github_webhook", "github_setup", "github_setup_complete", "github_status",
-                                            "advisor_check", "repo_write", "standards_sync", "agents_publish",
-                                            "evaluations_start"})
+    def run_queue(self, name, data):
+        body = data if isinstance(data, bytes) else json.dumps(data).encode()
+        return self.functions[name].get_user_function()(self.func.QueueMessage(body=body))
+
+    def test_routes_queues_and_their_protection(self):
+        triggers = {name: f.get_bindings()[0] for name, f in self.functions.items()}
+        http = {name: binding.auth_level for name, binding in triggers.items() if binding.type == "httpTrigger"}
+        self.assertEqual(http, {"github_webhook": self.func.AuthLevel.ANONYMOUS,  # GitHub's signature
+                                "github_setup_complete": self.func.AuthLevel.ANONYMOUS,  # the one-time state
+                                "github_setup": self.func.AuthLevel.FUNCTION, "github_status": self.func.AuthLevel.FUNCTION})
+        queues = {name: (binding.queue_name, binding.connection) for name, binding in triggers.items()
+                  if binding.type == "queueTrigger"}
+        self.assertEqual(queues, {"advise": ("advisor-runs", "AzureWebJobsStorage"),
+                                  "publish_standards": ("standards-runs", "AzureWebJobsStorage")})
+        self.assertEqual(set(http) | set(queues), set(triggers))  # no other way in
 
     def test_a_redelivery_and_a_second_event_for_the_same_issue_start_one_run(self):
-        payload = WebhookTests().payload()
-        first = self.deliver(payload, "11111111-1111-1111-1111-111111111111")
-        again = self.deliver(payload, "11111111-1111-1111-1111-111111111111")
-        labeled = self.deliver(dict(payload, action="labeled", label={"name": "design-advisor"}), "22222222-2222-2222-2222-222222222222")
-        self.assertEqual([first.status_code, again.status_code, labeled.status_code], [202, 200, 200])
-        self.assertEqual(len(self.started), 1)
-        self.assertEqual(self.started[0][1], {"issue": 7, "title": "Architecture question", "profile": "small-team",
-                                              "question": "Should triage run in-process?"})
+        events = WebhookTests()
+        opened = self.deliver(events.opened())  # filed with the label: GitHub sends opened, then labeled
+        first = self.deliver(events.payload(), "11111111-1111-1111-1111-111111111111")
+        again = self.deliver(events.payload(), "11111111-1111-1111-1111-111111111111")
+        relabeled = self.deliver(events.payload())
+        self.assertEqual([opened.status_code, first.status_code, again.status_code, relabeled.status_code],
+                         [200, 202, 200, 200])
+        self.assertEqual(len(self.queued), 1)
+        queue, message = self.queued[0]
+        self.assertEqual(queue, "advisor-runs")
+        self.assertEqual({key: message[key] for key in ("issue", "title", "profile", "question")},
+                         {"issue": 7, "title": "Architecture question", "profile": "small-team",
+                          "question": "Should triage run in-process?"})
+        self.assertRegex(message["id"], r"^[0-9a-f]{12}$")
+        self.assertIn(message["id"], json.loads(first.get_body())["result"])
+        self.assertEqual(self.markers.read("issues/7.json")[0]["state"], "queued")
+
+    def test_an_issue_from_an_outside_contributor_starts_nothing(self):
+        events = WebhookTests()
+        opened = self.deliver(events.opened(author_association="NONE"))
+        labeled = self.deliver(events.payload(author_association="NONE"))
+        self.assertEqual([opened.status_code, labeled.status_code], [200, 200])
+        self.assertEqual(json.loads(opened.get_body())["result"], "ignored")
+        self.assertIn("outside contributor", json.loads(labeled.get_body())["reason"])
+        self.assertEqual(self.queued, [])
+        self.assertIsNone(self.markers.read("issues/7.json")[0])
 
     def test_a_bad_signature_is_refused(self):
         response = self.call("github_webhook", body=b"{}", headers={"X-Hub-Signature-256": "sha256=00", "X-GitHub-Event": "ping",
                                                                     "X-GitHub-Delivery": "33333333-3333-3333-3333-333333333333"})
         self.assertEqual(response.status_code, 401)
-        self.assertEqual(self.markers, set())
+        self.assertEqual(self.markers.blobs, {})
 
-    def test_a_failed_start_releases_the_markers_for_a_redelivery(self):
-        self.app.start_workflow.side_effect = RuntimeError("the Logic App refused the run: HTTP 500")
-        response = self.deliver(WebhookTests().payload(), "44444444-4444-4444-4444-444444444444")
+    def test_a_failed_queue_write_releases_the_markers_for_a_redelivery(self):
+        self.app.enqueue.side_effect = RuntimeError("https://stsecret.queue.example refused the message")
+        with self.assertLogs("advisor", level="ERROR") as logs:
+            response = self.deliver(WebhookTests().payload(), "44444444-4444-4444-4444-444444444444")
         self.assertEqual(response.status_code, 500)
-        self.assertEqual(self.markers, set())
+        self.assertEqual(self.markers.blobs, {})
+        self.assertNotIn("stsecret", "\n".join(logs.output))
 
-    def test_work_routes_refuse_callers_without_the_logic_app_token(self):
-        for name in ("advisor_check", "repo_write", "standards_sync", "agents_publish", "evaluations_start"):
-            with self.subTest(name=name):
-                self.assertEqual(self.call(name, body=b"{}", headers={"Authorization": "Bearer not-a-jwt"}).status_code, 401)
+    def test_a_push_that_changes_the_standards_queues_a_standards_run(self):
+        push = {"ref": "refs/heads/main", "after": "a" * 40, "repository": {"full_name": "octo/requesthub", "default_branch": "main"},
+                "commits": [{"modified": ["solutions/02-design-microsoft/standards/STD-AI-001.md"]}]}
+        response = self.deliver(push, event="push")
+        self.assertEqual(response.status_code, 202)
+        queue, message = self.queued[0]
+        self.assertEqual((queue, message["sha"], message["files"]),
+                         ("standards-runs", "a" * 40, ["solutions/02-design-microsoft/standards/STD-AI-001.md"]))
 
+    def test_a_maintainer_retries_only_a_run_that_could_not_finish(self):
+        labeled = dict(WebhookTests().payload(), action="labeled", label={"name": "design-advisor"})
+        for state, since, retried in (("unavailable", 0, True), ("incomplete", 0, True), ("answered", 0, False),
+                                      ("rejected", 0, False), ("running", 0, False), ("queued", 0, False),
+                                      ("running", 16 * 60, True), (None, 0, False)):
+            with self.subTest(state=state, since=since):
+                self.markers.blobs.clear()
+                self.queued.clear()
+                old = {"run": "aaaaaaaaaaaa", "since": time.time() - since} | ({"state": state} if state else {})
+                self.markers.put("issues/7.json", old)
+                response = self.deliver(labeled)
+                self.assertEqual(len(self.queued), 1 if retried else 0)
+                marker = self.markers.read("issues/7.json")[0]
+                self.assertEqual(marker["run"], self.queued[0][1]["id"] if retried else "aaaaaaaaaaaa")
+                self.assertEqual(response.status_code, 202 if retried else 200)
+
+    def test_the_advisor_run_records_its_state_and_yields_to_a_newer_run(self):
+        job = {"id": "3f2a9c1b7d4e", "issue": 7, "title": "t", "profile": "small-team", "question": "Should triage run in-process?"}
+        self.markers.put("issues/7.json", {"state": "queued", "run": "3f2a9c1b7d4e", "since": time.time()})
+        with mock.patch.object(self.app.runs, "advise", return_value={"state": "answered"}) as advise, \
+                mock.patch.object(self.app, "advisor_tools"):
+            self.run_queue("advise", job)
+            self.assertEqual(self.markers.read("issues/7.json")[0]["state"], "answered")
+            self.assertEqual(advise.call_count, 1)
+            self.run_queue("advise", job)  # a second copy of the same message: the issue isn't waiting for it
+            self.assertEqual(advise.call_count, 1)
+            self.markers.put("issues/7.json", {"state": "queued", "run": "999999999999", "since": time.time()})
+            self.run_queue("advise", job)  # a newer run took the issue over: this one asks nothing
+            self.assertEqual(advise.call_count, 1)
+            self.assertEqual(self.markers.read("issues/7.json")[0]["run"], "999999999999")
+
+    def test_only_a_run_the_webhook_queued_asks_the_agent(self):
+        job = {"id": "3f2a9c1b7d4e", "issue": 8, "title": "t", "profile": "small-team", "question": "Should triage run in-process?"}
+        with mock.patch.object(self.app.runs, "advise", return_value={"state": "answered"}) as advise, \
+                mock.patch.object(self.app, "advisor_tools"):
+            self.run_queue("advise", job)  # well formed, but no marker: the webhook never queued it
+            self.assertIsNone(self.markers.read("issues/8.json")[0])
+            self.app.read_marker.side_effect = ConnectionError("https://stsecret.blob.example unreachable")
+            with self.assertLogs("advisor", level="ERROR") as logs:
+                self.run_queue("advise", job)  # the marker can't be read: no proof the webhook queued it
+            self.assertNotIn("stsecret", "\n".join(logs.output))
+        advise.assert_not_called()
+
+    def test_the_queues_drop_messages_the_webhook_did_not_write(self):
+        with mock.patch.object(self.app.runs, "advise") as advise, \
+                mock.patch.object(self.app.runs, "publish_standards") as publish, \
+                self.assertLogs("advisor", level="ERROR"):
+            for message in ({"id": "nope", "issue": 7, "profile": "small-team", "question": "q"},
+                            {"id": "3f2a9c1b7d4e", "issue": 7, "profile": "admin", "question": "q"},
+                            {"id": "3f2a9c1b7d4e", "issue": 0, "profile": "small-team", "question": "q"},
+                            {"id": "3f2a9c1b7d4e", "issue": 7, "profile": "small-team", "question": "  "},
+                            b"not json"):
+                self.run_queue("advise", message)
+            self.run_queue("publish_standards", {"sha": "a" * 40})
+        advise.assert_not_called()
+        publish.assert_not_called()
     def test_setup_stores_three_secrets_once_and_then_answers_409(self):
         blob = mock.MagicMock()
         blob.download_blob.return_value.readall.return_value = json.dumps({"state": "st4te", "created": time.time()}).encode()
@@ -724,31 +1257,39 @@ class FunctionRouteTests(unittest.TestCase):
         self.assertNotIn("codeSECRET1234", "\n".join(logs.output) + response.get_body().decode())
         self.assertEqual(self.stored, {})
 
-    def test_the_merge_path_refuses_an_unmerged_commit(self):
-        unmerged = mock.MagicMock()
-        unmerged.on_default_branch.return_value = False
-        with mock.patch.object(self.app.auth, "caller", return_value={}), \
-                mock.patch.object(self.app, "github_client", return_value=unmerged):
-            for name in ("standards_sync", "agents_publish", "evaluations_start"):
-                with self.subTest(name=name):
-                    response = self.call(name, body=json.dumps({"sha": "b" * 40}).encode())
-                    self.assertEqual(response.status_code, 400)
-                    self.assertIn("not on the default branch", response.get_body().decode())
-        unmerged.read_folder.assert_not_called()
+    def test_empty_github_secrets_mean_not_connected(self):
+        # Azure Resource Manager can't delete a Key Vault secret, and the vault is closed to the internet, so the README
+        # disconnects GitHub by setting the GitHub secrets to empty values.
+        self.secrets.update({"github-app-id": "", "github-app-private-key": "", "github-webhook-secret": "", "github-token": ""})
+        status = json.loads(self.call("github_status", method="GET").get_body())
+        self.assertEqual((status["connected"], status["webhookSecret"]), (False, False))
+        self.assertEqual(self.deliver(WebhookTests().payload()).status_code, 503)
+        self.assertFalse(self.app.connected())
+        with self.assertRaises(self.app.NotConnected):
+            self.app.github_client()
 
 
-class SecretHandlingTests(unittest.TestCase):
-    def test_a_connection_error_never_carries_the_trigger_url(self):
+class ScriptErrorTests(unittest.TestCase):
+    """setup_azure.py and evaluate.py print errors without the subscription, a resource, a host, or a key."""
+
+    def test_errors_never_print_the_subscription_a_host_or_a_key(self):
         import requests
+        sys.path.insert(0, str(HERE))
+        from azd_env import describe_error
 
-        import function_app
-        url = "https://prod-1.example.logic.azure.com/workflows/x/triggers/manual/paths/invoke?api-version=1&sig=SECRETSIG"
-        with mock.patch.object(function_app, "secret", return_value=url), \
-                mock.patch("requests.post", side_effect=requests.ConnectionError(f"Max retries exceeded with url: {url}")):
-            with self.assertRaises(RuntimeError) as raised:
-                function_app.start_workflow("advisor-workflow-url", {})
-        self.assertNotIn("SECRETSIG", str(raised.exception))
-        self.assertIn("ConnectionError", str(raised.exception))
+        path = "/subscriptions/00000000-1111-2222-3333-444444444444/resourceGroups/rg-x/providers/Microsoft.Web/sites/func-abc123"
+        outage = requests.ConnectionError(f"HTTPSConnectionPool(host='management.azure.com', port=443): Max retries "
+                                          f"exceeded with url: {path}?api-version=2024-04-01&code=KEY123")
+        refused = requests.HTTPError(f"403 Client Error: Forbidden for url: https://management.azure.com{path}",
+                                     response=FakeResponse(403))
+        sdk = RuntimeError("Failed to resolve 'srch-abc123.search.windows.net' for https://aif-abc123.services.ai.azure.com"
+                           f"/api/projects/design (tenant 00000000-1111-2222-3333-444444444444, {path})")
+        texts = [describe_error(exc) for exc in (outage, refused, sdk)]
+        self.assertTrue(texts[0].startswith("ConnectionError: the request didn't complete"))
+        self.assertEqual(texts[1], "HTTPError: HTTP 403")
+        self.assertIn("Failed to resolve '<host>'", texts[2])
+        for secret in ("00000000-1111", "func-abc123", "srch-abc123", "aif-abc123", "KEY123", "management.azure.com"):
+            self.assertNotIn(secret, "\n".join(texts))
 
 
 class EvaluateScriptTests(unittest.TestCase):
@@ -812,6 +1353,76 @@ class EvaluateScriptTests(unittest.TestCase):
         self.assertEqual(exit_code([run], completed), 2)
         openai.evals.runs.output_items.list.return_value = [graded[0], self.output("E02", **dict(self.ALL, access=False))]
         self.assertEqual(exit_code([run], completed), 1)
+
+    def waited(self, outputs: dict, restart, attempts=3, status="completed", timeout=60):
+        """evaluate.wait over fake runs: one small-team run (st-1) and one enterprise run (ent-1)."""
+        openai = mock.MagicMock()
+        openai.evals.runs.output_items.list.side_effect = lambda run_id, eval_id: outputs[run_id]
+        runs = [{"profile": "small-team", "runId": "st-1", "evalId": "e", "agent": "small-team v2", "cases": ["E01"]},
+                {"profile": "enterprise", "runId": "ent-1", "evalId": "e", "agent": "enterprise v2", "cases": ["E02"]}]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("advisor_core.evaluation.status", return_value={"status": status, "errored": 0}), \
+                mock.patch("sys.stdout", new=out), mock.patch("sys.stderr", new=err):
+            final, states, late, history = self.evaluate.wait(openai, runs, restart, attempts, timeout, poll=0)
+        printed = out.getvalue() + err.getvalue()
+        self.history = history
+        return openai, [run["runId"] for run in final], states, [run["runId"] for run in late], printed
+
+    def test_a_run_foundry_could_not_grade_is_started_again_but_a_failed_case_never_is(self):
+        restarted = []
+
+        def restart(run):
+            restarted.append(run["runId"])
+            return {"profile": "enterprise", "runId": f"ent-{run['attempt'] + 1}", "evalId": "e",
+                    "agent": "enterprise v2", "cases": ["E02"]}
+
+        passing, not_graded = self.output("E02", **self.ALL), self.output("E02", **dict(self.ALL, grounding=None))
+        outputs = {"st-1": [self.output("E01", **self.ALL)], "ent-1": [not_graded], "ent-2": [passing]}
+        _, final, _, late, printed = self.waited(outputs, restart)
+        self.assertEqual((restarted, final, late), (["ent-1"], ["st-1", "ent-2"], []))
+        self.assertIn("enterprise v2: Foundry could not grade run 1 (grounding); starting run 2 of up to 3", printed)
+        # The first attempt stays on record next to the retry that replaced it.
+        report = "\n".join(self.evaluate.attempts_report(self.history))
+        self.assertIn("First attempt: 1 passed, 0 failed, 1 could not be graded (of 2 cases)", report)
+        self.assertIn("enterprise v2: could not be graded: E02", report)
+        self.assertIn("Retry: enterprise v2 run 2, started because Foundry could not grade run 1; the agent answered "
+                      "again: 1 passed, 0 failed, 0 could not be graded", report)
+
+        # A failed case is a result: that run is final, even though another of its checks was not graded.
+        restarted.clear()
+        outputs["ent-1"] = [self.output("E02", **dict(self.ALL, citations=False, grounding=None))]
+        _, final, _, _, _ = self.waited(outputs, restart)
+        self.assertEqual((restarted, final), ([], ["st-1", "ent-1"]))
+        self.assertIn("First attempt: 1 passed, 1 failed, 0 could not be graded", self.evaluate.attempts_report(self.history)[0])
+        self.assertIn("Retries: none", self.evaluate.attempts_report(self.history))
+
+        # After the last attempt, the run that still could not be graded is reported, and never as a pass.
+        restarted.clear()
+        outputs["ent-1"] = outputs["ent-2"] = [not_graded]
+        openai, final, states, _, _ = self.waited(outputs, restart, attempts=2)
+        self.assertEqual((restarted, final), (["ent-1"], ["st-1", "ent-2"]))
+        runs = [{"runId": run_id, "evalId": "e", "agent": run_id, "cases": [case]}
+                for run_id, case in (("st-1", "E01"), ("ent-2", "E02"))]
+        with mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(self.evaluate.summarize(openai, runs, states, time.monotonic()), 2)
+
+        # --attempts 1 never starts a run again.
+        restarted.clear()
+        _, final, _, _, _ = self.waited(outputs, restart, attempts=1)
+        self.assertEqual((restarted, final), ([], ["st-1", "ent-1"]))
+
+    def test_a_run_that_cannot_start_again_or_never_finishes_is_reported(self):
+        def broken(run):
+            raise RuntimeError("Failed to resolve 'aif-abc123.services.ai.azure.com'")
+
+        outputs = {"st-1": [self.output("E01", **self.ALL)], "ent-1": [self.output("E02", **dict(self.ALL, access=None))]}
+        _, final, _, _, printed = self.waited(outputs, broken)
+        self.assertEqual(final, ["st-1", "ent-1"])
+        self.assertIn("could not start enterprise v2 again", printed)
+        self.assertNotIn("aif-abc123", printed)
+
+        _, final, _, late, _ = self.waited(outputs, broken, status="in_progress", timeout=0)
+        self.assertEqual((final, late), ([], ["st-1", "ent-1"]))
 
 
 if __name__ == "__main__":

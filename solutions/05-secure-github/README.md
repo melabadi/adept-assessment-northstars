@@ -12,7 +12,8 @@ AI review is not code scanning, and a passing review does not prove a vulnerabil
 ## Where it fits
 
 **Phase 5 of 7: Secure.** The [Microsoft counterpart](../05-secure-microsoft/) addresses deployed cloud posture.
-This solution addresses source-code risk, without deploying the training defect.
+This solution addresses source-code risk, without deploying the training defect. Its Copilot code review also checks
+the counterpart's cloud posture fix in the [Secure solution combo](../../PRESENTING.md#secure-azure-finds-and-fixes-copilot-reviews-a-person-deploys).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -46,19 +47,29 @@ evidence and **verified-remediation** to prove the repair. It is not Copilot Aut
 **Actions** executes tests against real PostgreSQL in isolated runner databases, without Azure credentials.
 The optional CodeQL workflow checks entitlement **before** downloading or running CodeQL, then records actual SARIF.
 
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request
+from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`.
+The CodeQL scan and the remediation replay start only by hand (`workflow_dispatch`, which needs write access), and the
+replay accepts only pull requests from this repository's branches into `lab/secure-*`. The tooling checks run on a fork's
+pull request with a read-only token and no secrets, once someone with write access approves the run.
+
 ## What's in this folder
 
 ```text
 05-secure-github/
 ├── README.md
 ├── images/                                real review, regression, repair and Actions screenshots
+├── evidence/                              committed replay snapshot, readable without signing in
 ├── requirements.txt                       standard library only; nothing to install
 ├── remediate-task.md                      acceptance criteria copied into the remediation Issue
 ├── lab/code-finding.patch                 deliberately unsafe query, stored as data only on main
 ├── regression/SearchSecurityTests.cs      identical regression used before and after repair
+├── replay_setup.py                        once per repository: the repair pull request the nightly replay uses
 ├── tests/test_security_tools.py           parser/guard unit tests, NOT demo evidence
 └── .github/
     ├── agents/secure-github.agent.md
+    ├── instructions/
+    │   └── secure-github-posture-review.instructions.md   Copilot code review of a cloud posture fix (Secure solution combo)
     ├── skills/
     │   ├── finding-triage/                evidence procedure, entitlement and SARIF reporter
     │   └── verified-remediation/          bounded two-snapshot replay with JUnit evidence
@@ -107,6 +118,24 @@ $repo = gh repo view --json nameWithOwner -q .nameWithOwner
 ```
 
 No Azure provisioning, access-policy changes, package installation or deployment is needed.
+
+For the [nightly replay](#nightly-replay-and-lasting-evidence), give it a repair pull request to replay, once per
+repository. In a copy without one, the script makes a reference repair from this folder's files on three `lab/secure-replay*`
+branches, opens and closes the pull request, and stores its number in the repository variable `SECURE_REPLAY_PR`:
+
+```powershell
+python solutions/05-secure-github/replay_setup.py
+```
+
+```text
+Created #1: lab/secure-replay-repair -> lab/secure-replay, closed.
+SECURE_REPLAY_PR = 1: the nightly replay uses it.
+```
+
+Run it again and it reuses the same pull request;
+`--status` says what the nightly run will use. After a live run of the demo, `--adopt <repair PR>` replays Copilot's
+own repair instead, as this repository does with `--adopt 105`. Its commits are marked `[skip ci]`, so no workflow runs on
+those branches.
 Before preparing a lab in an adopter's repo, check that **all deployment/release workflows exclude `lab/secure-*`
 and `copilot/*`**. Do not dispatch any deployment from those refs. In this repository, app CI only builds/tests,
 and release-candidate preflight requires `main`; the security workflows never deploy.
@@ -115,7 +144,8 @@ and release-candidate preflight requires `main`; the security workflows never de
 
 - Confirm the previous run's lab and repair PRs are closed **without merging**, its Issue is closed, and its temporary
   branches are gone. Use `gh pr list --state open`, `gh issue list --label phase:secure --state open` and
-  `git ls-remote --heads origin 'lab/secure-*'`; do not close or delete another presenter's work.
+  `git ls-remote --heads origin 'lab/secure-*'`; do not close or delete another presenter's work. The three
+  `lab/secure-replay*` branches belong to the nightly replay and stay.
 - Fetch `origin/main`, confirm a clean worktree with `git status --short`, and verify that the default branch contains
   the `secure-github` agent, the regression reference and `secure-github-verify.yml`. The lab must start from safe
   `main`, not a previous unsafe or repaired branch.
@@ -136,7 +166,8 @@ Allow about 15 minutes presenting, with the cloud agent started beforehand. Its 
 than promising a fixed duration. Commands below create two temporary lab branches and two PRs, never targeting `main`.
 The screenshots show the real run of [lab PR #99](https://github.com/melabadi/adept-assessment-northstars/pull/99),
 [repair PR #105](https://github.com/melabadi/adept-assessment-northstars/pull/105) and
-[trusted replay](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40712087636).
+[replay workflow runs](https://github.com/melabadi/adept-assessment-northstars/actions/workflows/secure-github-verify.yml).
+The [committed evidence snapshot](evidence/) preserves the actual failed and passing tests without requiring sign-in.
 Use your new run's numbers in the commands, not those historical examples.
 
 1. **Prepare the undeployed lab.** Use a clean worktree so no unrelated app edits enter the exercise.
@@ -269,6 +300,38 @@ Use your new run's numbers in the commands, not those historical examples.
 
    ![The actual Actions run lists the successful replay job, retained secure-remediation-evidence artifact and run link](images/06-retained-evidence.png)
 
+## Nightly replay and lasting evidence
+
+The replay workflow runs at **midnight Eastern** (`America/New_York`): 05:00 UTC in winter and 04:00 UTC in summer.
+It runs from the default branch and replays the repair pull request whose number is in the repository variable
+`SECURE_REPLAY_PR` ([Set up](#set-up)) against real PostgreSQL. Here that is the recorded repair **PR #105**, Copilot's
+repair from the screenshot run; in a fresh copy, `replay_setup.py` makes a reference repair instead. Either way the
+workflow first checks that the pull request's branch is in this repository and that it targets a `lab/secure-*` branch.
+It fetches the commits from the PR record, so deleted lab branches do not need to be recreated.
+Manual dispatch still accepts another same-repository repair PR targeting `lab/secure-*`. Until `SECURE_REPLAY_PR`
+is set, scheduled runs are skipped, so a fresh copy does not produce nightly setup failures. A manual dispatch with
+neither the variable nor a `pr` input still fails at once and says what setup is missing. In a copy with no pull request history, the
+reference repair replayed in 87 seconds: 6 of the 10 regression cases failed before the repair and all 10 passed after,
+as with #105.
+
+This is a deterministic replay, **not a new Copilot demo**: no new Issue, PR, review, agent session, token or secret.
+Permissions remain read-only, runs share a concurrency group, and the workflow never pushes, commits or comments.
+In particular, it cannot trigger a release candidate through a nightly commit. The job timeout remains 30 minutes;
+the recorded execution took about 84 seconds. Standard public-repository Actions runners are free; this replay
+consumes no Copilot premium requests or AI credits.
+
+Open [the workflow's runs](https://github.com/melabadi/adept-assessment-northstars/actions/workflows/secure-github-verify.yml)
+for recent results. GitHub requires sign-in to view job logs or download artifacts; here those expire after **90 days**.
+The [one-time committed snapshot](evidence/) contains `results.json`, before/after test logs, the full-suite log and
+both JUnit files. Anyone can read it without signing in, and it does not expire with Actions retention.
+The snapshot is historical evidence, not an automatically updated nightly result.
+
+GitHub can delay or drop scheduled runs during high load, so midnight is the requested time, not a guarantee.
+In public repositories, schedules are automatically disabled after **60 days without repository activity**.
+To resume, open **Actions → Secure · GitHub · replay the remediation → Enable workflow**.
+To stop nightly runs, use the same workflow's **… → Disable workflow**; re-enable it when wanted.
+The workflow intentionally never manufactures repository activity to avoid that pause.
+
 ## Optional: CodeQL and Autofix when public or licensed
 
 Do **not** make a private repository public just for this command. The owner makes that decision separately.
@@ -342,6 +405,10 @@ Do not delete the downloaded evidence when resetting the demo.
 Keep the evidence on the delivery PR. The next run uses a new timestamp and clean `origin/main`, so no existing
 branch or Issue is overwritten. Do not delete another session's branches, worktrees, databases or artifacts.
 
+The nightly replay's pull request stays between sessions. To remove it too, run
+`python solutions/05-secure-github/replay_setup.py --cleanup`: it closes the reference repair, deletes its three
+`lab/secure-replay*` branches, and removes `SECURE_REPLAY_PR`; it never touches an adopted pull request.
+
 ## Use it in your own repository
 
 Copy this folder's `.github/` files into your root `.github/`. Keep workflow/action pins, replace RequestHub paths,
@@ -349,7 +416,10 @@ test commands and the API fixture with your own, and write a **small, undeployed
 Update `SOURCE`, `TEST`, `WORKFLOW`, method boundaries and the ten-case expectation in the two Python tools.
 Replace the supplied regression with assertions for your actual behavior and negative authorization cases.
 Require detection before remediation and keep tests-only and fix commits separate. Never place the training defect
-on the default branch. Configure branch rulesets so deployment workflows cannot run lab refs.
+on the default branch. Configure branch rulesets so deployment workflows cannot run lab refs. For the nightly replay,
+run `replay_setup.py` once in your repository, or `--adopt` a repair pull request of your own.
+The posture review instruction applies only to the Microsoft counterpart's Bicep: point its `applyTo` at the folder
+where your infrastructure fixes land, or leave it out.
 
 For tooling changes, run:
 

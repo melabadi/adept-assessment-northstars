@@ -1,11 +1,12 @@
 # Develop · GitHub: a feature pull request must stay inside its bounds, whoever wrote it (Copilot or a person).
 # Feature pull requests are those that close an Issue labeled `phase:develop`, the feature Issues this solution hands to
 # Copilot. For them, the checker comes from the base branch and the pull request only supplies the commits it inspects,
-# so a pull request cannot change the rules it is judged by. The check fails when the change leaves app/ (CI/CD, agent
-# configuration, infrastructure), edits an existing migration, touches approval authority, deletes or skips a test,
-# changes code without tests, or breaks the API contract. Every other pull request passes at once, so the check can be
-# required in a ruleset without blocking unrelated work. If the feature lookup itself fails, the check fails.
-# The app's own tests run in the CI workflow.
+# so editing the checker doesn't change the rules a pull request is judged by. GitHub still runs a pull request's own
+# copy of this file, so review a change to it before you trust the check. The check fails when the change leaves app/
+# (CI/CD, agent configuration, infrastructure), edits an existing migration, touches approval authority, deletes or
+# skips a test, changes code without tests, or breaks the API contract. Every other pull request passes at once, so the
+# check can be required in a ruleset without blocking unrelated work. If the feature lookup itself fails, the check
+# fails. The app's own tests run in the CI workflow.
 name: Develop · GitHub · feature bounds
 
 on:

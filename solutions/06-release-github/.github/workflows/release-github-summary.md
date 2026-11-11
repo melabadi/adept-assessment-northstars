@@ -15,6 +15,11 @@ on:
         description: Run id of a successful "Release · GitHub · build the release candidate" run
         required: true
         type: string
+# Only the real candidate: a run that a person started (workflow_dispatch) in this repository. A fork's pull request can
+# add a workflow with the same name, on a branch it names main; its runs are pull_request runs from the fork.
+if: >-
+  github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'workflow_dispatch' &&
+  github.event.workflow_run.head_repository.full_name == github.repository)
 permissions:
   contents: read
   actions: read

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Write the Azure pull request reviewer's review comment (Develop phase, Microsoft track).
 
-The reviewer's Logic App runs this script last, in the judge's sandbox session: the session where the team's rules were
-checked and where the pull request's code never ran. It reads three files:
+The reviewer runs this script last, in the judge's sandbox session: the session where the team's rules were checked and
+where the pull request's code never ran. It reads three files:
 
   judge.json          what review_rules.py wrote there, before any of the pull request's code ran anywhere
-  review-input.json   what the Logic App uploads at the end:
+  review-input.json   what the reviewer uploads at the end:
                         pr            number, title, head and base commits
-                        run           the Logic App run id, for the footer
+                        run           the review's id, for the footer (the reviewer's logs name the review by it)
                         sandbox       run_change.sh's summary (text). The pull request's own code ran there, so it is
                                       evidence, not a verdict.
-                        agent_status  the Logic App status of the agent call
+                        agent_status  the status of the agent call
                         checker_ref   where the checker came from (main)
   agent.json          the Microsoft Foundry Responses API result of the reviewer agent, or the error that stopped it
 
@@ -21,9 +21,10 @@ The review has three parts, always in this order, and nothing in the second or t
   1. Team rules: the checker's verdict line and its own Markdown table, copied from judge.json word for word.
   2. Sandbox: the build and test results.
   3. Commentary from the reviewer agent: summary, observations, notes on rule results, what the person should decide.
-Text that came from the pull request or from the model is made inert: one line, no HTML, no @mentions. GUIDs and Azure
-host names are replaced, so not even a manipulated agent can post tenant details. Error messages are never posted, only
-error codes; the details stay in the Logic App's run history.
+Text that came from the pull request or from the model is made inert: one line, no HTML, no links or images, no
+@mentions, no references to Issues or pull requests (they would add "mentioned this" to their timelines in the name of
+the token's owner), and no math. GUIDs and Azure host names are replaced, so not even a manipulated agent can post
+tenant details. Error messages are never posted, only error codes; the details stay in the reviewer's logs.
 
 Usage
   python3 format_review.py --judge judge.json --input review-input.json --agent agent.json
@@ -59,6 +60,8 @@ def redact(text: str) -> str:
 
 ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 WWW = re.compile(r"(?i)www\.")
+REFERENCE = re.compile(r"(?i)(#|GH-)(?=\d)")  # #123, GH-123, owner/repo#123: links to an Issue, and a note on its timeline
+MAX_BACKTICKS = 80  # GitHub's Markdown parser (cmark-gfm) never opens a code span with a longer run of backticks
 
 
 def unmention(text: str) -> str:
@@ -67,17 +70,21 @@ def unmention(text: str) -> str:
 
 
 def inert_text(text: str) -> str:
-    """Text outside code spans: no HTML or entities, no mentions, no links, no autolinked URLs."""
+    """Text outside code spans: no HTML or entities, no links or images, no autolinked URLs, no references to Issues or
+    pull requests, no math (GitHub reads $...$ and $`...`$ as math, whatever the escaping), no mentions. Zero-width
+    spaces do the breaking, so the text reads the same."""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = text.replace("[", "\\[").replace("]", "\\]")
     text = WWW.sub("www\u200b.", text.replace("://", ":/\u200b/"))
+    text = REFERENCE.sub("\\g<1>\u200b", text).replace("$", "\u200b$\u200b")
     return unmention(text)
 
 
 def plain(value: object, limit: int = 500) -> str:
-    """Untrusted text as inert Markdown on one line. Code spans are found the way GitHub (CommonMark) finds them: a run
-    of backticks opens a span only if a run of the same length closes it, and a backslash-escaped backtick is a literal
-    one. Inside a span nothing is interpreted, so only mentions are neutralized there; everything outside is escaped."""
+    """Untrusted text as inert Markdown on one line. Code spans are found the way GitHub (cmark-gfm) finds them: a run of
+    at most 80 backticks opens a span only if a run of the same length closes it, and a backslash-escaped backtick is a
+    literal one. Inside a span nothing is interpreted, so only mentions are neutralized there; everything outside is
+    escaped, and so is every backtick that opens no span."""
     text = redact(" ".join(str(value or "").split()))
     if len(text) > limit:
         text = text[: limit - 1].rstrip() + "…"
@@ -93,11 +100,12 @@ def plain(value: object, limit: int = 500) -> str:
             continue
         if c == "`":
             n = len(text) - i - len(text[i:].lstrip("`"))
-            close = next((m.start() for m in re.finditer(r"`+", text[i + n:]) if len(m.group(0)) == n), None)
+            close = None if n > MAX_BACKTICKS else next(
+                (m.start() for m in re.finditer(r"`+", text[i + n:]) if len(m.group(0)) == n), None)
             out.append(inert_text("".join(outside)))
             outside = []
             if close is None:
-                out.append("\\`" * n)  # an unclosed run is literal text: escape it so it can't pair up later
+                out.append("\\`" * n)  # literal backticks: escape them so they can't pair up later
                 i += n
                 continue
             out.append("`" * n + unmention(text[i + n:i + n + close]) + "`" * n)
@@ -267,16 +275,16 @@ def compose(judge: dict, request: dict) -> dict:
     body += [""] + agent_section(answer, error, tool_calls, version, str(request.get("agent_name") or "reviewer agent"), titles)
     body += ["", "---",
              f"<sub>The Azure pull request reviewer never approves and never requests changes; a person decides. "
-             f"Commit `{head[:7]}` · Logic App run `{run}` · rule checker v{plain(judge['checker']['version'], 10)}.</sub>",
-             "", f"<!-- azure-pr-reviewer sha={re.sub(r'[^0-9a-f]', '', head)} run={re.sub(r'[^0-9A-Za-z]', '', run)} -->"]
+             f"Commit `{head[:7]}` · review `{run}` · rule checker v{plain(judge['checker']['version'], 10)}.</sub>",
+             "", f"<!-- azure-pr-reviewer sha={re.sub(r'[^0-9a-f]', '', head)} review={re.sub(r'[^0-9A-Za-z]', '', run)} -->"]
     return {"markdown": "\n".join(body), "agent": answer, "agent_error": error, "tool_calls": tool_calls}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--judge", type=Path, required=True, help="judge.json, written by review_rules.py")
-    parser.add_argument("--input", type=Path, required=True, help="review-input.json, uploaded by the Logic App")
-    parser.add_argument("--agent", type=Path, help="agent.json: the agent's Responses API result, uploaded by the Logic App")
+    parser.add_argument("--input", type=Path, required=True, help="review-input.json, uploaded by the reviewer")
+    parser.add_argument("--agent", type=Path, help="agent.json: the agent's Responses API result, uploaded by the reviewer")
     parser.add_argument("--markdown", action="store_true", help="Print only the review body")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):

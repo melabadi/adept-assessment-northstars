@@ -11,10 +11,12 @@ Revision labels describe the state at any moment, and each label has its own URL
 
 In Azure, this script runs as five Container Apps jobs that share one image (infra/jobs.bicep):
 
-  release    Started for every build pushed to the registry (Event Grid and a Logic App pass the image's digest), or
-             by a person with Run now (the newest build, requesthub-api:main). Deploys the build as a candidate, gates
-             it, and removes it if the gate fails. A pushed build that already serves users, or is already the
-             candidate, is skipped.
+  release    Started for every build pushed to the registry (Event Grid and the release trigger, an Azure Function,
+             pass the image's digest and its tag, the commit), or by a person with Run now (the newest build,
+             requesthub-api:main). Deploys the build as a candidate, gates it, and removes it if the gate fails. A
+             push whose tag isn't a 40-character commit is refused. A pushed build that already serves users, is
+             already the gated candidate, or whose image an earlier push already started a release for (Event Grid
+             delivers at least once) is skipped.
   promote    A person's go: checks the candidate again on its own URL, then moves 100% of traffic to it in one change.
   abort      A person's no-go: removes the candidate and keeps users on stable.
   rollback   Moves 100% of traffic back to the previous revision, which is still running.
@@ -584,6 +586,36 @@ def busy_executions(app: ContainerApp) -> list[str]:
     return [f"{r['step']} ({r['status'].lower()})" for r in ahead_of(running, own_execution(running))]
 
 
+def release_history(app: ContainerApp) -> list[dict]:
+    """Every execution of the release job that Azure still lists, with its start time and the image a push gave it
+    (its IMAGE setting; '' for a person's Run now)."""
+    history = []
+    for job in arm_list(f"{app.group_url}/providers/Microsoft.App/jobs"):
+        if as_dict(job.get("tags")).get("requesthub-release") != "release":
+            continue
+        for execution in arm_list(f"{ARM}{job['id']}/executions"):
+            props = as_dict(execution.get("properties"))
+            env = {str(entry.get("name")): str(entry.get("value") or "")
+                   for container in as_list(as_dict(props.get("template")).get("containers"))
+                   for entry in as_list(as_dict(container).get("env")) if isinstance(entry, dict)}
+            history.append({"name": str(execution.get("name", "")), "status": str(props.get("status") or "unknown"),
+                            "start": parse_time(props.get("startTime")), "image": env.get("IMAGE", "")})
+    return history
+
+
+def earlier_release(history: list[dict], me: str | None, digest: str) -> dict | None:
+    """The first execution of the release job that a push of the same build (image digest) started before this one,
+    or None. Event Grid delivers each event at least once, so one push can start the release job twice; the order is
+    the one steps take turns in. Only executions that started count (one that never started released nothing), and
+    without this execution's own start time there is no order, so nothing counts."""
+    mine = next((h for h in history if h["name"] == me), None) if me else None
+    if not digest or not mine or not mine["start"]:
+        return None
+    earlier = [h for h in history if h["name"] != me and h["start"] and digest_of(h["image"]) == digest
+               and (h["start"], h["name"]) < (mine["start"], mine["name"])]
+    return min(earlier, key=lambda h: (h["start"], h["name"]), default=None)
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # The registry and the repository: which build an image is
 # ---------------------------------------------------------------------------------------------------------------------
@@ -654,8 +686,8 @@ def tag_commit(reference: str) -> str:
 def image_problem(reference: str, registries: set[str]) -> str | None:
     """Why the release must not deploy an image, or None for a build of requesthub-api, named by a valid tag or
     digest, in a registry the API app itself pulls from. Whoever names the image is checked: a person, or the push
-    trigger, whose event anyone holding the Logic App's URL could forge. Messages quote the image as JSON, so
-    untrusted text stays on one line."""
+    trigger, whose event anyone holding the function's Event Grid key could forge. Messages quote the image as JSON,
+    so untrusted text stays on one line."""
     host, _, path = str(reference).partition("/")
     if "@" in path:
         repository, _, ref = path.partition("@")
@@ -1244,13 +1276,18 @@ def cmd_release(args) -> int:
     app = connect()
     pushed = bool(os.environ.get("IMAGE")) and not args.image  # started by the push trigger for one pushed build
     record = Record("release", "Release a build: candidate, gate, and removal if it fails")
+    pushed_commit = os.environ.get("COMMIT", "") if pushed else ""
+    if pushed and not COMMIT.fullmatch(pushed_commit):
+        # The trigger passes the pushed tag, which names the commit the build was made from. Without it, or with
+        # anything else, nothing says which build this is meant to be: never fall back to what the image claims.
+        return record.finish(False, f"The pushed build's tag {json.dumps(pushed_commit[:72])} is not a 40-character "
+                                    "commit: not released.")
     reference = args.image or os.environ.get("IMAGE") or f"{setting('AZURE_CONTAINER_REGISTRY_ENDPOINT')}/{REPOSITORY}:main"
     require_own_build(reference, app.get())
     if not wait_for_turn(app, record, args.wait):
         return record.finish(False, f"Another release step was still running after {args.wait} s; nothing was released.")
     image, baked = resolve_image(reference)
-    pushed_commit = os.environ.get("COMMIT", "") if pushed else ""
-    claimed = args.commit or (pushed_commit if COMMIT.fullmatch(pushed_commit) else "") or tag_commit(reference)
+    claimed = args.commit or pushed_commit or tag_commit(reference)
     commit, problem = release_commit(baked, claimed)
     record.data.update(trigger="push" if pushed else "person", image=short_image(image), commit=commit or baked)
     if problem:
@@ -1270,6 +1307,14 @@ def cmd_release(args) -> int:
                                    utc_now())):
             reason = (f"Build {commit[:7]} is already the candidate ({state.short(candidate)}) and passed the gate: "
                       "it waits for a person.")
+        else:
+            history = release_history(app)
+            first = earlier_release(history, own_execution(history), digest_of(image))
+            if first:
+                reason = (f"Execution {first['name']} already got a push of this image (build {commit[:7]}, "
+                          f"{first['status'].lower()}). A pushed image starts at most one release, even when Event "
+                          "Grid delivers its event twice. Nothing to release; to release this build again, run the "
+                          "release job yourself.")
         if reason:
             return record.finish(True, reason, status="skipped")
     record.finish(True, f"Releasing build {commit[:7]}.")

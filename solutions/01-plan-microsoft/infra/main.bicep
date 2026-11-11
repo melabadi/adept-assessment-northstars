@@ -7,7 +7,7 @@ targetScope = 'subscription'
 @description('azd environment name, for example ai-sdlc-plan. The resource group is rg-<name>.')
 param environmentName string
 
-@description('Region for the resource group and Microsoft Foundry. The model below must be available there, for example eastus2.')
+@description('Region for the resource group, Microsoft Foundry, and the Function app. The model below must be available there, for example eastus2.')
 param location string
 
 @description('Object id of the person running azd. Receives the Foundry User role and read access to the agent traces.')
@@ -16,11 +16,11 @@ param principalId string
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@description('GitHub repository (owner/name) where the Logic App creates the review Issue and the backlog. Set by the preprovision hook.')
+@description('GitHub repository (owner/name) where the Function app creates the review Issue and the backlog. Set by the preprovision hook.')
 param githubRepository string = ''
 
 @secure()
-@description('Fine-grained GitHub token for this repository only, with Issues read and write. Empty until you set PLAN_GITHUB_TOKEN (README, Set up).')
+@description('Fine-grained GitHub token for this repository only, with Issues read and write. Stored in Key Vault for the Function app. Empty until you set PLAN_GITHUB_TOKEN (README, Set up).')
 param githubToken string = ''
 
 @description('Chat model for the requirements analyst agent. agent.yaml sets temperature, so pick a non-reasoning model or switch agent.yaml to reasoning_effort.')
@@ -65,5 +65,5 @@ output FOUNDRY_ACCOUNT_NAME string = resources.outputs.foundryAccountName
 output FOUNDRY_PROJECT_NAME string = resources.outputs.foundryProjectName
 output FOUNDRY_PROJECT_ENDPOINT string = resources.outputs.foundryProjectEndpoint
 output FOUNDRY_MODEL_DEPLOYMENT string = resources.outputs.foundryModelDeployment
-output LOGIC_APP_NAME string = resources.outputs.logicAppName
+output FUNCTION_APP_NAME string = resources.outputs.functionAppName
 output APPLICATIONINSIGHTS_NAME string = resources.outputs.appInsightsName

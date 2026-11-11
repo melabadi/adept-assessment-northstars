@@ -1,11 +1,28 @@
-# Azure Developer CLI project for the Plan · Microsoft solution. Run `azd up` from this folder.
-# The hooks set the GitHub repository and publish the agent, its evaluators, and the evaluation to Foundry.
+# Azure Developer CLI project for the Plan · Microsoft solution. Run `azd up` from this folder, in a shell where
+# `pip install -r requirements.txt` ran: the hooks use those packages.
+#   prepackage (function)  copy agent.yaml and inputs/ into the Function app's package (function/bundle/)
+#   preprovision           set the GitHub repository; move a GITHUB_TOKEN stored in the azd environment to PLAN_GITHUB_TOKEN
+#   postprovision          run the unit tests, then publish the agent, its evaluators, and the evaluation to Foundry
+#   predeploy              run the unit tests again: a broken step or grader never reaches Azure
 name: ai-sdlc-plan-microsoft
 metadata:
-  template: ai-sdlc-plan-microsoft@2.0.0
+  template: ai-sdlc-plan-microsoft@3.0.0
 infra:
   provider: bicep
   path: infra
+services:
+  function:
+    project: function
+    language: python
+    host: function
+    hooks:
+      prepackage:
+        windows:
+          shell: pwsh
+          run: python ../setup_foundry.py bundle
+        posix:
+          shell: sh
+          run: python3 ../setup_foundry.py bundle
 hooks:
   preprovision:
     windows:
@@ -21,3 +38,10 @@ hooks:
     posix:
       shell: sh
       run: python3 setup_foundry.py publish
+  predeploy:
+    windows:
+      shell: pwsh
+      run: python -m unittest discover -s tests -q
+    posix:
+      shell: sh
+      run: python3 -m unittest discover -s tests -q

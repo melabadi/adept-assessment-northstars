@@ -7,7 +7,7 @@ targetScope = 'subscription'
 @description('azd environment name, for example ai-sdlc-design. The resource group is rg-<name>.')
 param environmentName string
 
-@description('Region for the resource group, Microsoft Foundry, the Function, and the Logic Apps. The model below must be available there, for example eastus2.')
+@description('Region for the resource group, Microsoft Foundry, and the Function. The model below must be available there, for example eastus2.')
 param location string
 
 @description('Region for Azure AI Search. Capacity varies by region; centralus has been reliable.')
@@ -76,6 +76,4 @@ output SEARCH_SERVICE_NAME string = resources.outputs.searchServiceName
 output SEARCH_ENDPOINT string = resources.outputs.searchEndpoint
 output FUNCTION_APP_NAME string = resources.outputs.functionAppName
 output KEY_VAULT_NAME string = resources.outputs.keyVaultName
-output ADVISOR_WORKFLOW_NAME string = resources.outputs.advisorWorkflowName
-output STANDARDS_WORKFLOW_NAME string = resources.outputs.standardsWorkflowName
 output APPLICATIONINSIGHTS_NAME string = resources.outputs.appInsightsName

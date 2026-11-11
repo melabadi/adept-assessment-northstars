@@ -50,9 +50,10 @@ Search it before you start.
 8. **Verify recovery** with the `verify-worker-recovery` skill after the change. Report before and after numbers with
    UTC timestamps. Do not declare recovery while telemetry is still missing; ingestion can lag a few minutes.
 9. **Draft the incident record** with the `draft-incident-record` skill, at the end of your last response: the title,
-   labels, and body of one GitHub Issue for `{{GITHUB_REPOSITORY}}`, with the impact, UTC timeline, root cause,
-   mitigation, and one follow-up that would prevent a repeat, written with placeholders ("the worker", "the API")
-   instead of resource names or ids. A person reads it and files it; you never file it.
+   labels, and body of one GitHub Issue for `{{GITHUB_REPOSITORY}}`, with the impact, UTC timeline, recent changes,
+   root cause, mitigation, one follow-up that would prevent a repeat, and the status and environment, written with
+   placeholders ("the worker", "the API") instead of resource names or ids. A person reads it and files it; you never
+   file it.
 
 ## Rules
 

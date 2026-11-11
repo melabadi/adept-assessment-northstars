@@ -1,0 +1,4 @@
+# Python packages of the release trigger (Azure Functions, Flex Consumption, Python 3.12). Flex installs them with a
+# remote build. azure-functions 2.x needs Python 3.13; 1.25.0 is the newest release for 3.12. The rest of the trigger
+# uses the standard library.
+azure-functions==1.25.0

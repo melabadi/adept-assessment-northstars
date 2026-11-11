@@ -37,8 +37,8 @@ module app '../../../app/infra/requesthub.bicep' = {
     location: location
     principalId: principalId
     principalType: principalType
-    // The automation identity is used only inside Azure, by the posture Logic Apps and the what-if job: no GitHub
-    // federation, no registry push, no RequestHub app role. Reader and Policy Enrollments Contributor on this group.
+    // The automation identity is used only inside Azure, by the what-if job: no GitHub federation, no registry push, no
+    // RequestHub app role. Reader and Policy Enrollments Contributor on this group. The posture Function app has its own.
     automationRoleDefinitionIds: [roles.reader, roles.policyEnrollmentsContributor]
     automationCanPushImages: false
     automationAppRoleNames: []

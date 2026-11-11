@@ -6,7 +6,7 @@ Small, well-defined features often wait in the backlog until a developer has tim
 
 ## Where it fits
 
-**Phase 3 of 7: Develop.** The Microsoft counterpart is [03-develop-microsoft](../03-develop-microsoft/): there, an agent in Azure *reviews* RequestHub's pull requests. Here, an AI agent *writes* RequestHub's code.
+**Phase 3 of 7: Develop.** The Microsoft counterpart is [03-develop-microsoft](../03-develop-microsoft/): there, an agent in Azure *reviews* RequestHub's pull requests. Here, an AI agent *writes* RequestHub's code. To run both on one pull request, follow the [Develop solution combo](../../PRESENTING.md#develop-copilot-writes-azure-reviews-a-person-decides); to follow one requirement from Plan to Test, see [Follow one requirement from Plan to Test](../../PRESENTING.md#follow-one-requirement-from-plan-to-test).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -32,8 +32,10 @@ flowchart LR
 ```
 
 - **Copilot cloud agent** runs the custom agent [`develop-github`](.github/agents/develop-github.agent.md) with three skills: `bounded-feature` (how to build a feature inside its bounds, plus the boundary check), `regression-validation` (runs the test suites a change touches), and `contract-impact` (additive-only API contract check). It works in the environment that [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml) prepares: .NET, Node.js, Playwright, and PostgreSQL.
-- **GitHub Actions** runs the app's [CI](../../.github/workflows/ci.yml) (API integration tests on PostgreSQL with the contract check, web typecheck, unit tests and build, browser tests) and this solution's [`develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml). The bounds check runs the checker from the base branch, so a pull request cannot change the rules it is judged by.
+- **GitHub Actions** runs the app's [CI](../../.github/workflows/ci.yml) (API integration tests on PostgreSQL with the contract check, web typecheck, unit tests and build, browser tests) and this solution's [`develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml). The bounds check runs the checker from the base branch, so editing the checker doesn't change the rules a pull request is judged by. GitHub still runs a pull request's own copy of the workflow file, so review any change to it.
 - **A person** writes the Issue, approves the workflow runs on Copilot's pull request, reviews, sends findings back with an `@copilot` comment, and decides. In RequestHub itself, only an approver ever approves a request, and the feature cannot change that.
+
+**Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot, and Copilot ignores `@copilot` comments from anyone else. The bounds check runs on every pull request, forks included, with a read-only token: it reads the commits as data and never runs them. CI runs a fork's code with a read-only token and no secrets, once someone with write access approves the run.
 
 ## What's in this folder
 
@@ -88,9 +90,9 @@ Check them with `gh label list --search phase:develop`: the first line reads `ph
      }'
    ```
 
-   ![The starting-state checks: the feature is not on main, no demo Issue is open, the custom agent is on main, and copilot-swe-agent can be assigned](images/00-starting-state.png)
+   ![The starting-state checks: the feature is not on main, the only open demo Issue is #2, the fallback kept on purpose, the custom agent is on main, and copilot-swe-agent can be assigned](images/00-starting-state.png)
 
-   If `git grep` finds the feature, someone merged a demo pull request: revert it before the session.
+   This repository keeps Issue #2 open on purpose, with its draft pull request #3 from an earlier run as the fallback, so `gh issue list` prints that one line. Any other open `phase:develop` Issue is left over from an earlier session: follow [Reset and clean up](#reset-and-clean-up). If `git grep` finds the feature, someone merged a demo pull request: revert it before the session.
 2. **Start Copilot early.** Run steps 2 and 3 at least 30 minutes before you present. Copilot needs 20 to 30 minutes for its first session (19 and 28 minutes in our runs). In the session, start from step 1 and switch to the pull request when you reach step 3.
 3. **Open in advance:**
    - the issue form (**Issues → New issue → Develop: bounded feature for Copilot**), the repository's **Pull requests** and **Actions** tabs, and Copilot's draft pull request once it exists;

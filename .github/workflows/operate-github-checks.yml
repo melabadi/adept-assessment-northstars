@@ -1,0 +1,58 @@
+# Operate · GitHub: checks this solution's tooling on every pull request that changes it.
+#  - Unit tests for its trust boundaries: a dispatched regression proof refuses a fork's pull request, the triage starts
+#    only for an incident from the owner, a member, or a collaborator and applies nothing when detection flags the run,
+#    and Copilot CLI only drafts. The scope test runs the proof workflow's own script against a fake `gh`.
+#  - The triage's lock file is exactly what the pinned gh-aw compiler produces from its source, so the workflow that runs
+#    is the workflow that was reviewed.
+name: Operate · GitHub · check the triage and proof tooling
+
+on:
+  pull_request:
+    paths:
+      - 'solutions/07-operate-github/**'
+      - '.github/agents/operate-github.agent.md'
+      - '.github/skills/incident-evidence/**'
+      - '.github/skills/regression-followup/**'
+      - '.github/workflows/operate-github-*'
+      - '.github/ISSUE_TEMPLATE/07-operate-github-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GH_AW_VERSION: v0.93.5 # pinned compiler; recompile and commit the lock file when you change it
+
+jobs:
+  tests:
+    name: Operate tooling unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s solutions/07-operate-github/tests -v
+
+  agentic-workflow:
+    name: Incident triage lock file is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install gh-aw ${{ env.GH_AW_VERSION }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh extension install github/gh-aw --pin "$GH_AW_VERSION"
+      - name: Compile in strict mode and compare with the committed lock file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh aw compile operate-github-incident-triage --strict --validate --no-check-update
+          git diff --exit-code -- .github/workflows/operate-github-incident-triage.lock.yml \
+            || { echo "::error::Run 'gh aw compile operate-github-incident-triage' with gh-aw $GH_AW_VERSION, then 'python tools/sync_solutions.py --pull .github/workflows/operate-github-incident-triage.lock.yml', and commit."; exit 1; }

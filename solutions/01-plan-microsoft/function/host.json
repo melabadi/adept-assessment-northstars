@@ -1,0 +1,28 @@
+{
+  "version": "2.0",
+  "functionTimeout": "01:00:00",
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  },
+  "extensions": {
+    "queues": {
+      "maxDequeueCount": 3,
+      "visibilityTimeout": "00:00:30",
+      "maxPollingInterval": "00:00:02",
+      "batchSize": 4
+    }
+  },
+  "logging": {
+    "logLevel": {
+      "default": "Warning",
+      "Host.Results": "Information",
+      "Function": "Information",
+      "Function.check_reviews": "Warning",
+      "Function.check_reviews.User": "Information"
+    },
+    "applicationInsights": {
+      "samplingSettings": { "isEnabled": false }
+    }
+  }
+}
