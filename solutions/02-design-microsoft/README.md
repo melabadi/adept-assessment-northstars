@@ -5,8 +5,8 @@ Design reviews stall when nobody can find the standard that applies, when two st
 ![The advisor's answer on a GitHub issue, posted from Azure by the GitHub App (ai-sdlc-design-advisor, with AI-SDLC design advisor), for the small-team profile: implement the live AI triage provider inside the existing RequestHub API behind ITriageProvider, not as a separate service, followed by the first standards it relied on, each with its id, version, and requirement](images/06-issue-answer.png)
 
 - **[See it work](#see-it-work):** a real run on RequestHub, this repository's sample app. A change to a standard was in the index 16 seconds after it merged, both agents then passed ten labelled cases, and a design question got a cited answer and an ADR draft 32 seconds after it was filed.
-- **[Add it to your repository](#add-it-to-your-repository):** about 10 minutes of one-time setup in Azure and GitHub, once the folder holds your standards, your teams' profiles, and labelled cases.
-- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 10 minutes to set it up on RequestHub, then about 20 minutes for the steps of See it work.
+- **[Add it to your repository](#add-it-to-your-repository):** about half an hour of one-time setup in Azure and GitHub, in a fresh setup we timed, 20 minutes of it for Azure AI Search to start, once the folder holds your standards, your teams' profiles, and labelled cases.
+- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about half an hour to set it up on RequestHub, in a fresh setup we timed, then about 20 minutes for the steps of See it work.
 
 ## Why it matters
 
@@ -240,7 +240,7 @@ These are the steps that set the solution up for this repository, with what to c
 
 - Your repository on GitHub, with admin rights, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. This solution uses neither GitHub Copilot nor GitHub Actions.
 - An Azure subscription where you can create a resource group and role assignments, for example as Owner.
-- Quota for `gpt-6-luna` version 2026-09-22 (Global Standard, 250,000 tokens per minute) in the region you choose, and for Azure AI Search Basic. We put everything in `eastus2`, except Azure AI Search, which goes to `centralus` unless you set `AZURE_SEARCH_LOCATION`.
+- Quota for `gpt-6-luna` version 2026-09-22 (Global Standard, 250,000 tokens per minute) in the region you choose, and for Azure AI Search Basic. We put everything in `eastus2`, except Azure AI Search, which goes to `centralus` unless you set `AZURE_SEARCH_LOCATION`. `az cognitiveservices usage list --location eastus2 --query "[?name.value=='OpenAI.GlobalStandard.gpt-6-luna']" -o table` shows your model quota there, in thousands of tokens per minute: `Limit` minus `CurrentValue` must be at least 250.
 - A GitHub account that may create a GitHub App and install it on the repository: the repository's owner, or an organization owner.
 - Your approved standards, as text you can split into one file per standard, and a few design questions whose right answers you know, for the evaluation.
 
@@ -261,7 +261,15 @@ Copy this folder into your repository at the same path, `solutions/02-design-mic
 
 ### One-time setup
 
-About 10 minutes, once the folder describes your standards and teams. In our setup, `azd up` took about 6 minutes the first time and 3 to 4 minutes after that, and connecting GitHub took about 3 minutes.
+About half an hour, once the folder describes your standards and teams. A fresh setup on 11 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, took ([the evidence](evidence/2026-11-11-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Deploy: `pip install -r requirements.txt` | 2 minutes 15 seconds |
+| 1. Deploy: `azd up` | 23 minutes 25 seconds, 19 minutes 46 seconds of them for Azure AI Search to start; 1 minute 33 seconds when run again |
+| 2. Connect GitHub | about 3 minutes in our first setup, for a person on two web pages; not timed in the fresh setup |
+
+How long Azure AI Search takes to start varies: in our first setup, in October, the first `azd up` took about 6 minutes.
 
 #### 1. Deploy
 
@@ -275,20 +283,20 @@ pip install -r requirements.txt
 az login
 azd auth login
 gh label create design-advisor --description "Ask the Foundry architecture advisor"
-azd env new <environment name> --location eastus2
+azd env new <environment name> --subscription (az account show --query id -o tsv) --location eastus2
 azd up
 ```
 
-The issue form applies the `design-advisor` label, and GitHub skips labels that don't exist, so the label comes first. The GitHub App that step 2 creates is named `AI-SDLC design advisor`; app names are unique on GitHub, so to give yours another name, run `azd env set GITHUB_APP_NAME "<your app name>"` before `azd up`.
+`--subscription` deploys to the subscription that `az` signed in to, where this README's `az` commands later look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd up` asks you to pick one of your subscriptions. The issue form applies the `design-advisor` label, and GitHub skips labels that don't exist, so the label comes first. The GitHub App that step 2 creates is named `AI-SDLC design advisor`; app names are unique on GitHub, so to give yours another name, run `azd env set GITHUB_APP_NAME "<your app name>"` before `azd up`.
 
-**What you should see:** `azd up` creates resource group `rg-<environment name>` with everything in [How it works](#how-it-works) and ends with `SUCCESS`. On the way, its hooks print:
+**What you should see:** `azd up` creates resource group `rg-<environment name>` with everything in [How it works](#how-it-works) and ends with `SUCCESS: Your application was provisioned and deployed to Azure in …`. On the way, its hooks print:
 
 - **Before provisioning:** `GitHub repository: <owner>/<repository>`, the repository the Function will answer, from your clone's `origin` remote.
 - **After provisioning:** what `setup_azure.py foundry` published in Azure AI Search and Foundry, which Bicep can't declare: the standards in the index and what each profile alone can see, each knowledge base's filter, the agents, and the evaluators. Running it again changes nothing. On this repository, on 29 October, it printed:
 
   ![python setup_azure.py foundry: 12 standards in the index with nothing new; small-team alone sees STD-DATA-002 and STD-OPS-001, enterprise alone sees STD-AI-002, STD-DATA-001, and STD-OPS-002; each knowledge base's base filter; both agents reused at version 2 with their knowledge base; five evaluators](images/00-setup-foundry.png)
 
-- **Before deploying:** the offline tests (`python -m unittest test_advisor`), so a broken gate never reaches Azure.
+- **Before deploying:** the offline tests (`python -m unittest test_advisor`), so a broken gate never reaches Azure. They end with `OK`.
 - **After deploying:** `GitHub is not connected yet. To connect <owner>/<repository>, run: python setup_azure.py github`.
 
 #### 2. Connect GitHub
@@ -377,7 +385,7 @@ About $96 a month while deployed: Azure AI Search Basic (about $73), three priva
 
 ## Try it first in a copy of this repository
 
-Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with this repository's standards and cases in place of yours.
+Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with this repository's standards and cases in place of yours. In the copy, the other solutions' workflows also see this one's pull requests, Issue, and comments, and stop at once or pass in seconds: in our fresh setup, one run of the steps below started three runs of *Repository checks* and two of *Develop · GitHub · feature bounds* for the two pull requests and the merge, a skipped run of *Operate · GitHub · agentic incident triage* for the label, and three runs of *Design · GitHub · agentic design review* for the advisor's comment and the reset's two comments, each stopped after a check of 7 to 10 seconds. No model ran.
 
 ### Quick start
 
@@ -391,12 +399,12 @@ pip install -r requirements.txt
 az login
 azd auth login
 gh label create design-advisor --description "Ask the Foundry architecture advisor"
-azd env new ai-sdlc-design --location eastus2
+azd env new ai-sdlc-design --subscription (az account show --query id -o tsv) --location eastus2
 azd up
 python setup_azure.py github
 ```
 
-`azd up` takes about 6 minutes and prints what [Deploy](#1-deploy) describes, with this repository's twelve standards. Then finish in the browser, as in [Connect GitHub](#2-connect-github). This repository's own app already has the name `AI-SDLC design advisor`, so give yours a suffix on GitHub's page, or set `GITHUB_APP_NAME` before `azd up`. Allow about 10 minutes in all. While deployed, the copy costs what [What it costs](#what-it-costs) says.
+`azd up` took 23 minutes in our fresh setup, 20 of them for Azure AI Search to start, and prints what [Deploy](#1-deploy) describes, with this repository's twelve standards. Then finish in the browser, as in [Connect GitHub](#2-connect-github). This repository's own app already has the name `AI-SDLC design advisor`, so give yours a suffix on GitHub's page, or set `GITHUB_APP_NAME` before `azd up`. Allow about half an hour in all: [One-time setup](#one-time-setup) has the fresh setup's times. While deployed, the copy costs what [What it costs](#what-it-costs) says.
 
 ### Check the starting state
 
@@ -414,13 +422,13 @@ If it says GitHub isn't connected yet, follow [Connect GitHub](#2-connect-github
 | --- | --- | --- |
 | 1. Change a standard | about 2 minutes | merged 40 seconds after the pull request opened |
 | 2. Azure re-indexes | under half a minute after the merge | 16 seconds to the index, 24 seconds to the evaluation's start |
-| 3. The evaluation | 3 to 7 minutes after the merge | 2 minutes 39 seconds and 6 minutes 46 seconds after the merge |
+| 3. The evaluation | 3 to 9 minutes after the merge | 2 minutes 39 seconds and 6 minutes 46 seconds after the merge |
 | 4. Ask from GitHub | about 1 minute | |
 | 5. The advisor run | about a minute | queued 7 seconds after the Issue, done 20 seconds after it started |
 | 6. Review | about 3 minutes | the comment 32 seconds after the Issue |
 | 7. Trace | about 1 minute | |
 
-All seven take about 20 minutes. You can start step 4 while step 3's evaluation runs.
+All seven take about 20 minutes. You can start step 4 while step 3's evaluation runs. In our fresh setup on 11 November, the pull request merged 4 seconds after it opened; the index changed 18 seconds after the merge, the evaluation started 29 seconds after it, and both of its runs reported 9 minutes after it; the advisor's comment and its ADR pull request came 46 seconds after the Issue ([the evidence](evidence/2026-11-11-fresh-setup.md#the-run)).
 
 ### 1. Change a standard
 
@@ -449,7 +457,7 @@ Run the log query from [Use it the first time](#use-it-the-first-time). The stan
 
 ### 3. Read the evaluation
 
-*3 to 7 minutes after the merge. What you should see: [See it work, step 3](#3-azure-evaluated-both-agents).*
+*3 to 9 minutes after the merge. What you should see: [See it work, step 3](#3-azure-evaluated-both-agents).*
 
 In the [Foundry portal](https://ai.azure.com), project `design`: **Build** → **Evaluations** → **Architecture advisor · labelled cases**, then the two runs named after your merge commit, one per profile. Each evaluator is a column.
 
@@ -517,10 +525,15 @@ The Function remembers each question it answered, so a closed Issue never gets a
 When you no longer need the solution, in your repository or in the copy, from the solution's folder:
 
 ```powershell
+$account = azd env get-value FOUNDRY_ACCOUNT_NAME
+az ad sp list --display-name "$account-" -o json | ConvertFrom-Json | Where-Object servicePrincipalType -eq ServiceIdentity | ForEach-Object { az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($_.id)" }
+az ad app list --display-name "$account-" -o json | ConvertFrom-Json | Where-Object displayName -like '*-AgentIdentityBlueprint' | ForEach-Object { az ad app delete --id $_.id }
 azd down --purge --force
 ```
 
-This removes the solution's resource group, with Foundry and its agents and evaluations, Azure AI Search, the Function, and the Key Vault that holds the GitHub App's credentials. Then delete the GitHub App, which is how the Function reached your repository: GitHub → **Settings** → **Developer settings** → **GitHub Apps** → your app → **Advanced** → **Delete GitHub App** (for an app that an organization owns, the organization's settings). If you used the fine-grained token instead, revoke it in **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens**, and delete the repository's webhook. The Issues and ADR pull requests stay in your repository.
+The first three lines remove what Foundry created in Microsoft Entra ID when it published the agents, which `azd down` leaves behind: each agent's agent identity, then its agent identity blueprint, an app registration owned by whoever published the agent ([agent identities in Foundry](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)). Run them before `azd down`, which forgets the account's name. Entra keeps what they delete in its recycle bin for 30 days.
+
+`azd down --purge` lists what it deletes and asks you to confirm; `--force` skips the question. It removes the solution's resource group, with Foundry and its agents and evaluations, Azure AI Search, the Function, and the Key Vault that holds the GitHub App's credentials. `--purge` also removes the soft-deleted Foundry account, Key Vault, and Log Analytics workspace, so their names can be reused. It took 3 minutes 57 seconds in our fresh setup. Then delete the GitHub App, which is how the Function reached your repository: GitHub → **Settings** → **Developer settings** → **GitHub Apps** → your app → **Advanced** → **Delete GitHub App** (for an app that an organization owns, the organization's settings). If you used the fine-grained token instead, revoke it in **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens**, and delete the repository's webhook. The Issues and ADR pull requests stay in your repository.
 
 To set the solution up again right after `azd down --purge`, give it new resource names first (`azd env set AZURE_RESOURCE_SEED <any new value>`): a purged Foundry name can keep pointing at the deleted account for a while. New names mean a new Function address, so connect GitHub again with a new app.
 
@@ -539,7 +552,8 @@ To set the solution up again right after `azd down --purge`, give it new resourc
 │   ├── 2026-10-31-recorded-run.md what Azure recorded during the run in See it work, exported for anyone to check
 │   ├── 2026-11-11-model-refresh.md the first switch, to gpt-6.1-sol: the evaluations of three models, a live answer, and their cost
 │   ├── 2026-11-11-e02-claim.md    case E02's added claim and its proof, both models evaluated on it, and why gpt-6-luna is the default
-│   └── 2026-11-11-e04-claim.md    case E04's added claims and their proof, and the standards run that showed the misread
+│   ├── 2026-11-11-e04-claim.md    case E04's added claims and their proof, and the standards run that showed the misread
+│   └── 2026-11-11-fresh-setup.md  a setup from scratch that followed only this README, timed step by step
 ├── function/                      the Azure Function (Python 3.12, Flex Consumption)
 │   ├── function_app.py            the webhook, the two queue functions, and connecting GitHub
 │   ├── advisor_core/
@@ -576,7 +590,8 @@ The scripts write nothing to the repository. The advisor writes ADR drafts to `a
 ## Troubleshooting
 
 - **`ModuleNotFoundError` in an azd hook.** The hooks run `python` from your PATH. Activate the solution's virtual environment before `azd up`.
-- **azd shows no hook output.** azd doesn't print hook output when it isn't attached to a terminal. Run the hook yourself to see it: `python setup_azure.py foundry`.
+- **azd shows no hook output.** azd shows a hook that isn't `interactive` in a small pane that it clears once the hook succeeds. This folder's [`azure.yaml`](azure.yaml) makes every hook interactive; if yours predates that, run the hook yourself to see what it publishes: `python setup_azure.py foundry`.
+- **`azd up` stops at once with `missing required inputs` and names `githubRepository`, or asks you for it.** azd checks the Bicep parameters before it runs the hook that detects the repository. Since 11 November, [`infra/main.bicep`](infra/main.bicep) gives `githubRepository` an empty default, so azd reaches the hook; if your copy predates that, add `= ''` after `param githubRepository string`, or run `azd env set GITHUB_REPOSITORY <owner>/<repository>` before `azd up`.
 - **`setup_azure.py github --check` warns that the Function answered 404 or 503 right after a deploy.** The Function restarts after a deployment and indexes its routes for up to a minute. Run the check again.
 - **An issue gets no answer.** Check that the issue has the `design-advisor` label (GitHub skips labels that don't exist in the repository), and that its author is the repository's owner, a member, or a collaborator: the advisor ignores anyone else's Issue. Then run the log query from [Use it the first time](#use-it-the-first-time) with `delivery ` added to its prefixes: every delivery the Function ignored has a line that says why. No line at all means the webhook didn't reach the Function: GitHub → **Settings** → **Developer settings** → **GitHub Apps** → the app → **Advanced** → **Recent Deliveries** lists each delivery and the Function's response. A queued run can wait about 10 seconds while Azure starts an instance for it, and log lines arrive about half a minute after they're written.
 - **The issue says the advisor could not answer, or that the ADR draft could not be completed.** Foundry, the index, or a GitHub step failed; the log lines of that advisor run (its id is in the comment) say which. Once the service is back, remove the `design-advisor` label from the issue and add it back: a run that couldn't finish may run again, and it reuses the branch and pull request the last one created. An answered or rejected question doesn't run again; ask it in a new issue.
@@ -596,10 +611,11 @@ The scripts write nothing to the repository. The advisor writes ADR drafts to `a
   ```
 
 - **An evaluation run fails with `use of builtin 'compile()' is not allowed in Python graders`.** Foundry runs `checks.py` as a Python grader, which refuses any call named `compile()`, even `re.compile`. Use pattern strings with `re.findall` and `re.sub`; the tests check this.
-- **`python evaluate.py` reports `COULD NOT GRADE` and exits with code 2.** Foundry's code-based evaluators are a preview, and the service sometimes fails to grade every item of one evaluator in a run. Those items say *An error occurred during grading*, yet the Foundry portal counts them as passed, so trust `evaluate.py` here. It happened in 7 of the 20 runs measured over three days, to a different evaluator from one run to the next. The checks take milliseconds, far inside Foundry's limit of 2 minutes per grading call, and turn any error into a fail, so the error comes from the service. `evaluate.py` starts such a run again by itself, up to three runs per profile (`--attempts`), so `COULD NOT GRADE` means the last of them failed too: run the evaluation again later, or use `python evaluate.py --local`. `no answer to grade` means the agent call itself failed, and `no result for this case` means Foundry returned no result for it; open the run in Foundry for the details.
+- **A standards run's evaluation stays in progress.** A standards run only starts the Foundry evaluation: its last log line says `evaluation started in Foundry`, and the Function never reads the results. A run shows no results until it finishes: in our fresh setup on 11 November, both runs of a standards run's evaluation showed none for 8½ minutes, then reported together. Earlier that day, one run's small-team evaluation (`evalrun_7e70a441…`) stayed in progress in Foundry for over 46 minutes with no results. If a run's evaluation stays in progress, read it in Foundry (**Build** → **Evaluations** → **Architecture advisor · labelled cases**), or run `python evaluate.py`, which starts its own runs, waits for them, and reports a graded result.
+- **`python evaluate.py` reports `COULD NOT GRADE` and exits with code 2.** Foundry's code-based evaluators are a preview, and the service sometimes fails to grade every item of one evaluator in a run. Those items say *An error occurred during grading*, yet the Foundry portal counts them as passed, so trust `evaluate.py` here. It happened in 7 of the 20 runs measured over three days, to a different evaluator from one run to the next. The checks take milliseconds, far inside Foundry's limit of 2 minutes per grading call, and turn any error into a fail, so the error comes from the service. `evaluate.py` starts such a run again by itself, up to three runs per profile (`--attempts`), so `COULD NOT GRADE` means the last of them failed too: run the evaluation again later, or use `python evaluate.py --local`. `no answer to grade` means the agent call itself failed, and `no result for this case` means Foundry returned no result for it; open the run in Foundry for the details. In our fresh setup on 11 November, the model provider refused one agent call for E10's ordinary question with HTTP 400 `invalid_prompt` (*your prompt was flagged as potentially violating our usage policy*), in a standards run's evaluation; the same case passed in the run before.
 - **`python evaluate.py` reports a case as `FAIL: citations`.** An excerpt the agent quoted isn't one the gate accepts, so the gate would have kept that answer from GitHub too. Once in 100 answers, the agent quoted the last five words of a longer sentence of STD-AI-001 (*every tool call is audited*): the check wants a whole sentence or at least six words in a row, so a shortened quote can't drop a *not*. `evaluate.py` never starts a run with a failed case again, because that would hide the result. Run the evaluation again for new answers.
 - **A case fails every evaluator at once.** The agent's run ended without an answer: in Foundry, the item's output has no final message. It happened once in more than 100 answers, after 80 seconds instead of the usual 15. Run the evaluation again; if the same case keeps failing, read that case's trace in the agent's **Traces** tab.
 - **Every case fails every evaluator, in every run.** The evaluators can't find the answers. In November 2026, Foundry began handing a code-based evaluator the agent's answer in its `sample` argument instead of the evaluation item; evaluators that read only the item then failed all 50 checks of a run. [`evaluation.py`](function/advisor_core/evaluation.py) reads the answer from either place. If your copy predates that change, update it and run `python evaluate.py`: it registers the new evaluator versions. A standards run uses the evaluators of the deployed Function, so run `azd deploy` too.
-- **`python evaluate.py` reports a case as `FAIL: grounding` although the answer looks right.** The check reads the answer's conclusion as short claims with their negations, conditions, and comparisons; it isn't a reader. In 80 answers to the ten labelled questions it failed two, both genuine: they reported the STD-OBS-002 and STD-SEC-002 conflict but quoted a sentence of STD-SEC-002 that doesn't say what conflicts. In 90 answers to the six held-out questions (84 asked directly and 6 in a Foundry run with `--held-out`), it misread three right answers, in two ways: one described the rejected tool as a sentence's subject, and two put "extending the existing service and avoiding new queues" in a single clause. On 11 November it misread two more right held-out answers that made the rejected choice a sentence's subject, and three right answers to E02 that named the gateway *the central Azure API Management AI gateway*, which puts six words between *through* and *gateway*. E02 now also accepts `through* api management`, the gateway's name in STD-OPS-002 ([the E02 claim](evidence/2026-11-11-e02-claim.md)). It also misread two right answers to E04 that put *only fields* in the same clause as a negation word meant for the rest of the clause, as in *"They require sending only fields needed for the use case and expressly prohibit sending attachments"*: the check counts negation words per clause, so one such word denies every claim in the clause. The check stays as it is; E04 now also accepts `minimi* set of field*` and `allowlist* field*`, two other ways right answers state STD-SEC-002 ([the E04 claims](evidence/2026-11-11-e04-claim.md)). `python evaluate.py --check-graders` lists the known misreads. Read the case's answer in Foundry before you call it wrong. If a right answer names something in words your claim doesn't accept, add those words as another claim in `eval_cases.jsonl`, never in `eval_heldout.jsonl`, and run `python evaluate.py --check-graders` to prove that every wrong answer still fails.
+- **`python evaluate.py` reports a case as `FAIL: grounding` although the answer looks right.** The check reads the answer's conclusion as short claims with their negations, conditions, and comparisons; it isn't a reader. In 80 answers to the ten labelled questions it failed two, both genuine: they reported the STD-OBS-002 and STD-SEC-002 conflict but quoted a sentence of STD-SEC-002 that doesn't say what conflicts. In 90 answers to the six held-out questions (84 asked directly and 6 in a Foundry run with `--held-out`), it misread three right answers, in two ways: one described the rejected tool as a sentence's subject, and two put "extending the existing service and avoiding new queues" in a single clause. On 11 November it misread two more right held-out answers that made the rejected choice a sentence's subject, and three right answers to E02 that named the gateway *the central Azure API Management AI gateway*, which puts six words between *through* and *gateway*. E02 now also accepts `through* api management`, the gateway's name in STD-OPS-002 ([the E02 claim](evidence/2026-11-11-e02-claim.md)). It also misread two right answers to E04 that put *only fields* in the same clause as a negation word meant for the rest of the clause, as in *"They require sending only fields needed for the use case and expressly prohibit sending attachments"*: the check counts negation words per clause, so one such word denies every claim in the clause. The check stays as it is; E04 now also accepts `minimi* set of field*` and `allowlist* field*`, two other ways right answers state STD-SEC-002 ([the E04 claims](evidence/2026-11-11-e04-claim.md)). In our fresh setup later that day, it misread three more right answers of 19: one to E01, which recommended to *prefer the existing API and ITriageProvider boundary*, words none of E01's claims accept, and two to E04, one with *only fields* in a clause with *exclude* and one that said *only those the AI use case needs* and *the minimum necessary set* ([the fresh setup](evidence/2026-11-11-fresh-setup.md#the-evaluations)). `python evaluate.py --check-graders` lists the known misreads. Read the case's answer in Foundry before you call it wrong. If a right answer names something in words your claim doesn't accept, add those words as another claim in `eval_cases.jsonl`, never in `eval_heldout.jsonl`, and run `python evaluate.py --check-graders` to prove that every wrong answer still fails.
 - **`DefaultAzureCredential failed to retrieve a token` from a script.** The Azure CLI took too long to return a token. Run `az account get-access-token --resource https://ai.azure.com` to check that it responds, then run the script again.
 - **The Foundry portal opens another project.** It reopens the project you used last. Pick `design` in the project switcher next to **Microsoft Foundry**, at the top left.
