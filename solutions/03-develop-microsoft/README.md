@@ -64,8 +64,8 @@ sequenceDiagram
 | --- | --- |
 | **GitHub** | Holds the code and the pull request. The `review:azure` label asks for a review; a repository webhook, signed with a secret, tells Azure. `azd up` creates both with your GitHub CLI. Nothing runs in GitHub Actions, and nothing depends on GitHub Copilot. |
 | **Azure Functions** (Flex Consumption, Python) | One app, [`function/`](function/). Its webhook function, `github_webhook`, checks GitHub's signature, reads the pull request from GitHub's REST API with a fine-grained token, and queues a review only if one may run, all within GitHub's 10-second limit. Its queue-triggered function, `review`, takes one review from the queue: it drives the two sandbox sessions, starts the agent and polls for its answer, and posts the review. It logs one line per step to Application Insights. Two more endpoints start and read the dry runs that `eval_reviewer.py` uses. It reads the GitHub token and the webhook secret from Key Vault with its managed identity. The app runs in its own virtual network and reaches its storage, which holds the queue, and Key Vault through private endpoints. |
-| **Azure Container Apps dynamic sessions** | Two pools of Shell sessions. The **judge** pool has no network: it runs the rule checker ([`sandbox/review_rules.py`](sandbox/review_rules.py)) on the code as data and, at the end, writes the review ([`sandbox/format_review.py`](sandbox/format_review.py)). The **run** pool builds and tests the pull request ([`sandbox/run_change.sh`](sandbox/run_change.sh)): for RequestHub, .NET 10 and the API's integration tests against PostgreSQL 16, then Node 26 and the web UI's typecheck and unit tests. PostgreSQL comes from the zonky project's builds of it on Maven Central, pinned by version and SHA-256, so nothing comes from Ubuntu's package archive. Each setup step has a time limit, and a step that fails shows in the review as an error with its reason. |
-| **Microsoft Foundry** | Hosts the `requesthub-pr-reviewer` prompt agent on `gpt-5.4-mini` ([`reviewer-agent.yaml`](reviewer-agent.yaml)). Its one tool, `runInSandbox`, reads files in the run session with the project's managed identity. Every answer is traced to Application Insights, and the evaluations live in the project. |
+| **Azure Container Apps dynamic sessions** | Two pools of Shell sessions, which are in [preview](https://learn.microsoft.com/azure/container-apps/sessions-tutorial-shell). The **judge** pool has no network: it runs the rule checker ([`sandbox/review_rules.py`](sandbox/review_rules.py)) on the code as data and, at the end, writes the review ([`sandbox/format_review.py`](sandbox/format_review.py)). The **run** pool builds and tests the pull request ([`sandbox/run_change.sh`](sandbox/run_change.sh)): for RequestHub, .NET 10 and the API's integration tests against PostgreSQL 16, then Node 26 and the web UI's typecheck and unit tests. PostgreSQL comes from the zonky project's builds of it on Maven Central, pinned by version and SHA-256, so nothing comes from Ubuntu's package archive. Each setup step has a time limit, and a step that fails shows in the review as an error with its reason. |
+| **Microsoft Foundry** | Hosts the `requesthub-pr-reviewer` prompt agent ([`reviewer-agent.yaml`](reviewer-agent.yaml)) on `gpt-6-luna`, model version 2026-09-22; in this repository's deployment it is agent version 6. Its one tool, `runInSandbox`, reads files in the run session with the project's managed identity. Every answer is traced to Application Insights, and the evaluations live in the project. |
 | **The person** | Adds the label, reads the review, and decides. |
 
 **Why you can trust the review.**
@@ -194,6 +194,8 @@ That evening, after Copilot's review of #298 led to a stricter commentary check,
 
 ![python eval_reviewer.py --check-graders: Foundry graded 26 fixed reviews, twice because it couldn't grade rule_verdicts on the first run. Every right review passes all five checks, and every wrong one, including sql-concatenation/reported and sql-concatenation/prevents, fails only useful_commentary, except two held-out reviews marked with an asterisk and listed under the table as known misses: fast-track/rules-out passes and department-leak/dropped-guard fails. Paired 13 of 13 and held-out 11 of 13 graded as labelled, and Foundry graded all 26 the same way as the local checks](images/10-check-graders.png)
 
+Since 11 November, the agent runs as version 6 on `gpt-6-luna`, and this evaluation passed every check on every case on it, locally and in Foundry. On the new model, the evaluation had first failed version 5 on one check: its concern on `sql-concatenation` left the problem's name to the summary, and one sentence added to the agent's instructions fixed that ([evidence](evidence/2026-11-11-evaluation.md)).
+
 Evidence: [the evaluation](evidence/2026-11-10-evaluation.md), with each dry run as the Function logged it and Foundry's run records; the ten pull requests [#268](https://github.com/melabadi/adept-assessment-northstars/pull/268) to [#277](https://github.com/melabadi/adept-assessment-northstars/pull/277); and the description of [#298](https://github.com/melabadi/adept-assessment-northstars/pull/298).
 
 **What this shows:** the reviewer's quality is measured on labelled changes, by checks that read conclusions rather than keywords, so any change to the rules, the agent, or the model can be compared with the last run.
@@ -238,7 +240,7 @@ These are the steps that set the solution up on RequestHub, with what to change 
 - Your repository on GitHub, where you have admin rights: the setup adds a webhook and a label with your GitHub CLI. No GitHub Copilot plan is needed.
 - The tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI 1.37 or later.
 - An Azure subscription where you can create a resource group and role assignments (Owner, or Contributor plus Role Based Access Control Administrator).
-- A region with Microsoft Foundry, `gpt-5.4-mini` (GlobalStandard, 150K tokens per minute of quota), Azure Container Apps dynamic sessions, and the Azure Functions Flex Consumption plan, for those resources. The default, East US 2, has all four; to use another, run `azd env set AZURE_AI_LOCATION <region>` before `azd up`. The resource group and monitoring go to the region you give `azd env new`.
+- A region with Microsoft Foundry, `gpt-6-luna` version 2026-09-22 (GlobalStandard, 150K tokens per minute of quota; Azure retires this version on 11 March 2028), Azure Container Apps dynamic sessions, and the Azure Functions Flex Consumption plan, for those resources. The default, East US 2, has all four; to use another, run `azd env set AZURE_AI_LOCATION <region>` before `azd up`. The resource group and monitoring go to the region you give `azd env new`.
 - A build and tests that run on Linux in a fresh shell: the run session installs your toolchain at the start of every review.
 
 ### What to copy and what to change
@@ -252,6 +254,7 @@ Copy this folder into your repository, for example as `review/`, without `demo/`
 | [`sandbox/run_change.sh`](sandbox/run_change.sh) | Installs RequestHub's toolchain, each step with a time limit: .NET 10, Node 26, and PostgreSQL 16 from Maven Central, pinned by version and SHA-256. Then runs its tests (`dotnet test --solution app/RequestHub.slnx`, then `npm ci`, `npm run typecheck`, and `npm test` in `app/web`) | Your toolchain and your test commands: one `setup` step per tool, with its time limit, so a step that fails shows in the review as an error with its reason. If your tests need PostgreSQL, keep `install_postgres` and use your tests' password; for another version, change `PG_VERSION` and `PG_SHA256` (Maven Central publishes each jar's `.sha256` next to it). Keep the `start`, `status`, and `summary` commands and the shape of `run/summary.json`, which `format_review.py` and the Function read. Results travel as files because a session cuts a command's output after 4 KB: put any new result in a file too. |
 | [`reviewer-agent.yaml`](reviewer-agent.yaml) | The Foundry agent: its instructions, the sandbox tool, and the strict output schema | The instructions, which describe RequestHub, and the rule ids in the schema's `rule_id` enum. `azd provision` publishes a new version when the file changes. |
 | [`infra/resources.bicep`](infra/resources.bicep) | Foundry, the model, two session pools, and the Function with its network, storage, Key Vault, and roles | The `REVIEW_SCRIPTS_PATH` app setting, `solutions/03-develop-microsoft/sandbox`: the folder of your copy of `sandbox/`, for example `review/sandbox`. |
+| [`infra/main.bicep`](infra/main.bicep) | The deployment's parameters, among them the model: `gpt-6-luna`, version 2026-09-22, at 150K tokens per minute | Nothing, unless you want another model: change `modelName`, `modelVersion`, and `modelCapacity`, and run `azd provision`. It deploys the model next to the old one and publishes a new agent version on it. Run the evaluation, then delete the old deployment: `az cognitiveservices account deployment delete -g (azd env get-value AZURE_RESOURCE_GROUP) -n (azd env get-value FOUNDRY_ACCOUNT_NAME) --deployment-name <old model>`. |
 | [`review_graders.py`](review_graders.py) and [`test_eval_reviewer.py`](test_eval_reviewer.py) | The five checks that score the reviewer, and their tests | The number of rules (`len(rules) != 5`) and the rule ids in the tests. |
 | [`eval_cases.jsonl`](eval_cases.jsonl), [`eval_changes/`](eval_changes/), and [`grader_checks.jsonl`](grader_checks.jsonl) | RequestHub's ten labelled cases, their changes, and the fixed right and wrong reviews | Your own labelled changes, as in [Use it the first time](#use-it-the-first-time). Until you have them, leave the evaluation out: `--setup` refuses cases whose commits aren't in your history. |
 | [`eval_prs.py`](eval_prs.py) | Makes each case a closed pull request of your repository | It stages only `app/` (`git add --all app`) and fetches `main` to find each case's starting commit: name your code's folders and your default branch. |
@@ -304,7 +307,7 @@ azd creates the resource group `rg-<environment name>` with the resources in [Ho
 - **predeploy** runs the Function's unit tests: code that breaks a rule of the review never reaches Azure.
 - **postdeploy** connects the repository with your GitHub CLI. It creates the label, checks that GitHub accepts the token, waits until the Function refuses an unsigned delivery (which it does only once it has read the webhook secret from Key Vault), and creates one webhook that sends signed `pull_request` events to the Function. It reads the Function's address from Azure and never prints it.
 
-**What you should see:** the preprovision hook prints `GitHub repository: <owner>/<repo>`, the postprovision hook prints `published new version: requesthub-pr-reviewer v1 (model gpt-5.4-mini)`, and `azd up` ends with `SUCCESS` after the postdeploy hook printed:
+**What you should see:** the preprovision hook prints `GitHub repository: <owner>/<repo>`, the postprovision hook prints `published new version: requesthub-pr-reviewer v1 (model gpt-6-luna)`, and `azd up` ends with `SUCCESS` after the postdeploy hook printed:
 
 ```text
 Label review:azure in <owner>/<repo>: ready.
@@ -336,7 +339,7 @@ Then make it part of your workflow:
 
 ### What it costs
 
-While deployed, about $23 a month, for the three private endpoints ($0.01 an hour each) and their DNS zones that keep the Function's storage and Key Vault off the internet. The Function costs nothing while no one asks for a review, and Key Vault charges per operation, fractions of a cent here. At list prices, each review costs about $0.07: two sandbox sessions at $0.03 each (sessions are billed in one-hour increments), less than $0.01 of `gpt-5.4-mini` tokens (Foundry estimated $0.002 and $0.003 for the reviews in See it work), and less than $0.01 of Function time (about 270 GB-seconds; the first 100,000 each month are free). An evaluation of ten cases costs under $1. Application Insights and Log Analytics stay within their free monthly allowance at this volume. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+While deployed, about $23 a month, for the three private endpoints ($0.01 an hour each) and their DNS zones that keep the Function's storage and Key Vault off the internet. The Function costs nothing while no one asks for a review, and Key Vault charges per operation, fractions of a cent here. At list prices, each review costs about $0.07: two sandbox sessions at $0.03 each (sessions are billed in one-hour increments), less than $0.01 of `gpt-6-luna` tokens (in the [evaluation of 11 November](evidence/2026-11-11-evaluation.md#the-agents-model-use), ten answers cost $0.0092 in all, at list prices), and less than $0.01 of Function time (about 270 GB-seconds; the first 100,000 each month are free). An evaluation of ten cases costs under $1. Application Insights and Log Analytics stay within their free monthly allowance at this volume. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
 
 ## Try it first in a copy of this repository
 
@@ -394,9 +397,9 @@ If GitHub refuses the token, create a new one, run `azd env set GITHUB_REVIEW_TO
 | 4. Read the review | a few minutes | |
 | 5. Open the agent and its traces | a few minutes | |
 | 6. Push a fix | 2 to 4 minutes to its review | 2 minutes 30 seconds from the commit |
-| 7. Measure the reviewer | about 15 minutes, a few more when Foundry grades twice; then 3 to 8 minutes per Foundry grading for `--check-graders`, or a second with `--local` | 16 minutes 26 seconds; then 11 minutes 26 seconds for `--check-graders`, graded twice |
+| 7. Measure the reviewer | about 9 minutes, a few more when Foundry grades twice; then 3 to 8 minutes per Foundry grading for `--check-graders`, or a second with `--local` | 16 minutes 26 seconds; then 11 minutes 26 seconds for `--check-graders`, graded twice. On 11 November, 8 minutes 45 seconds, graded once |
 
-All seven steps take about 45 minutes.
+All seven steps take about 40 minutes.
 
 ### 1. Open a pull request with a risky change
 
@@ -480,7 +483,7 @@ The query from step 3 shows the new review's steps, under a new id.
 
 ### 7. Measure the reviewer
 
-*About 15 minutes, then 3 to 8 per Foundry grading of the fixed reviews. What you should see: [See it work, step 7](#7-an-evaluation-measured-the-reviewer).*
+*About 9 minutes, a few more when Foundry grades twice; then 3 to 8 per Foundry grading of the fixed reviews. What you should see: [See it work, step 7](#7-an-evaluation-measured-the-reviewer).*
 
 ```powershell
 cd solutions/03-develop-microsoft
@@ -528,6 +531,7 @@ The solution creates no Microsoft Entra app registration, so after these steps n
 ├── evidence/                   what Azure recorded during the runs in See it work, exported for anyone to check
 │   ├── 2026-10-31-recorded-run.md   the review run: the Function's requests and log, and the agent's traces
 │   ├── 2026-11-10-evaluation.md     the evaluation: each dry run, and Foundry's run records
+│   ├── 2026-11-11-evaluation.md     the same evaluation after the move to gpt-6-luna, with the model's token use
 │   └── 2026-11-11-sandbox-setup.md  why PostgreSQL comes from Maven Central now, and the runs that checked it
 ├── images/                     screenshots of the runs in See it work, and of the Develop combo (combo-*)
 ├── azure.yaml                  azd project: provisions infra/, deploys function/, and runs the hooks below
