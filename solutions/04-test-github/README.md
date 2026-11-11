@@ -4,8 +4,8 @@ Defects that only show up under retries or simultaneous clicks slip through revi
 
 ![The review evidence on Copilot's pull request: every check passes, and Copilot's regression tests fail at the tests-only commit and pass at the head](images/07-evidence-checks.png)
 
-- **See it work:** [a real run on this repository](#see-it-work), step by step. A request that could be approved and then rejected was reproduced, tested with an eight-click race, fixed, and reviewed, with a screenshot and a link anyone can open for every step.
-- **Add it to your repository:** [copy 19 files, adapt them to your code, and set them up once](#add-it-to-your-repository). The setup's commands took seconds when this README was checked, 5 to copy the files and 4 for the labels; the rest is a settings page, a token, a pull request, and the changes your stack needs.
+- **See it work:** [a real run on this repository](#see-it-work), step by step. A request that could be approved and then rejected was reproduced, tested with an eight-click race, fixed, and reviewed, with a screenshot and a link anyone can open for every step. A later run shows the agentic workflow explaining two red CI runs.
+- **Add it to your repository:** [copy 19 files, adapt them to your code, and set them up once](#add-it-to-your-repository). The setup's commands took seconds when this README was checked, 5 to 8 to copy the files and 4 for the labels; the rest is a settings page, a token, a pull request, and the changes your stack needs.
 - **Try it first in a copy of this repository:** [about 2 minutes to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution. A run then needs about 22 minutes of Copilot and the checks working unattended.
 
 ## Why it matters
@@ -26,6 +26,8 @@ The value: a defect report becomes a proven, reviewable fix in under half an hou
 - **5 of 7** selected tests failed at the tests-only commit, and **7 of 7** passed at the fix. Six were Copilot's new tests; the seventh was an existing test that the proof script of that day also picked up ([step 5](#5-the-proof-showed-the-tests-failing-first)). The proof took 1 minute 44 seconds.
 - **One authorization gap** that no test covered, found by Copilot code review in 6 minutes. Copilot fixed it, with a new test, 7 minutes after a person asked, and the new commit passed the same gates.
 - **23 minutes** from filing the Issue to a passing proof, 7 of them waiting for a person to approve the workflow runs.
+
+On 11 November, the agentic CI failure investigation told a test-first failure from a regression on two red pull requests. When no other investigation was running, its comment arrived 4 minutes 50 seconds to 5 minutes 44 seconds after CI failed, and each run used 14 to 16 AI credits ([step 10](#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026)).
 
 The Microsoft counterpart, [04-test-microsoft](../04-test-microsoft/), load-tests the API with Azure Load Testing. The [Test combo](../../PRESENTING.md#test-copilot-proves-the-repair-azure-load-tests-the-same-commit) uses both on one change: Azure load-tests the very commit that this solution proves.
 
@@ -57,7 +59,7 @@ flowchart LR
 
 ## See it work
 
-This run took place on 28 October 2026, from 14:44 to 16:31 UTC, on `main` at [`79f9d2c`](https://github.com/melabadi/adept-assessment-northstars/commit/c6b8055ddf71f4d848045619273d664ddb09c57e). The repository's owner started it and took every person's step; Copilot and GitHub Actions did the rest. The defect report became Issue [#100](https://github.com/melabadi/adept-assessment-northstars/issues/100), and Copilot's work became pull request [#101](https://github.com/melabadi/adept-assessment-northstars/pull/101). Every link below opens without signing in. The workflow runs' summaries and logs need a GitHub sign-in and expire, so the screenshots show them, and [`evidence/`](evidence/) keeps both proofs. Every screenshot comes from this run, except the recorded approval in step 8.
+This run took place on 28 October 2026, from 14:44 to 16:31 UTC, on `main` at [`79f9d2c`](https://github.com/melabadi/adept-assessment-northstars/commit/c6b8055ddf71f4d848045619273d664ddb09c57e). The repository's owner started it and took every person's step; Copilot and GitHub Actions did the rest. The defect report became Issue [#100](https://github.com/melabadi/adept-assessment-northstars/issues/100), and Copilot's work became pull request [#101](https://github.com/melabadi/adept-assessment-northstars/pull/101). Every link below opens without signing in. The workflow runs' summaries and logs need a GitHub sign-in and expire, so the screenshots show them, and [`evidence/`](evidence/) keeps both proofs. Every screenshot comes from this run, except the recorded approval in step 8 and the screenshots of step 10, which come from the runs they describe.
 
 | Step | When (UTC) | Who | How long |
 | --- | --- | --- | --- |
@@ -70,8 +72,9 @@ This run took place on 28 October 2026, from 14:44 to 16:31 UTC, on `main` at [`
 | [7. The evidence comment](#7-the-evidence-comment-kept-checks-apart-from-comments) | 15:22 | Owner | seconds |
 | [8. The review loop](#8-a-person-asked-for-a-change-and-the-new-commit-passed-the-same-gates) | 15:22 to 16:04 | Owner, Copilot, GitHub Actions | 6 min 54 s from the request to Copilot's new commit |
 | [9. Optional: Copilot CLI](#9-optional-copilot-cli-fixed-a-second-defect) | 15:23 to 15:41 | Owner, then Copilot CLI | 17 min 50 s |
+| [10. Added since: the CI failure investigation](#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026) | 11 November, 15:05 to 15:41 | Owner, GitHub Actions, Copilot | 5 min 44 s from CI's failure to the comment on #359 |
 
-Steps 1 and 3 ran first, so Copilot was already working while step 2 reproduced the defect.
+Steps 1 and 3 ran first, so Copilot was already working while step 2 reproduced the defect. Step 10 ran on 11 November, after the CI failure investigation was added.
 
 ### 1. The lab branch was rebuilt from main
 
@@ -195,6 +198,36 @@ Four of four failed at the tests-only commit `b9e90bb` and passed at the fix `e8
 
 **What this shows:** the same skills and the same proof worked on a different defect, from the terminal, with no pull request.
 
+### 10. Added since: an agentic workflow explained two red CI runs (11 November 2026)
+
+The CI failure investigation was added after the recorded run, so this step comes from a run of its own. At 15:05 UTC on 11 November 2026 the owner rebuilt the lab branch from `main` at [`640f3e5`](https://github.com/melabadi/adept-assessment-northstars/commit/640f3e5db13494d1af8d4b236b26f3f87f41f2df), as in step 1. At 15:07 they opened two pull requests into it from `fix/` branches:
+
+- [#359](https://github.com/melabadi/adept-assessment-northstars/pull/359) added the three regression tests that the lab branch lacks, in [`42f4090`](https://github.com/melabadi/adept-assessment-northstars/pull/359/commits/42f40901d492c6d477066f6fbe74c518bc9588f0), without the fix: test-first, the way Copilot works.
+- [#360](https://github.com/melabadi/adept-assessment-northstars/pull/360) fixed step 9's defect, the blank rejection comment, test-first: a new test in [`06ce023`](https://github.com/melabadi/adept-assessment-northstars/pull/360/commits/06ce0236c1f9c41358da9f55b9a59752d65394e6), then the fix in [`d0eee36`](https://github.com/melabadi/adept-assessment-northstars/pull/360/commits/d0eee36b2443996644d650b95d9f65bcbcf821f0). The fix also dropped the check that only a rejection needs a comment.
+
+CI failed on both within a minute: three tests failed on #359, and four on #360. On #360 the proof passed, because its new test failed before the fix and passed after it. The proof reruns only the tests that a pull request adds; CI runs them all:
+
+![The checks of pull request 360: in CI, the API and worker tests fail and the browser tests are skipped, while the proof, regression tests fail before the fix and pass after it, passes](images/10-ci-failed-proof-passed.png)
+
+Within 4 seconds of each failure, GitHub queued a run of the investigation from `main`. A script collected the facts, Copilot sorted the failures, and threat detection checked the comment and the label before they were applied. On #359, Copilot found that all three failures were tests the pull request adds, failing as intended. It labeled the pull request `ci:defect-reproduced`, and for each test its next step was to fix the code, not the test:
+
+![The investigation's comment on pull request 359, under the label ci:defect-reproduced: three tests this pull request adds fail as intended, each with its assertion message, its line, its log, and the next step](images/10-ci-investigation-defect-reproduced.png)
+
+On #360, the four failures were existing tests that pass on main. Copilot labeled it `ci:regression` and traced the failures, in the diff, to the condition that the fix dropped. Approvals without a comment now got a 400, which also hid three authorization checks behind the validation error:
+
+![The investigation's comment on pull request 360, under the label ci:regression: four existing tests fail with BadRequest, traced to the Rejected condition dropped in RequestWorkflow.cs, with the next step to restore it and leave the four tests unchanged](images/10-ci-investigation-regression.png)
+
+The first comments, at 15:12 and 15:17 UTC, sorted every failure the same way, but their links to the lines and to the logs were broken (see [Troubleshooting](#troubleshooting)). [#361](https://github.com/melabadi/adept-assessment-northstars/pull/361) fixed the links, test-first, and at 15:22 the owner re-ran CI's failed job on both pull requests. The comments above come from those re-runs:
+
+- on [#359](https://github.com/melabadi/adept-assessment-northstars/pull/359#issuecomment-6799930281) at 15:29:12, 5 minutes 44 seconds after CI failed;
+- on [#360](https://github.com/melabadi/adept-assessment-northstars/pull/360#issuecomment-6800062263) at 15:34:46, 11 minutes 18 seconds after CI failed, 6 minutes 24 seconds of them spent waiting for the first run to end, because the runs go one at a time.
+
+Each run used 13.3 to 15.2 AI credits for Copilot and 0.62 for threat detection ([the runs' evidence](evidence/ci-investigation-2026-11-11.md)).
+
+At 15:33 the owner pushed the fix to #359, in [`ea02930`](https://github.com/melabadi/adept-assessment-northstars/pull/359/commits/ea029304a1c032e7147f8cf1bbd02fdacf2f4cae). CI and the proof passed by 15:35:44, and the investigation's run skipped every job, because nothing failed. The owner then closed both pull requests without merging.
+
+**What this shows:** a red CI run arrives explained. The comment says which failures reproduce the defect on purpose and which are a regression the change caused, each with its line, its log, and the next step. On #360 the proof alone was green, and the investigation pointed at the line that broke four existing tests.
+
 ## Results and value
 
 **What the run left behind:**
@@ -202,6 +235,7 @@ Four of four failed at the tests-only commit `b9e90bb` and passed at the fix `e8
 - Issue [#100](https://github.com/melabadi/adept-assessment-northstars/issues/100), closed as not planned, and pull request [#101](https://github.com/melabadi/adept-assessment-northstars/pull/101), closed without merging: Copilot's five commits (its plan, two tests-only commits, the fix, and the review-loop commit), Copilot code review's finding, Copilot's reply, and the evidence comment.
 - Two proofs, both *Proven*, in [`evidence/`](evidence/): the same 5 of 7 tests failed at `8de3d60fb`, and 7 of 7 passed at `a92d4b313` and again at `e1d52334d`.
 - The person's decisions: approving Copilot's workflow runs twice, and asking Copilot for a change after the review. No GitHub review was recorded, so the evidence comment's decision stayed pending; step 8 shows how the 10 November run recorded an approval.
+- From step 10's run, on 11 November: pull requests [#359](https://github.com/melabadi/adept-assessment-northstars/pull/359) and [#360](https://github.com/melabadi/adept-assessment-northstars/pull/360), closed without merging, each with its label and the investigation's comment, and the runs' record in [`evidence/ci-investigation-2026-11-11.md`](evidence/ci-investigation-2026-11-11.md).
 
 **What was measured:**
 
@@ -217,6 +251,8 @@ Four of four failed at the tests-only commit `b9e90bb` and passed at the fix `e8
 | Filing the Issue to the first passing proof | 23 min 26 s |
 | GitHub-hosted runner time: every workflow the run started, Copilot's two sessions and its code review included | 42.8 min of job time; 57 min as billed in a private repository, where each job is rounded up to a whole minute |
 | Optional Copilot CLI session (step 9) | 17 min 50 s, 25.48 AI credits |
+| CI failure investigation, from CI's failure to the comment (step 10, 11 November) | 4 min 50 s and 5 min 44 s; 9 min 59 s and 11 min 18 s for the two runs that waited for another to end |
+| CI failure investigation, per run (step 10) | 13.3 to 15.2 AI credits for Copilot and 0.62 for threat detection; 4 min 49 s to 6 min 0 s of job time |
 
 **What a team gets:**
 
@@ -224,8 +260,9 @@ Four of four failed at the tests-only commit `b9e90bb` and passed at the fix `e8
 - **Risk removed.** A fix can't arrive without at least one test that failed first: the proof names the tests that failed, at a known SHA. Races are tested, not assumed: eight parallel clicks must produce exactly one `201`, in the scenario and in the tests. The code review caught an authorization gap before anyone merged.
 - **Evidence a reviewer or auditor can follow.** The evidence comment on the pull request gives the proof's verdict at two known SHAs and keeps the review comments apart from the checks. The test reports at both SHAs are in the proof run's artifact; artifacts expire, so keep the ones you need, as [`evidence/`](evidence/) does here. Once a person submits a review, the comment records who decided.
 - **People stay in charge.** Workflows on Copilot's pull request run only after a person approves them, a person decides on the change, and RequestHub's own rule is untouched: only approvers decide, never on their own request.
+- **A red CI run explained.** Minutes after CI fails, the pull request says which failures reproduce the defect on purpose and which are a regression the change caused, with the line, the log, and the next step for each. On #360 that was a dropped condition behind four failing tests, while the proof's check was green.
 
-**The metric to track when you adopt it:** lead time from a defect report to a proven fix, from the Issue's creation to the first passing proof check on Copilot's pull request. Both timestamps are on GitHub. The recorded run measured 23 minutes 26 seconds, 7 minutes 26 seconds of them waiting for a person to approve the runs; the 10 November run measured 14 minutes 50 seconds. Track alongside it how many fixes arrive with tests that failed first (the proof's verdict), and how many review findings become a commit before merge. Compare both with similar defects fixed before you adopted it. A target such as "a proven fix within an hour of the report" is your team's goal, never a result to report.
+**The metric to track when you adopt it:** lead time from a defect report to a proven fix, from the Issue's creation to the first passing proof check on Copilot's pull request. Both timestamps are on GitHub. The recorded run measured 23 minutes 26 seconds, 7 minutes 26 seconds of them waiting for a person to approve the runs; the 10 November run measured 14 minutes 50 seconds. Track alongside it how many fixes arrive with tests that failed first (the proof's verdict), and how many review findings become a commit before merge. For the CI failure investigation, track how often its label matches what the reviewer concluded about the failure. Compare each with similar defects fixed before you adopted it. A target such as "a proven fix within an hour of the report" is your team's goal, never a result to report.
 
 ## Add it to your repository
 
@@ -253,7 +290,7 @@ Remove-Item -Recurse -Force $src
 git status --short --untracked-files=all
 ```
 
-What you should see: 19 new files, in 5 seconds when this README was checked; the other files in `.github/` and `tests/` stay. The scenarios, the lab patch, and the defect report stay behind, because they describe RequestHub's defect: use them as examples for yours. Then change what assumes RequestHub:
+What you should see: 19 new files, in 5 to 8 seconds in three runs when this README was checked; the other files in `.github/` and `tests/` stay. The scenarios, the lab patch, and the defect report stay behind, because they describe RequestHub's defect: use them as examples for yours. Then change what assumes RequestHub:
 
 | File, under `.github/` | As shipped, for RequestHub | Change it to |
 | --- | --- | --- |
@@ -338,7 +375,7 @@ On your own defect, the steps are those of [See it work](#see-it-work), from ste
 
    See [step 4](#4-a-person-approved-the-workflow-runs).
 4. **Read the proof:** `gh pr checks <pr> --watch`. What you should see: *Regression tests fail before the fix and pass after it* passes, and its summary lists each failure at the tests-only commit in the tests' own words, as in [step 5](#5-the-proof-showed-the-tests-failing-first).
-5. **If CI fails, read why.** When CI fails on the pull request, the CI failure investigation adds one label and posts a comment headed *CI failure investigation*. For each failing test it gives the assertion message, the file and line, a link to the log, its class, and the next step. `ci:defect-reproduced` means every failure is a test that the pull request adds or changes, failing as intended, as on a tests-only commit: the fix should make it pass. `ci:regression` means the change broke a test or a check that passes on main: fix the code, not the test. `ci:infrastructure` means a failure also happens on main, or isn't a test: rerun the failed job. The comment explains; you decide.
+5. **If CI fails, read why.** When CI fails on the pull request, the CI failure investigation adds one label and posts a comment headed *CI failure investigation*. For each failing test it gives the assertion message, the file and line, a link to the log, its class, and the next step. `ci:defect-reproduced` means every failure is a test that the pull request adds or changes, failing as intended, as on a tests-only commit: the fix should make it pass. `ci:regression` means the change broke a test or a check that passes on main: fix the code, not the test. `ci:infrastructure` means a failure also happens on main, or isn't a test: rerun the failed job. The comment explains; you decide. [Step 10](#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026) shows a `ci:defect-reproduced` comment and a `ci:regression` one.
 6. **Ask Copilot for a code review:** select **Reviewers** > **Copilot** in the pull request, or run `gh pr edit <pr> --add-reviewer "@copilot"`. See [step 6](#6-copilot-code-review-found-a-gap-the-tests-missed).
 7. **Post the evidence** on the pull request. Run it from your default branch, never from the pull request's branch: its copy of the script could leave out what the report must say.
 
@@ -360,7 +397,7 @@ On your own defect, the steps are those of [See it work](#see-it-work), from ste
 
 Setting it up uses no AI credits. Each defect fixed this way draws on your Copilot plan's AI credits, for the cloud agent's sessions and its code review, and on GitHub Actions. In the recorded run, Copilot's first session reported 6.3 AI credits, and the optional Copilot CLI session of step 9 reported 25.48. The run used 42.8 minutes of standard GitHub-hosted runners: 29.8 for Copilot's two sessions and its code review, 8.2 for CI, 3.1 for the proof, and 1.7 for this repository's other workflows. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 57 minutes for the recorded run, because each job is rounded up to a whole minute. The length of your test suite changes the CI and proof minutes ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
 
-The CI failure investigation runs only when CI fails on a fix's pull request. Its agent draws on the Copilot plan of the token's owner, and gh-aw stops it at 300 AI credits a run and 1,500 a day, the `max-ai-credits` and `max-daily-ai-credits` in its source; its threat detection has a separate cap, 400 by default. Its jobs run on standard GitHub-hosted runners.
+The CI failure investigation runs only when CI fails on a fix's pull request. In step 10's four runs, Copilot used 13.3 to 15.2 AI credits per run and threat detection 0.62, drawn from the Copilot plan of the token's owner. gh-aw stops a run at 40 credits for Copilot and 2 for detection, about 2.5 times the most a run used, and stops the workflow at 400 credits a day, about 25 investigations. These caps are `max-ai-credits`, `safe-outputs.threat-detection.max-ai-credits`, and `max-daily-ai-credits` in its source. Each run used 4 min 49 s to 6 min 0 s of runner time: 3.5 to 4.5 minutes on `ubuntu-latest` for Copilot and detection, and 1.1 to 1.6 on the single-CPU `ubuntu-slim` for the other four jobs. Those minutes are free in a public repository. In a private one, each job is rounded up to a whole minute, so each run counted 5 minutes of 2-core Linux and 4 of 1-core Linux ([runner pricing](https://docs.github.com/en/billing/reference/actions-runner-pricing)).
 
 ## Try it first in a copy of this repository
 
@@ -409,6 +446,7 @@ The steps have the numbers of [See it work](#see-it-work), which shows what each
 | 7. Assemble the evidence | seconds: the script took 9 s on pull request #101 when this README was checked |
 | 8. Decide, with a review loop | Copilot 6 min 54 s to a new commit, then the proof 1 min 33 s and CI 2 min 49 s |
 | 9. Optional: a second defect with Copilot CLI | 17 min 50 s |
+| 10. Optional: let CI fail, and read why | in the run of 11 November, CI failed within a minute, and the comment came 4 min 50 s to 5 min 44 s after it |
 
 1. **Rebuild the lab branch from `main`.** Do this before every run. The defect lives only on `lab/test-duplicate-decision`: `main` plus [`lab/duplicate-decision.patch`](lab/duplicate-decision.patch).
 
@@ -496,12 +534,26 @@ The steps have the numbers of [See it work](#see-it-work), which shows what each
 
    Copilot reproduces the defect, commits failing tests, then the fix, and the local proof runs the selected tests at the last tests-only commit and at the fix. See [step 9](#9-optional-copilot-cli-fixed-a-second-defect).
 
+10. **Optional: let CI fail, and read why.** This needs the `COPILOT_GITHUB_TOKEN` secret from the [quick start](#quick-start). Open a pull request from a `fix/` branch into the lab branch with the regression tests that the lab branch lacks, and no fix. `main`'s copy of the test file has them:
+
+    ```powershell
+    git fetch origin
+    git switch -c fix/duplicate-decision origin/lab/test-duplicate-decision
+    git checkout origin/main -- app/tests/RequestHub.Tests/RequestLifecycleTests.cs
+    git commit -m "Add regression tests: a request is decided only once"
+    git push -u origin fix/duplicate-decision
+    gh pr create --base lab/test-duplicate-decision --title "Decide a request only once: regression tests first" --body "Regression tests first; the fix follows."
+    ```
+
+    CI fails within about a minute. About 5 minutes later, `gh pr view fix/duplicate-decision --json labels -q '.labels[].name'` prints `ci:defect-reproduced`, and the pull request's comment lists the three tests, each with its message, its line, its log, and the next step. Any change that breaks an existing test gets `ci:regression` instead, as #360 did. See [step 10](#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026).
+
 ### Reset the copy for another run
 
 ```powershell
 gh pr close <pr> --delete-branch --comment "Demo run: closed without merging."
 gh issue close <issue> --reason "not planned"
 git switch main
+gh pr close fix/duplicate-decision --delete-branch --comment "Demo run: closed without merging."    # if you ran step 10
 git branch -D test/whitespace-rejection    # if you ran step 9
 ```
 
@@ -542,8 +594,8 @@ This solution creates no GitHub App or webhook, and apart from the CI failure in
 ├── README.md
 ├── duplicate-decision-issue.md         the defect report: becomes the Issue Copilot receives
 ├── requirements.txt                    no packages needed: the scripts use the Python standard library
-├── evidence/                           the recorded run's two proofs, copied from the workflow's artifacts
-├── images/                             screenshots from the recorded run, used in this README
+├── evidence/                           the recorded run's two proofs, and the CI failure investigation's runs of 11 November
+├── images/                             screenshots from the recorded run and from step 10's run, used in this README
 ├── lab/duplicate-decision.patch        the defect: removes the decision guards and the tests that cover them
 ├── scenarios/
 │   ├── duplicate-decision.json         the reported defect as data: a retry, a second approver, eight parallel clicks
@@ -578,3 +630,4 @@ This solution creates no GitHub App or webhook, and apart from the CI failure in
 - **`error: cannot reach http://localhost:5080`.** The API is not running yet, or runs on another port.
 - **`gh aw compile` fails with *Unknown properties: report-missing-data, report-missing-tool*.** Your gh-aw is older than the workflow: v0.92.0 printed this when this README was checked. `gh aw version` must print `v1.2.2`, the version in `test-github-checks.yml`. Run `gh extension remove gh-aw`, then `gh extension install github/gh-aw --pin v1.2.2`, and compile again.
 - **`gh aw compile --strict` fails with *CTR-021: [workflow-run-scope] workflow_run lacks positive branch scope*.** Strict mode refuses `branches: ["**"]` and negative-only patterns under `on.workflow_run`. Name the branches your fixes come from, such as `copilot/**` for Copilot's and `fix/**` for your own.
+- **The links in the CI failure investigation's comment are broken, with `%60%60` in them.** With `allowed-github-references: []`, which keeps the comment from adding an item to any Issue's or pull request's timeline, gh-aw wraps everything shaped like a GitHub reference (`#123`, `owner/repo#123`) in a code span, inside links too. A link that ends in `…/RequestHub.Tests/RequestLifecycleTests.cs#L102` or `…/job/130606824425#step:6:1` has that shape, so the first comments on #359 and #360 came out with links such as `…/RequestHub.%60%60Tests/RequestLifecycleTests.cs#L102%60%60`. [#361](https://github.com/melabadi/adept-assessment-northstars/pull/361) fixed it: `ci_failure_facts.py` puts a query before every `#` (`?plain=1#L102`, `?pr=359#step:6:1`), which the pattern can't match, and `tests/test_ci_investigation.py` runs gh-aw's pattern over every link the facts hold. If you change how the facts build a link, keep a query before its `#`.
