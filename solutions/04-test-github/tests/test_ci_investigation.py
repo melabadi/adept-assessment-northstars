@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -36,6 +37,10 @@ BASE = "b" * 40
 MERGE_BASE = "c" * 40
 WORK = "/home/runner/work/example-repo/example-repo/"
 TEST_FILE = "app/tests/Example.Tests/DecisionTests.cs"
+# With allowed-github-references: [], gh-aw v1.2.2 wraps whatever looks like a GitHub reference (#123, owner/repo#456) in a
+# code span, inside links too (neutralizeGitHubReferences in actions/setup/js/sanitize_content_core.cjs). A link that
+# ends in path/file#L41 or job/11#step:6:1 matches, and breaks.
+GH_AW_REFERENCE = re.compile(r"(^|[^\w])(?:([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)/([a-z0-9._-]+))?#(\w+)", re.I | re.A)
 WHEN = "2026-11-11T10:00:00Z"
 
 
@@ -293,8 +298,8 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(by_test["Search_is_literal"]["on_main"], "failed")
         self.assertEqual(by_test["Later_decision_returns_conflict"]["on_main"], "unknown")
         added = by_test["Later_decision_returns_conflict"]
-        self.assertEqual(added["file_url"], f"https://github.com/{REPO}/blob/{HEAD}/{TEST_FILE}#L41")
-        self.assertEqual(added["log_url"], f"https://github.com/{REPO}/actions/runs/1/job/11#step:6:1")
+        self.assertEqual(added["file_url"], f"https://github.com/{REPO}/blob/{HEAD}/{TEST_FILE}?plain=1#L41")
+        self.assertEqual(added["log_url"], f"https://github.com/{REPO}/actions/runs/1/job/11?pr=7#step:6:1")
         self.assertIn("public async Task Later_decision_returns_conflict()", added["source"])
         self.assertEqual(facts["pull_request"]["merge_base"], MERGE_BASE)
         self.assertEqual(facts["main"]["failed_tests"], ["Example.Tests.SearchTests.Search_is_literal"])
@@ -321,6 +326,23 @@ class CollectTests(unittest.TestCase):
         [error] = facts_of(folder)["other_failures"]
         self.assertEqual((error["kind"], error["file"], error["line"], error["in_pull_request"]),
                          ("build", "app/web/src/lib/format.ts", 12, True))
+
+    def test_every_link_survives_gh_aws_reference_escaping(self):
+        def strings(value):
+            if isinstance(value, dict):
+                return [s for v in value.values() for s in strings(v)]
+            if isinstance(value, list):
+                return [s for v in value for s in strings(v)]
+            return [value] if isinstance(value, str) else []
+
+        urls: list[str] = []
+        for fake in (FakeGitHub(), FakeGitHub(logs={11: BUILD_LOG}), FakeGitHub(logs={11: SETUP_LOG})):
+            _, folder, _ = collect(fake)
+            urls += [s for s in strings(facts_of(folder)) if s.startswith("https://")]
+            urls += re.findall(r"https://[^\s)>\]]+", (folder / "facts.md").read_text(encoding="utf-8"))
+        self.assertTrue(any("/blob/" in url for url in urls) and any("/job/" in url for url in urls))
+        self.assertEqual([url for url in urls if GH_AW_REFERENCE.search(url)], [],
+                         "gh-aw would wrap part of these links in a code span, and the links would break")
 
     def test_a_unit_test_path_is_matched_to_the_file_the_pull_request_changes(self):
         files = [{"filename": "app/web/src/lib/format.test.ts", "status": "added", "patch": "+test"}]
