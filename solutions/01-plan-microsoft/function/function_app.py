@@ -1,6 +1,6 @@
 """The Plan · Microsoft run as an Azure Function app (Flex Consumption, Python 3.12): three functions, no state in memory.
 
-  runs           HTTP, with the Function app's key. runs.py, in the solution folder, calls it for the presenter.
+  runs           HTTP, with the Function app's key. runs.py, in the solution folder, calls it for you.
                    POST   /api/runs         start a run; body {"compareWithPullRequest": 129} is optional, and
                                             {"evaluatePullRequest": 129} evaluates that pull request's brief instead
                                             of drafting one (the Plan solution combo)

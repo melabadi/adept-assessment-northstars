@@ -45,10 +45,10 @@ def github_token(raw: str | None) -> str:
     token = (raw or "").strip()
     if not token:
         raise TokenMissing("Key Vault has no GitHub token yet: set PLAN_GITHUB_TOKEN in the azd environment and run "
-                           "`azd provision` (README, Set up)")
+                           "`azd provision` (README, One-time setup)")
     if any(char.isspace() or not char.isprintable() for char in token):
         raise TokenMissing("the GitHub token in Key Vault contains spaces or control characters: set PLAN_GITHUB_TOKEN "
-                           "again and run `azd provision` (README, Set up)")
+                           "again and run `azd provision` (README, One-time setup)")
     return token
 
 
