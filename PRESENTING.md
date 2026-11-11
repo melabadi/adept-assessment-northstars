@@ -167,9 +167,9 @@ An architecture question gets two kinds of help on one pull request. The Foundry
 - **Evidence to show:** the advisor's comment (standards, conflicts, unknowns, the checks its citations passed, the agent version and run), the pull request's two commits (the advisor's draft and Copilot's completion), and GitHub's ADR and API contract checks on its head commit.
 - **Pilot metric:** time from a design question to a reviewable ADR with green checks, with the conflicts and unknowns found before review tracked alongside the ones found later. Compare it with design decisions made before the pilot. Our rehearsal measured one question: the advisor answered in 39 seconds, Copilot completed the ADR in 5 minutes 16 seconds, and the checks finished 18 seconds after its commit; one conflict and three unknowns reached the architect before any review. That is one run, not a trend; a target is a goal the customer sets.
 
-**Prepare** (5 minutes): both solutions' **Set up** ([02-design-github](solutions/02-design-github/README.md#quick-start), [02-design-microsoft](solutions/02-design-microsoft/README.md#set-up)) and **Before each session**, and a PowerShell 7 terminal at the repository root, signed in to GitHub and Copilot CLI.
+**Prepare** (5 minutes): both solutions' **Set up** ([02-design-github](solutions/02-design-github/README.md#quick-start), [02-design-microsoft](solutions/02-design-microsoft/README.md#quick-start)) and **Before each session**, and a PowerShell 7 terminal at the repository root, signed in to GitHub and Copilot CLI.
 
-1. **Ask the advisor** (1 minute, then under a minute of waiting). File the question with the **small-team** profile, from the issue form as in 02-design-microsoft's [step 4](solutions/02-design-microsoft/README.md#run-the-demo), or from a terminal:
+1. **Ask the advisor** (1 minute, then under a minute of waiting). File the question with the **small-team** profile, from the issue form as in 02-design-microsoft's [step 4](solutions/02-design-microsoft/README.md#4-ask-from-github), or from a terminal:
 
    ```powershell
    $body = "### Operating profile`n`nsmall-team`n`n### Question`n`nShould the live AI triage provider run inside the existing RequestHub API behind ITriageProvider, or as a new separate service?"
@@ -207,7 +207,7 @@ An architecture question gets two kinds of help on one pull request. The Foundry
 
    **Point out:** the draft alone is not yet a decision record: in our run, the ADR checker found 11 gaps in the advisor's draft (no decision, architecture, API impact, threat model, or task sections, no options in the template's form, no diagrams), and the contract check reported no breaking and no additive change.
 
-4. **The architect decides** (3 minutes). In **Files changed**, open the ADR with **⋯** → **View file**. Give each open question an owner. To accept, set the status to Accepted, name the deciders, and merge; to reject, close the pull request. For the demo, close it and follow both [Reset](solutions/02-design-microsoft/README.md#reset-and-clean-up) sections.
+4. **The architect decides** (3 minutes). In **Files changed**, open the ADR with **⋯** → **View file**. Give each open question an owner. To accept, set the status to Accepted, name the deciders, and merge; to reject, close the pull request. For the demo, close it and follow both [Reset](solutions/02-design-microsoft/README.md#reset-the-copy-for-another-run) sections.
 
    ![The checker fails the ADR accepted by GitHub Copilot with "status Accepted must name the people who decided … an agent can only propose", then passes once a person is named as decider](solutions/02-design-github/images/07-people-decide.png)
 
