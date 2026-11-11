@@ -1,6 +1,6 @@
 # The switch to gpt-6.1-sol, on 11 November 2026
 
-The records behind what the README says about the model the advisor runs today and what it costs, for anyone who can't sign in to the Azure or Foundry portal. On 11 November 2026, the agents moved from `gpt-5.4-mini` to a newer model, in the same resource group as [See it work](../README.md#see-it-work). `gpt-6-luna` was tried first and failed a labelled case in both of its evaluations; `gpt-6.1-sol` passed every case, so it became the default. Later that day, case E02 was given one more claim, and both models were evaluated again: see [Case E02's added claim and the model choice](2026-11-11-e02-claim.md). Times are UTC. The records were exported the same day with the read-only queries in [How these records were exported](#how-these-records-were-exported).
+The records behind what the README says about the model the advisor runs today and what it costs, for anyone who can't sign in to the Azure or Foundry portal. On 11 November 2026, the agents moved from `gpt-5.4-mini` to a newer model, in the same resource group as [See it work](../README.md#see-it-work). `gpt-6-luna` was tried first and failed a labelled case in both of its evaluations; `gpt-6.1-sol` passed every case, so it became the default. Later that day, case E02 was given one more claim, both models were evaluated again, and `gpt-6-luna` became the default: see [Case E02's added claim and the model choice](2026-11-11-e02-claim.md). Times are UTC. The records were exported the same day with the read-only queries in [How these records were exported](#how-these-records-were-exported).
 
 ## What changed
 
@@ -97,7 +97,7 @@ Each failed answer passed the gate: every citation existed, was in the profile's
 - **E02, version 4.** The summary said *"have the API call the Foundry model endpoint through Azure API Management, the central AI gateway—not directly"*: the comma ends the clause before *gateway*. The recommendation said *"through Azure API Management"*, without *gateway*.
 - **E04, version 4.** The question: *Which request fields may we send to the AI model, and can we include attachments?* The answer must state one of `only* field*`, `minimal* payload`, `minimum* field*`, `minimal* field*`, or `minimum* payload`. The summary said *"send only fields the use case needs and exclude personal data"*: *exclude* is one of the words that negate a clause, so the check read the clause as denying *only fields*. The recommendation asked for *"a use-case-specific set of necessary, non-personal fields"*.
 
-Neither the checks nor the labels were changed to let a model pass. Later that day, after the same miss on `gpt-6.1-sol`, E02 also accepted `through* api management`, once that was shown to pass no wrong answer: see [Case E02's added claim and the model choice](2026-11-11-e02-claim.md).
+Neither the checks nor the labels were changed to let a model pass. Later that day, after the same miss on `gpt-6.1-sol`, E02 also accepted `through* api management`, once that was shown to pass no wrong answer. With it, `gpt-6-luna` passed all ten labelled cases and became the default: see [Case E02's added claim and the model choice](2026-11-11-e02-claim.md).
 
 ## The live answer
 

@@ -68,7 +68,7 @@ flowchart LR
   PR --> H{Architect<br/>merge or close}
 ```
 
-- **Foundry Agent Service** hosts one prompt agent per operating profile on the `gpt-6.1-sol` model, published from [`agent.yaml`](agent.yaml): instructions, model settings, a knowledge tool, and a strict JSON output schema.
+- **Foundry Agent Service** hosts one prompt agent per operating profile on the `gpt-6-luna` model, published from [`agent.yaml`](agent.yaml): instructions, model settings, a knowledge tool, and a strict JSON output schema.
 - **Foundry IQ** gives each profile its own knowledge base over the `architecture-standards` index in Azure AI Search. The profile's scope filter (`scope eq 'all' or scope eq 'small-team'`) is stored in the knowledge source, so the search service, not the prompt, decides what a team can retrieve.
 - **The Azure Function** ([`function/`](function/), Python on the Flex Consumption plan) is the only code that talks to GitHub:
   - Its **webhook** checks GitHub's signature and who asked, then puts the question on a queue and answers GitHub within its 10 seconds.
@@ -97,7 +97,7 @@ This build runs the preferred path of both preview features: the agents retrieve
 
 On 31 October and 1 November 2026, the solution ran end to end against the real services in resource group `rg-ai-sdlc-design`, with Microsoft Foundry and the Function in East US 2 and Azure AI Search in Central US, on RequestHub, this repository's sample app: a change to a standard at 23:23 UTC on 31 October, then a design question 78 minutes later. The operator was a GitHub Copilot agent session working for the repository owner: it merged the change and filed the question, signed in to GitHub as the owner. The GitHub App, the Function, Azure AI Search, and Foundry did the rest. The Function ran the code of pull request [#244](https://github.com/melabadi/adept-assessment-northstars/pull/244) ([the code that ran](evidence/2026-10-31-recorded-run.md#the-code-that-ran)), and both agents were at version 2.
 
-The agents answered with `gpt-5.4-mini` then. Since 11 November 2026 they run `gpt-6.1-sol`, which gave this run's question, asked again as Issue [#355](https://github.com/melabadi/adept-assessment-northstars/issues/355), the same recommendation. Its evaluations that day passed 10 of the 10 labelled cases and 6 of the 6 held-out cases, and in a second round, after case E02 was changed, 9 and 5 ([the switch](evidence/2026-11-11-model-refresh.md), [the E02 claim](evidence/2026-11-11-e02-claim.md)).
+The agents answered with `gpt-5.4-mini` then. Since 11 November 2026 they run `gpt-6-luna`, which passed all ten labelled cases and five of the six held-out cases on its first attempt and, asked this run's question, recommended the same ([why this model](#what-it-costs), [the evidence](evidence/2026-11-11-e02-claim.md)).
 
 Every step links evidence that opens without signing in: the pull request that changed the standard, the Issue and the pull request the advisor created, and [what Azure recorded](evidence/2026-10-31-recorded-run.md), exported from Application Insights and the Foundry evaluation. Times are UTC. Where a screenshot of the Foundry portal comes from another run, the step says which.
 
@@ -240,7 +240,7 @@ These are the steps that set the solution up for this repository, with what to c
 
 - Your repository on GitHub, with admin rights, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. This solution uses neither GitHub Copilot nor GitHub Actions.
 - An Azure subscription where you can create a resource group and role assignments, for example as Owner.
-- Quota for `gpt-6.1-sol` version 2026-09-29 (Global Standard, 250,000 tokens per minute) in the region you choose, and for Azure AI Search Basic. We put everything in `eastus2`, except Azure AI Search, which goes to `centralus` unless you set `AZURE_SEARCH_LOCATION`.
+- Quota for `gpt-6-luna` version 2026-09-22 (Global Standard, 250,000 tokens per minute) in the region you choose, and for Azure AI Search Basic. We put everything in `eastus2`, except Azure AI Search, which goes to `centralus` unless you set `AZURE_SEARCH_LOCATION`.
 - A GitHub account that may create a GitHub App and install it on the repository: the repository's owner, or an organization owner.
 - Your approved standards, as text you can split into one file per standard, and a few design questions whose right answers you know, for the evaluation.
 
@@ -364,7 +364,16 @@ Saving the query in a file keeps PowerShell from mangling its quotes. To search 
 
 ### What it costs
 
-About $96 a month while deployed: Azure AI Search Basic (about $73), three private endpoints and their DNS zones for the Function's blobs, queues, and Key Vault (about $23), and storage, Key Vault, and Log Analytics within cents. The Function costs nothing while idle. Model tokens cost up to about 4 cents per answer on `gpt-6.1-sol`, at $2 per million input and $10 per million output tokens: on 11 November, an answer to a labelled case averaged 3,241 input and 2,008 output tokens, or 2.5 cents, and the evaluation of all ten cost 25 cents ([the measurements](evidence/2026-11-11-model-refresh.md#cost)). `gpt-6-luna` costs a twenty-fifth of that and answers in about half the time. On 11 November, once case E02 also accepted the gateway's other name, it passed 10 of the 10 labelled cases and 5 of the 6 held-out cases, against 9 and 5 for `gpt-6.1-sol` ([the comparison](evidence/2026-11-11-e02-claim.md#the-choice)). We keep `gpt-6.1-sol` as the default until `gpt-6-luna` passes every case on the first attempt. To try another model, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), run `azd provision`, then `python evaluate.py`. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+About $96 a month while deployed: Azure AI Search Basic (about $73), three private endpoints and their DNS zones for the Function's blobs, queues, and Key Vault (about $23), and storage, Key Vault, and Log Analytics within cents. The Function costs nothing while idle. Model tokens cost about a tenth of a cent per answer on `gpt-6-luna`, at $0.10 per million input and $0.50 per million output tokens: on 11 November, an answer to a labelled case averaged 3,763 input and 1,521 output tokens, and the evaluation of all ten cost about one cent ([the measurements](evidence/2026-11-11-e02-claim.md#cost)). The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+
+**Why `gpt-6-luna`.** On 11 November each model answered the ten labelled cases and the six held-out cases once, with the same labels, and its first attempt counted. The cheaper model became the default because it did at least as well on both sets:
+
+| Model | Labelled cases | Held-out cases | Average answer | Cost of the labelled evaluation |
+| --- | --- | --- | --- | --- |
+| `gpt-6-luna` | 10 of 10 | 5 of 6 | 20.7 s | $0.0105 |
+| `gpt-6.1-sol` | 9 of 10 | 5 of 6 | 40.2 s | $0.240 |
+
+`gpt-6.1-sol`'s labelled miss was real: it quoted a standard with a sentence left out. Each held-out miss was the check misreading a right answer. The held-out cases stay as they are: they are never tuned to an answer, which is what lets them test the checks on questions the checks weren't fitted to. Earlier that day, `gpt-6.1-sol` had become the default because `gpt-6-luna` failed case E02 in both of its evaluations. The next evaluation then failed E02 on `gpt-6.1-sol` the same way, which showed that E02's claim was misreading right answers from both models. E02 now also accepts the gateway's name in STD-OPS-002, and the comparison above uses it ([the first switch](evidence/2026-11-11-model-refresh.md), [the E02 claim and the choice](evidence/2026-11-11-e02-claim.md#the-choice)). To try another model, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), run `azd provision`, then `python evaluate.py` and `python evaluate.py --held-out`, and compare the first attempts the same way.
 
 ## Try it first in a copy of this repository
 
@@ -528,8 +537,8 @@ To set the solution up again right after `azd down --purge`, give it new resourc
 ├── inputs/reviewed-brief.md       the reviewed brief behind the design question
 ├── evidence/
 │   ├── 2026-10-31-recorded-run.md what Azure recorded during the run in See it work, exported for anyone to check
-│   ├── 2026-11-11-model-refresh.md the switch to gpt-6.1-sol: the evaluations of three models, a live answer, and their cost
-│   └── 2026-11-11-e02-claim.md    case E02's added claim, the proof that it passes no wrong answer, and both models evaluated on it
+│   ├── 2026-11-11-model-refresh.md the first switch, to gpt-6.1-sol: the evaluations of three models, a live answer, and their cost
+│   └── 2026-11-11-e02-claim.md    case E02's added claim and its proof, both models evaluated on it, and why gpt-6-luna is the default
 ├── function/                      the Azure Function (Python 3.12, Flex Consumption)
 │   ├── function_app.py            the webhook, the two queue functions, and connecting GitHub
 │   ├── advisor_core/

@@ -26,8 +26,8 @@ param githubRepository string
 param githubAppName string = 'AI-SDLC design advisor'
 
 @description('Chat model for the architecture advisor agents. agent.yaml sets a reasoning effort, so pick a reasoning model (the gpt-5 or gpt-6 families) or switch agent.yaml to temperature.')
-param modelName string = 'gpt-6.1-sol'
-param modelVersion string = '2026-09-29'
+param modelName string = 'gpt-6-luna'
+param modelVersion string = '2026-09-22'
 
 @description('Model capacity in thousands of tokens per minute. An evaluation run sends five cases at once per profile; 250 leaves room for two runs and the advisor.')
 param modelCapacity int = 250
