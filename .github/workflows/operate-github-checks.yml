@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 env:
-  GH_AW_VERSION: v0.93.5 # pinned compiler; recompile and commit the lock file when you change it
+  GH_AW_VERSION: v1.2.2 # pinned compiler; recompile and commit the lock file when you change it
 
 jobs:
   tests:

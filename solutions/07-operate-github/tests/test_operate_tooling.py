@@ -243,6 +243,19 @@ class TriageGateTests(unittest.TestCase):
         permissions = re.search(r"^permissions:\n((?:  .*\n)+)", frontmatter(self.source), re.MULTILINE).group(1)
         self.assertEqual(["contents: read", "issues: read"], [line.strip() for line in permissions.strip("\n").splitlines()])
 
+    def test_the_agent_asks_for_one_comment_some_labels_and_one_follow_up_without_attachments(self):
+        # gh-aw adds its own reporting outputs to every workflow. A new write, such as the issue artifacts that gh-aw
+        # v1.2.1 added to create-issue, must be turned off here or reviewed.
+        reporting = {"noop", "report_incomplete", "report_missing_data", "report_missing_tool", "create_report_incomplete_issue"}
+        quoted = re.search(r'GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "((?:[^"\\]|\\.)*)"', self.lock)
+        self.assertIsNotNone(quoted, "the compiled workflow configures its safe outputs")
+        outputs = json.loads(json.loads(f'"{quoted.group(1)}"'))
+        writes = set(outputs) - reporting
+        self.assertEqual({"add_comment", "add_labels", "create_issue"}, writes)
+        for name in writes:
+            self.assertEqual(1, outputs[name]["max"], name)
+        self.assertLessEqual(outputs["create_issue"].get("max_issue_artifacts", 10), 0, "the follow-up carries no attachments")
+
 
 class CopilotCliTests(unittest.TestCase):
     """Option B runs Copilot CLI unattended, signed in as the person who runs it. It gets file tools only and writes two
