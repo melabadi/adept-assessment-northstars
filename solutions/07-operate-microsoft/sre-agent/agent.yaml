@@ -124,3 +124,15 @@ toolPolicy:
     - RunShellCommand
     - ExecutePythonCode
     - DisconnectRepositoryFromResourceForGitHub   # disabled by default; would change the agent's GitHub connection
+    # Azure DevOps: disabled in the agent, but their default permission is allow, so they would run without asking if
+    # someone enabled them. A pipeline run or a repository connection must never happen without a person.
+    - TriggerBuildPipeline
+    - TriggerReleasePipeline
+    - ConnectRepositoryToResourceForAzureDevOps
+    - DisconnectRepositoryFromResourceForAzureDevOps
+    - AzureDevOps                  # the Azure DevOps MCP server, as the tool catalog lists it
+    # Its tools. An MCP tool is named <connection>_<tool>, and the server's connection gets its id only when someone
+    # connects Azure DevOps (the Azure Monitor server's tools are system-mcp-monitor_<tool>), so the pattern doesn't
+    # depend on it. It matches no tool in today's catalog: system tools such as FindConnectedRepositoryForAzureDevOps,
+    # a read, have no underscore.
+    - "*DevOps*_*"
