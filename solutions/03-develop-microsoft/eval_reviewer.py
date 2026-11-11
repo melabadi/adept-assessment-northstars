@@ -226,10 +226,24 @@ def grader_source(fn) -> str:
     return re.sub(r"^def \w+\(", "def grade(", inspect.getsource(fn), count=1)
 
 
+def criterion_deployment(criterion) -> str | None:
+    """The model deployment a Foundry testing criterion names in its initialization parameters, if any."""
+    data = criterion.model_dump() if hasattr(criterion, "model_dump") else vars(criterion)
+    return (data.get("initialization_parameters") or {}).get("deployment_name")
+
+
+def reusable_evaluation(evaluations, model: str):
+    """The first evaluation of these checks whose criteria all name this model deployment, or None. After a model
+    change, a run is never filed under criteria that name the old deployment, which may be deleted."""
+    return next((e for e in evaluations if e.name == EVAL_NAME
+                 and sorted(c.name for c in e.testing_criteria) == sorted(GRADERS)
+                 and all(criterion_deployment(c) == model for c in e.testing_criteria)), None)
+
+
 def foundry_setup() -> tuple:
     """Register the checks as code-based evaluators (a new version only when a check's code changed) and return
     (OpenAI client, evaluation). A new evaluator version gets a new evaluation, so a run is never scored by an older
-    version of a check."""
+    version of a check, and so does a new model deployment."""
     from azure.ai.projects import AIProjectClient
 
     model = setting("FOUNDRY_MODEL_DEPLOYMENT")
@@ -258,8 +272,7 @@ def foundry_setup() -> tuple:
         criteria.append({"type": "azure_ai_evaluator", "name": name, "evaluator_name": name,
                          "initialization_parameters": {"deployment_name": model, "pass_threshold": 1.0}})
     client = project.get_openai_client()
-    existing = None if registered else next((e for e in client.evals.list(limit=100) if e.name == EVAL_NAME
-                                             and sorted(c.name for c in e.testing_criteria) == sorted(GRADERS)), None)
+    existing = None if registered else reusable_evaluation(client.evals.list(limit=100), model)
     evaluation = existing or client.evals.create(
         name=EVAL_NAME, data_source_config={"type": "custom", "item_schema": ITEM_SCHEMA, "include_sample_schema": False},
         testing_criteria=criteria)

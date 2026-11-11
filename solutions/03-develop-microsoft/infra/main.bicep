@@ -41,8 +41,8 @@ param checkerRef string = 'main'
 param reviewLabel string = 'review:azure'
 
 @description('Reasoning model for the reviewer agent.')
-param modelName string = 'gpt-5.4-mini'
-param modelVersion string = '2026-03-17'
+param modelName string = 'gpt-6-luna'
+param modelVersion string = '2026-09-22'
 
 @description('Model capacity in thousands of tokens per minute.')
 param modelCapacity int = 150
