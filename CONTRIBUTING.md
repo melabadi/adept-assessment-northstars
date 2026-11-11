@@ -145,23 +145,22 @@ Change these yourself when you make a copy public. Nothing in the repository cha
 
 ## Solution READMEs
 
-A README serves two readers, in this order. A **presenter** shows the demo from the README alone, walking through a run that already happened: nothing to start, deploy, or sign in to. A **customer** then sets the solution up in a copy of the repository and runs it. Write for someone who has never seen the repository, with no project-status sections. Write commands for PowerShell 7 (`pwsh`) and paste-test them; quote `gh api` paths that contain `{owner}/{repo}`, because PowerShell reads unquoted braces as a script block.
+Write for a customer who wants the solution in their own repository and has never seen this one. Show what the solution does and what it is worth with a real run, then how to add it to a repository, then how to try it first in a copy of this one. Address that reader, not a presenter or an audience: no "point out", "on stage", or session checklists (those belong in [PRESENTING.md](PRESENTING.md)), and no project-status sections. Write commands for PowerShell 7 (`pwsh`) and paste-test them; quote `gh api` paths that contain `{owner}/{repo}`, because PowerShell reads unquoted braces as a script block.
 
-1. **Title and summary.** One paragraph: the problem and what AI changes. Then the one screenshot that best shows the result, and a line for each reader: how long it takes to present the recorded run, and how long to set it up yourself, linking both sections.
-2. **Why it matters.** The SDLC phase, how teams work today compared with this solution, and the value in a sentence or two, with the recorded run's headline results. Link the phase's combo in [PRESENTING.md](PRESENTING.md#solution-combos).
+1. **Title and summary.** One paragraph: the problem, and what the solution adds to a repository's workflow. Then the one screenshot that best shows the result, and a line for each path: *See it work*, *Add it to your repository* (how long its one-time setup takes), and *Try it first in a copy of this repository* (how long), each linked.
+2. **Why it matters.** The SDLC phase, how teams work today compared with this solution, and the value in a sentence or two, with the headline results of the run in *See it work*. Link the phase's other solution, and the [combo](PRESENTING.md#solution-combos) that uses both on one change.
 3. **How it works.** A diagram (Mermaid renders on GitHub) and who does what: Copilot or Foundry, GitHub Actions or Azure, and the person who decides.
-4. **The recorded run.** One real run, end to end, in the past tense: when it ran, on which commit, and who started it. Numbered steps: each says what happened and who did it, how long it took, shows a screenshot, links its evidence, and ends with **Point out:** the one thing the audience should notice.
-5. **Results and value.** What the run left behind (the artifacts and the person's decision), what was measured, and what a team gets from it: time saved, risk removed, evidence a reviewer or auditor can follow. End with the metric to track in a pilot.
-6. **What's in this folder.** An annotated file tree.
-7. **Set it up yourself.** Prerequisites, then a quick start: the fewest copy-paste commands from the root of the reader's copy of the repository to a working setup, how long they take, and what the solution costs while it is deployed. The root README's [Set it up yourself](README.md#set-it-up-yourself) makes that copy, once for every solution: link to it rather than repeat its commands. Then each one-time step in detail, with what you should see when it worked.
-8. **Run it yourself.** Optional, for a live session or to check a new setup: how to confirm the starting state, what to start early, then the recorded run's steps with their commands or click paths, numbered the same. Don't repeat the recorded run's screenshots; name the step that shows the result.
-9. **Reset and clean up.**
-10. **Use it in your own repository.** What to copy and what to change.
-11. **Troubleshooting.** Only problems someone actually hit.
+4. **See it work.** One real run, end to end, in the past tense: when it ran, on which commit, and who started it. Numbered steps: each says what happened and who did it, how long it took, shows a screenshot, links its evidence, and ends with **What this shows:** in one sentence.
+5. **Results and value.** What the run left behind (the artifacts and the person's decision), what was measured, and what a team gets from it: time saved, risk removed, evidence a reviewer or auditor can follow. End with the metric to track when you adopt it.
+6. **Add it to your repository.** Prerequisites; what to copy and what to change for your own code; each one-time step, with what you should see when it worked; how to use it the first time; and what it costs.
+7. **Try it first in a copy of this repository.** Optional: the same solution on RequestHub, before you adapt anything. A quick start from the root of the copy that the root README's [Try it in a copy of this repository](README.md#try-it-in-a-copy-of-this-repository) makes once for every solution (link to it rather than repeat its commands), and how long it takes. Then the steps of *See it work* as commands or click paths, numbered the same, with how long each takes; don't repeat its screenshots. End with how to reset the copy for another run.
+8. **Clean up.** How to remove what the solution deployed or created, in your repository or in the copy, and which token to revoke.
+9. **What's in this folder.** An annotated file tree.
+10. **Troubleshooting.** Only problems someone actually hit.
 
-**Evidence anyone can open.** Every link in the recorded run and its results opens without signing in: Issues, pull requests, commits, files in the repository, and evidence committed to the solution folder. Workflow logs and job summaries need a GitHub sign-in and expire, draft releases are visible only to people who can write to the repository, and the Azure and Foundry portals need an account in your tenant: show those as screenshots, or commit the evidence to the solution's `evidence/` folder after `python tools/redact.py check`.
+**Evidence anyone can open.** Every link in *See it work* and *Results and value* opens without signing in: Issues, pull requests, commits, files in the repository, and evidence committed to the solution folder. Workflow logs and job summaries need a GitHub sign-in and expire, draft releases are visible only to people who can write to the repository, and the Azure and Foundry portals need an account in your tenant: show those as screenshots, or commit the evidence to the solution's `evidence/` folder after `python tools/redact.py check`.
 
-**Measured, never invented.** Every number, time, and link in the recorded run and its results comes from that run. If a step's screenshot comes from another run, say which. Keep what was measured apart from what a customer might aim for: a target is the customer's goal, never a result.
+**Measured, never invented.** Every number, time, and link in *See it work* and its results comes from that run. If a step's screenshot comes from another run, say which. Keep what was measured apart from what a customer might aim for: a target is the customer's goal, never a result.
 
 ## Screenshots
 
@@ -197,8 +196,8 @@ Before you commit, run `python tools/redact.py check --changed`; it must print `
 
 A solution is done when:
 
-- *Set it up yourself* and *Run it yourself* work end to end against the real services from a clean state, following the README.
-- *The recorded run* is a real run of the demo. Every step has a screenshot from it, captured with `tools/screenshot.mjs`; every link in it opens without signing in; and `python tools/redact.py check --changed` prints `OK`.
+- *Add it to your repository* and *Try it first in a copy of this repository* work end to end against the real services from a clean state, following the README.
+- *See it work* is a real run of the solution. Every step has a screenshot from it, captured with `tools/screenshot.mjs`; every link in it opens without signing in; and `python tools/redact.py check --changed` prints `OK`.
 - The *Repository checks* workflow passes (mirrored files, and every relative link and `#anchor`: run `python tools/check_links.py` to list broken ones), and the app's CI passes if the app changed.
 - The pull request links the live evidence: workflow runs, Issues and pull requests the demo created, evaluation results, and screenshots where they help. When a step only works from the default branch (issue templates, label- or dispatch-triggered workflows), run it right after merging and add the evidence as a comment on the pull request.
 - It ships in its own pull request.

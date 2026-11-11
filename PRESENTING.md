@@ -1,6 +1,6 @@
 # Presenting the seven-phase demo
 
-Present every demo from its README. Each one walks through a run we recorded, step by step: its screenshots, how long each step took, and links to the Issues, pull requests, and commits it left behind. There is nothing to start, deploy, or sign in to, and every link opens for your audience too. This guide helps you choose what to show and in what order. To run the demos live instead, see [Run it live](#run-it-live).
+Present every solution from its README. Each one shows a real run in *See it work*, step by step: its screenshots, how long each step took, and links to the Issues, pull requests, and commits it left behind. There is nothing to start, deploy, or sign in to, and every link opens for your audience too. The READMEs are written for customers who want a solution in their own repository; this guide is for you, the presenter: what to show, in what order, and what to point out. To run the demos live instead, see [Run it live](#run-it-live).
 
 ## Present a solution
 
@@ -9,9 +9,9 @@ Open its README and walk down the page:
 1. **The summary**: the problem, what AI changes, and the screenshot of the result (1 minute).
 2. **Why it matters**: how teams work today, what changes, and the headline results (2 minutes).
 3. **How it works**: the diagram; say who does what, and who decides (2 minutes).
-4. **The recorded run**: one step at a time. Show its screenshot, open the linked Issue or pull request when someone asks for proof, and say its **Point out** (5 to 8 minutes).
+4. **See it work**: one step at a time. Show its screenshot, open the linked Issue or pull request when someone asks for proof, and say what the step shows (5 to 8 minutes).
 5. **Results and value**: what the run left behind, what was measured, and the metric to track in a pilot (2 minutes).
-6. **Set it up yourself**: show how short the quick start is (1 minute).
+6. **Add it to your repository**: what a team copies and changes, and how short the one-time setup is (1 minute).
 
 That is about 15 minutes a solution. Whatever you show, tell the same story: one app, RequestHub, goes through every phase, and in each phase AI does the tedious part while a person keeps the decision.
 
@@ -28,7 +28,7 @@ That is about 15 minutes a solution. Whatever you show, tell the same story: one
 
 ### A highlights run
 
-One solution per phase, about 10 minutes each: the summary, the diagram, the recorded run's key steps, and the results.
+One solution per phase, about 10 minutes each: the summary, the diagram, the key steps of *See it work*, and the results.
 
 1. **Plan**: [01-plan-github](solutions/01-plan-github/), a traceable backlog from a stakeholder transcript.
 2. **Design**: [02-design-microsoft](solutions/02-design-microsoft/), two operating profiles get different, grounded answers.
@@ -44,7 +44,7 @@ To show the other offering of a phase, swap in its other solution.
 
 The two solutions of a phase can also work together on one change. In a combo, the GitHub solution and the Microsoft solution each do the part they are built for, pass one artifact between them, and a person makes the decision at the end. Each combo is a single-phase session. Both solutions still run on their own from their READMEs, so a customer can adopt either accelerator first and add the other later.
 
-Present a combo from its rehearsal: the screenshots, timings, and links below come from our runs. To run one live, set up both solutions and run both READMEs' *Run it yourself* checklists first, and follow both *Reset and clean up* sections afterwards.
+Present a combo from its rehearsal: the screenshots, timings, and links below come from our runs. To run one live, set both solutions up in your copy, as their READMEs' *Try it first in a copy of this repository* describe, and reset both afterwards.
 
 | Phase | GitHub does | Azure does | What passes between them | A person decides |
 | --- | --- | --- | --- | --- |
@@ -675,28 +675,11 @@ flowchart LR
 
 ## After you present: hand it over
 
-Customers set a solution up themselves, from the root README's [Set it up yourself](README.md#set-it-up-yourself) and then the solution's own *Set it up yourself*: a quick start, then each step in detail. Leave them those two links, the solution's *Use it in your own repository*, and [what it costs while it is deployed](#what-it-costs-while-it-is-deployed).
-
-## What it costs while it is deployed
-
-The GitHub demos use your Copilot plan and Actions minutes. The Microsoft solutions bill while their resource groups exist, even when nobody presents:
-
-| Bills by the hour while deployed | Solutions |
-| --- | --- |
-| A PostgreSQL flexible server and two container apps kept at one replica each (RequestHub) | 04-test, 05-secure, 06-release, and 07-operate (Microsoft) |
-| Three private endpoints and their DNS zones, for the planner Function's storage, queue, and Key Vault: about $23 a month, plus up to about $4.50 for its timer, which runs every 30 seconds | 01-plan-microsoft |
-| Azure AI Search, Basic tier, and three private endpoints and their DNS zones, for the advisor Function's storage, queues, and Key Vault: about $96 a month | 02-design-microsoft |
-| Three private endpoints and their DNS zones, for the reviewer Function's storage and Key Vault: about $23 a month | 03-develop-microsoft |
-| Three private endpoints and their DNS zones, for the reporting Function's storage, queue, and Key Vault: about $23 a month | 04-test-microsoft |
-| Two private endpoints and their DNS zones, for the posture Function's storage and Key Vault: about $16 a month | 05-secure-microsoft |
-| One private endpoint, for the release trigger Function's storage: about $7 a month | 06-release-microsoft |
-| Azure SRE Agent: 4 Azure Agent Units (AAUs) an hour while it exists (about $292 a month), plus roughly 10 to 35 AAUs per investigation (capped at 1,000 a month) | 07-operate-microsoft |
-
-Everything else bills for what you use: Foundry models and evaluations, Azure Functions, 05-secure-microsoft's Logic App, Container Apps jobs and dynamic sessions, Azure Load Testing, and Defender for Cloud. Delete a solution's resource group when you won't present it for a while: `azd up` recreates it.
+Customers add a solution to their own repository from its README's *Add it to your repository*, after the root README's [Before you start](README.md#before-you-start). To try it first, the root README's [Try it in a copy of this repository](README.md#try-it-in-a-copy-of-this-repository) makes a copy for every solution. Leave them those links and [what the Microsoft solutions cost](README.md#what-the-microsoft-solutions-cost).
 
 ## Run it live
 
-Each demo also runs live, from its README's *Run it yourself*. A live run shows the tools working in your own tenant, but it takes longer, costs money while it runs, and needs every solution you show set up and in its starting state first.
+Each demo also runs live, in a copy of this repository, from its README's *Try it first in a copy of this repository*. A live run shows the tools working in your own tenant, but it takes longer, costs money while it runs, and needs every solution you show set up and in its starting state first.
 
 ### Timings for a live session
 
@@ -723,14 +706,14 @@ Each demo also runs live, from its README's *Run it yourself*. A live run shows 
 
 #### Once
 
-- Work through the root README's [Set it up yourself](README.md#set-it-up-yourself), then each solution's *Set it up yourself*. The Microsoft solutions each deploy into their own resource group with `azd up`, which takes from 2 to 20 minutes depending on the solution.
-- Connect each Microsoft solution to GitHub once, as its *Set it up yourself* describes: a fine-grained token limited to this repository (Plan, Develop, Test, Secure, Release), a private GitHub App (Design), or Azure SRE Agent's Code access (Operate). Their AI and automation run in Azure; no GitHub Actions workflow takes part.
+- Make a copy, as in the root README's [Try it in a copy of this repository](README.md#try-it-in-a-copy-of-this-repository), then follow each solution's *Try it first in a copy of this repository*. The Microsoft solutions each deploy into their own resource group with `azd up`, which takes from 2 to 20 minutes depending on the solution.
+- Connect each Microsoft solution to GitHub once, as its README describes: a fine-grained token limited to this repository (Plan, Develop, Test, Secure, Release), a private GitHub App (Design), or Azure SRE Agent's Code access (Operate). Their AI and automation run in Azure; no GitHub Actions workflow takes part.
 - For the two agentic workflows (06-release-github and 07-operate-github), create the `COPILOT_GITHUB_TOKEN` secret as their READMEs describe.
 - Use a demo tenant and a demo subscription. On stage, your audience sees your real Azure portal, your account, and your resource names.
 
 #### The day before
 
-- Run the starting-state checklist in each solution's *Run it yourself*. It confirms the demo is in its starting state and lists what to open.
+- Reset each solution you will show, as the end of its README's *Try it first in a copy of this repository* describes, and check that it is in its starting state.
 - Make sure the PostgreSQL servers of the Microsoft solutions that run RequestHub are running. Tenant governance policies can stop them on a schedule; when that happens the app fails its readiness check and requests time out. Each README's checklist has the check and the `az postgres flexible-server start` command, which takes 3 to 5 minutes.
 - Run the quick self-checks the READMEs include, such as an evaluation run or a preflight. They catch an expired sign-in or a missing secret while there is still time to fix it.
 - If you present from another machine, sign in there to GitHub, Azure CLI (`az login`), and Azure Developer CLI (`azd auth login`).
@@ -739,17 +722,17 @@ Each demo also runs live, from its README's *Run it yourself*. A live run shows 
 
 1. Sign in to GitHub and the Azure portal in the browser you present from.
 2. Start the long-running parts in the order of the [timings](#timings-for-a-live-session): Copilot tasks first, then the release candidate, then load tests and the incident.
-3. Open the tabs and terminals each README lists under *Run it yourself*.
+3. Open the pages and terminals that each step uses: the Issue or pull request, the workflow runs, and the portals.
 
 ### During the session
 
 - Narrate while things run. Every README says what to show while you wait: the input files, the agent's instructions, the workflow definition.
 - Keep your account menu, the Foundry project's Home page, and Azure resources' Overview pages off the shared screen: they show your account, endpoints, and subscription. The READMEs' screenshots were captured with these details masked; a live screen isn't.
-- If a live step is slow or fails, switch to the README's recorded run: its screenshots come from a real run of the same steps. Each README's **Troubleshooting** covers the failures we have seen.
+- If a live step is slow or fails, switch to the README's *See it work*: its screenshots come from a real run of the same steps. Each README's **Troubleshooting** covers the failures we have seen.
 - Show evaluation results as they came out, in three parts: the **first attempt** (what passed and what failed the first time), the **retries** (a run started again only because Foundry's preview grader couldn't score it, with new answers from the agent), and what **could not be graded**. 02-design-microsoft's `evaluate.py` and 03-develop-microsoft's `eval_reviewer.py` print them apart. A failed case is a result: never run an evaluation again until it passes.
 - End each phase on its *Results and value*: what the AI did, what the person decided, and the evidence left behind.
 
 ### After the session
 
-- Reset each solution you used, following its **Reset and clean up**. Resets close the Issues and pull requests the demo created, delete temporary branches, and put Azure resources back in their starting state.
+- Reset each solution you used, as the end of its README's *Try it first in a copy of this repository* describes: the reset closes the Issues and pull requests the demo created, deletes temporary branches, and puts Azure resources back in their starting state.
 - When you are done with a Microsoft solution, its clean-up section removes everything it created, including any Microsoft Entra app registration, and says how to revoke its GitHub access: delete its token or GitHub App on GitHub.
