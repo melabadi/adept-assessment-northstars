@@ -1,6 +1,6 @@
 # Evidence: the recorded run of 31 October 2026
 
-What Azure recorded during [the recorded run](../README.md#the-recorded-run), exported so that anyone can check it without signing in to Azure. Times are UTC.
+What Azure recorded during [the run in See it work](../README.md#see-it-work), exported so that anyone can check it without signing in to Azure. Times are UTC.
 
 - **Exported** on 11 November 2026 from resource group `rg-ai-sdlc-test`, with the commands shown in each section, run from `solutions/04-test-microsoft` after `azd env select ai-sdlc-test`. The exports keep only the fields that each command names, none of which identify the tenant: no e-mail addresses, resource URLs, or signed links.
 - **Kept here because telemetry expires:** the Log Analytics workspace behind Application Insights keeps 30 days of data, so the queries in [the function's log](#the-functions-log) and [the API's telemetry](#the-apis-telemetry) return nothing after 30 November 2026. The tables keep their results.
@@ -656,7 +656,7 @@ Times that the terminal session running the steps printed, in UTC. It polled the
 05:00:43  issue 215: CLOSED
 ```
 
-The starting-state check, `slowdown.py on`, and `slowdown.py off`, as the recorded run's screenshots of its starting state, step 4, and step 8 show them:
+The starting-state check, `slowdown.py on`, and `slowdown.py off`, as the screenshots of See it work's starting state, step 4, and step 8 show them:
 
 ```text
 PS> azd env select ai-sdlc-test
