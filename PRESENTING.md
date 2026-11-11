@@ -528,7 +528,7 @@ When an alert fires, the team needs the service back first, and then a test that
 - **Evidence to show:** the alert and the investigation thread in Azure, then one incident Issue that links the triage comment, the follow-up Issue, Copilot's pull request, and the proof check on that pull request.
 - **Pilot metric:** time from an incident's record to a proven regression test: from the incident Issue's creation (`gh issue view <incident> --json createdAt`) to the proof check's PROVEN on its follow-up's pull request (`gh pr checks <pull request>`). Track alongside the share of incidents that get a follow-up at all, and the time to recover in Azure, from the alert's fired time to its resolved time in Azure Monitor. Compare it with similar work from before the pilot. Our first rehearsal measured 16 minutes from the incident Issue to PROVEN (15 minutes 43 seconds, measured). In our second, a person approved the fix 5 minutes after the alert, and Azure Monitor resolved the alert 12 minutes 57 seconds after it fired (measured). A target is a goal the customer sets, never a result.
 
-**Prepare** (about 20 minutes): both solutions' **Set up** ([07-operate-github](solutions/07-operate-github/README.md#set-up), [07-operate-microsoft](solutions/07-operate-microsoft/README.md#set-up)) and **Before each session** checklists. About 10 minutes before the Operate segment, start the incident in `solutions/07-operate-microsoft`. It takes about 2 minutes (1 minute 44 seconds in our run). The alert fires about 6½ minutes after its requests (6 minutes 29 seconds), and the agent's report with its approval request follows about 2 minutes later (2 minutes 8 seconds).
+**Prepare** (about 20 minutes): both solutions' **Set up** ([07-operate-github](solutions/07-operate-github/README.md#try-it-first-in-a-copy-of-this-repository), [07-operate-microsoft](solutions/07-operate-microsoft/README.md#set-up)) and **Before each session** checklists. About 10 minutes before the Operate segment, start the incident in `solutions/07-operate-microsoft`. It takes about 2 minutes (1 minute 44 seconds in our run). The alert fires about 6½ minutes after its requests (6 minutes 29 seconds), and the agent's report with its approval request follows about 2 minutes later (2 minutes 8 seconds).
 
 ```powershell
 python incident.py start
@@ -561,7 +561,7 @@ python incident.py start
 
    **Point out:** the person adds no fact; their decision is the `incident` label. The agent never applies it, so only a person hands an incident to the GitHub team's triage.
 
-4. **Read the triage** (about 5 minutes to the comment, 2 to read it) — like [07-operate-github](solutions/07-operate-github/README.md#run-the-demo), step 2A from "Within a minute or two", and step 3. While the run works, walk through its jobs under **Actions**, **Operate · GitHub · triage an incident**. The comment arrives on the incident 4 to 5 minutes after you file it (4 minutes 19 seconds in our run), with a severity and an area label and one follow-up Issue under the incident's **Sub-issues**.
+4. **Read the triage** (about 5 minutes to the comment, 2 to read it) — like [07-operate-github](solutions/07-operate-github/README.md#the-steps), step 2 from "Within a minute or two", and step 3. While the run works, walk through its jobs under **Actions**, **Operate · GitHub · triage an incident**. The comment arrives on the incident 4 to 5 minutes after you file it (4 minutes 19 seconds in our run), with a severity and an area label and one follow-up Issue under the incident's **Sub-issues**.
 
    ```powershell
    gh issue view <incident> --comments
@@ -571,7 +571,7 @@ python incident.py start
 
    **Point out:** the triage checked the record against the code, and its one follow-up depends on what the record shows. In our run nobody approved the fix, so the fault switched itself off at its expiry: 14 deliveries still waited 10 seconds after it, and the triage traced that to the worker computing the delay once per batch, a failure in the incident's own recovery path.
 
-5. **Copilot writes the regression test** (about 8 minutes) — [07-operate-github](solutions/07-operate-github/README.md#run-the-demo), steps 5 and 6. Assign the follow-up to Copilot with the `operate-github` agent:
+5. **Copilot writes the regression test** (about 8 minutes) — [07-operate-github](solutions/07-operate-github/README.md#the-steps), steps 5 and 6. Assign the follow-up to Copilot with the `operate-github` agent:
 
    ```powershell
    $repo = gh repo view --json nameWithOwner --jq .nameWithOwner
