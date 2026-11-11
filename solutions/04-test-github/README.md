@@ -6,7 +6,7 @@ Defects that only show up under retries or simultaneous clicks slip through revi
 
 - **See it work:** [a real run on this repository](#see-it-work), step by step. A request that could be approved and then rejected was reproduced, tested with an eight-click race, fixed, and reviewed, with a screenshot and a link anyone can open for every step.
 - **Add it to your repository:** [copy 14 files, adapt them to your code, and set them up once](#add-it-to-your-repository). The setup's commands took seconds when this README was checked, 8 to copy the files and 3 for the labels; the rest is a settings page, a pull request, and the changes your stack needs.
-- **Try it first in a copy of this repository:** [about 2 minutes to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md) makes once for every solution. A run then needs about 22 minutes of Copilot and the checks working unattended.
+- **Try it first in a copy of this repository:** [about 2 minutes to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution. A run then needs about 22 minutes of Copilot and the checks working unattended.
 
 ## Why it matters
 
@@ -340,7 +340,7 @@ Optional: the same solution on RequestHub, before you adapt anything. You repeat
 
 ### Quick start
 
-About 2 minutes, from the root of your copy of this repository: the [root README](../../README.md) makes that copy, once for every solution. You need the [prerequisites](#prerequisites); the copy already holds the files, and RequestHub is the API and the tests, so there is nothing to copy or change. In PowerShell 7, create the two labels the defect's Issue uses (3 seconds when this README was checked):
+About 2 minutes, from the root of your copy of this repository: the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes that copy, once for every solution. You need the [prerequisites](#prerequisites); the copy already holds the files, and RequestHub is the API and the tests, so there is nothing to copy or change. In PowerShell 7, create the two labels the defect's Issue uses (3 seconds when this README was checked):
 
 ```powershell
 gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
@@ -494,7 +494,7 @@ git branch -D lab/test-duplicate-decision
 git push origin --delete lab/test-duplicate-decision
 ```
 
-The [root README](../../README.md) says how to delete the copy itself.
+The [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
 
 This solution creates no token, secret, GitHub App, or webhook, so there is nothing to revoke: you act with your own GitHub CLI sign-in, and its workflows with the token GitHub gives each run.
 
