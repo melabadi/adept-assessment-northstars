@@ -66,8 +66,8 @@ When you no longer need your copy, follow the *Reset and clean up* of each solut
 
 Every solution needs:
 
-- Your copy of this repository on GitHub (step 2). The GitHub solutions need **GitHub Copilot Business or Enterprise** on it, and solutions that assign work to Copilot also need the **Copilot cloud agent** enabled for the repository.
-- [GitHub CLI](https://cli.github.com/), signed in with the `workflow` scope: `gh auth login --scopes workflow`, or `gh auth refresh --scopes workflow` if you are already signed in. Your copy's first push contains workflow files, and GitHub refuses those from a token without that scope. The GitHub solutions also use [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli) (`copilot`); Visual Studio Code with GitHub Copilot works for their interactive steps too.
+- Your copy of this repository on GitHub (step 2). The GitHub solutions need a paid **GitHub Copilot** plan, and solutions that assign work to Copilot also need the **Copilot cloud agent** allowed in your copy.
+- [GitHub CLI](https://cli.github.com/), signed in with the `workflow` scope: `gh auth login --scopes workflow`, or `gh auth refresh --scopes workflow` if you are already signed in. Your copy's first push contains workflow files, and GitHub refuses those from a token without that scope. The GitHub solutions also use [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli) (`copilot`); Visual Studio Code with GitHub Copilot works for their interactive steps too.
 - Python 3.12 or later for the solution scripts (`pip install -r requirements.txt` in the solution folder, when it has one).
 - [PowerShell 7.4 or later](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`). The READMEs' commands are written for it. Windows PowerShell 5.1 handles quotes and file encodings differently, and some commands fail there.
 
