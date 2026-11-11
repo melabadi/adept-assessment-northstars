@@ -56,7 +56,7 @@ Each solution works on its own: start with the phase you want to improve.
 
 1. **Check the tools and access** in [Before you start](#before-you-start).
 2. **Try it first, if you like,** in [a copy of this repository](#try-it-in-a-copy-of-this-repository), where it runs on RequestHub as in its README's *See it work*, before you adapt anything.
-3. **Follow its README's *Add it to your repository*:** what to copy, what to change for your code, and each one-time step, with what you should see when it worked. A Microsoft solution deploys into its own Azure resource group with `azd up`; see [what the Microsoft solutions cost](#what-the-microsoft-solutions-cost).
+3. **Follow its README's *Add it to your repository*:** what to copy, what to change for your code, and each one-time step, with what you should see when it worked. Copy [LICENSE](LICENSE) along with the solution's files ([License](#license)). A Microsoft solution deploys into its own Azure resource group with `azd up`; see [what the Microsoft solutions cost](#what-the-microsoft-solutions-cost).
 
 ### Before you start
 
@@ -142,3 +142,7 @@ tools/       repository tooling: sync_solutions.py (mirror check), check_links.p
 - **Some GitHub security features depend on your plan.** CodeQL code scanning (including running CodeQL in a workflow), Copilot Autofix, secret scanning, and push protection are free on public repositories. On a private repository they need GitHub Code Security or GitHub Secret Protection, which require a GitHub Team or Enterprise plan. Solutions that use them say what runs without them.
 - **Presenting the solutions:** [PRESENTING.md](PRESENTING.md) suggests formats and an order, the combos that put a phase's two solutions on one change, and one requirement followed from Plan to Test.
 - **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) for how solutions are structured and validated.
+
+## License
+
+The [MIT License with the Commons Clause](LICENSE). You may download, fork, use, and change the solutions and RequestHub, including at work, and share them free of charge. You may not sell them, or sell hosting, consulting, or support whose value comes entirely or substantially from them. Keep the LICENSE file with anything you copy: every copy must carry its notice. Because it forbids selling, it is a source-available license, not an open source license as the [Open Source Initiative defines one](https://opensource.org/osd).
