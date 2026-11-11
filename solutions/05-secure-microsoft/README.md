@@ -1,6 +1,6 @@
-# Secure · Cloud posture remediation with Defender for Cloud, Copilot in Azure, and Microsoft Foundry
+# Secure · Cloud posture remediation with Defender for Cloud, Azure Copilot, and Microsoft Foundry
 
-Cloud misconfigurations are usually found by one team in a security portal and fixed by another team in code, if they are fixed at all. This solution connects the two in your repository's workflow. When Microsoft Defender for Cloud and Azure Policy flag a resource, one click on the recommendation hands it to an Azure Function. The Function files a GitHub Issue with each source's evidence, asks a Microsoft Foundry agent for the smallest fix to your Bicep, checks the answer, and opens it as a draft pull request. A what-if preview that runs in Azure lists what the fix would change before anyone deploys it. A person reviews, merges, and deploys the fix, and the Function then records the evidence on the Issue and closes it. Copilot in Azure explains the finding in the portal. GitHub holds only the code, the Issue, and the pull request: the AI and the automation run in Azure.
+Cloud misconfigurations are usually found by one team in a security portal and fixed by another team in code, if they are fixed at all. This solution connects the two in your repository's workflow. When Microsoft Defender for Cloud and Azure Policy flag a resource, one click on the recommendation hands it to an Azure Function. The Function files a GitHub Issue with each source's evidence, asks a Microsoft Foundry agent for the smallest fix to your Bicep, checks the answer, and opens it as a draft pull request. A what-if preview that runs in Azure lists what the fix would change before anyone deploys it. A person reviews, merges, and deploys the fix, and the Function then records the evidence on the Issue and closes it. Azure Copilot explains the finding in the portal. GitHub holds only the code, the Issue, and the pull request: the AI and the automation run in Azure.
 
 ![The draft pull request that the Foundry agent posture-remediator drafted in Azure: it sets the module parameter storagePrivateEndpoint to true, remediates Issue #223 without closing it, lists the expected changes and the risks, and says nothing is deployed until someone runs azd provision](images/04-agent-pull-request.png)
 
@@ -15,7 +15,7 @@ Cloud misconfigurations are usually found by one team in a security portal and f
 | | Today | With this solution |
 | --- | --- | --- |
 | Finding | A Defender for Cloud recommendation waits in a portal the app team never opens. | One click on the recommendation files a GitHub Issue with each source's evidence: the live configuration, Azure Policy, and Defender for Cloud. A second click reuses the Issue. |
-| Understanding | Someone searches the documentation for what the recommendation means. | Copilot in Azure explains the risk and the fix next to the recommendation. |
+| Understanding | Someone searches the documentation for what the recommendation means. | Azure Copilot explains the risk and the fix next to the recommendation. |
 | Fix | Someone changes the setting in the portal, and the next deployment reverts it. | A Foundry agent drafts the smallest change to the team's Bicep. The Function accepts only one exact edit inside the lines the team marked for posture fixes, and opens it as a draft pull request. |
 | Blast radius | "It should be fine." | A what-if preview lists every resource the pull request creates or modifies, and fails on anything unexpected. |
 | Done | The ticket closes when someone says so. | After deployment, the Function records the live configuration and Azure Policy's result on the Issue, then closes it. Defender's slower confirmation follows. |
@@ -35,7 +35,7 @@ sequenceDiagram
   autonumber
   actor H as Person
   participant D as Defender for Cloud<br/>and Azure Policy
-  participant C as Copilot in Azure
+  participant C as Azure Copilot
   participant L as Logic App<br/>posture-intake
   participant P as Function app<br/>intake, preview, verify
   participant F as Foundry agent<br/>posture-remediator
@@ -61,13 +61,13 @@ sequenceDiagram
 ```
 
 - **Azure Policy and Microsoft Defender for Cloud** find the problem. This solution assigns the built-in definition *Storage accounts should use private link* (version 2, AuditIfNotExists) to its own resource group. Azure Policy is the fast signal: an on-demand evaluation takes minutes. Defender for Cloud reports the same control through the Microsoft cloud security benchmark, on its own schedule: its first assessment of a new storage account took about 20 hours here, and a change can take from about 30 minutes to a day to show.
-- **Copilot in Azure** explains the recommendation and writes example Bicep in the portal's chat. It has no API, so it helps the person reading the finding, not the automation.
+- **Azure Copilot** (formerly Copilot in Azure) explains the recommendation and writes example Bicep in the portal's chat. It has no API, so it helps the person reading the finding, not the automation.
 - **The Logic App `posture-intake`** ([`logic/intake.json`](infra/logic/intake.json)) is there because Defender for Cloud sends a recommendation only to a Logic App: from **Trigger logic app**, and from its workflow automation. It has three steps and no other logic: Defender's trigger; *Keep only the recommendation* (the resource, the recommendation's name, its status, and the time); and *Send it to the posture Function*, with a token for its own managed identity, which has no role anywhere. It runs one recommendation at a time. When the Function answers 503 (not yet, or another intake is running), its retry policy sends the recommendation again every minute, up to 12 times.
 - **The Function app** ([`function/`](function/), Python on the Flex Consumption plan) does the work, in three functions. It runs in its own virtual network and reaches its storage account and Key Vault only through private endpoints, because the tenant this was built in forces public network access off on both.
   - **`intake`** accepts a call only from the Logic App's identity, and handles one at a time. It reads the recommendation's current status and text from Azure with its own managed identity, along with the storage account and Azure Policy's results: it does not trust the event it was sent. When the event reports Healthy before Azure's API does, it asks the Logic App to send it again, for up to 10 minutes. If the account already has an approved private endpoint, Defender has only not caught up with a deployed fix, and it stops. Otherwise, with the GitHub token, it files the Issue, or reuses the open one. It sends the finding, the solution's Bicep file, and the module that file uses to the Foundry agent, and checks the answer before it uses it ([`checks.py`](function/posture/checks.py)). The edit must replace text that occurs exactly once, at most 2,000 characters each way, and leave everything outside the lines marked `posture:editable` in [`resources.bicep`](infra/resources.bicep) byte for byte as it was, marker lines included. In the edited file, every line between the markers must be a `//` comment or exactly `storagePrivateEndpoint: true` or `false`, so roles, other settings, and new resources cannot slip in; the agent's texts must also name no protected setting. Only then does it create a branch, commit the checked file, open a draft pull request, and start the preview. An answer that fails a check becomes a comment on the Issue that lists why.
   - **`preview`** receives the repository webhook's `pull_request` events, signed with a secret that only GitHub and the Function's Key Vault hold. It drops a pull request whose branch is in a fork, or whose author is not the repository's owner, a member, or a collaborator. From any other it takes only the number, reads the pull request from GitHub's API and checks the same again, skips it if it does not change this solution's `infra/`, sets the commit status `posture/what-if` to pending, and starts the Container Apps job `posture-whatif` as it is defined. It previews each commit once, so when the webhook reports the pull request that `intake` just opened, it does not start the job again. The job runs [`whatif.py`](whatif.py) with `--pending`: it previews every open pull request whose head commit has that pending status, checks each one again, comments a summary on the pull request, and sets the final commit status. So the Function can start the job, but cannot change what the job runs.
   - **`verify`** runs every hour, or when you start it. Once the storage account has an approved private endpoint, it waits up to 20 minutes for this solution's assignment to report the account compliant, and starts an Azure Policy evaluation if it does not yet. It then records each source's answer on the Issue and closes it; if Azure Policy has not caught up, the next run tries again. Defender's own confirmation arrives later: when the recommendation turns Healthy, the workflow automation `posture-defender-healthy` sends it through `posture-intake`, and `intake` records it on the Issue.
-- **The Foundry agent `posture-remediator`** is a prompt agent on `gpt-5-mini` in the solution's own Foundry project. Its instructions, [`posture-remediator.md`](posture-remediator.md), tell it to prefer an existing module parameter, change one block and the comment above it, and never weaken a control. A strict JSON schema shapes its answer. The azd hook [`remediation_agent.py`](remediation_agent.py) publishes a new version whenever the definition changes.
+- **The Foundry agent `posture-remediator`** is a prompt agent on `gpt-6-luna` in the solution's own Foundry project. Its instructions, [`posture-remediator.md`](posture-remediator.md), tell it to prefer an existing module parameter, change one block and the comment above it, and never weaken a control. A strict JSON schema shapes its answer. The azd hook [`remediation_agent.py`](remediation_agent.py) publishes a new version whenever the definition changes.
 - **A person** creates the GitHub token, reviews and merges the pull request, deploys it with `azd provision`, and decides when the work is done.
 - **GitHub** holds the code, the Issue, the pull request, and one webhook. No GitHub Actions workflow, Copilot agent, or skill takes part.
 
@@ -114,7 +114,7 @@ Evidence: the table in Issue [#223](https://github.com/melabadi/adept-assessment
 
 **What this shows:** two services flagged the same resource, and neither said where in the team's code the fix belongs: Defender links to general guidance, and the policy, which only audits, offers no remediation task.
 
-### 2. Copilot in Azure explained the risk
+### 2. Azure Copilot explained the risk
 
 *Not part of this run: from the earlier run captured for pull request #164.*
 
@@ -124,11 +124,11 @@ In that run, the operator selected **Copilot** in the portal's top bar and asked
 
 Copilot explained the risk (unauthorized access, data exfiltration, and reconnaissance) and that a private endpoint fixes it, then wrote a generic private endpoint in Bicep, with placeholder names such as `yourStorageAccountName`. Its words differ each time.
 
-![Copilot in Azure's answer: the recommendation reduces the risk of unauthorized access, data exfiltration, and reconnaissance, and a private endpoint fixes it, followed by a basic Bicep example with placeholder names such as yourStorageAccountName](images/02-azure-copilot.png)
+![Azure Copilot's answer: the recommendation reduces the risk of unauthorized access, data exfiltration, and reconnaissance, and a private endpoint fixes it, followed by a basic Bicep example with placeholder names such as yourStorageAccountName](images/02-azure-copilot.png)
 
-Evidence: the screenshot. Copilot in Azure keeps no record that others can open.
+Evidence: the screenshot. Azure Copilot keeps no record that others can open.
 
-**What this shows:** Copilot in Azure helps a person understand a finding in the portal, but it doesn't know the team's Bicep; the Foundry agent in step 4 does.
+**What this shows:** Azure Copilot helps a person understand a finding in the portal, but it doesn't know the team's Bicep; the Foundry agent in step 4 does.
 
 ### 3. One click handed the finding to Azure
 
@@ -161,6 +161,8 @@ Then `intake` sent the finding, [`infra/resources.bicep`](infra/resources.bicep)
 ![The pull request's diff of resources.bicep: between the posture:editable-begin and posture:editable-end lines, two comment lines and storagePrivateEndpoint: false are replaced by a one-line comment and storagePrivateEndpoint: true](images/04-agent-diff.png)
 
 ![The Foundry agent posture-remediator in the Foundry portal: version 6, model gpt-5-mini on a Global Standard deployment, the start of its instructions, and its description: drafts the smallest Bicep fix for a cloud posture finding; the Function intake opens it as a pull request](images/04-foundry-agent.png)
+
+Since 11 November 2026, the agent runs on `gpt-6-luna`: in [its validation run](evidence/2026-11-11-model-refresh.md), a replay of this run's trigger through the updated Function, it drafted the same one-value fix on its first try, in pull request [#336](https://github.com/melabadi/adept-assessment-northstars/pull/336), which was closed without merging.
 
 The morning's first trigger, at 05:14, had filed Issue [#222](https://github.com/melabadi/adept-assessment-northstars/issues/222). The agent's answer then changed text outside the marked lines, so the Function refused it, opened nothing, and commented why on the Issue. Before the run shown, the operator deployed a Function that asks again when an answer fails, up to three times, telling the agent why, against the same checks, and closed #222 as not planned.
 
@@ -253,8 +255,8 @@ The solution fixes one control: a storage account without a private endpoint, wh
 - Your app's Azure resources in Bicep, deployed with `azd` into one resource group, with the fix available as a module parameter, as RequestHub's [`requesthub.bicep`](../../app/infra/requesthub.bicep) offers `storagePrivateEndpoint`. The agent changes that one value; the module does the rest.
 - An Azure subscription where you can create resource groups, role assignments, and policy assignments, for example as Owner. Owner also covers **Trigger logic app**, which needs Security Admin on the resource group and the right to run the Logic App.
 - Microsoft Defender for Cloud with the Microsoft cloud security benchmark assigned, the default for Azure subscriptions. The free foundational CSPM includes the recommendation, **Trigger logic app**, and workflow automation. With the paid Defender CSPM plan, as in See it work, the portal also rates each recommendation's risk level.
-- Copilot in Azure, which the Azure portal offers unless your tenant's administrators turned it off.
-- A region with Azure Functions on the Flex Consumption plan, Microsoft Foundry, and Global Standard quota for `gpt-5-mini` (50,000 tokens per minute). We used `centralus`.
+- Azure Copilot, which the Azure portal offers unless your tenant's administrators turned it off.
+- A region with Azure Functions on the Flex Consumption plan, Microsoft Foundry, and Global Standard quota for `gpt-6-luna` (50,000 tokens per minute). We used `centralus`.
 - A GitHub account that can create a fine-grained personal access token for the repository.
 
 ### What to copy and what to change
@@ -277,7 +279,7 @@ Before you open the pull request that adds the folder, run the offline tests in 
 
 ### One-time setup
 
-About 30 minutes, once the files describe your app, then up to a day before Defender for Cloud assesses resources it hasn't seen. On RequestHub, adding the posture Function to a running deployment took 7 minutes 6 seconds, and each later `azd provision` took 5 to 5½ minutes.
+About 30 minutes, once the files describe your app, then up to a day before Defender for Cloud assesses resources it hasn't seen. On RequestHub, adding the posture Function to a running deployment took 7 minutes 6 seconds, and each later `azd provision` took 5 to 6 minutes.
 
 #### 1. Create the GitHub token
 
@@ -358,10 +360,11 @@ Then keep it in your workflow:
 
 - **One storage account per deployment.** The Function acts on the account in `storageAccountId`, and ignores a click on any other resource's recommendation.
 - **Keep the evidence you need.** The Issue and the pull request stay on GitHub. Azure's records of the runs expire (after 90 days here), so export what you want to keep, as [`evidence/`](evidence/) does for See it work, and check the export for host names, GUIDs, and e-mail addresses before you commit it.
+- **Keep the model current.** The agent runs on `gpt-6-luna` version 2026-09-22, which Azure retires on 11 March 2028. To change the model, set `modelName` and `modelVersion` in [`infra/automation.bicep`](infra/automation.bicep) and run `azd provision`, which deploys the model and publishes a new agent version on it. Then run `python remediation_agent.py try` a few times, and delete the old deployment, as in the [model refresh](evidence/2026-11-11-model-refresh.md) that moved this agent from `gpt-5-mini`.
 
 ### What it costs
 
-Your app bills as it already does. While deployed, the solution adds about $16 a month for the posture Function's two private endpoints and their private DNS zones, and a private link fix adds your app's own private endpoint, about $7 a month. The rest bills per use: the Function on Flex Consumption, the Logic App's runs, the what-if job's executions, and the agent's `gpt-5-mini` tokens in Foundry. Defender for Cloud's foundational CSPM is free; the Defender CSPM plan, which rates risk levels, bills per resource. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+Your app bills as it already does. While deployed, the solution adds about $16 a month for the posture Function's two private endpoints and their private DNS zones, and a private link fix adds your app's own private endpoint, about $7 a month. The rest bills per use: the Function on Flex Consumption, the Logic App's runs, the what-if job's executions, and the agent's `gpt-6-luna` tokens in Foundry, about $0.0008 per answer here (6,786 input and 271 output tokens, at $0.10 and $0.50 per million). Defender for Cloud's foundational CSPM is free; the Defender CSPM plan, which rates risk levels, bills per resource. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
 
 ## Try it first in a copy of this repository
 
@@ -381,7 +384,7 @@ azd env set POSTURE_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')
 azd up
 ```
 
-Allow about 30 minutes, most of it for `azd up`. We haven't timed a clean `azd up` of this version: adding the posture Function to a running deployment took 7 minutes 6 seconds, and each later `azd provision` took 5 to 5½ minutes. `azd up` prints what [Deploy](#2-deploy) shows. Then wait up to a day before step 1: Defender for Cloud can take that long to assess the new storage account, and the Function files work only while Defender reports it `Unhealthy`.
+Allow about 30 minutes, most of it for `azd up`. We haven't timed a clean `azd up` of this version: adding the posture Function to a running deployment took 7 minutes 6 seconds, and each later `azd provision` took 5 to 6 minutes. `azd up` prints what [Deploy](#2-deploy) shows. Then wait up to a day before step 1: Defender for Cloud can take that long to assess the new storage account, and the Function files work only while Defender reports it `Unhealthy`.
 
 While deployed, the copy's resource group bills by the hour for RequestHub's platform (Container Apps, PostgreSQL, a container registry, and Log Analytics) and for the posture Function's private endpoints, as in [What it costs](#what-it-costs).
 
@@ -392,7 +395,7 @@ Resource group `rg-ai-sdlc-secure`, with:
 - **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): private PostgreSQL, Blob storage, a container registry, monitoring, a Container Apps environment, and a Microsoft Entra app registration with RequestHub's app roles (you get every role). Storage is deployed **without a private endpoint**: that is the finding.
 - **The app**, as two container apps: the API with the web UI, and the notification worker.
 - **The Azure Policy assignment** `requesthub-storage-private-link`, on this resource group only.
-- **The posture automation**: a Microsoft Foundry account with the project `secure`, the model deployment `gpt-5-mini`, and the agent `posture-remediator`; the Function app `func-posture-…` on the Flex Consumption plan, with its own virtual network, storage account, and Key Vault, the last two reached through private endpoints; the Logic App `posture-intake`; the Container Apps job `posture-whatif`; and the Defender for Cloud connection and workflow automation `posture-defender-healthy`.
+- **The posture automation**: a Microsoft Foundry account with the project `secure`, the model deployment `gpt-6-luna`, and the agent `posture-remediator`; the Function app `func-posture-…` on the Flex Consumption plan, with its own virtual network, storage account, and Key Vault, the last two reached through private endpoints; the Logic App `posture-intake`; the Container Apps job `posture-whatif`; and the Defender for Cloud connection and workflow automation `posture-defender-healthy`.
 - **Three managed identities**, with the roles listed under **Least privilege** in [How it works](#how-it-works). None has GitHub federation, registry push, or a RequestHub app role.
 
 In GitHub, it creates one webhook that sends `pull_request` events to the Function's `preview` route, signed with the webhook secret that the preprovision hook generated. The hook passes the secret to `gh` on standard input and never prints it or the URL.
@@ -441,7 +444,7 @@ The third line prints the repository's name, read with the automation's token an
 | Step | Takes | In See it work |
 | --- | --- | --- |
 | 1. Open the finding | about 2 minutes | |
-| 2. Ask Copilot in Azure | about 2 minutes | not part of the run |
+| 2. Ask Azure Copilot | about 2 minutes | not part of the run |
 | 3. Trigger the automation | about a minute | the Logic App run took 21.3 seconds |
 | 4. Read the Issue and the pull request | about 3 minutes, while the preview runs | the Issue 5 seconds after the trigger, the pull request 16 |
 | 5. Wait for the preview | 1 to 2 minutes after the trigger | PASS 92 seconds after the trigger |
@@ -459,9 +462,9 @@ In the Azure portal, open **Microsoft Defender for Cloud** > **Recommendations**
 
 Optional: open the app (`azd env get-value API_URL`), open any request, and attach a file. Where an organization-wide policy closes storage accounts' public endpoints, the upload fails.
 
-### 2. Ask Copilot in Azure
+### 2. Ask Azure Copilot
 
-*About 2 minutes. What you should see: [See it work, step 2](#2-copilot-in-azure-explained-the-risk).*
+*About 2 minutes. What you should see: [See it work, step 2](#2-azure-copilot-explained-the-risk).*
 
 Select **Copilot** in the portal's top bar and ask:
 
@@ -583,7 +586,8 @@ When you no longer need the solution, run this in its folder, then delete the to
 05-secure-microsoft/
 ├── README.md
 ├── evidence/
-│   └── 2026-10-31-recorded-run.md  what Azure recorded during the run in See it work, exported for anyone to check
+│   ├── 2026-10-31-recorded-run.md  what Azure recorded during the run in See it work, exported for anyone to check
+│   └── 2026-11-11-model-refresh.md the move to gpt-6-luna: before-and-after tries, a replay through the Function, and the cost
 ├── images/                       screenshots of the run in See it work, and of the Secure combo (combo-*)
 ├── azure.yaml                    azd project: infra, the shared app's api and worker, the posture Function, and the hooks
 ├── infra/
@@ -626,7 +630,7 @@ There is no `.github/` folder: the solution ships no workflow, agent, or skill. 
 - **A `posture-intake` run fails at *Send it to the posture Function*.** Open the step: its output is the Function's answer. HTTP 409 means the GitHub token is not in Key Vault; HTTP 502 with `GitHub answered HTTP 401` means it expired or was revoked. Create a new one ([Create the GitHub token](#1-create-the-github-token)), store it with `azd env set POSTURE_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')`, and run `azd provision`. HTTP 404 right after the first `azd provision` of a new environment means the Function's code is not deployed yet: run `azd deploy posture`.
 - **The agent's proposal was not applied.** The Issue has a comment that lists why. The Function already asked the agent up to three times, telling it why each answer failed; the checks don't change. Trigger the recommendation again, or tighten the instructions in `posture-remediator.md` and try them with `python remediation_agent.py try`.
 - **`posture/what-if` stays pending after an `azd provision`, and the `posture-whatif` job's execution failed.** The job reads its GitHub token from a secret that `azd provision` sets from the azd environment. When `POSTURE_GITHUB_TOKEN` is missing there, for example in a new clone, provision sets that secret to `not-set`, and the job's console log in Log Analytics ends with `HTTP Error 401: Unauthorized`. The Function keeps working, because it reads Key Vault, which provision writes only when it has a token. Store the token with `azd env set POSTURE_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')`, run `azd provision` again, then start the job: `az containerapp job start -g (azd env get-value AZURE_RESOURCE_GROUP) -n posture-whatif`. It previews every open pull request whose head is still pending.
-- **A push to the pull request starts no preview.** In the repository's **Settings** > **Webhooks**, open the posture webhook's **Recent Deliveries**. HTTP 401 `invalid signature` means the webhook's secret and Key Vault's differ: run `azd provision`, whose hooks set both from the azd environment. A delivery that timed out after 10 seconds reached a Function that was starting; it can still have started the preview.
+- **A push to the pull request starts no preview.** In the repository's **Settings** > **Webhooks**, open the posture webhook's **Recent Deliveries**. HTTP 401 `invalid signature` means the webhook's secret and Key Vault's differ: run `azd provision`, whose hooks set both from the azd environment. Each azd environment generates its own secret, so a provision from another clone's environment replaces both: deliveries during that provision, between its deployment and its postprovision hook, can get 401, as one did during the [model refresh](evidence/2026-11-11-model-refresh.md). Use **Redeliver** on them afterwards. A delivery that timed out after 10 seconds reached a Function that was starting; it can still have started the preview.
 - **The commit status `posture/what-if` says the preview could not start in Azure.** In RequestHub's Application Insights, open **Logs** and run `traces | where message has "JobStartOverrideAuthorizationFailed"`. A match means the deployment predates the job's `--pending` mode: the Function started the job with a template override, which Azure now allows only with write access on the job, and the Function's identity has none. Run `azd provision`, then `azd deploy posture`, from an up-to-date `main`. Then update the pull request, for example edit its description: the Function previews a commit again when its last preview ended in error.
 - **`verify` adds nothing to the Issue.** The `az rest` command only starts it. Its result is in RequestHub's Application Insights: open **Logs** and run `traces | where message startswith "verify"`. *Not fixed yet* means the storage account has no approved private endpoint: run `azd provision` on an up-to-date `main`. *Does not report the storage account compliant yet* means Azure Policy took longer than 20 minutes: start `verify` again, or let the next hourly run try.
 - **The token check in [Check the starting state](#check-the-starting-state) returns 401 right after you stored a new token.** An `azd provision` or `azd up` that was already running when you stored it rewrote `.azure/ai-sdlc-secure/.env` with the old value when it finished. Store the token again once no azd command is running in this folder, then run `azd provision`.
