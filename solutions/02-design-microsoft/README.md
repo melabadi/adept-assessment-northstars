@@ -68,7 +68,7 @@ flowchart LR
   PR --> H{Architect<br/>merge or close}
 ```
 
-- **Foundry Agent Service** hosts one prompt agent per operating profile, published from [`agent.yaml`](agent.yaml): instructions, model settings, a knowledge tool, and a strict JSON output schema.
+- **Foundry Agent Service** hosts one prompt agent per operating profile on the `gpt-6.1-sol` model, published from [`agent.yaml`](agent.yaml): instructions, model settings, a knowledge tool, and a strict JSON output schema.
 - **Foundry IQ** gives each profile its own knowledge base over the `architecture-standards` index in Azure AI Search. The profile's scope filter (`scope eq 'all' or scope eq 'small-team'`) is stored in the knowledge source, so the search service, not the prompt, decides what a team can retrieve.
 - **The Azure Function** ([`function/`](function/), Python on the Flex Consumption plan) is the only code that talks to GitHub:
   - Its **webhook** checks GitHub's signature and who asked, then puts the question on a queue and answers GitHub within its 10 seconds.
@@ -96,6 +96,8 @@ This build runs the preferred path of both preview features: the agents retrieve
 ## See it work
 
 On 31 October and 1 November 2026, the solution ran end to end against the real services in resource group `rg-ai-sdlc-design`, with Microsoft Foundry and the Function in East US 2 and Azure AI Search in Central US, on RequestHub, this repository's sample app: a change to a standard at 23:23 UTC on 31 October, then a design question 78 minutes later. The operator was a GitHub Copilot agent session working for the repository owner: it merged the change and filed the question, signed in to GitHub as the owner. The GitHub App, the Function, Azure AI Search, and Foundry did the rest. The Function ran the code of pull request [#244](https://github.com/melabadi/adept-assessment-northstars/pull/244) ([the code that ran](evidence/2026-10-31-recorded-run.md#the-code-that-ran)), and both agents were at version 2.
+
+The agents answered with `gpt-5.4-mini` then. Since 11 November 2026 they run `gpt-6.1-sol`: it passed the ten labelled and the six held-out cases in Foundry, and gave this run's question, asked again as Issue [#355](https://github.com/melabadi/adept-assessment-northstars/issues/355), the same recommendation ([the evidence](evidence/2026-11-11-model-refresh.md)).
 
 Every step links evidence that opens without signing in: the pull request that changed the standard, the Issue and the pull request the advisor created, and [what Azure recorded](evidence/2026-10-31-recorded-run.md), exported from Application Insights and the Foundry evaluation. Times are UTC. Where a screenshot of the Foundry portal comes from another run, the step says which.
 
@@ -238,7 +240,7 @@ These are the steps that set the solution up for this repository, with what to c
 
 - Your repository on GitHub, with admin rights, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. This solution uses neither GitHub Copilot nor GitHub Actions.
 - An Azure subscription where you can create a resource group and role assignments, for example as Owner.
-- Quota for `gpt-5.4-mini` (Global Standard, 250,000 tokens per minute) in the region you choose, and for Azure AI Search Basic. We put everything in `eastus2`, except Azure AI Search, which goes to `centralus` unless you set `AZURE_SEARCH_LOCATION`.
+- Quota for `gpt-6.1-sol` version 2026-09-29 (Global Standard, 250,000 tokens per minute) in the region you choose, and for Azure AI Search Basic. We put everything in `eastus2`, except Azure AI Search, which goes to `centralus` unless you set `AZURE_SEARCH_LOCATION`.
 - A GitHub account that may create a GitHub App and install it on the repository: the repository's owner, or an organization owner.
 - Your approved standards, as text you can split into one file per standard, and a few design questions whose right answers you know, for the evaluation.
 
@@ -340,7 +342,7 @@ Comments and pull requests then appear under your name, and you rotate the token
 ### Use it the first time
 
 1. **Put the folder and the issue form on your default branch,** through a pull request: GitHub offers an issue form only from there. Once GitHub is connected, each merge that changes `standards/`, `agent.yaml`, or `eval_cases.jsonl` starts a standards run, as in [See it work](#see-it-work) steps 2 and 3: Azure re-indexes that commit's standards, publishes new agent versions if `agent.yaml` changed, and starts an evaluation named after the commit.
-2. **Ask a question.** **Issues** → **New issue** → **Design: ask the Foundry architecture advisor**; pick a profile, write one design question, and select **Create**. **What you should see:** within a minute, a comment from your GitHub App with the answer, the standards it relied on, the conflicts and unknowns, and the checks that passed, and an ADR draft pull request from a `design/advisor-issue-<number>` branch, as in [step 6](#6-the-answer-and-a-proposed-adr-reached-github). If the gate rejects the answer, the comment lists only the failed checks, and no pull request opens.
+2. **Ask a question.** **Issues** → **New issue** → **Design: ask the Foundry architecture advisor**; pick a profile, write one design question, and select **Create**. **What you should see:** within two minutes, a comment from your GitHub App with the answer, the standards it relied on, the conflicts and unknowns, and the checks that passed, and an ADR draft pull request from a `design/advisor-issue-<number>` branch, as in [step 6](#6-the-answer-and-a-proposed-adr-reached-github). If the gate rejects the answer, the comment lists only the failed checks, and no pull request opens.
 3. **Evaluate the agents on your cases,** from the solution folder, in the activated environment:
 
    ```powershell
@@ -362,7 +364,7 @@ Saving the query in a file keeps PowerShell from mangling its quotes. To search 
 
 ### What it costs
 
-About $96 a month while deployed: Azure AI Search Basic (about $73), three private endpoints and their DNS zones for the Function's blobs, queues, and Key Vault (about $23), and storage, Key Vault, and Log Analytics within cents. The Function costs nothing while idle. Each answer costs about half a cent in model tokens (the agent's Traces tab shows the estimate), and an evaluation of the ten cases about six cents. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+About $96 a month while deployed: Azure AI Search Basic (about $73), three private endpoints and their DNS zones for the Function's blobs, queues, and Key Vault (about $23), and storage, Key Vault, and Log Analytics within cents. The Function costs nothing while idle. Model tokens cost up to about 4 cents per answer on `gpt-6.1-sol`, at $2 per million input and $10 per million output tokens: on 11 November, an answer to a labelled case averaged 3,241 input and 2,008 output tokens, or 2.5 cents, and the evaluation of all ten cost 25 cents ([the measurements](evidence/2026-11-11-model-refresh.md#cost)). The same day, `gpt-6-luna` cost a twenty-fifth of that, but it failed a labelled case in both of its evaluations, so it isn't the default. To try another model, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), run `azd provision`, then `python evaluate.py`. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
 
 ## Try it first in a copy of this repository
 
@@ -405,7 +407,7 @@ If it says GitHub isn't connected yet, follow [Connect GitHub](#2-connect-github
 | 2. Azure re-indexes | under half a minute after the merge | 16 seconds to the index, 24 seconds to the evaluation's start |
 | 3. The evaluation | 3 to 7 minutes after the merge | 2 minutes 39 seconds and 6 minutes 46 seconds after the merge |
 | 4. Ask from GitHub | about 1 minute | |
-| 5. The advisor run | under a minute | queued 7 seconds after the Issue, done 20 seconds after it started |
+| 5. The advisor run | about a minute | queued 7 seconds after the Issue, done 20 seconds after it started |
 | 6. Review | about 3 minutes | the comment 32 seconds after the Issue |
 | 7. Trace | about 1 minute | |
 
@@ -450,7 +452,7 @@ To evaluate without changing a standard, run `python evaluate.py` from the solut
 
 ![python evaluate.py --check-graders: 30 fixed answers. Every wrong answer passes citations and fails grounding (E07's also fails conflicts); every right answer passes all five checks, except held-out H06's, a known misread listed under the table. Paired: 18 of 18 graded as labelled, and Foundry graded 18 of 18 exactly as checks.py did; held-out: 11 of 12, and Foundry graded 12 of 12 the same way](images/09-check-graders.png)
 
-If Foundry still can't grade a profile's third run, `evaluate.py` reports `COULD NOT GRADE`. Then `python evaluate.py --local` asks the same agent versions the same questions and scores the answers on your machine with the same checks, in about 3 minutes. Its run on 30 October:
+If Foundry still can't grade a profile's third run, `evaluate.py` reports `COULD NOT GRADE`. Then `python evaluate.py --local` asks the same agent versions the same questions, one at a time, and scores the answers on your machine with the same checks: 7 minutes on `gpt-6.1-sol` on 11 November, all ten passed ([the evidence](evidence/2026-11-11-model-refresh.md#the-fallback-evaluation)). Its run on 30 October, on `gpt-5.4-mini`:
 
 ![python evaluate.py --local: all ten cases pass, each with its profile, the agent version that answered, and 11 to 21 seconds per answer](images/09-evaluate-local.png)
 
@@ -467,7 +469,7 @@ $issue = (gh issue create --title "Architecture question: where should the live 
 
 ### 5. Follow the advisor run
 
-*Under a minute. What you should see: [See it work, step 5](#5-azure-asked-the-agent-and-checked-its-answer).*
+*About a minute. What you should see: [See it work, step 5](#5-azure-asked-the-agent-and-checked-its-answer).*
 
 Run the log query from [Use it the first time](#use-it-the-first-time) again: the advisor run's lines start with `advisor run` and end with `commented the answer`. To see the agent that answered, open the Foundry portal: **Build** → **Agents** → `architecture-advisor-small-team`, with its model, instructions, and knowledge base.
 
@@ -525,7 +527,8 @@ To set the solution up again right after `azd down --purge`, give it new resourc
 ├── grader_checks.jsonl            a right and a wrong answer per labelled question, same quotes, opposite conclusions (`--check-graders`)
 ├── inputs/reviewed-brief.md       the reviewed brief behind the design question
 ├── evidence/
-│   └── 2026-10-31-recorded-run.md what Azure recorded during the run in See it work, exported for anyone to check
+│   ├── 2026-10-31-recorded-run.md what Azure recorded during the run in See it work, exported for anyone to check
+│   └── 2026-11-11-model-refresh.md the switch to gpt-6.1-sol: the evaluations of three models, a live answer, and their cost
 ├── function/                      the Azure Function (Python 3.12, Flex Consumption)
 │   ├── function_app.py            the webhook, the two queue functions, and connecting GitHub
 │   ├── advisor_core/

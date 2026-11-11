@@ -120,13 +120,15 @@ def register_evaluators(project) -> dict[str, str]:
 
 
 def ensure_eval(openai, model: str, versions: dict[str, str], name: str = EVAL_NAME, fixed_answers: bool = False) -> str:
-    """The evaluation (cases schema + the five evaluators at the given versions); reused while nothing changed.
+    """The evaluation (cases schema + the five evaluators at the given versions, configured with the model deployment);
+    reused while neither changed, so a new model deployment never runs under criteria that name the old one.
     fixed_answers: items carry their answer in item["sample"] (grader checks) instead of asking an agent."""
     import openai as openai_errors
 
     signature = ",".join(f"{kind}:{versions[kind]}" for kind in EVALUATORS)
     for existing in openai.evals.list(limit=100):
-        if existing.name == name and (existing.metadata or {}).get("evaluators") == signature:
+        metadata = existing.metadata or {}
+        if existing.name == name and metadata.get("evaluators") == signature and metadata.get("model") == model:
             return existing.id
     criteria = [{"type": "azure_ai_evaluator", "name": evaluator_name(kind), "evaluator_name": evaluator_name(kind),
                  "evaluator_version": versions[kind],
@@ -135,7 +137,7 @@ def ensure_eval(openai, model: str, versions: dict[str, str], name: str = EVAL_N
     for _ in range(12):  # a new evaluator version takes a few seconds to appear in the catalog
         try:
             created = openai.evals.create(
-                name=name, metadata={"evaluators": signature},
+                name=name, metadata={"evaluators": signature, "model": model},
                 data_source_config={"type": "custom", "item_schema": schema, "include_sample_schema": not fixed_answers},
                 testing_criteria=criteria)
             break
@@ -143,11 +145,14 @@ def ensure_eval(openai, model: str, versions: dict[str, str], name: str = EVAL_N
             time.sleep(15)
     else:
         raise RuntimeError("the evaluators did not appear in the Foundry evaluator catalog")
-    # Keep one evaluation under its name: earlier ones (older evaluator code) keep their runs under another name.
+    # Keep one evaluation under its name: earlier ones keep their runs under a name that says what changed since.
     for existing in openai.evals.list(limit=100):
         if existing.name == name and existing.id != created.id:
+            metadata = existing.metadata or {}
+            changed = (f"earlier model {metadata['model']}" if metadata.get("model")
+                       and metadata.get("evaluators") == signature else "earlier evaluators")
             try:
-                openai.evals.update(existing.id, name=f"{name} (earlier evaluators)")
+                openai.evals.update(existing.id, name=f"{name} ({changed})")
             except Exception:  # renaming is cosmetic; the new evaluation is ready either way
                 pass
     return created.id

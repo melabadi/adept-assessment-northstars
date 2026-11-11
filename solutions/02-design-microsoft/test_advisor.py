@@ -460,6 +460,35 @@ class EvaluatorTests(unittest.TestCase):
                 self.assertEqual(missed, known)
                 self.assertTrue(not known or row["split"] == "held-out", "a paired answer can't be a known miss")
 
+    def test_a_new_model_deployment_gets_its_own_evaluation(self):
+        """The evaluators' criteria name the model deployment. After the model changes, the old deployment can be
+        deleted: the evaluation is created again for the new one, and the old evaluation keeps its runs under a name
+        that gives its model. The same evaluators and deployment reuse the evaluation."""
+        versions = dict.fromkeys(evaluation.EVALUATORS, "7")
+        signature = ",".join(f"{kind}:7" for kind in evaluation.EVALUATORS)
+        old = mock.MagicMock(id="eval_old", metadata={"evaluators": signature, "model": "gpt-5.4-mini"})
+        old.name = evaluation.EVAL_NAME
+        openai = mock.MagicMock()
+        openai.evals.list.return_value = [old]
+        openai.evals.create.return_value = mock.MagicMock(id="eval_new")
+
+        self.assertEqual(evaluation.ensure_eval(openai, "gpt-6-luna", versions), "eval_new")
+        created = openai.evals.create.call_args.kwargs
+        self.assertEqual(created["metadata"], {"evaluators": signature, "model": "gpt-6-luna"})
+        self.assertEqual({c["initialization_parameters"]["deployment_name"] for c in created["testing_criteria"]},
+                         {"gpt-6-luna"})
+        openai.evals.update.assert_called_once_with("eval_old",
+                                                    name=f"{evaluation.EVAL_NAME} (earlier model gpt-5.4-mini)")
+
+        openai.evals.create.reset_mock()
+        self.assertEqual(evaluation.ensure_eval(openai, "gpt-5.4-mini", versions), "eval_old")
+        openai.evals.create.assert_not_called()
+
+        openai.evals.update.reset_mock()
+        old.metadata = {"evaluators": signature.replace(":7", ":6"), "model": "gpt-6-luna"}
+        evaluation.ensure_eval(openai, "gpt-6-luna", versions)
+        openai.evals.update.assert_called_once_with("eval_old", name=f"{evaluation.EVAL_NAME} (earlier evaluators)")
+
 
 class ReportTests(unittest.TestCase):
     sample = {"issue": 12, "question": "Where should the triage provider run?", "profile": "small-team",

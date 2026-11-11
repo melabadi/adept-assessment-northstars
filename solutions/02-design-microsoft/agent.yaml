@@ -34,8 +34,8 @@ instructions: |
     standards the search did not return.
   - Your output is advisory. An architect reviews and decides.
 
-# Reasoning settings for the gpt-5 family (the default model, gpt-5.4-mini). Non-reasoning models such as gpt-4.1-mini
-# reject a reasoning effort: replace this line with `temperature: 0.1`.
+# Reasoning settings for reasoning models, the gpt-5 and gpt-6 families (the default model is gpt-6.1-sol).
+# Non-reasoning models such as gpt-4.1-mini reject a reasoning effort: replace this line with `temperature: 0.1`.
 reasoning_effort: low
 
 # Upper bound for each answer, reasoning included (answers use about 1,000 to 2,000 tokens). It also lowers the tokens per

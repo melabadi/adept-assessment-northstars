@@ -25,9 +25,9 @@ param githubRepository string
 @description('Name proposed for the GitHub App on GitHub\'s registration page (the person creating it can change it).')
 param githubAppName string = 'AI-SDLC design advisor'
 
-@description('Chat model for the architecture advisor agents. agent.yaml sets a reasoning effort, so pick a gpt-5 family model or switch agent.yaml to temperature.')
-param modelName string = 'gpt-5.4-mini'
-param modelVersion string = '2026-03-17'
+@description('Chat model for the architecture advisor agents. agent.yaml sets a reasoning effort, so pick a reasoning model (the gpt-5 or gpt-6 families) or switch agent.yaml to temperature.')
+param modelName string = 'gpt-6.1-sol'
+param modelVersion string = '2026-09-29'
 
 @description('Model capacity in thousands of tokens per minute. An evaluation run sends five cases at once per profile; 250 leaves room for two runs and the advisor.')
 param modelCapacity int = 250
