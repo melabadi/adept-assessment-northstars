@@ -34,8 +34,10 @@ tools:
 network: defaults
 timeout-minutes: 10
 max-turns: 30
-max-ai-credits: 300
-max-daily-ai-credits: 1500
+# The four runs of 11 November used 13.3 to 15.2 AI credits for the agent: the cap is about 2.5 times the most.
+max-ai-credits: 40
+# About 25 investigations a day at the 14 to 16 credits a run used, detection included.
+max-daily-ai-credits: 400
 steps:
   # The facts come from a script on the default branch, not from the pull request. It checks again that the run may be
   # investigated (this repository's branch, an open pull request whose author is the owner, a member, a collaborator, or
@@ -57,6 +59,7 @@ safe-outputs:
   threat-detection:
     continue-on-error: false
     report-as-issue: false
+    max-ai-credits: 2 # detection used 0.62 in each of the four runs of 11 November
   # The comment and the label go to the pull request whose CI run failed, never to one the agent names.
   add-comment:
     max: 1
