@@ -5,7 +5,7 @@ Defects that only show up under retries or simultaneous clicks slip through revi
 ![The review evidence on Copilot's pull request: every check passes, and Copilot's regression tests fail at the tests-only commit and pass at the head](images/07-evidence-checks.png)
 
 - **Present it in about 20 minutes:** walk through [the recorded run](#the-recorded-run), a real run with a screenshot and a link for every step. Nothing to start or sign in to.
-- **Set it up yourself in about 5 minutes:** [Set it up yourself](#set-it-up-yourself) makes your own copy of the repository. A run then needs about 22 minutes of unattended work by Copilot and the checks, which you can start before the audience arrives: see [Run it yourself](#run-it-yourself).
+- **Set it up yourself in about 2 minutes:** follow [Set it up yourself](#set-it-up-yourself) in your copy of the repository, which the [root README](../../README.md) makes once for every solution. A run then needs about 22 minutes of unattended work by Copilot and the checks, which you can start before the audience arrives: see [Run it yourself](#run-it-yourself).
 
 ## Why it matters
 
@@ -253,32 +253,28 @@ Four of four failed at the tests-only commit `b9e90bb` and passed at the fix `e8
 
 ### Prerequisites
 
-- **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your copy. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). Step 6 uses Copilot code review, and the optional step 9 [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli).
-- **A Copilot session on GitHub Actions.** Copilot gets PostgreSQL for its tests from [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml), and cloud sandboxes don't run setup steps ([Copilot's environments](https://docs.github.com/en/copilot/concepts/agents/cloud-agent/about-cloud-agent#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)). Assigning the Issue started a GitHub Actions-based session in the recorded run and in the 10 November run; if you're offered a choice of environment, pick GitHub Actions.
-- **[GitHub CLI](https://cli.github.com/)**, signed in with the right to create repositories and the `workflow` scope: `gh auth login --scopes workflow`, or `gh auth refresh --scopes workflow` if you are already signed in. Your copy's first push contains workflow files, and GitHub refuses those from a token without that scope.
-- **Git, [PowerShell 7.4 or later](https://learn.microsoft.com/powershell/scripting/install/installing-powershell), and Python 3.12 or later.** The scripts use only Python's standard library.
+Your copy of the repository, and the tools every solution needs, in the root README's [Before you start](../../README.md#before-you-start). This solution's scripts use only Python's standard library. It also needs:
+
+- **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your copy. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). Step 6 uses Copilot code review, and the optional step 9 [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli).
+- **A Copilot session on GitHub Actions.** Copilot gets PostgreSQL for its tests from [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml), and cloud sandboxes don't run setup steps ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)). Assigning the Issue started a GitHub Actions-based session in the recorded run and in the 10 November run; if you're offered a choice of environment, pick GitHub Actions.
 - **For steps 2 and 9 only:** the [.NET 10 SDK](https://dotnet.microsoft.com/download) and PostgreSQL on `localhost:5432` (user `requesthub`, password `devpass`). The [app README](../../app/README.md#run-it-locally) has a one-line Docker command.
 
 ### Quick start
 
-About 5 minutes once the tools are installed: when this README was checked, the clone took 9 seconds, and the rest is a push, two labels, and one settings page. In a PowerShell terminal, in the folder that should hold the copy:
+About 2 minutes, in your copy of the repository, from its root folder: the [root README](../../README.md)'s *Set it up yourself* makes that copy, once for every solution. In PowerShell 7, create the two labels the demo's Issue uses; the commands took 3 seconds when this README was checked:
 
 ```powershell
-git clone https://github.com/melabadi/adept-assessment-northstars.git requesthub-ai-sdlc
-cd requesthub-ai-sdlc
-git remote remove origin
-gh repo create requesthub-ai-sdlc --private --source . --remote origin --push
 gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
 gh label create phase:test --color C5DEF5 --description "SDLC phase 4: Test" --force
 ```
 
-Then allow the Copilot cloud agent in the new repository, as in the prerequisites. To run steps 2 and 9 on your machine, also do [one-time step 5](#one-time-steps-in-detail).
+Then allow the Copilot cloud agent in your copy, as in the prerequisites. To run steps 2 and 9 on your machine, also do [one-time step 5](#one-time-steps-in-detail).
 
-**What it costs.** Making the copy uses no AI credits. Its first push runs four workflows once (CI, Repository checks, Copilot setup steps, and Secure · GitHub · lab tooling checks): about 5 minutes of runner time on this repository's latest runs, 10 as billed in a private repository. A demo run draws on your Copilot plan's AI credits, for the cloud agent's sessions, its code review, and Copilot CLI in step 9, and on GitHub Actions. In the recorded run, Copilot's first session reported 6.3 AI credits and step 9's Copilot CLI session 25.48, and the workflows, Copilot's sessions included, used 42.8 minutes of standard GitHub-hosted runners. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 57 minutes for the recorded run, because each job is rounded up to a whole minute ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
+**What it costs.** Setting it up costs nothing: the labels and the setting use no AI credits or runner minutes. A demo run draws on your Copilot plan's AI credits, for the cloud agent's sessions, its code review, and Copilot CLI in step 9, and on GitHub Actions. In the recorded run, Copilot's first session reported 6.3 AI credits and step 9's Copilot CLI session 25.48, and the workflows, Copilot's sessions included, used 42.8 minutes of standard GitHub-hosted runners. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 57 minutes for the recorded run, because each job is rounded up to a whole minute ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
 
 ### One-time steps in detail
 
-1. **Make your copy.** The quick start's first four commands clone this repository, drop its remote, and push `main` to a new repository of yours. `--private` keeps it to you; `--public` makes its Actions minutes free, and then also apply [Settings for a public copy](../../CONTRIBUTING.md#settings-for-a-public-copy). In an organization, name it `<org>/requesthub-ai-sdlc`. What you should see: `gh repo view --json nameWithOwner,visibility` prints your copy, and `git remote -v` lists only `origin`, pointing at it. The push runs the four workflows from the cost note on `main` once.
+1. **Start in your copy.** The [root README](../../README.md)'s *Set it up yourself* makes it, once for every solution. Run this README's commands from its root folder. What you should see: `gh repo view --json nameWithOwner -q .nameWithOwner` prints your copy, the repository that every `gh` command below acts on.
 2. **Let Copilot work in it.** Allow the Copilot cloud agent in the repository, as in the prerequisites. What you should see: on any Issue in your copy, **Assignees** lists **Copilot**.
 3. **Create the labels** that step 3's Issue uses (`bug` comes with every new repository). What you should see:
 
@@ -423,8 +419,6 @@ git branch -D test/whitespace-rejection    # if you ran step 9
 ```
 
 Never merge Copilot's pull request. Step 1 rebuilds the lab branch from `main` for the next run.
-
-When you no longer need your copy, delete it: `gh auth refresh -s delete_repo`, then `gh repo delete <owner>/requesthub-ai-sdlc --yes`.
 
 ## Use it in your own repository
 
