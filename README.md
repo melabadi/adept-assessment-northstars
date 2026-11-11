@@ -48,11 +48,11 @@ Each solution sets up on its own, so start with the one you want.
    ```powershell
    git clone https://github.com/melabadi/adept-assessment-northstars.git ai-sdlc
    cd ai-sdlc
-   git remote rename origin upstream
+   git remote remove origin
    gh repo create <owner>/ai-sdlc --private --source . --push
    ```
 
-   The copy has `main` with its full history, and your repository becomes `origin`. The recorded runs in the READMEs keep their links to this repository's Issues and pull requests. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
+   Your copy has `main` with its full history, and it becomes the clone's only remote, `origin`, so the solutions' scripts and `gh` commands act on it. Don't add this repository back as a remote named `upstream`: `gh` prefers that name over `origin`, and would file your demos' Issues here. To take later updates, pull without a remote: `git pull https://github.com/melabadi/adept-assessment-northstars.git main`. The recorded runs in the READMEs keep their links to this repository's Issues and pull requests. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
 2. **Check the tools and access** in [Before you start](#before-you-start).
 3. **Follow the solution's README** from *Set it up yourself*: a quick start, then each step in detail. A Microsoft solution deploys into its own resource group with `azd up`, and its clean-up removes everything it created; [PRESENTING.md](PRESENTING.md#what-it-costs-while-it-is-deployed) lists what bills while it is deployed.
 4. **Bring it to your own repository.** Each README's *Use it in your own repository* says what to copy and what to change.
