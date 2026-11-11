@@ -330,6 +330,18 @@ class ConclusionTests(unittest.TestCase):
                      "Route only usage reports through Azure API Management, and call the model endpoint directly."):
             self.assertNotEqual(checks.conclusion_misses(label, answer(summary=said, recommendation="")), [])
 
+    def test_e04_accepts_a_minimized_or_allowlisted_set_of_fields(self):
+        """STD-SEC-002 is titled "Data minimization for AI services". Seen live on E04 from gpt-6-luna: "Use a minimized,
+        explicitly allowlisted set of fields" states the rule, while "only fields" sat in a clause that also held
+        "prohibit", which denies the whole clause. A negation or an attachment still fails."""
+        label = {**next(c for c in CASES if c["id"] == "E04")["expectConclusion"], "evidence": {}}
+        for said in ("Use a minimized, explicitly allowlisted set of fields shown to be necessary for triage; exclude "
+                     "attachments and personal data.",
+                     "Send the model a minimized set of fields."):
+            self.assertEqual(checks.conclusion_misses(label, answer(summary=said, recommendation="")), [])
+        for said in ("Do not allowlist fields; send the whole request.", "Allowlist fields, including attachments."):
+            self.assertNotEqual(checks.conclusion_misses(label, answer(summary=said, recommendation="")), [])
+
 
 class ResponseParsingTests(unittest.TestCase):
     def test_retrieval_is_read_from_a_foundry_iq_response(self):
