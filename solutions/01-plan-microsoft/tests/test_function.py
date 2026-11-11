@@ -767,7 +767,7 @@ class RunTests(unittest.TestCase):
 
     def test_an_unexpected_error_on_one_review_issue_does_not_lose_an_approved_run(self):
         # Found in review: the error escaped the timer after the first run had moved to publishing, so its publish
-        # message was never written. Two review Issues at once is normal: the README's backup run.
+        # message was never written. Two review Issues waiting at once is normal: runs can overlap.
         first, second = self.to_review(), self.to_review()
         self.github.label(self.record(first)["review"]["issue"], "brief-approved")
         self.github.fail_on["issue"] = (2, http.client.IncompleteRead(b"partial"))
