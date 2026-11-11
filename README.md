@@ -41,30 +41,37 @@ GitHub only reads agents, skills, workflows, and issue templates from the reposi
 
 ## Set it up yourself
 
-Each solution sets up on its own, so start with the one you want.
+Every solution sets up on its own, in one copy of this repository, so start with the one you want.
 
-1. **Make your own copy of this repository**, private or public, in your account or organization. In PowerShell 7, with `<owner>` your account or organization:
+1. **Check the tools and access** in [Before you start](#before-you-start).
+2. **Make your copy of this repository**, private or public, in your account or organization (about 2 minutes). In PowerShell 7, with `<owner>` your account or organization:
 
    ```powershell
    git clone https://github.com/melabadi/adept-assessment-northstars.git ai-sdlc
    cd ai-sdlc
    git remote remove origin
    gh repo create <owner>/ai-sdlc --private --source . --push
+   git remote -v
    ```
 
-   Your copy has `main` with its full history, and it becomes the clone's only remote, `origin`, so the solutions' scripts and `gh` commands act on it. Don't add this repository back as a remote named `upstream`: `gh` prefers that name over `origin`, and would file your demos' Issues here. To take later updates, pull without a remote: `git pull https://github.com/melabadi/adept-assessment-northstars.git main`. The recorded runs in the READMEs keep their links to this repository's Issues and pull requests. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
-2. **Check the tools and access** in [Before you start](#before-you-start).
-3. **Follow the solution's README** from *Set it up yourself*: a quick start, then each step in detail. A Microsoft solution deploys into its own resource group with `azd up`, and its clean-up removes everything it created; [PRESENTING.md](PRESENTING.md#what-it-costs-while-it-is-deployed) lists what bills while it is deployed.
+   `git remote -v` lists only `origin`, your copy, so the solutions' scripts and `gh` commands act on it. Don't add this repository back as a remote named `upstream`: `gh` prefers that name over `origin`, and would file your demos' Issues here. To take later updates, pull without a remote: `git pull https://github.com/melabadi/adept-assessment-northstars.git main`. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
+
+   The push runs your copy's four push workflows once (CI, Repository checks, Copilot setup steps, and the Secure lab tooling checks): about 5 minutes of GitHub-hosted runners, 10 as billed in a private repository. Nothing else runs until you set a solution up. The recorded runs in the READMEs keep their links to this repository's Issues and pull requests.
+3. **Follow the solution's README** from *Set it up yourself*: its quick start begins in your copy's root folder. A Microsoft solution deploys into its own resource group with `azd up`, and its clean-up removes everything it created; [PRESENTING.md](PRESENTING.md#what-it-costs-while-it-is-deployed) lists what bills while it is deployed.
 4. **Bring it to your own repository.** Each README's *Use it in your own repository* says what to copy and what to change.
+
+When you no longer need your copy, follow the *Reset and clean up* of each solution you set up: a Microsoft solution's clean-up removes its Azure resources and says which GitHub token to revoke. Then delete the copy: `gh auth refresh --scopes delete_repo`, then `gh repo delete <owner>/ai-sdlc --yes`.
 
 ### Before you start
 
 Every solution needs:
 
-- Your copy of this repository on GitHub (step 1). The GitHub solutions need **GitHub Copilot Business or Enterprise** on it, and solutions that assign work to Copilot also need the **Copilot cloud agent** enabled for the repository.
-- [GitHub CLI](https://cli.github.com/) (`gh auth login`). The GitHub solutions also use [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli) (`copilot`); Visual Studio Code with GitHub Copilot works for their interactive steps too.
+- Your copy of this repository on GitHub (step 2). The GitHub solutions need **GitHub Copilot Business or Enterprise** on it, and solutions that assign work to Copilot also need the **Copilot cloud agent** enabled for the repository.
+- [GitHub CLI](https://cli.github.com/), signed in with the `workflow` scope: `gh auth login --scopes workflow`, or `gh auth refresh --scopes workflow` if you are already signed in. Your copy's first push contains workflow files, and GitHub refuses those from a token without that scope. The GitHub solutions also use [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli) (`copilot`); Visual Studio Code with GitHub Copilot works for their interactive steps too.
 - Python 3.12 or later for the solution scripts (`pip install -r requirements.txt` in the solution folder, when it has one).
 - [PowerShell 7.4 or later](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`). The READMEs' commands are written for it. Windows PowerShell 5.1 handles quotes and file encodings differently, and some commands fail there.
+
+Where the Copilot cloud agent runs RequestHub's tests (03-develop-github, 04-test-github, 05-secure-github, and 07-operate-github), its session must run on GitHub Actions, where [`copilot-setup-steps.yml`](.github/workflows/copilot-setup-steps.yml) starts PostgreSQL. Cloud sandboxes don't run setup steps, and cloud is the default wherever GitHub offers a choice of environment: pick GitHub Actions ([GitHub's comparison](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)).
 
 Microsoft solutions also need:
 
