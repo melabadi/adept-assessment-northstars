@@ -1,6 +1,6 @@
 # Evidence from the recorded run
 
-These are the two proofs from [the recorded run](../README.md#the-recorded-run) on pull request [#101](https://github.com/melabadi/adept-assessment-northstars/pull/101), 28 October 2026. Each folder holds four files from one proof run's `regression-proof` artifact, copied unchanged. The runs and their artifacts need a GitHub sign-in, and the artifacts expire on 26 January 2027; these copies stay.
+These are the two proofs from the run in [See it work](../README.md#see-it-work), on pull request [#101](https://github.com/melabadi/adept-assessment-northstars/pull/101), 28 October 2026. Each folder holds four files from one proof run's `regression-proof` artifact, copied unchanged. The runs and their artifacts need a GitHub sign-in, and the artifacts expire on 26 January 2027; these copies stay.
 
 | Folder | Proof run (UTC) | Head | Verdict |
 | --- | --- | --- | --- |
