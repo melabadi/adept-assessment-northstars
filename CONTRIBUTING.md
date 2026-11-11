@@ -10,6 +10,7 @@ This repository holds fourteen independent solutions built on one shared app. Th
 - **Synthetic data only.** No real people, customers, secrets, tenant ids, or subscription ids in code, docs, or commit messages.
 - **Demos are live.** A demo passes only when it ran against the real service (Copilot, Foundry, Azure). Mocks, fixtures, and canned output are fine in tests, never as demo evidence.
 - **AI helps the people, not the product.** Every demo shows AI helping the people who plan, design, build, test, secure, release, and operate RequestHub. No demo is about an AI feature inside RequestHub.
+- **Contributions take the repository's license.** What you contribute is licensed under [LICENSE](LICENSE): the MIT License with the Commons Clause.
 
 ## Two tracks, two toolsets
 
