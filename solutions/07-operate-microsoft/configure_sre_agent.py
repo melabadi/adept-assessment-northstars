@@ -18,7 +18,9 @@ from the files in sre-agent/, described by sre-agent/agent.yaml:
                  asks a person
   tool policy    global allow, ask, and deny rules: Azure writes ask first, and every GitHub write tool is denied,
                  Issue writes included, by pattern and by the exact names found in the agent's tool catalog. So are
-                 the command tools that could use the token: the terminal, shell commands, and Python.
+                 the command tools that could use the token: the terminal, shell commands, and Python. So are the
+                 tools that run Azure DevOps pipelines or connect and disconnect repositories, and the Azure DevOps
+                 MCP server's tools: disabled in the agent, they would run without asking if someone enabled them.
                  CreateGithubIssue stays denied by name: after a person allows it, it appends a footer that names the
                  agent instance and links the thread with the subscription ID and thread GUID, which neither the
                  guard hook nor the approval card shows
@@ -42,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import http.client
 import json
 import re
 import subprocess
@@ -90,6 +93,17 @@ WRITE_TOOLS = {"RunAzCliWriteCommands", "RunKubectlWriteCommand", "RunShellComma
 # Command tools that must be denied outright: with GitHub connected, the agent's terminal can use gh and git with the
 # connection's token, and nothing in this solution needs a terminal, shell commands, or Python.
 COMMAND_TOOLS = ("RunInTerminal", "Terminal", "RunShellCommand", "ExecutePythonCode")
+# Tools that run Azure DevOps pipelines or connect and disconnect repositories, and the Azure DevOps MCP server as the
+# tool catalog lists it. They are disabled in the agent, but their default permission is allow: enabled in the portal,
+# they would run without asking. A pipeline run or a repository connection must never happen without a person.
+DEVOPS_TOOLS = ("TriggerBuildPipeline", "TriggerReleasePipeline", "ConnectRepositoryToResourceForAzureDevOps",
+                "DisconnectRepositoryFromResourceForAzureDevOps", "DisconnectRepositoryFromResourceForGitHub",
+                "AzureDevOps")
+# An MCP server's tools are named <connection>_<tool>, and the Azure DevOps server's connection has no id until someone
+# connects it: names its tools could have, with the connection named like the catalog's entry or like the Azure Monitor
+# server's (system-mcp-monitor).
+DEVOPS_MCP_SAMPLES = ("AzureDevOps_pipelines_run", "system-mcp-azuredevops_pipelines_run",
+                      "system-mcp-azure-devops_repo_create_branch")
 # Skills that earlier versions of this solution applied; removed from the agent when found.
 RETIRED_SKILLS = ("file-incident-record",)
 # After a person allows it, this tool appends a footer that names the agent instance and links the thread with the
@@ -349,6 +363,11 @@ def check(config: Config) -> list[str]:
                         "Contributor on the whole subscription, so an approved az monitor command would run with it")
     problems += [f"tool policy must deny {t}: with GitHub connected, a command tool could use the connection's token"
                  for t in COMMAND_TOOLS if t not in deny]
+    problems += [f"tool policy must deny {t}: a pipeline run or a repository connection must never happen without a "
+                 "person, and the tool would run without asking if someone enabled it" for t in DEVOPS_TOOLS
+                 if t not in deny]
+    problems += [f"tool policy must deny the Azure DevOps MCP server's tools, such as {t}"
+                 for t in DEVOPS_MCP_SAMPLES if not matches(t, deny)]
 
     github = config.github
     issue_tools, github_deny, guard = github.get("issueTools") or [], github.get("deny") or [], github.get("guardHook") or {}
@@ -431,6 +450,12 @@ class Client:
 
     def call(self, method: str, url: str, scope: str, body: object = None, headers: dict | None = None,
              raw: bytes | None = None, attempts: int = 1, wait: int = 20) -> tuple[int, dict, object]:
+        """Sends a request and returns its status, headers, and parsed body. With attempts above 1, the request is
+        sent again after `wait` seconds when the answer is 404, 409, 429, or 5xx, and when the connection drops or
+        times out before an answer. A request without an answer may or may not have reached the service, so pass
+        attempts above 1 only for a request that is safe to repeat: a GET, a PUT of a whole object, or a knowledge
+        upload, which replaces the file of the same name. A DELETE or a conditional PUT is sent once: repeated after
+        it succeeded, it would fail with 404 or 412."""
         for attempt in range(1, attempts + 1):
             data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
             request = urllib.request.Request(url, data=data, method=method)
@@ -454,6 +479,12 @@ class Client:
                     time.sleep(wait)
                     continue
                 return error.code, dict(error.headers), text
+            except (OSError, http.client.HTTPException) as error:  # URLError, RemoteDisconnected, TimeoutError, ...
+                if attempt < attempts:
+                    print(f"    {type(error).__name__} before an answer, retrying in {wait}s ({attempt}/{attempts - 1})")
+                    time.sleep(wait)
+                    continue
+                raise
         raise AssertionError("unreachable")
 
 
@@ -461,7 +492,7 @@ def agent_resource(client: Client, agent_id: str) -> dict:
     """Waits until the agent is provisioned and returns its ARM resource."""
     url = f"{ARM}{agent_id}?api-version={ARM_API_VERSION}"
     for _ in range(30):
-        status, _, body = client.call("GET", url, ARM_SCOPE)
+        status, _, body = client.call("GET", url, ARM_SCOPE, attempts=3)
         if status != 200:
             raise SystemExit(f"error: cannot read the SRE Agent ({status}): {body}")
         props = body.get("properties", {})
@@ -608,6 +639,7 @@ def apply(config: Config, dry_run: bool) -> int:
     print("Knowledge")
     for name, text in bodies["knowledge"].items():
         data, content_type = multipart("files", name, text.encode("utf-8"), "text/markdown")
+        # Safe to repeat: an upload replaces the knowledge file of the same name.
         status, _, response = client.call("POST", f"{endpoint}/api/v1/agentmemory/upload?triggerIndexing=true",
                                           DATA_PLANE_SCOPE, raw=data, headers={"Content-Type": content_type}, attempts=3)
         ok = 200 <= status < 300
@@ -621,7 +653,7 @@ def apply(config: Config, dry_run: bool) -> int:
 
     print("Custom agent")
     put("agents", agent["name"], bodies["customAgent"])
-    status, _, existing = client.call("GET", f"{endpoint}/api/v2/extendedAgent/skills", DATA_PLANE_SCOPE)
+    status, _, existing = client.call("GET", f"{endpoint}/api/v2/extendedAgent/skills", DATA_PLANE_SCOPE, attempts=3)
     for retired in (s.get("name") for s in items(existing)):
         if retired in RETIRED_SKILLS:
             status, _, _ = client.call("DELETE", f"{endpoint}/api/v2/extendedAgent/skills/{retired}", DATA_PLANE_SCOPE)
@@ -647,14 +679,15 @@ def apply(config: Config, dry_run: bool) -> int:
     print("Guard hook")
     hook = bodies["guardHook"]
     put("hooks", hook["name"], hook)
-    status, _, hooks = client.call("GET", f"{endpoint}/api/v2/extendedAgent/hooks", DATA_PLANE_SCOPE)
+    status, _, hooks = client.call("GET", f"{endpoint}/api/v2/extendedAgent/hooks", DATA_PLANE_SCOPE, attempts=3)
     for other in items(hooks):
         if other.get("name") != hook["name"]:
             print(f"  note    other hook on this agent: {other.get('name')}")
 
     print("Response plan")
     put("incidentFilters", plan["name"], bodies["responsePlan"], attempts=5)
-    status, _, plans = client.call("GET", f"{endpoint}/api/v2/extendedAgent/incidentFilters", DATA_PLANE_SCOPE)
+    status, _, plans = client.call("GET", f"{endpoint}/api/v2/extendedAgent/incidentFilters", DATA_PLANE_SCOPE,
+                                   attempts=3)
     for other in items(plans):
         if other.get("name") == QUICKSTART_PLAN:
             status, _, _ = client.call("DELETE", f"{endpoint}/api/v2/extendedAgent/incidentFilters/{QUICKSTART_PLAN}",
@@ -672,7 +705,7 @@ def apply(config: Config, dry_run: bool) -> int:
         "tool policy": url,
     }
     for label, check_url in checks.items():
-        status, _, body = client.call("GET", check_url, DATA_PLANE_SCOPE)
+        status, _, body = client.call("GET", check_url, DATA_PLANE_SCOPE, attempts=3)
         props = body.get("properties", {}) if isinstance(body, dict) else {}
         ok = status == 200
         if ok and label.startswith("agents/"):
@@ -727,8 +760,8 @@ def main() -> int:
         print(f"sre-agent/ is valid: custom agent '{config.agent['name']}', {len(config.skills)} skills, "
               f"{len(config.knowledge)} knowledge file(s), response plan '{config.plan['name']}' in "
               f"{config.plan['agentMode']} mode, no GitHub tool for the agent and every GitHub write tool denied "
-              f"(Issue writes included), Azure writes need approval, deletes denied, guard hook "
-              f"'{config.github['guardHook']['name']}' as a backstop.")
+              f"(Issue writes included), Azure writes need approval, deletes denied, Azure DevOps pipeline runs and "
+              f"repository connections denied, guard hook '{config.github['guardHook']['name']}' as a backstop.")
         return 0
     return apply(config, args.dry_run)
 
