@@ -252,9 +252,17 @@ def failed_jobs(repo: str, run: dict) -> list[dict]:
     return failed
 
 
-def log_url(job: dict) -> str:
-    """The job's log, opened at its first failed step."""
-    return f"{job['url']}#step:{job['step_number']}:1" if job["url"] and job["step_number"] else job["url"]
+def log_url(job: dict, pr_number: int) -> str:
+    """The job's log, opened at its first failed step. The query before the fragment keeps the link intact in a safe
+    output: gh-aw escapes `<word>/<word>#<word>` as a GitHub reference, and `.../job/<id>#step` matches it."""
+    url = f"{job['url']}?pr={pr_number}" if job["url"] else ""
+    return f"{url}#step:{job['step_number']}:1" if url and job["step_number"] else url
+
+
+def line_url(repo: str, sha: str, path: str, line: int) -> str:
+    """The line in the file at the run's commit. `?plain=1` comes before the fragment for the same reason as in
+    log_url: `.../File.cs#L41` reads as a GitHub reference."""
+    return f"https://github.com/{repo}/blob/{sha}/{quote(path)}?plain=1#L{line}" if path and line else ""
 
 
 def main_ci(repo: str, run: dict, branch: str) -> dict:
@@ -433,23 +441,22 @@ def collect(repo: str, run_id: int, bases: list[str], out: Path, noop_to: str | 
             path = in_changed(test["file"], changed) or test["file"]
             failures.append({"job": job["name"], "kind": test["kind"], "test": test["test"],
                              "message": [clip(m) for m in test["message"]], "file": path, "line": test["line"],
-                             "file_url": f"https://github.com/{repo}/blob/{run['head_sha']}/{quote(path)}#L{test['line']}"
-                             if path and test["line"] else "",
-                             "log_url": log_url(job), "pull_request_change": change,
+                             "file_url": line_url(repo, run["head_sha"], path, test["line"]),
+                             "log_url": log_url(job, pr["number"]), "pull_request_change": change,
                              "on_main": on_main(test["test"], main), "source": source})
         for error in parsed["errors"]:
             excerpt += [f"== {error['code']} {error['file']}:{error['line']}", *error["excerpt"], ""]
             path = in_changed(error["file"], changed)
             others.append({"job": job["name"], "kind": "build", "file": path or error["file"], "line": error["line"],
-                           "message": [f"{error['code']}: {m}" for m in error["message"]], "log_url": log_url(job),
-                           "in_pull_request": bool(path)})
+                           "message": [f"{error['code']}: {m}" for m in error["message"]],
+                           "log_url": log_url(job, pr["number"]), "in_pull_request": bool(path)})
         if parsed["tail"]:
             excerpt += [f"== the lines before the first error of step {job['step']!r}", *parsed["tail"]]
-            others.append({"job": job["name"], "kind": "other", "step": job["step"], "log_url": log_url(job),
+            others.append({"job": job["name"], "kind": "other", "step": job["step"], "log_url": log_url(job, pr["number"]),
                            "message": [clip(line) for line in parsed["tail"][-MAX_MESSAGE_LINES:]]})
         (out / "logs" / f"{job['id']}.txt").write_text("\n".join(excerpt[:MAX_LOG_LINES]) + "\n", encoding="utf-8")
     facts.update({"jobs": [{"id": job["id"], "name": job["name"], "conclusion": job["conclusion"], "step": job["step"],
-                            "log_url": log_url(job)} for job in jobs],
+                            "log_url": log_url(job, pr["number"])} for job in jobs],
                   "changed_files": [{"path": f["filename"], "status": f.get("status"), "additions": f.get("additions", 0),
                                      "deletions": f.get("deletions", 0)} for f in files],
                   "failures_total": total, "failures": failures, "other_failures": others, "main": main,

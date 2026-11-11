@@ -74,7 +74,8 @@ error belongs to (c), not (a).
 ```
 
 - Leave out a class that has no failures. List at most 15 failures per class, then "and <k> more in the log".
-- Quote assertion messages as they are, in a code span, shortened to one line. Use only the links in the facts.
+- Quote assertion messages as they are, in a code span, shortened to one line. Use only the links in the facts, exactly
+  as they are: the query before each `#` keeps the link intact when the comment is posted.
 - Write the test method's name, not its namespace. Keep the comment under 500 words.
 
 ## Rules
