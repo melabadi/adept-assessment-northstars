@@ -229,6 +229,15 @@ Copy this folder into your repository, two levels below its root, for example as
 | [`configure_sre_agent.py`](configure_sre_agent.py) and [`test_configure_sre_agent.py`](test_configure_sre_agent.py) | Applies `sre-agent/`, and checks it offline: the solution's rules, the guard hook's tests, and `RECORD_FIELDS`, what the record must state | `PLACEHOLDERS`, the `{{...}}` settings your files use; `RECORD_FIELDS`, if your record's fields differ; and `resource_suffixes()`, which takes the random suffix of your resource names from `WORKER_APP_NAME`. Update the tests to match. |
 | [`azure.yaml`](azure.yaml) | The azd project: the infrastructure, RequestHub's `api` and `worker` services, and the `postprovision` hook | Remove the `api` and `worker` services. |
 
+If you connect Azure DevOps to the agent, check the names of its MCP server's tools. `toolPolicy.deny` covers them with the pattern `*DevOps*_*`, chosen before their names could be seen: while the server is disabled, the tool catalog lists only its `AzureDevOps` entry. This lists the tools that aren't built in, with their connection:
+
+```powershell
+$endpoint = az resource show -g (azd env get-value AZURE_RESOURCE_GROUP) -n (azd env get-value SRE_AGENT_NAME) --resource-type Microsoft.App/agents --api-version 2026-01-01 --query properties.agentEndpoint -o tsv
+az rest --url "$endpoint/api/v2/agent/tools" --resource https://azuresre.dev --query "data[?source!='system'].{tool: name, connection: mcpConnector || mcpConnectorDisplayName}" -o table
+```
+
+Each Azure DevOps tool's name must contain `DevOps`, capitalized like that, followed by an underscore. If one doesn't, add a pattern that matches all of its connection's tools, such as `<connection>_*`, to `toolPolicy.deny` in `sre-agent/agent.yaml`, and the tool's name to `DEVOPS_MCP_SAMPLES` in `configure_sre_agent.py`, so that `--check` fails if the pattern is removed.
+
 To rehearse an incident before a real one, write a drill for your service like [`incident.py`](incident.py), or use an [Azure Chaos Studio](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-overview) experiment. Give every fault an expiry. Before you open the pull request, `python configure_sre_agent.py --check` runs the solution's rules and the guard hook's tests on your machine, with no Azure access.
 
 ### One-time setup
