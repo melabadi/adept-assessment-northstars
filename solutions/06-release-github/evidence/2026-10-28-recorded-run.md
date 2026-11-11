@@ -3,7 +3,7 @@
 What GitHub and Copilot recorded during [the run in See it work](../README.md#see-it-work), kept here because most of it needs a GitHub sign-in or no longer exists. Times are UTC.
 
 - **Exported** on 11 November 2026, read-only: the job times with `gh run view <run id> --json jobs`, and Copilot's summary and its usage from the AI summary run's artifacts, with `gh run download 40711045694 -n agent-output-fallback` and `gh run download 40711045694 -n usage`. Those artifacts need a GitHub sign-in to download, and expire on 26 January 2027.
-- **Saved from the terminal** during the run: the two Copilot CLI sessions, with their durations timed there, and the check of the published release. One local temporary folder is shortened to `<temp>`, and Copilot CLI's last line, which resumes a session on that machine, is left out.
+- **Saved from the terminal** during the run: the two Copilot CLI sessions, which started at the times in the timeline, and the check of the published release. Their durations are the ones Copilot CLI printed at the end of each session, next to its AI credits. One local temporary folder is shortened to `<temp>`, and Copilot CLI's last line, which resumes a session on that machine, is left out.
 - **No longer on GitHub:** the draft and the published release `demo-v1.0.0` and its tag, deleted when the run was reset so that the version could be used again, and the candidate run's artifacts, kept for 7 days. The [README's screenshots](../README.md#see-it-work) show the release.
 
 ## Timeline
@@ -20,10 +20,10 @@ What GitHub and Copilot recorded during [the run in See it work](../README.md#se
 | 14:59:58 to 15:01:20 | Threat detection checked that request | [run 40711045694](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40711045694) |
 | 15:01:37 | The `safe_outputs` job appended the summary to the draft | [usage](#what-copilot-used) |
 | 15:02:09 | The AI release summary finished | [run 40711045694](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40711045694) |
-| 16:21:41 | The owner asked the `release-github` agent in Copilot CLI for [a brief](#the-brief-before-the-approval); it took 3 min 38 s | terminal |
+| 16:21:41 | The owner asked the `release-github` agent in Copilot CLI for [a brief](#the-brief-before-the-approval); Copilot CLI reported 3 min 20 s | terminal |
 | 16:26:28 to 16:26:50 | An approval from the branch `demo/not-main`: the evidence verified, and the environment refused the publish job | [run 40725978777](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40725978777) |
 | 16:32:46 to 16:33:02 | An approval after one report on the draft was edited: verify refused it | [run 40727011991](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40727011991) |
-| 16:34:41 | Copilot CLI [explained the refusal](#why-the-approval-failed), in 1 min 18 s | terminal |
+| 16:34:41 | Copilot CLI [explained the refusal](#why-the-approval-failed); it reported 1 min 11 s | terminal |
 | 16:36:54 to 16:37:53 | The approval: verify (17 s), then record and publish (35 s). The approval was recorded at 16:37:39, and the release was published by 16:37:44 | [run 40727695904](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40727695904) |
 | 16:46:30 | The owner [verified the published release](#the-check-of-the-published-release) | terminal |
 

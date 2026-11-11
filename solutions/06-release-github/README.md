@@ -6,7 +6,7 @@ A release is often approved on trust: test results are pasted somewhere after th
 
 - **See it work:** [a real run on this repository](#see-it-work), step by step. Version 1.0.0 went from **Run workflow** to a draft release with its evidence in 3 minutes 25 seconds, and with Copilot's summary in 7 minutes 48 seconds. Two attempts to approve it the wrong way were refused, and the approval published it in 50 seconds.
 - **Add it to your repository:** [copy 18 files, adapt the build and test jobs to your code, and set it up once](#add-it-to-your-repository). The setup's commands took seconds when this README was checked: 9 to copy the files, 5 to recompile Copilot's summary, and 3 for the unit tests. The rest is two `gh api` calls for the environment, a settings page for reviewers, a token for Copilot's summary, a pull request, and the changes your build and tests need.
-- **Try it first in a copy of this repository:** [a few minutes to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md) makes once for every solution. A run then takes 6 to 13 minutes of GitHub Actions and Copilot working unattended, and about a minute to approve.
+- **Try it first in a copy of this repository:** [a few minutes to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution. A run then takes 6 to 13 minutes of GitHub Actions and Copilot working unattended, and about a minute to approve.
 
 ## Why it matters
 
@@ -78,9 +78,9 @@ Every link below opens without signing in: each run's page shows its jobs, their
 | [1. The owner started the release candidate](#1-the-owner-started-the-release-candidate) | 14:53 | Owner | seconds |
 | [2. Actions tested the release images and drafted the release](#2-actions-tested-the-release-images-and-drafted-the-release) | 14:53 to 14:57 | GitHub Actions | 3 min 25 s |
 | [3. Copilot appended a summary for the approver](#3-copilot-appended-a-summary-for-the-approver) | 14:57 to 15:02 | Copilot, in GitHub Actions | 4 min 52 s |
-| [4. The owner reviewed the draft, with a brief from Copilot](#4-the-owner-reviewed-the-draft-with-a-brief-from-copilot) | 16:21 to 16:25 for the brief | Owner, then Copilot CLI | 3 min 38 s for the brief |
+| [4. The owner reviewed the draft, with a brief from Copilot](#4-the-owner-reviewed-the-draft-with-a-brief-from-copilot) | 16:21 to 16:25 for the brief | Owner, then Copilot CLI | 3 min 20 s for the brief |
 | [5. An approval from another branch was refused](#5-an-approval-from-another-branch-was-refused) | 16:26 | Owner, then GitHub Actions | 22 s |
-| [6. An approval after tampering was refused, and Copilot explained why](#6-an-approval-after-tampering-was-refused-and-copilot-explained-why) | 16:32 to 16:36 | Owner, GitHub Actions, then Copilot CLI | 16 s, then 1 min 18 s |
+| [6. An approval after tampering was refused, and Copilot explained why](#6-an-approval-after-tampering-was-refused-and-copilot-explained-why) | 16:32 to 16:36 | Owner, GitHub Actions, then Copilot CLI | 16 s, then 1 min 11 s |
 | [7. The approval checked everything again and published the release](#7-the-approval-checked-everything-again-and-published-the-release) | 16:36 to 16:37 | Owner, then GitHub Actions | 59 s |
 | [8. The release carried its approval record](#8-the-release-carried-its-approval-record) | 16:46 for the check | Owner | seconds |
 
@@ -144,7 +144,7 @@ The 11 files: `release-manifest.json`, `SHA256SUMS`, `test-summary.json`, the fo
 
 ![The draft's 11 assets, each with its SHA-256 digest: the JUnit reports, the manifest, two SBOMs, SHA256SUMS, the smoke results, the test summary, and the list of changes](images/04-draft-assets.png)
 
-From 16:21 to 16:25 UTC the owner asked the `release-github` agent in Copilot CLI for a brief. It verified the draft with `release_evidence.py verify`: 7 checks passed, 0 failed, and 2 were skipped, the images, because the local token couldn't read packages, and the approval record, still pending. It listed the commit, the digests, and the test counts, named what a person should review, and ended with the approval command for the owner to run. It took 3 minutes 38 seconds and 8.48 AI credits ([the session](evidence/2026-10-28-recorded-run.md#the-brief-before-the-approval)).
+At 16:21:41 UTC the owner asked the `release-github` agent in Copilot CLI for a brief. It verified the draft with `release_evidence.py verify`: 7 checks passed, 0 failed, and 2 were skipped, the images, because the local token couldn't read packages, and the approval record, still pending. It listed the commit, the digests, and the test counts, named what a person should review, and ended with the approval command for the owner to run. It took 3 minutes 20 seconds and 8.48 AI credits, as Copilot CLI reported ([the session](evidence/2026-10-28-recorded-run.md#the-brief-before-the-approval)).
 
 ![The release-github agent's brief in Copilot CLI: it verified the draft, lists the commit, image digests, and test counts, names what a person should review, and ends with the approval command for you to run](images/04-agent-brief.png)
 
@@ -166,7 +166,7 @@ The owner downloaded `browser-tests.junit.xml` from the draft, added one XML com
 
 ![The refused approval: the verify summary shows every check passing except checksums, where browser-tests.junit.xml changed after the candidate run](images/06-tamper-refused.png)
 
-From 16:34 to 16:36 UTC the owner asked the agent why the run failed. It digested the run with the `workflow-investigation` skill, quoted the failed check, called it an evidence-integrity failure rather than a failed browser test, and advised comparing the file with the original rather than updating its checksum. It took 1 minute 18 seconds and 5.67 AI credits ([the session](evidence/2026-10-28-recorded-run.md#why-the-approval-failed)).
+At 16:34:41 UTC the owner asked the agent why the run failed. It digested the run with the `workflow-investigation` skill, quoted the failed check, called it an evidence-integrity failure rather than a failed browser test, and advised comparing the file with the original rather than updating its checksum. It took 1 minute 11 seconds and 5.67 AI credits, as Copilot CLI reported ([the session](evidence/2026-10-28-recorded-run.md#why-the-approval-failed)).
 
 ![The release-github agent's explanation: it ran the workflow-investigation skill, quotes the checksum failure, calls it an evidence-integrity failure, and advises investigating rather than updating the checksum](images/06-agent-explains.png)
 
@@ -218,9 +218,9 @@ At 16:46 UTC the owner checked the published release from a terminal, as anyone 
 | The other suites | API and worker 60 of 60 in 12.3 s, web UI 14 of 14 in 4.4 s |
 | Copilot's summary run | 4 min 52 s, starting 3 s after the candidate; 15.79 AI credits, 15.28 for the summary and 0.52 for threat detection |
 | **Run workflow** to Copilot's summary on the draft | 7 min 48 s |
-| Optional brief from Copilot CLI before approving | 3 min 38 s, 8.48 AI credits |
+| Optional brief from Copilot CLI before approving | 3 min 20 s, 8.48 AI credits |
 | Approval from another branch, refused | 22 s |
-| Approval after one report was edited, refused | 16 s; Copilot CLI's explanation 1 min 18 s, 5.67 AI credits |
+| Approval after one report was edited, refused | 16 s; Copilot CLI's explanation 1 min 11 s, 5.67 AI credits |
 | Starting the approval to the published release | 50 s, after 10 of 10 checks; the run ended 9 s later, after checking the published release |
 | GitHub-hosted runner time, all five runs | 11.9 min of job time; 22 min as billed in a private repository, where each job is rounded up to a whole minute |
 
@@ -397,9 +397,9 @@ The steps have the numbers of [See it work](#see-it-work), which shows what each
 | 1. Start the release candidate | seconds |
 | 2. Watch the candidate | 3 min 25 s (between 2 min 33 s and 7 min 4 s across seven runs from `main`) |
 | 3. Watch Copilot's summary | 4 min 52 s, starting 3 s after the candidate (between 3 min 59 s and 6 min 9 s across six runs) |
-| 4. Review the draft, optionally with a brief from Copilot | 3 min 38 s for the brief |
+| 4. Review the draft, optionally with a brief from Copilot | 3 min 20 s for the brief |
 | 5. Try to approve from another branch | 22 s |
-| 6. Optional: tamper with the evidence, try to approve, and ask Copilot why | 16 s, then 1 min 18 s for Copilot's explanation |
+| 6. Optional: tamper with the evidence, try to approve, and ask Copilot why | 16 s, then 1 min 11 s for Copilot's explanation |
 | 7. Approve and publish | 59 s for the run, which published the release after 50 s (runs took between 50 and 59 s across three approvals) |
 | 8. Check the result | seconds |
 
@@ -516,7 +516,7 @@ gh variable delete RELEASE_GITHUB_PREVENT_SELF_APPROVAL    # if you set it
 
 Your published releases and their tags stay: they are your release history. To delete the images, run `gh auth refresh -s read:packages,delete:packages`, then delete the packages under **Packages** on your profile or organization. Then revoke the token: on GitHub, **Settings** → **Developer settings** → **Personal access tokens** → [**Fine-grained tokens**](https://github.com/settings/personal-access-tokens), delete `COPILOT_GITHUB_TOKEN`. [07-operate-github](../07-operate-github/)'s agentic workflow uses the same secret: keep both if you use it.
 
-**In the copy,** [reset it](#reset-the-copy-for-another-run), then remove the environment, the secret, the images, and the token as above. The [root README](../../README.md) says how to delete the copy itself.
+**In the copy,** [reset it](#reset-the-copy-for-another-run), then remove the environment, the secret, the images, and the token as above. The [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
 
 ## What's in this folder
 
