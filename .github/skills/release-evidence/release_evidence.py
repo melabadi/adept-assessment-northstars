@@ -342,12 +342,12 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     mode = ""
     if env is None:
         checks.append(Check("environment", "FAIL",
-                            f"environment `{args.environment}` not found; create it as described in {SOLUTION_PATH}/README.md (Set up)"))
+                            f"environment `{args.environment}` not found; create it as described in {SOLUTION_PATH}/README.md (One-time setup)"))
     else:
         branches = env["deployment_branches"]
         if not branches:
             checks.append(Check("environment", "FAIL",
-                                f"`{args.environment}` lets any branch deploy; restrict it to `main` (see the README's Set up)"))
+                                f"`{args.environment}` lets any branch deploy; restrict it to `main` (see the README's One-time setup)"))
         else:
             checks.append(Check("environment", "PASS", f"`{args.environment}`: {environment_text(env)}"))
         mode = approval_mode(env)
