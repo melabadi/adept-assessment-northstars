@@ -90,7 +90,7 @@ def prepare() -> None:
         print("Webhook secret: generated and stored in the azd environment.")
     if not values.get("GITHUB_REVIEW_TOKEN"):
         print("warning: GITHUB_REVIEW_TOKEN is not set. Azure deploys, but no pull request is reviewed until you create the "
-              "fine-grained token (see the README, Set up), store it with `azd env set GITHUB_REVIEW_TOKEN ...`, and run "
+              "fine-grained token (see the README, One-time setup), store it with `azd env set GITHUB_REVIEW_TOKEN ...`, and run "
               "`azd up` again.")
 
 
@@ -174,7 +174,7 @@ def publish() -> None:
         for hook in hooks:
             run("gh", "api", "-X", "DELETE", f"repos/{repo}/hooks/{hook['id']}")
         missing = "GITHUB_REVIEW_TOKEN" if not token else "GITHUB_WEBHOOK_SECRET"
-        print(f"Webhook: {'deleted' if hooks else 'not created'}, because {missing} is not set. Store it (README, Set up) "
+        print(f"Webhook: {'deleted' if hooks else 'not created'}, because {missing} is not set. Store it (README, One-time setup) "
               "and run `azd up` again; until then no pull request is reviewed.")
         return
     expires = check_token(repo, token)
