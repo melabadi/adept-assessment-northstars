@@ -10,7 +10,8 @@ on:
   pull_request:
     paths:
       - 'solutions/07-operate-github/**'
-      - '.github/agents/operate-github.agent.md'
+      # gh-aw records every custom agent's name, model, and tools in the lock's manifest, so any agent can stale it.
+      - '.github/agents/**'
       - '.github/skills/incident-evidence/**'
       - '.github/skills/regression-followup/**'
       - '.github/workflows/operate-github-*'
