@@ -34,7 +34,7 @@ instructions: |
     standards the search did not return.
   - Your output is advisory. An architect reviews and decides.
 
-# Reasoning settings for reasoning models, the gpt-5 and gpt-6 families (the default model is gpt-6.1-sol).
+# Reasoning settings for reasoning models, the gpt-5 and gpt-6 families (the default model is gpt-6-luna).
 # Non-reasoning models such as gpt-4.1-mini reject a reasoning effort: replace this line with `temperature: 0.1`.
 reasoning_effort: low
 
