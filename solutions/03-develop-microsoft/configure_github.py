@@ -2,7 +2,7 @@
 
   python configure_github.py prepare    (azd preprovision hook)
       1. Finds the GitHub repository (`gh repo view`) and stores it in the azd environment as GITHUB_REPOSITORY: the
-         repository whose pull requests the Function reviews.
+         repository whose pull requests the Function reviews. Stops azd when it can't name one as owner/name.
       2. Generates the webhook secret once and stores it as GITHUB_WEBHOOK_SECRET. GitHub signs every delivery with it,
          and the Function refuses anything not signed with it. The secret goes to azd through a temporary file, never
          on a command line, and is never printed. Provisioning then writes it, and GITHUB_REVIEW_TOKEN, to the
@@ -51,6 +51,7 @@ ROUTE = "/api/github/webhook"
 LABEL_COLOR = "0078D4"
 LABEL_DESCRIPTION = "Ask the Azure pull request reviewer to review this pull request"
 URL = re.compile(r"https?://\S+")
+REPOSITORY = re.compile(r"[\w.-]+/[\w.-]+")
 
 
 def run(*args: str, stdin: str | None = None) -> str:
@@ -81,6 +82,10 @@ def store_secret(name: str, value: str) -> None:
 def prepare() -> None:
     values = azd_values()
     repo = values.get("GITHUB_REPOSITORY") or run("gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner")
+    # infra/main.bicep gives githubRepository an empty default so azd reaches this hook, so this is where it's checked.
+    if not REPOSITORY.fullmatch(repo):
+        raise SystemExit(f"error: {repo!r} isn't a GitHub repository (owner/name). Run azd from your clone of the "
+                         "repository, or run `azd env set GITHUB_REPOSITORY owner/name` first.")
     run("azd", "env", "set", "GITHUB_REPOSITORY", repo)
     print(f"GitHub repository: {repo}")
     if values.get("GITHUB_WEBHOOK_SECRET"):
