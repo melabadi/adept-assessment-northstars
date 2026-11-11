@@ -68,8 +68,8 @@ tools:
 # The agent needs no host beyond gh-aw's documented baseline: it reads files with the commands above, and reaches GitHub
 # through gh-aw's MCP gateway and Copilot through gh-aw's API proxy, never directly.
 network: defaults
-# A hard cap on each run's AI credits, until a recorded run measures what a review uses.
-max-ai-credits: 150
+# A hard cap on each run's AI credits. gh-aw steers the agent from 80% of it (48); three recorded runs used 19 to 24.
+max-ai-credits: 60
 timeout-minutes: 10
 steps:
   # Runs on the default branch, before gh-aw checks out a pull request's branch: the standards, the brief, the contract,
@@ -120,7 +120,7 @@ safe-outputs:
   threat-detection:
     continue-on-error: false
     report-as-issue: false
-    max-ai-credits: 10 # detection reads one comment: 07-operate-github's detection used about 1 per run
+    max-ai-credits: 10 # detection reads one comment: it used about 1 in each recorded run
   add-comment:
     max: 1
     hide-older-comments: true
