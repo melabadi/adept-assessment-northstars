@@ -196,7 +196,7 @@ Before you commit, run `python tools/redact.py check --changed`; it must print `
 
 A solution is done when:
 
-- *Add it to your repository* and *Try it first in a copy of this repository* work end to end against the real services from a clean state, following the README.
+- *Try it first in a copy of this repository* works end to end against the real services from a clean state, following the README. *Add it to your repository* uses the same commands and names what to change for another codebase; it doesn't claim a test in a repository nobody ran it in.
 - *See it work* is a real run of the solution. Every step has a screenshot from it, captured with `tools/screenshot.mjs`; every link in it opens without signing in; and `python tools/redact.py check --changed` prints `OK`.
 - The *Repository checks* workflow passes (mirrored files, and every relative link and `#anchor`: run `python tools/check_links.py` to list broken ones), and the app's CI passes if the app changed.
 - The pull request links the live evidence: workflow runs, Issues and pull requests the demo created, evaluation results, and screenshots where they help. When a step only works from the default branch (issue templates, label- or dispatch-triggered workflows), run it right after merging and add the evidence as a comment on the pull request.
