@@ -184,7 +184,7 @@ Evidence: [the preview comment](https://github.com/melabadi/adept-assessment-nor
 
 *05:35:05 to 05:41:05: ready for review, merged 4 seconds later, then `azd provision` for 5 minutes 29 seconds.*
 
-At 05:35:05 the operator marked #224 ready for review, and at 05:35:09 merged it as [0d03f96](https://github.com/melabadi/adept-assessment-northstars/commit/0d03f96). The 11 minutes between the preview and the merge went to capturing the screenshots of steps 3 to 5. From 05:35:36, in the solution folder on `main`, `azd provision` deployed the fix: RequestHub's private endpoint `pe-blob-…` existed at 05:36:39, and its DNS zone link at 05:37:27. Azure Policy evaluated the account compliant at 05:38, on its own.
+At 05:35:05 the operator marked #224 ready for review, and at 05:35:09 merged it as [0d03f96](https://github.com/melabadi/adept-assessment-northstars/commit/53d9015). The 11 minutes between the preview and the merge went to capturing the screenshots of steps 3 to 5. From 05:35:36, in the solution folder on `main`, `azd provision` deployed the fix: RequestHub's private endpoint `pe-blob-…` existed at 05:36:39, and its DNS zone link at 05:37:27. Azure Policy evaluated the account compliant at 05:38, on its own.
 
 ![azd provision deploying the merged fix in the solution folder: resource names masked, RequestHub's new Private Endpoint among the resources it deployed, and SUCCESS after 5 minutes 29 seconds](images/06-azd-provision.png)
 
@@ -213,7 +213,7 @@ Evidence: [the verification comment](https://github.com/melabadi/adept-assessmen
 **What the run left behind.**
 
 - Issue [#223](https://github.com/melabadi/adept-assessment-northstars/issues/223), which the Function filed and closed: each source's finding, the link to the fix, and [the verification evidence](https://github.com/melabadi/adept-assessment-northstars/issues/223#issuecomment-6539692968).
-- Pull request [#224](https://github.com/melabadi/adept-assessment-northstars/pull/224), merged as [0d03f96](https://github.com/melabadi/adept-assessment-northstars/commit/0d03f96): the agent's one-value change, its description, and [Azure's what-if preview](https://github.com/melabadi/adept-assessment-northstars/pull/224#issuecomment-6539527624), with the success status on its commit.
+- Pull request [#224](https://github.com/melabadi/adept-assessment-northstars/pull/224), merged as [0d03f96](https://github.com/melabadi/adept-assessment-northstars/commit/53d9015): the agent's one-value change, its description, and [Azure's what-if preview](https://github.com/melabadi/adept-assessment-northstars/pull/224#issuecomment-6539527624), with the success status on its commit.
 - Issue [#222](https://github.com/melabadi/adept-assessment-northstars/issues/222), from the first trigger: the agent's refused answer and the reason, closed as not planned.
 - [The evidence](evidence/2026-10-31-recorded-run.md) behind the times in [See it work](#see-it-work) and in these results: the Logic App's runs, the Function's log, the job's executions, the Activity log, and the terminal.
 - The decisions, all taken with a person's account: to merge and deploy the fix, here by the operator for the owner, and to close #222. After the run, revert pull request [#226](https://github.com/melabadi/adept-assessment-northstars/pull/226) removed the fix, to stage the finding again.

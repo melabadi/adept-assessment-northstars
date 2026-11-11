@@ -49,7 +49,7 @@ flowchart LR
 
 ## See it work
 
-This run took place on 28 October 2026, from 15:51 to 16:44 UTC, on `main` at [`55bae46`](https://github.com/melabadi/adept-assessment-northstars/commit/55bae46729ce4f0853206bddde9da876c98e3938). The repository's owner started it and took every person's step; Copilot and GitHub Actions did the rest. The request became Issue [#123](https://github.com/melabadi/adept-assessment-northstars/issues/123), and Copilot's brief became pull request [#124](https://github.com/melabadi/adept-assessment-northstars/pull/124). A second brief, drafted with Copilot CLI at the same time, became pull request [#129](https://github.com/melabadi/adept-assessment-northstars/pull/129). Every link below opens without signing in. Copilot's session page and the workflow runs' summaries and logs need a GitHub sign-in, so the screenshots show them, and [`evidence/`](evidence/2026-10-28-workflow-runs.md) keeps what the runs recorded. Every screenshot comes from this run.
+This run took place on 28 October 2026, from 15:51 to 16:44 UTC, on `main` at [`55bae46`](https://github.com/melabadi/adept-assessment-northstars/commit/4eb745cd7a1a82799954c70bf0414d8e329a6219). The repository's owner started it and took every person's step; Copilot and GitHub Actions did the rest. The request became Issue [#123](https://github.com/melabadi/adept-assessment-northstars/issues/123), and Copilot's brief became pull request [#124](https://github.com/melabadi/adept-assessment-northstars/pull/124). A second brief, drafted with Copilot CLI at the same time, became pull request [#129](https://github.com/melabadi/adept-assessment-northstars/pull/129). Every link below opens without signing in. Copilot's session page and the workflow runs' summaries and logs need a GitHub sign-in, so the screenshots show them, and [`evidence/`](evidence/2026-10-28-workflow-runs.md) keeps what the runs recorded. Every screenshot comes from this run.
 
 | Step | When (UTC) | Who | How long |
 | --- | --- | --- | --- |
@@ -65,7 +65,7 @@ In step 2, Copilot CLI drafted a second brief on the owner's machine while the c
 
 ### 1. The notes held the problems real notes have
 
-Copilot's input was two synthetic files, as they were at `55bae46`: [`stakeholder-transcript.md`](https://github.com/melabadi/adept-assessment-northstars/blob/55bae46729ce4f0853206bddde9da876c98e3938/solutions/01-plan-github/inputs/stakeholder-transcript.md), workshop notes in paragraphs T01 to T24, and [`routing-policies.md`](https://github.com/melabadi/adept-assessment-northstars/blob/55bae46729ce4f0853206bddde9da876c98e3938/solutions/01-plan-github/inputs/routing-policies.md), the policies they mention. The transcript hides the problems real notes have:
+Copilot's input was two synthetic files, as they were at `55bae46`: [`stakeholder-transcript.md`](https://github.com/melabadi/adept-assessment-northstars/blob/4eb745cd7a1a82799954c70bf0414d8e329a6219/solutions/01-plan-github/inputs/stakeholder-transcript.md), workshop notes in paragraphs T01 to T24, and [`routing-policies.md`](https://github.com/melabadi/adept-assessment-northstars/blob/4eb745cd7a1a82799954c70bf0414d8e329a6219/solutions/01-plan-github/inputs/routing-policies.md), the policies they mention. The transcript hides the problems real notes have:
 
 - **T04 vs T05**: advisory or automatic routing? **T19** records the decision.
 - **T06 vs T07**: Finance or IT for expensive computers? Nobody decides.
@@ -78,7 +78,7 @@ Copilot's input was two synthetic files, as they were at `55bae46`: [`stakeholde
 
 ### 2. Copilot drafted the brief, and its checks waited for a person
 
-At 15:51:40 UTC the owner filed Issue [#123](https://github.com/melabadi/adept-assessment-northstars/issues/123), with [`refine-task.md`](https://github.com/melabadi/adept-assessment-northstars/blob/55bae46729ce4f0853206bddde9da876c98e3938/solutions/01-plan-github/refine-task.md) as its body and the labels `ai-sdlc` and `phase:plan`. The same API call assigned it to Copilot, with the `plan-github` custom agent and the base branch `main`; [the steps](#the-steps) show that call, and the issue form that does the same in a browser. Copilot opened draft pull request [#124](https://github.com/melabadi/adept-assessment-northstars/pull/124) 8 seconds later.
+At 15:51:40 UTC the owner filed Issue [#123](https://github.com/melabadi/adept-assessment-northstars/issues/123), with [`refine-task.md`](https://github.com/melabadi/adept-assessment-northstars/blob/4eb745cd7a1a82799954c70bf0414d8e329a6219/solutions/01-plan-github/refine-task.md) as its body and the labels `ai-sdlc` and `phase:plan`. The same API call assigned it to Copilot, with the `plan-github` custom agent and the base branch `main`; [the steps](#the-steps) show that call, and the issue form that does the same in a browser. Copilot opened draft pull request [#124](https://github.com/melabadi/adept-assessment-northstars/pull/124) 8 seconds later.
 
 Copilot's session ran for 5 minutes 10 seconds and reported 1.6 AI credits. It wrote `backlog.json`, ran the validator, which reported `VALID`, and rendered `brief.md`. It committed both at 15:56:28 ([`1a16e3f`](https://github.com/melabadi/adept-assessment-northstars/pull/124/commits/1a16e3fadd180ad9abdd056b49f64b82470258bf)) and asked the owner for a review at 15:57:03. Its summary named what a person still had to decide:
 

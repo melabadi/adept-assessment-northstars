@@ -103,11 +103,11 @@ Every step links evidence that opens without signing in: the pull request that c
 
 *31 October, 23:23:08 to 23:23:48: the pull request merged 40 seconds after it opened.*
 
-The standards are Markdown files in [`standards/`](standards/), one per standard. Each has a stable id, a version, a scope (`all`, `small-team`, or `enterprise`), keywords, and the rule itself. The operator opened pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull/238), which added the keyword *Application Insights* to [STD-OBS-001](standards/STD-OBS-001.md), and merged it as commit [`74e59ec`](https://github.com/melabadi/adept-assessment-northstars/commit/74e59ece58bf1450cd1d1f9e61332698e5d8503a). The screenshot shows another standard, STD-OPS-002, whose scope is `enterprise`: the small-team profile can never retrieve it.
+The standards are Markdown files in [`standards/`](standards/), one per standard. Each has a stable id, a version, a scope (`all`, `small-team`, or `enterprise`), keywords, and the rule itself. The operator opened pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull/238), which added the keyword *Application Insights* to [STD-OBS-001](standards/STD-OBS-001.md), and merged it as commit [`74e59ec`](https://github.com/melabadi/adept-assessment-northstars/commit/1baf5004d0cc6a447b5163649359b1b77d1c8d61). The screenshot shows another standard, STD-OPS-002, whose scope is `enterprise`: the small-team profile can never retrieve it.
 
 ![STD-OPS-002 on GitHub: id, version 2.0, title Central AI gateway, scope enterprise, status approved, and the rule that enterprise workloads call model endpoints through the central AI gateway](images/01-standard.png)
 
-Evidence: pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull/238) and commit [`74e59ec`](https://github.com/melabadi/adept-assessment-northstars/commit/74e59ece58bf1450cd1d1f9e61332698e5d8503a).
+Evidence: pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull/238) and commit [`74e59ec`](https://github.com/melabadi/adept-assessment-northstars/commit/1baf5004d0cc6a447b5163649359b1b77d1c8d61).
 
 **What this shows:** the standards are reviewed like code, and only a merged change can reach the advisor.
 
@@ -131,7 +131,7 @@ Evidence: [the standards run](evidence/2026-10-31-recorded-run.md#the-standards-
 
 *23:24:10 to 23:30:34: the small-team results came 2 minutes 17 seconds after their run started, the enterprise results 6 minutes 23 seconds after theirs.*
 
-Foundry sent the ten labelled cases in [`eval_cases.jsonl` as of `74e59ec`](https://github.com/melabadi/adept-assessment-northstars/blob/74e59ece58bf1450cd1d1f9e61332698e5d8503a/solutions/02-design-microsoft/eval_cases.jsonl), five per profile, to that profile's agent, and scored every answer with five code-based evaluators that embed the gate's checks: citations, access, grounding, abstention, and conflicts. All 50 checks passed, and Foundry graded every one. Case E01 asked the question that the operator filed in step 4. Case E07 expected the conflict between STD-OBS-002 and STD-SEC-002, and the small-team agent reported it. Case E08 asked for a monthly token budget that no standard sets, and the enterprise agent abstained instead of inventing one. The enterprise results waited for E08's answer, which took 261 seconds; the other nine answers took 8 to 14 seconds.
+Foundry sent the ten labelled cases in [`eval_cases.jsonl` as of `74e59ec`](https://github.com/melabadi/adept-assessment-northstars/blob/1baf5004d0cc6a447b5163649359b1b77d1c8d61/solutions/02-design-microsoft/eval_cases.jsonl), five per profile, to that profile's agent, and scored every answer with five code-based evaluators that embed the gate's checks: citations, access, grounding, abstention, and conflicts. All 50 checks passed, and Foundry graded every one. Case E01 asked the question that the operator filed in step 4. Case E07 expected the conflict between STD-OBS-002 and STD-SEC-002, and the small-team agent reported it. Case E08 asked for a monthly token budget that no standard sets, and the enterprise agent abstained instead of inventing one. The enterprise results waited for E08's answer, which took 261 seconds; the other nine answers took 8 to 14 seconds.
 
 The screenshot comes from another run with the same agent and evaluator versions: the small-team run that `evaluate.py` started on 29 October at 18:38.
 
@@ -203,7 +203,7 @@ Evidence: [the agent's trace](evidence/2026-10-31-recorded-run.md#the-agents-tra
 
 **What the run left behind.**
 
-- Pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull/238) and commit [`74e59ec`](https://github.com/melabadi/adept-assessment-northstars/commit/74e59ece58bf1450cd1d1f9e61332698e5d8503a): the reviewed change to the standards, which Azure indexed.
+- Pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull/238) and commit [`74e59ec`](https://github.com/melabadi/adept-assessment-northstars/commit/1baf5004d0cc6a447b5163649359b1b77d1c8d61): the reviewed change to the standards, which Azure indexed.
 - Two evaluation runs in Foundry, named after that commit: 10 of 10 cases and 50 of 50 checks passed, and Foundry graded every check.
 - Issue [#242](https://github.com/melabadi/adept-assessment-northstars/issues/242), with the advisor's answer, and pull request [#243](https://github.com/melabadi/adept-assessment-northstars/pull/243), with the Proposed ADR. Both name the agent version, the response id, and the advisor run.
 - [The evidence](evidence/2026-10-31-recorded-run.md) behind every number in [See it work](#see-it-work) and in these results: the Function's log and invocations, the agent's spans, and the evaluation's results.

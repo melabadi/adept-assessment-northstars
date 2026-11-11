@@ -9,8 +9,8 @@ What Azure recorded when [`eval_reviewer.py`](../eval_reviewer.py) measured the 
 
 ## The code that ran
 
-- **The evaluation:** `eval_reviewer.py`, its five checks in [`review_graders.py`](../review_graders.py), and the cases in [`eval_cases.jsonl`](../eval_cases.jsonl) and [`eval_changes/`](../eval_changes/), from the branch of pull request #298, before it merged as [f4890b9](https://github.com/melabadi/adept-assessment-northstars/commit/f4890b9). Its fixed reviews for `--check-graders` came from the same branch, after Copilot's review of #298 led to a stricter commentary check.
-- **The Function, the rule checker, and the review's formatter:** the code on `main` at [c6eeb3c](https://github.com/melabadi/adept-assessment-northstars/commit/c6eeb3c) (pull request [#267](https://github.com/melabadi/adept-assessment-northstars/pull/267)), which hasn't changed since.
+- **The evaluation:** `eval_reviewer.py`, its five checks in [`review_graders.py`](../review_graders.py), and the cases in [`eval_cases.jsonl`](../eval_cases.jsonl) and [`eval_changes/`](../eval_changes/), from the branch of pull request #298, before it merged as [f4890b9](https://github.com/melabadi/adept-assessment-northstars/commit/40d748f). Its fixed reviews for `--check-graders` came from the same branch, after Copilot's review of #298 led to a stricter commentary check.
+- **The Function, the rule checker, and the review's formatter:** the code on `main` at [c6eeb3c](https://github.com/melabadi/adept-assessment-northstars/commit/a3fa3b4) (pull request [#267](https://github.com/melabadi/adept-assessment-northstars/pull/267)), which hasn't changed since.
 - **The agent:** `requesthub-pr-reviewer` version 4, on `gpt-5.4-mini`, the same version as on 31 October.
 
 ## The dry runs
