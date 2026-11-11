@@ -79,7 +79,7 @@ Each solution README lists anything else it needs.
 
 ### Try it in a copy of this repository
 
-To try the solutions on RequestHub before you adapt them, make one copy of this repository for all of them, private or public, in your account or organization (about 2 minutes). In PowerShell 7, with `<owner>` your account or organization:
+To try the solutions on RequestHub before you adapt them, make one copy of this repository for all of them, private or public, in your account or organization (20 seconds when we made one on 11 November). In PowerShell 7, with `<owner>` your account or organization:
 
 ```powershell
 git clone https://github.com/melabadi/adept-assessment-northstars.git ai-sdlc
@@ -91,7 +91,7 @@ git remote -v
 
 `git remote -v` lists only `origin`, your copy, so the solutions' scripts and `gh` commands act on it. Don't add this repository back as a remote named `upstream`: `gh` prefers that name over `origin`, and would file your Issues here. To take later updates, pull without a remote: `git pull https://github.com/melabadi/adept-assessment-northstars.git main`. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
 
-The push runs your copy's four push workflows once (CI, Repository checks, Copilot setup steps, and the Secure lab tooling checks): about 5 minutes of GitHub-hosted runners, 10 as billed in a private repository. Nothing else runs until you set a solution up.
+The push can run your copy's four push workflows once (CI, Repository checks, Copilot setup steps, and the Secure lab tooling checks), each only when the push changes files it watches: at most about 5 minutes of GitHub-hosted runners, 10 as billed in a private repository. A copy made from main on 11 November, whose newest commit changed only Markdown files, ran only Repository checks, for 15 seconds ([the fresh setup of 01-plan-microsoft](solutions/01-plan-microsoft/evidence/2026-11-11-fresh-setup.md)). Nothing else runs until you set a solution up.
 
 Then follow the solution's *Try it first in a copy of this repository*. The runs in the READMEs keep their links to this repository's Issues and pull requests.
 
