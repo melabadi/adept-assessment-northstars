@@ -22,7 +22,7 @@ Turning workshop notes into a backlog is slow, and it is easy to lose track of w
 
 The value: a transcript becomes a reviewable backlog in minutes, a reviewer can check every line against its source, and the decisions stay with people. The run in [See it work](#see-it-work), on 28 October 2026, measured:
 
-- **5 minutes 10 seconds** for the Copilot cloud agent to draft a brief that passed the check. Its draft pull request opened 8 seconds after the Issue was assigned to it. Copilot CLI drafted another brief in 4 minutes 31 seconds, at the same time.
+- **5 minutes 10 seconds** for the Copilot cloud agent to draft a brief that passed the check. Its draft pull request opened 8 seconds after the Issue was assigned to it. Copilot CLI drafted another brief at the same time, in 4 minutes 3 seconds by its own count.
 - **Every planted problem caught**, scored afterwards against an answer key that Copilot never saw: 10 of 10 key paragraphs cited, both disagreements given the right status, all four unknowns raised as open questions, and the instruction pasted into the notes ignored.
 - **9 seconds** for the check, and **1 minute 15 seconds** from the person's label to five published Issues. Publishing again took 49 seconds and changed nothing.
 - **36 minutes** from filing the Issue to the published backlog: 22 of them waiting for a person to approve the workflow runs on Copilot's pull request, and about 8 reading and scoring the brief.
@@ -61,7 +61,7 @@ This run took place on 28 October 2026, from 15:51 to 16:44 UTC, on `main` at [`
 | [6. The label published the backlog](#6-a-persons-label-published-the-backlog) | 16:26 to 16:28 | Owner, then GitHub Actions | 1 min 15 s from the label to the comment |
 | [7. Publishing again](#7-publishing-again-changed-nothing) | 16:43 to 16:44 | Owner, then GitHub Actions | 49 s from the label to the comment |
 
-In step 2, Copilot CLI drafted the second brief from 15:52 to 15:56, while the cloud agent worked.
+In step 2, Copilot CLI drafted a second brief on the owner's machine while the cloud agent worked.
 
 ### 1. The notes held the problems real notes have
 
@@ -84,7 +84,7 @@ Copilot's session ran for 5 minutes 10 seconds and reported 1.6 AI credits. It w
 
 ![The finished Copilot cloud agent session, started from Issue 123: it ran for 5 minutes 10 seconds, reported 1.6 AI credits, and reports a VALID brief with four tasks and five open questions, T04/T05 resolved by T19, T06/T07 unresolved, and T18 ignored](images/02b-cloud-agent-session.png)
 
-At the same time, from 15:52:26 to 15:56:57, the owner ran the same agent in a terminal with Copilot CLI, on a new branch from the same `main`. It took 4 minutes 31 seconds and reported 16.57 AI credits. Its brief had different wording and different open questions, and the same verdict:
+At the same time, the owner ran the same agent in a terminal with Copilot CLI, on a new branch from the same `main`. It took 4 minutes 3 seconds and 16.57 AI credits, as it reported on its last line. Its brief had different wording and different open questions, and the same verdict:
 
 ![Copilot CLI output: the requirements-traceability skill loads, Copilot creates backlog.json, validates it and renders brief.md, and summarizes: VALID with 4 tasks, 5 open questions, and 1 of 2 conflicts unresolved, T06 vs T07 left for a decision, T18 ignored, and 16.57 AI credits](images/02a-copilot-cli.png)
 
@@ -168,7 +168,7 @@ At 16:43 the owner removed the label and applied it again, at 16:43:17. That run
 | --- | --- |
 | Assigning the Issue to Copilot's draft pull request | 8 s |
 | Copilot cloud agent's session | 5 min 10 s and 1.6 AI credits, as its session page reported |
-| Copilot CLI, at the same time | 4 min 31 s, and 16.57 AI credits as it reported; then 15 s to commit, push, and open the pull request |
+| Copilot CLI, at the same time | 4 min 3 s and 16.57 AI credits, as it reported; then 15 s to commit, push, and open the pull request |
 | Waiting for a person to approve the workflow runs on Copilot's pull request | 22 min 3 s |
 | The check, *Validate the brief* | 9 s; 11 s on the CLI's pull request |
 | Planted problems caught, scored against the answer key | all of them: 10 of 10 key paragraphs, 2 of 2 conflicts with the right status, 4 of 4 unknowns, and T18 ignored |
@@ -391,7 +391,7 @@ The steps have the numbers of [See it work](#see-it-work), which shows what each
 | Step | How long it took in the recorded run |
 | --- | --- |
 | 1. Open the notes | not timed: opening a file |
-| 2. Ask Copilot for the brief | A: 4 min 31 s, then 15 s to commit, push, and open the pull request. B: 8 s to the draft pull request and 5 min 10 s of Copilot's session, then seconds to approve its runs |
+| 2. Ask Copilot for the brief | A: 4 min 3 s, as Copilot CLI reported, then 15 s to commit, push, and open the pull request. B: 8 s to the draft pull request and 5 min 10 s of Copilot's session, then seconds to approve its runs |
 | 3. Watch the check | 9 s; 11 s on option A's pull request |
 | 4. Review the brief | about 8 min, with step 5 |
 | 5. Optional: score the brief | under a second |
