@@ -196,6 +196,6 @@ A solution is done when:
 
 - The demo runs end to end against the real services, following its README from a clean state.
 - Every step of *Run the demo* that shows something on screen has a screenshot from a real run, captured with `tools/screenshot.mjs`, and `python tools/redact.py check --changed` prints `OK`.
-- The *Repository checks* workflow passes, and the app's CI passes if the app changed.
+- The *Repository checks* workflow passes (mirrored files, and every relative link and `#anchor`: run `python tools/check_links.py` to list broken ones), and the app's CI passes if the app changed.
 - The pull request links the live evidence: workflow runs, Issues and pull requests the demo created, evaluation results, and screenshots where they help. When a step only works from the default branch (issue templates, label- or dispatch-triggered workflows), run it right after merging and add the evidence as a comment on the pull request.
 - It ships in its own pull request.
