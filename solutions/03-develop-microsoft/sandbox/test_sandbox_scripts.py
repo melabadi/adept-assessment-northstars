@@ -6,8 +6,10 @@ Run from the repository root:  python -m unittest discover -s solutions/03-devel
 from __future__ import annotations
 
 import contextlib
+import html
 import io
 import json
+import re
 import sys
 import tarfile
 import tempfile
@@ -17,6 +19,47 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import format_review  # noqa: E402
 import review_rules  # noqa: E402
+
+# GitHub links an @ to a person or a team when a letter, digit, or underscore follows it. Inert text puts a zero-width
+# space after every @, so this finds anything that could still notify someone.
+MENTION = re.compile(r"@(?!\u200b)")
+ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+MAX_BACKTICKS = 80  # cmark-gfm, GitHub's Markdown parser, never opens a code span with a longer run of backticks
+LITERAL = "\x00"  # marks a character GitHub shows as is: an escaped one, or a backtick that opens no code span
+
+
+def interpreted(markdown: str) -> str:
+    """What GitHub interprets as Markdown in `markdown`, found the way cmark-gfm finds it: a code span (an opening run of
+    up to 80 backticks, closed by a run of the same length) becomes a space, a backslash-escaped character gets LITERAL
+    in front of it, and a backtick that opens no span becomes LITERAL. Every line of a review is its own block, and
+    GitHub splits a table row into cells at each pipe not preceded by a backslash before it looks for code spans, so a
+    span never crosses either. Written apart from the scanners it checks."""
+    lines = []
+    for line in markdown.splitlines():
+        cells = re.split(r"(?<!\\)\|", line) if line.startswith("|") else [line]
+        lines.append("|".join(map(inline, cells)))
+    return "\n".join(lines)
+
+
+def inline(text: str) -> str:
+    out, i = [], 0
+    while i < len(text):
+        if text[i] == "\\" and i + 1 < len(text) and text[i + 1] in ASCII_PUNCTUATION:
+            out.append(LITERAL + text[i + 1])
+            i += 2
+        elif text[i] == "`":
+            run = len(text) - i - len(text[i:].lstrip("`"))
+            closer = next((m for m in re.finditer(r"`+", text[i + run:]) if len(m.group()) == run), None)
+            if closer and run <= MAX_BACKTICKS:
+                out.append(" ")
+                i += run + closer.end()
+            else:
+                out.append(LITERAL * run)
+                i += run
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
 
 WORKFLOW = review_rules.WORKFLOW
 ENDPOINTS = "app/src/RequestHub.Api/Endpoints/ApiEndpoints.cs"
@@ -360,6 +403,83 @@ class ReviewFormatterTests(unittest.TestCase):
                 code = format_review.main(["--judge", str(folder / "judge.json"), "--input", str(folder / "review-input.json")])
         self.assertEqual(code, 2)
         self.assertNotIn("markdown", json.loads(out.getvalue()))
+
+
+class InertAssertions(unittest.TestCase):
+    def assert_inert(self, markdown: str) -> None:
+        """No mention anywhere, even in code spans. Where GitHub interprets Markdown: no raw HTML, and no link or image.
+        Then, as GitHub shows that text (HTML entities decoded, backslash escapes applied): no mention, no URL it turns
+        into a link, no reference to an Issue or a pull request, and no $ it could read as math. GitHub's own renderer
+        (POST /markdown) agreed with these rules: a run of 81 backticks opens no code span, a run of 80 does, nothing in
+        a code span is linked or read as math, and zero-width spaces stop mentions, references, and math."""
+        found = MENTION.search(markdown)
+        if found:
+            start, end = markdown.rfind("\n", 0, found.start()) + 1, markdown.find("\n", found.start())
+            self.fail(f"an @ that could mention someone: {markdown[start:end if end >= 0 else None]!r}")
+        text = interpreted(markdown)
+        self.assertNotRegex(text, r"(?<!\x00)<[A-Za-z!/?]", "raw HTML")
+        self.assertNotRegex(text, r"(?<!\x00)[\[\]]", "a link or an image")
+        shown = html.unescape(text).replace(LITERAL, "")
+        self.assertNotRegex(shown, MENTION, "an @ that GitHub shows from an entity or an escape")
+        self.assertNotRegex(shown, r"(?i)://|www\.", "a URL GitHub turns into a link")
+        self.assertNotRegex(shown, r"(?i)(#|GH-)\d", "a reference to an Issue or a pull request")
+        self.assertNotRegex(shown, r"(?<!\u200b)\$|\$(?!\u200b)", "a $ GitHub could read as math")
+
+
+class InertTextTests(InertAssertions):
+    """format_review.plain() and review_rules.cell() on the ways GitHub's Markdown could still turn quoted text into a
+    mention, a link, an image, a reference to an Issue or a pull request, or math. The review is posted with the token
+    owner's account, so a reference would add "mentioned this" to that Issue in their name. The zero-width spaces leave
+    the text reading the same."""
+
+    def assert_quoted(self, value: str, expected: str) -> None:
+        self.assertEqual(format_review.plain(value), expected)
+        self.assert_inert(f"- Quoted: {format_review.plain(value)}")
+
+    def test_runs_of_more_than_80_backticks_open_no_code_span(self):
+        fence = "`" * 81
+        self.assert_quoted(f"{fence} &#64;octocat <img src=x> [a](https://evil.example/a) www.evil.example {fence}",
+                           "\\`" * 81 + " &amp;#\u200b64;octocat &lt;img src=x&gt; \\[a\\](https:/\u200b/evil.example/a) "
+                           "www\u200b.evil.example " + "\\`" * 81)
+        fence = "`" * 80
+        self.assert_quoted(f"{fence} @octocat <b> {fence}", f"{fence} @\u200boctocat <b> {fence}")
+
+    def test_references_to_issues_and_pull_requests_are_not_linked(self):
+        self.assert_quoted("Fixes other-org/other-repo#1, refs #7 and GH-8",
+                           "Fixes other-org/other-repo#\u200b1, refs #\u200b7 and GH-\u200b8")
+        self.assert_quoted("#7 is fixed", "\\#\u200b7 is fixed")  # and a line that starts with # is still no heading
+
+    def test_dollar_signs_cannot_start_math(self):
+        self.assert_quoted("costs $5, $x^2$ and $`\\frac{1}{2}`$",
+                           "costs \u200b$\u200b5, \u200b$\u200bx^2\u200b$\u200b and \u200b$\u200b`\\frac{1}{2}`\u200b$\u200b")
+
+    def test_evidence_cells_break_references_and_math_too(self):
+        cell = review_rules.cell("fixes #7, gh-8 and other-org/other-repo#1; costs $x^2$")
+        self.assertEqual(cell, "fixes #\u200b7, gh-\u200b8 and other-org/other-repo#\u200b1; costs \u200b$\u200bx^2\u200b$\u200b")
+        self.assert_inert(f"| Rule | ✅ PASS | {cell} |")
+
+    def test_a_hostile_review_is_inert_where_github_reads_it(self):
+        fence = "`" * 81
+        hostile = (f"Fixes #7 and GH-8, costs $x^2$ and $`y`$, see @octocat. {fence} [Approve](https://evil.example/a) "
+                   f"<img src=x> {fence}")
+        endpoints = BASE[ENDPOINTS] + 'if (user.IsInRole("Reviewer")) { /* fixes #7 and GH-8, costs $x^2$ @octocat */ }\n'
+        judge = review_rules.judge(tree({}), tree({ENDPOINTS: endpoints}))
+        judge["markdown"] = review_rules.markdown(judge)
+        answer = dict(ANSWER, summary=hostile, tests_note=hostile, for_the_person=hostile,
+                      observations=[{"severity": "concern", "file": "app/src/X.cs", "line": 3, "text": hostile}],
+                      rule_notes=[{"rule_id": "authorization-in-workflow", "note": hostile}])
+        sandbox = json.dumps({"api": {"status": "failed", "total": 2, "passed": 1, "failed": 1,
+                                      "failed_tests": ["Fixes #7 costs $x$ @octocat"]},
+                              "web": {"status": "passed", "typecheck": "passed", "tests": {"total": 14, "passed": 14, "failed": 0}}})
+        body = format_review.compose(judge, {"pr": {"number": 7, "head": "a" * 40}, "run": "a1b2c3d4e5f6", "checker_ref": "main",
+                                             "agent_name": "requesthub-pr-reviewer", "sandbox": sandbox,
+                                             "agent_status": "Succeeded", "agent": agent_response(answer)})["markdown"]
+        self.assertIn("role or department check outside RequestWorkflow", body)  # the quoted line is in the verdicts table
+        self.assertEqual(body.count("Fixes #\u200b7 and GH-\u200b8"), 5)  # summary, observation, rule note, tests, decision
+        own = re.sub(r"<!-- azure-pr-reviewer [^>]*-->", "", body)  # the review's own marker, <sub> footer, and line breaks
+        for tag in ("<sub>", "</sub>", "<br>"):
+            own = own.replace(tag, " ")
+        self.assert_inert(own)
 
 
 if __name__ == "__main__":

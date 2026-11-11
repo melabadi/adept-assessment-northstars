@@ -6,7 +6,7 @@ Small, well-defined features often wait in the backlog until a developer has tim
 
 ## Where it fits
 
-**Phase 3 of 7: Develop.** The Microsoft counterpart is [03-develop-microsoft](../03-develop-microsoft/): there, an agent in Azure *reviews* RequestHub's pull requests. Here, an AI agent *writes* RequestHub's code.
+**Phase 3 of 7: Develop.** The Microsoft counterpart is [03-develop-microsoft](../03-develop-microsoft/): there, an agent in Azure *reviews* RequestHub's pull requests. Here, an AI agent *writes* RequestHub's code. To run both on one pull request, follow the [Develop solution combo](../../PRESENTING.md#develop-copilot-writes-azure-reviews-a-person-decides); to follow one requirement from Plan to Test, see [Follow one requirement from Plan to Test](../../PRESENTING.md#follow-one-requirement-from-plan-to-test).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ flowchart LR
 ```
 
 - **Copilot cloud agent** runs the custom agent [`develop-github`](.github/agents/develop-github.agent.md) with three skills: `bounded-feature` (how to build a feature inside its bounds, plus the boundary check), `regression-validation` (runs the test suites a change touches), and `contract-impact` (additive-only API contract check). It works in the environment that [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml) prepares: .NET, Node.js, Playwright, and PostgreSQL.
-- **GitHub Actions** runs the app's [CI](../../.github/workflows/ci.yml) (API integration tests on PostgreSQL with the contract check, web typecheck, unit tests and build, browser tests) and this solution's [`develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml). The bounds check runs the checker from the base branch, so a pull request cannot change the rules it is judged by.
+- **GitHub Actions** runs the app's [CI](../../.github/workflows/ci.yml) (API integration tests on PostgreSQL with the contract check, web typecheck, unit tests and build, browser tests) and this solution's [`develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml). The bounds check runs the checker from the base branch, so editing the checker doesn't change the rules a pull request is judged by. GitHub still runs a pull request's own copy of the workflow file, so review any change to it.
 - **A person** writes the Issue, approves the workflow runs on Copilot's pull request, reviews, sends findings back with an `@copilot` comment, and decides. In RequestHub itself, only an approver ever approves a request, and the feature cannot change that.
 
 **Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot, and Copilot ignores `@copilot` comments from anyone else. The bounds check runs on every pull request, forks included, with a read-only token: it reads the commits as data and never runs them. CI runs a fork's code with a read-only token and no secrets, once someone with write access approves the run.

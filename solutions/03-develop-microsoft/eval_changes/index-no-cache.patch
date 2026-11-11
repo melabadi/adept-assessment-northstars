@@ -1,0 +1,89 @@
+diff --git a/app/src/RequestHub.Api/Program.cs b/app/src/RequestHub.Api/Program.cs
+index 947eee8..491fda6 100644
+--- a/app/src/RequestHub.Api/Program.cs
++++ b/app/src/RequestHub.Api/Program.cs
+@@ -91,8 +91,21 @@ app.Use(async (ctx, next) =>
+ app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+ app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = c => c.Tags.Contains("ready") });
+ 
++// index.html names the current build's hashed scripts. Without revalidation a browser keeps the old page after a
++// deploy and asks the new revision for scripts it no longer serves; the hashed scripts themselves may be cached.
++var revalidateHtml = new StaticFileOptions
++{
++    OnPrepareResponse = ctx =>
++    {
++        if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
++        {
++            ctx.Context.Response.Headers.CacheControl = "no-cache";
++        }
++    },
++};
++
+ app.UseDefaultFiles();
+-app.UseStaticFiles();
++app.UseStaticFiles(revalidateHtml);
+ app.UseAuthentication();
+ app.UseAuthorization();
+ app.UseCustomHeaderCsrfGuard();
+@@ -100,7 +113,7 @@ app.UseCustomHeaderCsrfGuard();
+ app.MapOpenApi("/openapi/{documentName}.json");
+ app.MapRequestHubApi();
+ app.MapFallback("/api/{**path}", () => Results.Problem(statusCode: 404, title: "route.not_found", detail: "No such API route."));
+-app.MapFallbackToFile("index.html");
++app.MapFallbackToFile("index.html", revalidateHtml);
+ 
+ app.Run();
+ 
+diff --git a/app/tests/RequestHub.Tests/WebUiCachingTests.cs b/app/tests/RequestHub.Tests/WebUiCachingTests.cs
+new file mode 100644
+index 0000000..8f5f795
+--- /dev/null
++++ b/app/tests/RequestHub.Tests/WebUiCachingTests.cs
+@@ -0,0 +1,47 @@
++using System.Net;
++
++namespace RequestHub.Tests;
++
++/// <summary>Serves a stand-in build of the web UI: an index.html and one hashed script, as `npm run build` writes them.</summary>
++public sealed class WebUiFixture : ApiFixture
++{
++    private readonly string webRoot = Path.Combine(Path.GetTempPath(), $"rh-webroot-{Guid.NewGuid():N}");
++
++    public WebUiFixture()
++    {
++        Directory.CreateDirectory(Path.Combine(webRoot, "assets"));
++        File.WriteAllText(Path.Combine(webRoot, "index.html"), "<!doctype html><title>RequestHub</title><script src=\"/assets/index-1a2b3c4d.js\"></script>");
++        File.WriteAllText(Path.Combine(webRoot, "assets", "index-1a2b3c4d.js"), "document.title = 'RequestHub';");
++    }
++
++    protected override IReadOnlyDictionary<string, string> Settings => new Dictionary<string, string> { ["webroot"] = webRoot };
++}
++
++/// <summary>
++/// index.html names the current build's hashed scripts. A browser that keeps an old copy after a deploy asks the new
++/// revision for scripts it no longer serves, so the page must be revalidated every time; the scripts themselves may be cached.
++/// </summary>
++public sealed class WebUiCachingTests(WebUiFixture api) : IClassFixture<WebUiFixture>
++{
++    [Theory]
++    [InlineData("/")]
++    [InlineData("/index.html")]
++    [InlineData("/requests/REQ-1001")]
++    public async Task The_page_is_revalidated_after_every_deploy(string path)
++    {
++        var response = await api.As("u-ava").GetAsync(path);
++
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
++        Assert.True(response.Headers.CacheControl?.NoCache, $"Cache-Control for {path}: {response.Headers.CacheControl}");
++    }
++
++    [Fact]
++    public async Task Hashed_scripts_stay_cacheable()
++    {
++        var response = await api.As("u-ava").GetAsync("/assets/index-1a2b3c4d.js");
++
++        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
++        Assert.False(response.Headers.CacheControl?.NoCache ?? false);
++    }
++}

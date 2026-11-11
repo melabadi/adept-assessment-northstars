@@ -42,6 +42,9 @@ DOCS, SKIPPED = standards.parse(FILES, SPEC)
 BY_ID = {doc["id"]: doc for doc in DOCS}
 EVERY = {d["id"]: {"version": d["version"], "text": f"{d['title']}\n{d['content']}"} for d in DOCS}
 CASES = [json.loads(line) for line in (HERE / "eval_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+HELD_OUT = [json.loads(line) for line in (HERE / "eval_heldout.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+GRADER_CHECKS = [json.loads(line) for line in (HERE / "grader_checks.jsonl").read_text(encoding="utf-8").splitlines()
+                 if line.strip()]
 
 
 def visible(profile: str) -> list[str]:
@@ -129,13 +132,34 @@ class EvaluationCaseTests(unittest.TestCase):
         self.assertEqual(len({c["id"] for c in CASES}), 10)
 
     def test_labels_match_the_profile_scopes(self):
-        for case in CASES:
+        for case in CASES + HELD_OUT:
             with self.subTest(case=case["id"]):
                 seen = set(visible(case["profile"]))
                 self.assertTrue(set(case["expectStandards"]) <= seen, "expected standards must be retrievable")
                 self.assertTrue(set(case["expectConflict"]) <= seen, "conflicting standards must be retrievable")
                 self.assertFalse(set(case["forbidStandards"]) & seen, "forbidden standards must be out of scope")
                 self.assertTrue(set(case["forbidStandards"]) <= set(BY_ID), "forbidden standards must exist")
+
+    def test_every_answerable_case_labels_its_conclusion_with_positive_claims_and_real_evidence(self):
+        """A claim with a negation in it could never be asserted, and evidence must be words the standard really has."""
+        self.assertEqual({c["id"] for c in HELD_OUT} & {c["id"] for c in CASES}, set())
+        for case in CASES + HELD_OUT:
+            with self.subTest(case=case["id"]):
+                label = case.get("expectConclusion")
+                self.assertEqual(bool(label), case["expectAnswerable"], "label the conclusion of every answerable case")
+                if not label:
+                    continue
+                claims = [c for entry in label.get("states", []) for c in ([entry] if isinstance(entry, str) else entry)]
+                claims += label.get("rejects", [])
+                for claim in claims:
+                    for word in claim.split():
+                        self.assertFalse(any(checks._word_matches(word.rstrip("*"), cue) for cue in checks.NEGATION_CUES),
+                                         f"{claim!r} holds the negation cue {word!r}")
+                self.assertTrue(set(label.get("evidence", {})) <= set(case["expectStandards"]))
+                for standard, phrases in label.get("evidence", {}).items():
+                    for phrase in [phrases] if isinstance(phrases, str) else phrases:
+                        self.assertGreaterEqual(checks._position(checks.words(EVERY[standard]["text"]), checks.words(phrase), 0), 0,
+                                                f"{standard} doesn't say {phrase!r}")
 
     def test_suite_covers_every_behaviour(self):
         self.assertTrue(any(c["forbidStandards"] for c in CASES))
@@ -253,6 +277,46 @@ class GateTests(unittest.TestCase):
         self.assertIn("grounding: an answer must cite at least one standard", gate(answer(constraints=[], options=[])))
 
 
+class ConclusionTests(unittest.TestCase):
+    """How checks.asserts reads a stated conclusion: claims in clauses, with their negations, conditions, and comparisons."""
+
+    def test_a_claim_is_its_words_in_order_a_few_words_apart(self):
+        self.assertTrue(checks.asserts("Approve low-risk requests automatically.", "approv* automat*"))
+        self.assertTrue(checks.asserts("The agent can auto-approve them.", "auto approv*"))
+        self.assertFalse(checks.asserts("Approve requests from the shared queue on Fridays automatically.", "approv* automat*"))
+        self.assertFalse(checks.asserts("Automatically route; approve later.", "approv* automat*"))
+
+    def test_a_negation_denies_its_clause_and_two_negations_cancel(self):
+        self.assertFalse(checks.asserts("There is no automatic approval, whatever the confidence.", "automat* approv*"))
+        self.assertFalse(checks.asserts("Direct calls from applications are not allowed in production.", "direct* call*"))
+        self.assertFalse(checks.asserts("The standard forbids automatic approval.", "automat* approv*"))
+        self.assertTrue(checks.asserts("Nothing prevents automatic approval above 95%.", "automat* approv*"))
+        self.assertTrue(checks.asserts("Do not wait: approvals require a human decision.", "human decision*"))
+
+    def test_a_negation_reaches_only_its_own_clause(self):
+        self.assertTrue(checks.asserts("Do not auto-approve, because approvals require a human decision.", "human decision*"))
+        self.assertTrue(checks.asserts("Keep it inside the existing API rather than in a new service.", "inside* existing"))
+        self.assertFalse(checks.asserts("Keep it in a new service rather than inside the existing API.", "inside* existing"))
+        self.assertFalse(checks.asserts("No — not as a tool that can change any request.", "chang* any request*"))
+
+    def test_conditions_and_comparisons_assert_nothing(self):
+        self.assertFalse(checks.asserts("If you want true auto-approval, the board must approve an exception.", "auto approv*"))
+        self.assertFalse(checks.asserts("Change the standard before direct calls could be allowed.", "direct* call*"))
+        self.assertFalse(checks.asserts("The gateway meets the standards better than a direct endpoint call.", "direct* call*"))
+        # Seen live on E04: the recommendation listed both options before choosing the second.
+        self.assertFalse(checks.asserts("Compared options: (1) send full request data including attachments, or (2) send "
+                                        "only the minimum structured fields.", "includ* attachment*"))
+        self.assertTrue(checks.asserts("Release with two bundles: (1) telemetry, and (2) an evaluation dataset.",
+                                       "evaluation dataset"))
+
+    def test_only_the_summary_and_the_recommendation_state_the_conclusion(self):
+        """The options name the wrong choice too, so they never count as the answer's conclusion."""
+        wrong_option = answer(summary="Keep approvals human.", recommendation="An approver decides every request.",
+                              options=[{"name": "Approve automatically above 95%", "description": "", "pros": [], "cons": [],
+                                        "standards": ["STD-AI-001"]}])
+        self.assertEqual(checks.conclusion_misses({"rejects": ["approv* automat*"]}, wrong_option), [])
+
+
 class ResponseParsingTests(unittest.TestCase):
     def test_retrieval_is_read_from_a_foundry_iq_response(self):
         response = {"output": [{"type": "mcp_list_tools", "tools": []},
@@ -287,7 +351,7 @@ class EvaluatorTests(unittest.TestCase):
 
     @staticmethod
     def item(case_id: str, data: dict, retrieved: tuple[str, ...]) -> dict:
-        case = next(c for c in CASES if c["id"] == case_id)
+        case = next(c for c in CASES + HELD_OUT if c["id"] == case_id)
         row = evaluation.items([case], EVERY, visible(case["profile"]))[0]["item"]
         row["sample"] = {"output_text": json.dumps(data),
                          "output_items": [{"type": "tool_result", "tool_result": iq_output(*retrieved)}]}
@@ -307,11 +371,13 @@ class EvaluatorTests(unittest.TestCase):
         self.assertLess(len(code.encode()), 256 * 1024)
 
     def test_a_correct_conflict_answer_passes_every_evaluator(self):
-        data = answer(constraints=[
+        data = answer(summary="The standards conflict, so an architect must resolve it before anything is stored.",
+                      recommendation="Persist only structured results until an architect resolves the conflict.",
+                      constraints=[
             {"standardId": "STD-OBS-002", "version": "1.0", "requirement": "Log prompts.",
              "excerpt": "log the full prompt and completion of every AI call for 30 days"},
             {"standardId": "STD-SEC-002", "version": "1.1", "requirement": "Do not persist raw prompts.",
-             "excerpt": "Send AI services only the fields the use case needs."}],
+             "excerpt": "Do not persist raw prompts or completions that contain free text entered by users"}],
             options=[], conflicts=[{"standards": ["STD-OBS-002", "STD-SEC-002"], "description": "log vs do not persist"}])
         row = self.item("E07", data, ("STD-OBS-002", "STD-SEC-002"))
         self.assertEqual({kind: self.grade(kind, row) for kind in evaluation.EVALUATORS}, dict.fromkeys(evaluation.EVALUATORS, 1.0))
@@ -339,6 +405,60 @@ class EvaluatorTests(unittest.TestCase):
         row = self.item("E01", answer(), ("STD-ARCH-001",))
         row["sample"] = {"output_text": "", "output_items": []}
         self.assertEqual(self.grade("citations", row), 0.0)
+
+    def test_the_answer_is_graded_wherever_foundry_puts_it(self):
+        """Fixed answers ride in item["sample"]. When Foundry asks an agent, the answer comes in the sample argument
+        (seen live in November 2026: every check of every case failed while the graders read only item["sample"]),
+        or as flattened sample.* fields."""
+        row = self.item("E01", answer(), ("STD-ARCH-001",))
+        answer_sample = row.pop("sample")
+        scope: dict = {}
+        exec(compile(evaluation.evaluator_code("citations"), "advisor_citations", "exec"), scope)  # noqa: S102 - our own code
+        self.assertEqual(scope["grade"](answer_sample, dict(row)), 1.0)
+        flattened = dict(row, **{"sample.output_text": answer_sample["output_text"],
+                                 "sample.output_items": answer_sample["output_items"]})
+        self.assertEqual(scope["grade"]({}, flattened), 1.0)
+        self.assertEqual(scope["grade"]({}, dict(row, sample=answer_sample)), 1.0)
+        self.assertEqual(scope["grade"]({}, dict(row)), 0.0)
+
+    def test_a_correct_quote_with_the_opposite_conclusion_earns_citation_credit_only(self):
+        """E05, as reported: the answer quotes STD-AI-001 word for word, then recommends automatic approval above 95%
+        confidence. The quote is real, so the citation passes; the conclusion contradicts it, so the answer isn't grounded."""
+        quote = {"standardId": "STD-AI-001", "version": "1.0", "requirement": "Approvals require a human decision.",
+                 "excerpt": "Approvals, rejections, payments, and access grants always require a human decision."}
+        wrong = answer(summary="Yes. Above 95% confidence the triage agent can approve low-risk requests automatically.",
+                       recommendation="Let the triage agent approve low-risk requests automatically when its confidence "
+                                      "is above 95%; below that, approvals require a human decision.",
+                       options=[], constraints=[quote])
+        row = self.item("E05", wrong, ("STD-AI-001",))
+        self.assertEqual(self.grade("citations", row), 1.0)
+        self.assertEqual(self.grade("grounding", row), 0.0)
+
+    def test_paired_answers_share_their_keywords_and_evidence(self):
+        """Every labelled case has a right and a wrong answer that quote the same excerpts and offer the same options;
+        only the stated conclusion differs."""
+        by_id = {row["id"]: row for row in GRADER_CHECKS}
+        for case in [c for c in CASES + HELD_OUT if c["expectAnswerable"]]:
+            with self.subTest(case=case["id"]):
+                right, wrong = by_id[f"{case['id']}/right"], by_id[f"{case['id']}/wrong"]
+                self.assertEqual(right["split"], "held-out" if case in HELD_OUT else "paired")
+                self.assertEqual(right["answer"]["constraints"], wrong["answer"]["constraints"])
+                self.assertEqual(right["answer"]["options"], wrong["answer"]["options"])
+                self.assertTrue(all(right["expect"].values()))
+                self.assertFalse(wrong["expect"]["grounding"])
+                self.assertTrue(wrong["expect"]["citations"], "the wrong answer's quotes are real: citation credit only")
+
+    def test_every_grader_check_is_graded_as_labelled_by_the_code_foundry_runs(self):
+        """grader_checks.jsonl: the paired answers must all be graded right. A held-out answer the checks get wrong is
+        recorded with knownMiss ("<check>: why"), and must stay wrong until the checks improve and the label changes."""
+        for row in GRADER_CHECKS:
+            with self.subTest(row=row["id"]):
+                item = self.item(row["case"], row["answer"], tuple(row["retrieved"]))
+                graded = {kind: self.grade(kind, item) == 1.0 for kind in evaluation.EVALUATORS}
+                missed = {kind for kind in graded if graded[kind] != row["expect"][kind]}
+                known = {row["knownMiss"].split(":")[0]} if row.get("knownMiss") else set()
+                self.assertEqual(missed, known)
+                self.assertTrue(not known or row["split"] == "held-out", "a paired answer can't be a known miss")
 
 
 class ReportTests(unittest.TestCase):
@@ -1233,6 +1353,76 @@ class EvaluateScriptTests(unittest.TestCase):
         self.assertEqual(exit_code([run], completed), 2)
         openai.evals.runs.output_items.list.return_value = [graded[0], self.output("E02", **dict(self.ALL, access=False))]
         self.assertEqual(exit_code([run], completed), 1)
+
+    def waited(self, outputs: dict, restart, attempts=3, status="completed", timeout=60):
+        """evaluate.wait over fake runs: one small-team run (st-1) and one enterprise run (ent-1)."""
+        openai = mock.MagicMock()
+        openai.evals.runs.output_items.list.side_effect = lambda run_id, eval_id: outputs[run_id]
+        runs = [{"profile": "small-team", "runId": "st-1", "evalId": "e", "agent": "small-team v2", "cases": ["E01"]},
+                {"profile": "enterprise", "runId": "ent-1", "evalId": "e", "agent": "enterprise v2", "cases": ["E02"]}]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("advisor_core.evaluation.status", return_value={"status": status, "errored": 0}), \
+                mock.patch("sys.stdout", new=out), mock.patch("sys.stderr", new=err):
+            final, states, late, history = self.evaluate.wait(openai, runs, restart, attempts, timeout, poll=0)
+        printed = out.getvalue() + err.getvalue()
+        self.history = history
+        return openai, [run["runId"] for run in final], states, [run["runId"] for run in late], printed
+
+    def test_a_run_foundry_could_not_grade_is_started_again_but_a_failed_case_never_is(self):
+        restarted = []
+
+        def restart(run):
+            restarted.append(run["runId"])
+            return {"profile": "enterprise", "runId": f"ent-{run['attempt'] + 1}", "evalId": "e",
+                    "agent": "enterprise v2", "cases": ["E02"]}
+
+        passing, not_graded = self.output("E02", **self.ALL), self.output("E02", **dict(self.ALL, grounding=None))
+        outputs = {"st-1": [self.output("E01", **self.ALL)], "ent-1": [not_graded], "ent-2": [passing]}
+        _, final, _, late, printed = self.waited(outputs, restart)
+        self.assertEqual((restarted, final, late), (["ent-1"], ["st-1", "ent-2"], []))
+        self.assertIn("enterprise v2: Foundry could not grade run 1 (grounding); starting run 2 of up to 3", printed)
+        # The first attempt stays on record next to the retry that replaced it.
+        report = "\n".join(self.evaluate.attempts_report(self.history))
+        self.assertIn("First attempt: 1 passed, 0 failed, 1 could not be graded (of 2 cases)", report)
+        self.assertIn("enterprise v2: could not be graded: E02", report)
+        self.assertIn("Retry: enterprise v2 run 2, started because Foundry could not grade run 1; the agent answered "
+                      "again: 1 passed, 0 failed, 0 could not be graded", report)
+
+        # A failed case is a result: that run is final, even though another of its checks was not graded.
+        restarted.clear()
+        outputs["ent-1"] = [self.output("E02", **dict(self.ALL, citations=False, grounding=None))]
+        _, final, _, _, _ = self.waited(outputs, restart)
+        self.assertEqual((restarted, final), ([], ["st-1", "ent-1"]))
+        self.assertIn("First attempt: 1 passed, 1 failed, 0 could not be graded", self.evaluate.attempts_report(self.history)[0])
+        self.assertIn("Retries: none", self.evaluate.attempts_report(self.history))
+
+        # After the last attempt, the run that still could not be graded is reported, and never as a pass.
+        restarted.clear()
+        outputs["ent-1"] = outputs["ent-2"] = [not_graded]
+        openai, final, states, _, _ = self.waited(outputs, restart, attempts=2)
+        self.assertEqual((restarted, final), (["ent-1"], ["st-1", "ent-2"]))
+        runs = [{"runId": run_id, "evalId": "e", "agent": run_id, "cases": [case]}
+                for run_id, case in (("st-1", "E01"), ("ent-2", "E02"))]
+        with mock.patch("sys.stdout", new=io.StringIO()), mock.patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(self.evaluate.summarize(openai, runs, states, time.monotonic()), 2)
+
+        # --attempts 1 never starts a run again.
+        restarted.clear()
+        _, final, _, _, _ = self.waited(outputs, restart, attempts=1)
+        self.assertEqual((restarted, final), ([], ["st-1", "ent-1"]))
+
+    def test_a_run_that_cannot_start_again_or_never_finishes_is_reported(self):
+        def broken(run):
+            raise RuntimeError("Failed to resolve 'aif-abc123.services.ai.azure.com'")
+
+        outputs = {"st-1": [self.output("E01", **self.ALL)], "ent-1": [self.output("E02", **dict(self.ALL, access=None))]}
+        _, final, _, _, printed = self.waited(outputs, broken)
+        self.assertEqual(final, ["st-1", "ent-1"])
+        self.assertIn("could not start enterprise v2 again", printed)
+        self.assertNotIn("aif-abc123", printed)
+
+        _, final, _, late, _ = self.waited(outputs, broken, status="in_progress", timeout=0)
+        self.assertEqual((final, late), ([], ["st-1", "ent-1"]))
 
 
 if __name__ == "__main__":

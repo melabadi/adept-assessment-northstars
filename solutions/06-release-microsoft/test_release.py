@@ -2,13 +2,16 @@
 
 They cover what a reviewer must be able to trust without a live run:
   - only builds of requesthub-api from the API's own registry are released, whatever an event or a person names;
-  - the Logic App passes event values to the job as values, starts it only when every check passed, and fails its run
-    when it rejects an event;
+  - an image is pinned by the digest the registry reports, an OCI image index with attestations (a build of GitHub
+    Actions, imported into the registry) included, and its commit is read from its linux/amd64 image;
   - nothing untrusted can print a line that looks like a release record;
   - promote needs the gate's verdict for exactly this candidate and image, with the standard bake;
   - a release that fails removes its own candidate, even while another step waits for its turn;
   - steps take turns first come, first served, and any execution that has not finished counts as running;
-  - a build without a known commit is never released;
+  - a build without a known commit is never released, and neither is a push whose COMMIT is missing or isn't a
+    40-character commit;
+  - a pushed image starts at most one release: when Event Grid delivers its push again, or the same image is pushed
+    again, only the execution that got it first may release it;
   - rollback goes only to the revision that served users just before: never a drill revision or the candidate;
   - the preflight fails when a pull request, from a fork too, could start the build task, whose pushes start releases.
 
@@ -23,6 +26,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -34,9 +38,16 @@ import release
 REGISTRY = "crexample.azurecr.io"
 SHA = "4" * 40
 OTHER_SHA = "5" * 40
+LETTERS = "4f0a" * 10  # a commit with letters, to tell lowercase from uppercase
 DIGEST = "sha256:" + "ab" * 32
 OTHER_DIGEST = "sha256:" + "cd" * 32
 NOW = datetime(2026, 10, 29, 18, 0, tzinfo=timezone.utc)
+
+
+def execution(name: str, seconds: float | None, image: str = "", *, status: str = "Succeeded") -> dict:
+    """One execution of the release job as release_history lists it: started this many seconds after NOW."""
+    return {"name": name, "status": status, "start": None if seconds is None else NOW + timedelta(seconds=seconds),
+            "image": image}
 
 
 def revision(image_digest: str = DIGEST, commit: str = SHA, *, active: bool = True, fault: bool = False) -> dict:
@@ -173,6 +184,56 @@ class ImageReferences(unittest.TestCase):
         problem = release.image_problem(f"{REGISTRY}/evil:x\nRELEASE-RECORD {{\"step\":\"promote\"}}", self.registries)
         self.assertNotIn("\n", problem)
         self.assertIn("\\n", problem)
+
+
+class ImageResolution(unittest.TestCase):
+    """Which build an image is, read from the registry itself. A build made with docker buildx and SBOM and provenance
+    attestations, as GitHub Actions builds a release candidate (06-release-github), is an OCI image index, and
+    az acr import keeps its digest: the release pins the index's own digest, and reads the commit from its linux/amd64
+    image, never from an attestation manifest."""
+
+    BASE = f"https://{REGISTRY}/v2/requesthub-api"
+    IMAGE = "sha256:" + "11" * 32
+    ATTESTATION = "sha256:" + "22" * 32
+    CONFIG = "sha256:" + "33" * 32
+
+    def resolve(self, reference: str, responses: dict[str, tuple[int, dict | None, dict]]) -> tuple[tuple[str, str], list[str]]:
+        calls: list[str] = []
+
+        def fake_http(method: str, url: str, **kwargs) -> release.Response:
+            calls.append(url)
+            status, body, headers = responses[url]
+            return release.Response(status, b"" if body is None else json.dumps(body).encode(), headers, 1.0)
+        with mock.patch.object(release, "registry_token", return_value="token"), \
+                mock.patch.object(release, "http", side_effect=fake_http):
+            return release.resolve_image(reference), calls
+
+    def image(self, build_sha: str) -> dict[str, tuple[int, dict | None, dict]]:
+        """The linux/amd64 image and its configuration, served from storage through a redirect as ACR does."""
+        return {f"{self.BASE}/manifests/{self.IMAGE}": (200, {"config": {"digest": self.CONFIG}}, {}),
+                f"{self.BASE}/blobs/{self.CONFIG}": (307, None, {"location": "https://storage.example/config"}),
+                "https://storage.example/config": (200, {"config": {"Env": ["PATH=/usr/bin", f"BUILD_SHA={build_sha}"]}}, {})}
+
+    def test_an_index_with_attestations_is_pinned_by_its_own_digest_and_read_from_its_image(self):
+        index = {"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
+            {"digest": self.ATTESTATION, "platform": {"architecture": "unknown", "os": "unknown"},
+             "annotations": {"vnd.docker.reference.type": "attestation-manifest", "vnd.docker.reference.digest": self.IMAGE}},
+            {"digest": self.IMAGE, "platform": {"architecture": "amd64", "os": "linux"}}]}
+        for reference in (f"{REGISTRY}/requesthub-api@{DIGEST}", f"{REGISTRY}/requesthub-api:{SHA}"):
+            with self.subTest(reference=reference):
+                ref = reference.rsplit("@", 1)[-1] if "@" in reference else SHA
+                responses = {f"{self.BASE}/manifests/{ref}": (200, index, {"docker-content-digest": DIGEST}), **self.image(SHA)}
+                (image, commit), calls = self.resolve(reference, responses)
+                self.assertEqual(image, f"{REGISTRY}/requesthub-api@{DIGEST}")
+                self.assertEqual(commit, SHA)
+                self.assertNotIn(f"{self.BASE}/manifests/{self.ATTESTATION}", calls)
+
+    def test_a_single_image_is_read_directly_and_a_local_build_reports_no_commit(self):
+        responses = {f"{self.BASE}/manifests/main": (200, {"config": {"digest": self.CONFIG}}, {"docker-content-digest": DIGEST}),
+                     **self.image("local")}
+        responses.pop(f"{self.BASE}/manifests/{self.IMAGE}")
+        (image, commit), _ = self.resolve(f"{REGISTRY}/requesthub-api:main", responses)
+        self.assertEqual((image, commit), (f"{REGISTRY}/requesthub-api@{DIGEST}", ""))
 
 
 class PrintableRecords(Quiet):
@@ -431,14 +492,22 @@ class Provenance(Quiet):
             self.assertEqual(commit, "", (baked, claimed))
             self.assertIsNotNone(problem, (baked, claimed))
 
-    def release(self, app: FakeApp, baked: str, env: dict | None = None) -> tuple[int, mock.Mock]:
+    def release(self, app: FakeApp, baked: str, env: dict | None = None, history: list[dict] | None = None,
+                me: str | None = "me") -> tuple[int, mock.Mock]:
+        """cmd_release as the release job runs it. env replaces IMAGE and COMMIT (default: a push of build SHA);
+        history is the release job's executions, and me this execution's name among them."""
         args = argparse.Namespace(image=None, commit=None, wait=0, force=False)
         image = f"{REGISTRY}/requesthub-api@{DIGEST}"
         with mock.patch.object(release, "connect", return_value=app), \
                 mock.patch.object(release, "wait_for_turn", return_value=True), \
                 mock.patch.object(release, "resolve_image", return_value=(image, baked)), \
+                mock.patch.object(release, "release_history", return_value=history or []), \
+                mock.patch.object(release, "own_execution", return_value=me), \
                 mock.patch.object(release, "deploy_and_gate", return_value=0) as deploy, \
-                mock.patch.dict("os.environ", env or {"IMAGE": image, "COMMIT": SHA}):
+                mock.patch.dict("os.environ", {}):
+            for name in ("IMAGE", "COMMIT"):
+                os.environ.pop(name, None)
+            os.environ.update({"IMAGE": image, "COMMIT": SHA} if env is None else env)
             return release.cmd_release(args), deploy
 
     def stable_app(self, tags: dict | None = None, candidate: dict | None = None) -> FakeApp:
@@ -459,6 +528,45 @@ class Provenance(Quiet):
         self.assertEqual(code, 1)
         deploy.assert_not_called()
 
+    def test_a_push_without_a_valid_commit_is_never_released(self):
+        # The trigger passes the pushed tag as COMMIT. Anything but a 40-character commit, or no COMMIT at all, is
+        # refused rather than replaced by the commit baked into the image.
+        image = f"{REGISTRY}/requesthub-api@{DIGEST}"
+        for commit in (None, "", "main", LETTERS[:7], LETTERS.upper(), LETTERS + "0", "g" * 40, LETTERS + "\n", " " + LETTERS):
+            with self.subTest(commit=commit):
+                env = {"IMAGE": image} if commit is None else {"IMAGE": image, "COMMIT": commit}
+                code, deploy = self.release(self.stable_app(), baked=LETTERS, env=env)
+                self.assertEqual(code, 1)
+                deploy.assert_not_called()
+        code, deploy = self.release(self.stable_app(), baked=LETTERS, env={"IMAGE": image, "COMMIT": LETTERS})
+        self.assertEqual(code, 0)
+        deploy.assert_called_once()
+
+    def test_a_person_releases_the_newest_build_as_the_commit_baked_into_it(self):
+        # Run now passes neither IMAGE nor COMMIT: the release takes requesthub-api:main and its baked commit.
+        code, deploy = self.release(self.stable_app(), baked=SHA, env={"AZURE_CONTAINER_REGISTRY_ENDPOINT": REGISTRY})
+        self.assertEqual(code, 0)
+        deploy.assert_called_once()
+        self.assertEqual(deploy.call_args.args[3], SHA)
+
+    def test_a_push_that_an_earlier_execution_released_is_not_released_again(self):
+        # Event Grid delivers at least once. Here the first delivery's candidate was aborted by a person, so the
+        # build is neither stable nor the candidate; the second delivery must not bring it back.
+        image = f"{REGISTRY}/requesthub-api@{DIGEST}"
+        history = [execution("first", 0, image), execution("me", 40, image, status="Running")]
+        code, deploy = self.release(self.stable_app(), baked=SHA, history=history)
+        self.assertEqual(code, 0)
+        deploy.assert_not_called()
+        # The first delivery itself, a push of another build, and a person's Run now are released.
+        for history, me, env in ((history, "first", None),
+                                 ([execution("first", 0, f"{REGISTRY}/requesthub-api@{OTHER_DIGEST}"),
+                                   execution("me", 40, image, status="Running")], "me", None),
+                                 (history, "me", {"AZURE_CONTAINER_REGISTRY_ENDPOINT": REGISTRY})):
+            with self.subTest(me=me, env=env):
+                code, deploy = self.release(self.stable_app(), baked=SHA, history=history, me=me, env=env)
+                self.assertEqual(code, 0)
+                deploy.assert_called_once()
+
     def test_a_duplicate_push_is_skipped_only_when_its_candidate_passed_the_gate(self):
         image = f"{REGISTRY}/requesthub-api@{DIGEST}"
         code, deploy = self.release(self.stable_app(candidate=revision()), baked=SHA)
@@ -468,6 +576,59 @@ class Provenance(Quiet):
         code, deploy = self.release(self.stable_app(tags=gated, candidate=revision()), baked=SHA)
         self.assertEqual(code, 0)
         deploy.assert_not_called()
+
+
+class RepeatedPush(unittest.TestCase):
+    """Event Grid delivers each event at least once, so one push can start the release job twice. The release job's
+    own execution history, in Azure, says which execution got the push first: only that one releases the build."""
+
+    image = f"{REGISTRY}/requesthub-api@{DIGEST}"
+
+    def test_a_later_execution_finds_the_first_release_of_the_same_build(self):
+        history = [execution("first", 0, self.image), execution("another-build", 5, f"{REGISTRY}/requesthub-api@{OTHER_DIGEST}"),
+                   execution("me", 10, self.image, status="Running"), execution("later", 20, self.image, status="Running")]
+        self.assertEqual(release.earlier_release(history, "me", DIGEST)["name"], "first")
+        self.assertEqual(release.earlier_release(history, "later", DIGEST)["name"], "first")
+        self.assertIsNone(release.earlier_release(history, "first", DIGEST), "the first delivery releases the build")
+        self.assertIsNone(release.earlier_release(history, "me", "sha256:" + "ef" * 32))
+
+    def test_ties_are_broken_by_name_as_for_turns(self):
+        history = [execution("b", 0, self.image), execution("a", 0, self.image)]
+        self.assertIsNone(release.earlier_release(history, "a", DIGEST))
+        self.assertEqual(release.earlier_release(history, "b", DIGEST)["name"], "a")
+
+    def test_only_executions_that_started_count_and_only_when_this_one_is_known(self):
+        self.assertIsNone(release.earlier_release([execution("never-started", None, self.image), execution("me", 10, self.image)], "me", DIGEST))
+        history = [execution("first", 0, self.image), execution("me", None, self.image)]
+        self.assertIsNone(release.earlier_release(history, "me", DIGEST))
+        for me in (None, "not-listed"):
+            self.assertIsNone(release.earlier_release(history, me, DIGEST))
+
+    def test_a_persons_run_is_no_push_of_a_build(self):
+        history = [execution("run-now", 0, ""), execution("me", 10, self.image)]
+        self.assertIsNone(release.earlier_release(history, "me", DIGEST))
+        self.assertIsNone(release.earlier_release(history, "me", ""))
+
+    def test_the_history_lists_the_release_jobs_executions_and_the_image_each_was_given(self):
+        jobs = [{"id": "/jobs/caj-release-x", "tags": {"requesthub-release": "release"}},
+                {"id": "/jobs/caj-drill-x", "tags": {"requesthub-release": "drill"}}, {"id": "/jobs/another", "tags": {}}]
+        executions = {"/jobs/caj-release-x": [
+            {"name": "pushed", "properties": {"status": "Succeeded", "startTime": "2026-10-29T18:00:00Z", "template": {
+                "containers": [{"env": [{"name": "IMAGE", "value": self.image}, {"name": "COMMIT", "value": SHA}]}]}}},
+            {"name": "run-now", "properties": {"status": "Failed", "startTime": "2026-10-29T18:05:00.1234567Z",
+                                               "template": {"containers": [{"env": [{"name": "RELEASE_STEP", "value": "release"}]}]}}},
+            {"name": "odd", "properties": {"status": "Running", "template": "not an object"}}]}
+
+        def fake_list(url: str) -> list[dict]:
+            if url.endswith("/providers/Microsoft.App/jobs"):
+                return jobs
+            return executions[url.removeprefix(release.ARM).removesuffix("/executions")]  # only the release job's
+        with mock.patch.object(release, "arm_list", side_effect=fake_list):
+            history = release.release_history(FakeApp({}, []))
+        self.assertEqual([(h["name"], h["status"], h["image"]) for h in history],
+                         [("pushed", "Succeeded", self.image), ("run-now", "Failed", ""), ("odd", "Running", "")])
+        self.assertEqual(history[0]["start"], NOW)
+        self.assertIsNone(history[2]["start"])
 
 
 class Rollback(Quiet):
@@ -550,60 +711,6 @@ class RunningRule(unittest.TestCase):
                 mock.patch.object(release, "utc_now", return_value=NOW):
             running = release.running_steps(FakeApp({}, []))
         self.assertEqual([(r["name"], r["status"]) for r in running], [("running", "Running"), ("degraded", "Degraded")])
-
-
-class TriggerDefinition(unittest.TestCase):
-    """Finding 3 and the re-review, on the Logic App's definition (infra/release-trigger.json): what reaches the job,
-    and what a rejected event leaves behind."""
-
-    folder = Path(__file__).resolve().parent / "infra"
-
-    def setUp(self) -> None:
-        self.definition = json.loads((self.folder / "release-trigger.json").read_text(encoding="utf-8"))
-        self.text = json.dumps(self.definition)
-        self.actions: dict[str, tuple[dict, list[tuple[str, str]]]] = {}
-
-        def walk(actions: dict, ancestors: list[tuple[str, str]]) -> None:
-            for name, action in actions.items():
-                self.actions[name] = (action, ancestors)
-                walk(action.get("actions") or {}, ancestors + [(name, action["type"])])
-                walk((action.get("else") or {}).get("actions") or {}, ancestors + [(name, action["type"] + ":else")])
-        walk(self.definition["actions"], [])
-
-    def test_the_repository_is_set_in_one_place(self):
-        self.assertNotIn(release.REPOSITORY, self.text)
-        self.assertIn("repository", self.definition["parameters"])
-        bicep = (self.folder / "release.bicep").read_text(encoding="utf-8")
-        self.assertIn(f"var repository = '{release.REPOSITORY}'", bicep)
-        self.assertIn("subjectBeginsWith: '${repository}:'", bicep)
-        self.assertIn("repository: { value: repository }", bicep)
-
-    def test_event_values_reach_the_job_as_values_never_as_json_text(self):
-        self.assertNotIn("json(concat(", self.text)
-        env = self.actions["Release_this_build"][0]["inputs"]["env"]
-        self.assertIn("addProperty(", env)
-        self.assertIn("outputs('Pushed_build')?['repository'], '@', outputs('Pushed_build')?['digest']", env)
-
-    def test_the_job_starts_only_when_every_check_passed(self):
-        _, ancestors = self.actions["Start_release_job"]
-        condition, kind = ancestors[-1]
-        self.assertEqual(kind, "If")
-        self.assertIn("outputs('Check_pushed_build')", json.dumps(self.actions[condition][0]["expression"]))
-        check = self.actions["Check_pushed_build"][0]["inputs"]
-        for name in ("topic:", "eventType:", "host:", "repository:", "digest:"):
-            self.assertIn(name, check)
-        self.assertNotIn("startsWith(", check)  # not case-sensitive in Logic Apps, while replace() is
-
-    def test_a_rejected_event_fails_the_run_after_the_loop(self):
-        terminates = [(action, ancestors) for action, ancestors in self.actions.values() if action["type"] == "Terminate"]
-        self.assertEqual(len(terminates), 1)
-        action, ancestors = terminates[0]
-        self.assertEqual(action["inputs"]["runStatus"], "Failed")
-        self.assertFalse([kind for _, kind in ancestors if kind.startswith(("Foreach", "Until"))],
-                         "Logic Apps cannot run Terminate inside a loop")
-        note, note_ancestors = self.actions["Note_the_rejection"]
-        self.assertEqual(note["type"], "AppendToArrayVariable")
-        self.assertEqual(note_ancestors[-1], ("Is_a_push_of_the_API_to_this_registry", "If:else"))
 
 
 class BuildTrigger(unittest.TestCase):

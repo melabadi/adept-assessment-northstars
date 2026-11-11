@@ -1,8 +1,10 @@
 """Offline tests for the Test · Microsoft solution's reporting function. No Azure or GitHub access is needed.
 
 They port the checks that proved the Logic App this function replaces, and add the function's own:
-  - the report: the same Markdown the Logic App's KQL wrote for Issue #180 (plus the sampling note), and the six
-    verdicts (accepted, warning, expected-failure, regression, no-telemetry, no-verdict);
+  - the report: the same Markdown the Logic App's KQL wrote for Issue #180 (plus the sampling note and the run's
+    readable id), and the six verdicts (accepted, warning, expected-failure, regression, no-telemetry, no-verdict);
+  - the build under test: the API revisions that served the run (from the telemetry), and for a candidate run the
+    commit and revision its description names, confirmed or contradicted by the telemetry; a GUID run id is never named;
   - replay protection: a notification without a run id, an unknown run, another test's run, and a run that ended more
     than an hour ago never reach the queue;
   - the waits: a run without a verdict and incomplete telemetry come back later through the queue, with a delay, and
@@ -10,7 +12,8 @@ They port the checks that proved the Logic App this function replaces, and add t
   - GitHub: only this test's open Issue counts (full title prefix, pull requests skipped, opened by the owner, a member,
     or a collaborator); a failing run opens or comments; only an accepted run that started after the Issue opened closes
     it; a repeated delivery changes nothing, and only those authors' markers count, so an outsider's comment can't make
-    a run look reported; one report posts at a time; and the token never appears in a log or an error;
+    a run look reported; a candidate run also comments on the open Issue it names, never on a pull request, a closed
+    Issue, or an outsider's Issue; one report posts at a time; and the token never appears in a log or an error;
   - the Function's bindings: a function key on the HTTP route, written with the action group's copy in one deployment,
     the queue name Bicep creates, and a GitHub token that only Key Vault holds (read with the function's identity, and
     never by the HTTP route).
@@ -119,10 +122,24 @@ FIX_ROWS = [
     row("POST /api/requests/{id}/decisions", 26, 0, 0, 75.0, 0, "2026-10-30T18:56:29Z"),
 ]
 
-# Issue #180's report, written by the Logic App's KQL on 2026-10-30, with the sampling note this function adds.
+# A candidate run as candidate.py starts it: a synthetic commit, deployed as API revision c9f1c2ab, for Issue #284.
+CANDIDATE_SHA = "9f1c2ab3d4e5f60718293a4b5c6d7e8f90a1b2c3"
+CANDIDATE_DESCRIPTION = f"Commit {CANDIDATE_SHA} on API revision c9f1c2ab for Issue #284"
+# Log Analytics returns report.kql's dynamic `revisions` column as JSON text.
+CANDIDATE_ROWS = [dict(r, revisions='["c9f1c2ab"]') for r in FIX_ROWS]
+
+
+def candidate_run(**overrides) -> dict:
+    run = fix_run(testRunId="candidate-9f1c2ab-20261030-185145", displayName="Candidate 9f1c2ab",
+                  description=CANDIDATE_DESCRIPTION)
+    run.update(overrides)
+    return run
+
+# Issue #180's report, written by the Logic App's KQL on 2026-10-30, with the sampling note and the run's id that this
+# function adds. The rows carry no revisions (the KQL of the time did not ask), so the report has no build line.
 SLOWDOWN_REPORT = """## Load test: After the slowdown
 
-**FAILED** · test `requesthub-journey` · 10 virtual users · 119 s
+**FAILED** · test `requesthub-journey` · run `slowdown-20261030-183250` · 10 virtual users · 119 s
 
 **Expected failure:** the API ran with the rehearsal slowdown (151 server requests carried `requesthub.fault.queue_delay_ms`), and the criteria caught it. This run proves the gate works; it is not an acceptance run.
 
@@ -214,8 +231,9 @@ class FakeLock:
 
 
 class FakeGitHub:
-    def __init__(self, open_issues=None, comments=None):
+    def __init__(self, open_issues=None, comments=None, others=None):
         self.issues = list(open_issues or [])
+        self.others = dict(others or {})  # issues and pull requests by number that open_issues() doesn't list
         self.comments_by_issue = {key: list(value) for key, value in (comments or {}).items()}
         self.calls = []
         self.next_number = 200
@@ -223,6 +241,11 @@ class FakeGitHub:
     def open_issues(self, label):
         self.calls.append(("list", label))
         return [dict(issue) for issue in self.issues if issue.get("state", "open") == "open"]
+
+    def issue(self, number):
+        self.calls.append(("get", number))
+        found = next((issue for issue in self.issues if issue["number"] == number), None) or self.others.get(number)
+        return dict(found) if found else None
 
     def comments(self, number, since=None):
         self.calls.append(("comments", number, since))
@@ -283,7 +306,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn("| POST /api/admin/load-test/cleanup | 1 | 0 | 0 | 556 | 0 |", text)
         self.assertIn("| Total | 579 | 0.0% | 16 | 97 | 276 |", text)
         self.assertTrue(text.startswith("## Load test: After the fix\n\n**PASSED** · test `requesthub-journey` · "
-                                        "10 virtual users · 120 s\n\n"))
+                                        "run `fix-20261030-185145` · 10 virtual users · 120 s\n\n"))
 
     def test_six_verdicts(self):
         delayed = [row("GET /api/requests", 10, 0, 0, 1500, 10)]
@@ -343,6 +366,73 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(report.telemetry_ready([row("x", 1, 0, 0, 1, 0, "2026-10-30T18:36:30Z")], ended))
         self.assertFalse(report.telemetry_ready([row("x", 1, 0, 0, 1, 0, "2026-10-30T18:36:28Z")], ended))
         self.assertFalse(report.telemetry_ready([], ended))
+
+
+# ---------- the build under test ----------
+
+class BuildTests(unittest.TestCase):
+    def test_a_candidate_runs_description_names_its_commit_revision_and_issue(self):
+        self.assertEqual(report.candidate(candidate_run()), {"commit": CANDIDATE_SHA, "revision": "c9f1c2ab", "issue": 284})
+        self.assertEqual(report.candidate({"description": f"commit {CANDIDATE_SHA.upper()} on revision C9F1C2AB"}),
+                         {"commit": CANDIDATE_SHA, "revision": "c9f1c2ab"})
+        # No commit, no candidate: an Issue or a revision alone changes nothing.
+        for description in (None, "", "Baseline", "Revision c9f1c2ab for Issue #284", f"Commit {CANDIDATE_SHA[:39]}"):
+            self.assertEqual(report.candidate({"description": description}), {})
+        # Only a revision suffix and a positive Issue number are taken from the text.
+        self.assertEqual(report.candidate({"description": f"Commit {CANDIDATE_SHA} on API revision -x for Issue #0"}),
+                         {"commit": CANDIDATE_SHA})
+
+    def test_the_report_names_the_build_that_the_telemetry_confirms(self):
+        text = report.render(candidate_run(), CANDIDATE_ROWS, "accepted", GROUP)
+        self.assertTrue(text.startswith("## Load test: Candidate 9f1c2ab\n\n**PASSED** · test `requesthub-journey` · run "
+                                        "`candidate-9f1c2ab-20261030-185145` · 10 virtual users · 120 s\n\n"))
+        line = (f"**Build under test:** commit {CANDIDATE_SHA} on API revision `c9f1c2ab`. Every server request in the "
+                "run's window came from that revision.")
+        self.assertIn(f"{report.VERDICTS['accepted']}\n\n{line}\n\n### Pass/fail criteria", text)
+
+    def test_a_revision_that_the_telemetry_contradicts_is_called_out(self):
+        other = [dict(r, revisions='["0000024"]') for r in FIX_ROWS]
+        self.assertIn(f"**Build under test:** the run's description names commit {CANDIDATE_SHA} on API revision "
+                      "`c9f1c2ab`, but the server requests in the run's window came from revision `0000024`. This run "
+                      "does not show how that commit performs.", report.render(candidate_run(), other, "accepted", GROUP))
+        both = FIX_ROWS[:2] + [dict(r, revisions='["0000024", "c9f1c2ab"]') for r in FIX_ROWS[2:]]
+        self.assertIn("came from revisions `0000024` and `c9f1c2ab`. This run does not show",
+                      report.render(candidate_run(), both, "accepted", GROUP))
+
+    def test_without_telemetry_the_named_revision_is_not_confirmed(self):
+        self.assertIn(f"**Build under test:** commit {CANDIDATE_SHA} on API revision `c9f1c2ab`, as the run's "
+                      "description says. No server request in the run's window confirms the revision yet.",
+                      report.render(candidate_run(), [], "no-telemetry", GROUP))
+        unnamed = candidate_run(description=f"Commit {CANDIDATE_SHA}")
+        self.assertIn(f"**Build under test:** commit {CANDIDATE_SHA}, as the run's description says; it names no API "
+                      "revision. The server requests in the run's window came from revision `c9f1c2ab`.",
+                      report.render(unnamed, CANDIDATE_ROWS, "accepted", GROUP))
+
+    def test_any_run_names_the_revision_that_served_it(self):
+        rows = [dict(r, revisions='["0000025"]') for r in FIX_ROWS]
+        self.assertIn("**API revision:** the server requests in the run's window came from revision `0000025`.\n\n",
+                      report.render(fix_run(), rows, "accepted", GROUP))
+        self.assertNotIn("revision", report.render(fix_run(), FIX_ROWS, "accepted", GROUP).split("###")[0])
+
+    def test_revisions_come_as_json_text_or_lists_and_anything_else_is_dropped(self):
+        rows = [{"revisions": '["c9f1c2ab", "0000024"]'}, {"revisions": ["0000025"]}, {"revisions": "not json"},
+                {"revisions": ["UPPER", "../x", "a-b", "-x", "ok-1", 7]}, {}]
+        self.assertEqual(report.revisions(rows), ["0000024", "0000025", "a-b", "c9f1c2ab", "ok-1"])
+
+    def test_a_guid_run_id_is_never_named(self):
+        guid = "0f8fad5b-d9cb-469f-a165-70867728950e"  # what the portal gives a run it starts
+        text = report.render(fix_run(testRunId=guid), FIX_ROWS, "accepted", GROUP)
+        self.assertNotIn(guid, text)
+        self.assertIn("**PASSED** · test `requesthub-journey` · 10 virtual users · 120 s", text)
+        self.assertEqual(report.run_name({"testRunId": f"run-{guid}"}), "")
+        self.assertEqual(report.run_name({"testRunId": "candidate-9f1c2ab-20261030-185145"}),
+                         "candidate-9f1c2ab-20261030-185145")
+
+    def test_the_query_keeps_only_the_revision_suffix(self):
+        # AppVersion is <app>--<suffix> on Container Apps, and the app's name carries the deployment's unique token.
+        self.assertIn("extend revision = extract(@'--([a-z0-9-]+)$', 1, AppVersion)", report.QUERY)
+        self.assertIn("revisions = make_set_if(revision, isnotempty(revision), 10)", report.QUERY)
+        self.assertNotIn("AppRoleInstance", report.QUERY)
 
 
 # ---------- replay protection (the HTTP route) ----------
@@ -509,7 +599,9 @@ class GitHubTests(unittest.TestCase):
                                         "which wrote this report. The function closes this Issue when a run passes "
                                         "again.\n\n" + SLOWDOWN_REPORT))
         self.assertTrue(body.endswith(issues.marker("slowdown-20261030-183250", "expected-failure")))
-        self.assertNotIn("slowdown-20261030-183250", body)
+        # The marker names the run by a hash; the report names its id because the id is readable (never a GUID).
+        self.assertNotIn("slowdown-20261030-183250", issues.marker("slowdown-20261030-183250", "expected-failure"))
+        self.assertIn("· run `slowdown-20261030-183250` ·", body)
 
     def test_pull_requests_and_other_tests_issues_do_not_count(self):
         others = [issue(number=7, pull_request={"url": "x"}),
@@ -637,6 +729,83 @@ class GitHubTests(unittest.TestCase):
                 self.assertEqual(issues.choose([issue(author_association=association)], TEST_ID)["number"], 180)
 
 
+# ---------- a candidate run's report on the Issue it names ----------
+
+def defect_issue(**extra) -> dict:
+    """The Issue a candidate's commit fixes, as 04-test-github's presenter files it."""
+    return issue(number=284, title="Test: a request can be decided more than once", created_at="2026-10-30T18:00:00Z",
+                 body="A request can be approved and rejected.", **extra)
+
+
+class NamedIssueTests(unittest.TestCase):
+    def post(self, run, github, rows=CANDIDATE_ROWS):
+        services = wire([run], rows=rows, github=github)
+        with self.assertLogs("reporter", level="INFO") as logs:
+            result = flow.step(message(run["testRunId"], "telemetry"), services, SETTINGS, NOW)
+        return result, "\n".join(logs.output)
+
+    def test_a_passing_candidate_comments_on_the_issue_it_names(self):
+        github = FakeGitHub(others={284: defect_issue()})
+        result, logs = self.post(candidate_run(), github)
+        self.assertEqual(result, "no-change; commented #284")
+        (kind, number, body), = github.writes()
+        self.assertEqual((kind, number), ("comment", 284))
+        self.assertTrue(body.startswith("`Candidate 9f1c2ab` load-tested a candidate fix for this Issue. Azure Load "
+                                        "Testing sent the finished run to an Azure Function in resource group "
+                                        "`rg-ai-sdlc-test`, which wrote this report.\n\n## Load test: Candidate 9f1c2ab\n\n"))
+        self.assertIn(f"**Build under test:** commit {CANDIDATE_SHA} on API revision `c9f1c2ab`. Every server", body)
+        self.assertTrue(body.endswith(issues.marker("candidate-9f1c2ab-20261030-185145", "accepted")))
+        self.assertIn(f"candidate run for commit {CANDIDATE_SHA[:12]} on API revision c9f1c2ab; the API's telemetry "
+                      "shows revision c9f1c2ab.", logs)
+        self.assertIn(("comments", 284, "2026-10-30T18:54:30Z"), github.calls)
+
+    def test_a_failing_candidate_also_opens_the_tests_issue(self):
+        run = candidate_run(testResult="FAILED")
+        github = FakeGitHub(others={284: defect_issue()})
+        self.assertEqual(self.post(run, github)[0], "opened #200; commented #284")
+        self.assertEqual([(call[0], call[1] if call[0] == "comment" else None) for call in github.writes()],
+                         [("create", None), ("comment", 284)])
+        self.assertIn("**Build under test:** commit", github.writes()[0][2])
+
+    def test_a_repeated_delivery_comments_once(self):
+        github = FakeGitHub(others={284: defect_issue()})
+        self.assertEqual(self.post(candidate_run(), github)[0], "no-change; commented #284")
+        result, logs = self.post(candidate_run(), github)
+        self.assertEqual(result, "no-change; no-comment #284")
+        self.assertIn("this run's report is already on the Issue", logs)
+        self.assertEqual(len(github.writes()), 1)
+
+    def test_never_a_pull_request_a_closed_issue_a_missing_one_or_an_outsiders(self):
+        cases = {"pull request": defect_issue(pull_request={"url": "x"}), "closed": defect_issue(state="closed"),
+                 **{association: defect_issue(author_association=association) for association in OUTSIDE}}
+        for case, target in [*cases.items(), ("missing", None)]:
+            with self.subTest(case=case):
+                github = FakeGitHub(others={284: target} if target else {})
+                result, logs = self.post(candidate_run(), github)
+                self.assertEqual(result, "no-change; no-comment #284")
+                self.assertEqual(github.writes(), [])
+                self.assertIn("#284 is not an open Issue that the owner, a member, or a collaborator opened", logs)
+                self.assertNotIn(("comments", 284, "2026-10-30T18:54:30Z"), github.calls)
+
+    def test_an_outsiders_marker_on_the_named_issue_does_not_suppress_the_comment(self):
+        forged = {"body": issues.marker("candidate-9f1c2ab-20261030-185145", "accepted"), "author_association": "NONE"}
+        github = FakeGitHub(others={284: defect_issue()}, comments={284: [forged]})
+        self.assertEqual(self.post(candidate_run(), github)[0], "no-change; commented #284")
+
+    def test_a_run_that_names_no_issue_or_no_commit_comments_nowhere_else(self):
+        for description in (f"Commit {CANDIDATE_SHA} on API revision c9f1c2ab", "Issue #284", None):
+            with self.subTest(description=description):
+                github = FakeGitHub(others={284: defect_issue()})
+                self.assertEqual(self.post(candidate_run(description=description), github)[0], "no-change")
+                self.assertNotIn(("get", 284), github.calls)
+
+    def test_the_named_issue_can_be_the_tests_own(self):
+        # A failing run comments on the load-test Issue first; the marker then keeps a second copy off it.
+        github = FakeGitHub([issue(number=284, created_at="2026-10-30T10:00:00Z")])
+        self.assertEqual(self.post(candidate_run(testResult="FAILED"), github)[0], "commented #284; no-comment #284")
+        self.assertEqual([call[0] for call in github.writes()], ["comment"])
+
+
 # ---------- the real clients, with a fake HTTP session ----------
 
 class FakeResponse:
@@ -730,6 +899,21 @@ class ServicesTests(unittest.TestCase):
         for bad in ("owner", "owner/repo/issues", "../x/y", "owner/repo?x=1"):
             with self.assertRaises(ValueError):
                 services.GitHub(bad, TOKEN)
+
+    def test_an_issue_is_read_from_this_repository_only(self):
+        own = {"number": 284, "repository_url": "https://api.github.com/repos/Owner/Repo"}
+        moved = {"number": 284, "repository_url": "https://api.github.com/repos/someone/else"}
+        session = self.use(FakeResponse(200, own), FakeResponse(200, moved), FakeResponse(404, {"message": "Not Found"}),
+                           FakeResponse(410, {"message": "Gone"}), FakeResponse(502, {"message": "Bad Gateway"}))
+        github = services.GitHub("owner/repo", TOKEN)
+        self.assertEqual(github.issue(284), own)
+        self.assertIsNone(github.issue(284))  # a transferred Issue redirects to another repository
+        self.assertIsNone(github.issue(284))
+        self.assertIsNone(github.issue(284))
+        with self.assertRaises(services.GitHubError):
+            github.issue(284)
+        self.assertEqual({(method, url) for method, url, _ in session.requests},
+                         {("GET", "https://api.github.com/repos/owner/repo/issues/284")})
 
     def test_runs_are_read_with_the_load_testing_audience_and_an_encoded_id(self):
         session = self.use(FakeResponse(200, {"testId": TEST_ID}), FakeResponse(404, {}))

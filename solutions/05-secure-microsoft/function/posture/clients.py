@@ -128,15 +128,10 @@ class Azure:
         self._arm("POST", f"{resource_group_id}/providers/Microsoft.PolicyInsights/policyStates/latest/triggerEvaluation",
                   "2019-10-01")
 
-    def job_container(self, job_id: str) -> dict:
-        job = self._arm("GET", job_id, "2025-07-01")
-        return (((job or {}).get("properties") or {}).get("template") or {}).get("containers", [{}])[0]
-
-    def start_job(self, job_id: str, container: dict, args: list[str]) -> None:
-        """Starts one execution of the what-if job with these arguments and the job's own image, command, and settings."""
-        self._arm("POST", f"{job_id}/start", "2025-07-01", body={"containers": [{
-            "name": container.get("name"), "image": container.get("image"), "command": container.get("command"),
-            "args": args, "env": container.get("env"), "resources": container.get("resources")}]})
+    def start_job(self, job_id: str) -> None:
+        """Starts one execution of the what-if job as it is defined, without a template override: Azure requires write
+        access on a job to override its template at start, and this identity can only start it."""
+        self._arm("POST", f"{job_id}/start", "2025-07-01")
 
     def ask_agent(self, project_endpoint: str, agent_name: str, document: dict, timeout: float = 40) -> dict:
         """The Foundry agent's proposal: the project's Responses API with a reference to the published agent."""

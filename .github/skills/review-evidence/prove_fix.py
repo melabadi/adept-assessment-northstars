@@ -12,6 +12,9 @@ changed, and runs exactly those tests twice, each time in a clean temporary git 
 Both test outputs (console log and CTRF JSON report) are kept in --out, named after their commit, next to proof.json and
 proof.md. The workflow "Test · GitHub · prove the fix test-first" runs this script on fix pull requests, and a reviewer
 can run it locally. It proves the order of the evidence, not the quality of the tests: a person still reads them.
+proof.md quotes the pull request (commit titles, test and file names, assertion messages) as inert text: no @mention, no
+reference to an Issue or a pull request, and no link, image, or HTML, because review_evidence.py posts it with a
+person's token.
 
 Usage
   python .github/skills/review-evidence/prove_fix.py --pr 42
@@ -44,10 +47,97 @@ TEST_ATTRIBUTE = re.compile(r"^\s*\[(?:Fact|Theory)\b")
 METHOD = re.compile(r"\b(?:Task|ValueTask|void)\s+(\w+)\s*\(")
 CLASS = re.compile(r"\bclass\s+(\w+)")
 LITERAL = re.compile(r'@"(?:[^"]|"")*"|"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)\'')
+ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+WWW = re.compile(r"(?i)www\.")
+MENTION = re.compile(r"@(?!\u200b)")
+REFERENCE = re.compile(r"(?i)(#|GH-)(?=\d)")  # #123, GH-123, owner/repo#123: links to an Issue, and a note on its timeline
+MAX_BACKTICKS = 80  # GitHub's Markdown parser (cmark-gfm) never opens a code span with a longer run of backticks
 
 
 class ProofError(Exception):
     """A configuration, git, or GitHub CLI problem (exit code 2)."""
+
+
+# Text from a pull request or from GitHub (titles, test and file names, messages, review notes) is made inert before it
+# goes into Markdown, because review_evidence.py posts that Markdown with a person's token: an @mention in it would
+# notify, or start Copilot, in that person's name, and #123 would add "mentioned this" to Issue 123 in that person's
+# name. The approach of solutions/03-develop-microsoft's format_review.py, checked against GitHub's own renderer.
+
+def unmention(text: str) -> str:
+    """A zero-width space after every @, so nothing GitHub renders from this text notifies anyone, Copilot included."""
+    return MENTION.sub("@\u200b", text)
+
+
+def inert_text(text: str) -> str:
+    """Text outside code spans: no HTML or entities, no links or images, no autolinked URLs, no references to Issues or
+    pull requests, no math (GitHub reads $...$ and $`...`$ as MathJax, whatever the escaping), no mentions. Zero-width
+    spaces do the breaking, so the text reads the same."""
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = text.replace("[", "\\[").replace("]", "\\]")
+    text = WWW.sub("www\u200b.", text.replace("://", ":/\u200b/"))
+    text = REFERENCE.sub("\\g<1>\u200b", text).replace("$", "\u200b$\u200b")
+    return unmention(text)
+
+
+def inert(value: object, limit: int = 500) -> str:
+    """Untrusted text as inert Markdown on one line. Code spans are found the way GitHub (cmark-gfm) finds them: a run of
+    at most 80 backticks opens a span only if a run of the same length closes it, and a backslash-escaped backtick is a
+    literal one. Inside a span nothing is interpreted, so only mentions are neutralized there; everything outside is
+    escaped, and so is every backtick that opens no span."""
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    out: list[str] = []
+    outside: list[str] = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and i + 1 < len(text) and text[i + 1] in ASCII_PUNCTUATION:
+            # A backslash escape shows the next character literally: keep it escaped so it stays literal.
+            outside.append(c + text[i + 1] if text[i + 1] in "`\\" else text[i + 1])
+            i += 2
+            continue
+        if c == "`":
+            n = len(text) - i - len(text[i:].lstrip("`"))
+            close = None if n > MAX_BACKTICKS else next(
+                (m.start() for m in re.finditer(r"`+", text[i + n:]) if len(m.group(0)) == n), None)
+            out.append(inert_text("".join(outside)))
+            outside = []
+            if close is None:
+                out.append("\\`" * n)  # literal backticks: escape them so they can't pair up later
+                i += n
+                continue
+            out.append("`" * n + unmention(text[i + n:i + n + close]) + "`" * n)
+            i += n + close + n
+            continue
+        outside.append(c)
+        i += 1
+    out.append(inert_text("".join(outside)))
+    result = "".join(out)
+    return "\\" + result if result.startswith("#") else result  # a line that starts with # would be a heading
+
+
+def cell(value: object, limit: int = 200) -> str:
+    """inert(), for a Markdown table cell, where a | would end the cell."""
+    return inert(value, limit).replace("|", "\\|")
+
+
+def code(value: object, limit: int = 160) -> str:
+    """A test name or a file name from the pull request, as a code span it can't break out of."""
+    text = " ".join(str(value or "").split()).replace("`", "'")
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    return f"`{unmention(text)}`" if text else ""
+
+
+def short_sha(sha: object) -> str:
+    """The first nine characters of a commit id. A proof.json from elsewhere could hold anything, so only hex is kept."""
+    return re.sub(r"[^0-9a-f]", "", str(sha or "").lower())[:9] or "?"
+
+
+def count(value: object) -> int:
+    """A test count from a proof; anything that isn't a whole number reads as 0."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
 def run(*args: str, cwd: Path = REPO) -> str:
@@ -182,7 +272,7 @@ def short_name(test: str) -> str:
 
 
 def outcome(result: dict, missing: int = 0) -> str:
-    total, passed, failed = result["total"], result["passed"], result["failed"]
+    total, passed, failed = count(result.get("total")), count(result.get("passed")), count(result.get("failed"))
     if not total:
         return "⚠️ did not run (build error? see the log)"
     if failed:
@@ -194,24 +284,27 @@ def outcome(result: dict, missing: int = 0) -> str:
 
 
 def render(proof: dict, heading: str = "### Regression tests at known commits") -> str:
+    """The proof as Markdown. Commit titles, test and file names, and assertion messages come from the pull request, so
+    they are made inert: review_evidence.py posts this Markdown with a person's token."""
     lines = [heading, ""]
     runs = proof["runs"]
     if runs:
         tests_only, head = proof["testsOnly"], runs["head"]
+        missing = proof.get("missingAtHead")
         lines += ["| Commit | What it contains | Selected tests | Expected |", "|---|---|---|---|",
-                  f"| `{tests_only['sha'][:9]}` | tests only: {tests_only['title']} | {outcome(runs['testsOnly'])} | must fail: proves the defect |",
-                  f"| `{head['sha'][:9]}` | head: {proof['headTitle']} | {outcome(head, len(proof.get('missingAtHead', [])))} | must pass: proves the fix |", ""]
+                  f"| `{short_sha(tests_only['sha'])}` | tests only: {cell(tests_only['title'])} | {outcome(runs['testsOnly'])} | must fail: proves the defect |",
+                  f"| `{short_sha(head['sha'])}` | head: {cell(proof['headTitle'])} | {outcome(head, len(missing) if isinstance(missing, list) else 0)} | must pass: proves the fix |", ""]
     icon = "✅ Proven" if proof["verdict"] == "proven" else "❌ Not proven"
-    lines += [f"**{icon}:** {proof['reason']}", ""]
+    lines += [f"**{icon}:** {inert(proof['reason'])}", ""]
     if proof["tests"]:
-        lines += [f"Selected tests ({proof['selection']}): " + ", ".join(f"`{t}`" for t in proof["tests"]), ""]
+        lines += [f"Selected tests ({inert(proof['selection'])}): " + ", ".join(code(t) for t in proof["tests"]), ""]
     if runs and runs["testsOnly"]["failedTests"]:
-        failures = sorted(runs["testsOnly"]["failedTests"], key=lambda t: t["name"])
+        failures = sorted(runs["testsOnly"]["failedTests"], key=lambda t: str(t["name"]))
         lines += ["Failures at the tests-only commit (the reported defect, in the tests' words):", ""]
-        lines += [f"- `{short_name(t['name'])}`: {t['message'] or 'failed'}" for t in failures[:12]]
+        lines += [f"- {code(short_name(str(t['name'])))}: {inert(t['message']) or 'failed'}" for t in failures[:12]]
         lines.append("")
     if proof["otherTests"]:
-        lines += ["Not run by this check (run them by hand): " + ", ".join(f"`{p}`" for p in proof["otherTests"]), ""]
+        lines += ["Not run by this check (run them by hand): " + ", ".join(code(p) for p in proof["otherTests"]), ""]
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -274,7 +367,7 @@ def judge(before: dict, after: dict) -> tuple[bool, str, list[str]]:
         problems = [f"{after['failed']} failed"] * bool(after["failed"]) + [f"{skipped} skipped"] * bool(skipped)
         if missing:
             gone = "test no longer exists" if len(missing) == 1 else "tests no longer exist"
-            problems.append(f"{len(missing)} {gone}: " + ", ".join(f"`{short_name(name)}`" for name in missing[:8]))
+            problems.append(f"{len(missing)} {gone}: " + ", ".join(code(short_name(name)) for name in missing[:8]))
         return False, f"not every selected test passes at the head ({'; '.join(problems)}).", missing
     if after.get("exitCode", 0):
         return False, f"the test command failed at the head (exit code {after['exitCode']}); see the log.", missing

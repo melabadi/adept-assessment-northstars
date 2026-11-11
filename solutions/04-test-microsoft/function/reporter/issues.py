@@ -6,6 +6,11 @@ the run started after the Issue opened and the report accepts the run (no inject
 otherwise it says why the Issue stays open. A replayed or repeated delivery of a run changes nothing: every post ends
 with a hidden marker naming the run (by a short hash, never its id) and the verdict, and the function looks for it first.
 
+A candidate run (candidate.py) can also name the GitHub Issue its commit fixes ("... for Issue #284"). The function then
+comments the same report on that Issue, passed or failed, once per run and verdict, so the people who decide on the fix
+read how it performed. It comments only on an open Issue, never on a pull request, and never on an Issue opened by
+someone outside the repository.
+
 On a public repository anyone can open an Issue or comment, and run ids are easy to guess, so only the owner, members,
 and collaborators count: the function takes only an Issue they opened, and reads markers only in that Issue's body and
 in their comments. It posts with a person's token, so its own Issues and comments count.
@@ -15,7 +20,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from .report import parse_time
+from .report import candidate, parse_time
 
 LABEL = "load-test"
 TITLE = "[load-test {test_id}] RequestHub journey missed its performance criteria"
@@ -107,3 +112,34 @@ def decide(run: dict, verdict: str, report: str, issue: dict | None, earlier: li
                       body=(f"`{name}` passed its criteria, but the report does not accept it, so this Issue stays open."
                             f"\n\n{report}\n\n{tag}"))
     return Action("none", "the run has no verdict")
+
+
+def named_issue(run: dict) -> int | None:
+    """The GitHub Issue a candidate run's description names, if any."""
+    return candidate(run).get("issue")
+
+
+def can_comment(issue: dict | None) -> bool:
+    """Whether the function may comment on the Issue a candidate run names: an open Issue (not a pull request) that the
+    owner, a member, or a collaborator opened."""
+    return (issue is not None and issue.get("pull_request") is None and issue.get("state") == "open"
+            and trusted(issue))
+
+
+def comment_on_named(run: dict, verdict: str, report: str, issue: dict | None, earlier: list[str],
+                     resource_group: str) -> Action:
+    """The comment for the Issue a candidate run names. `earlier` holds that Issue's body and its comments since the
+    run started."""
+    number = named_issue(run)
+    if number is None:
+        return Action("none", "the run names no Issue")
+    if not can_comment(issue):
+        return Action("none", f"#{number} is not an open Issue that the owner, a member, or a collaborator opened")
+    test_run_id = str(run.get("testRunId") or "")
+    tag = marker(test_run_id, verdict)
+    if any(tag in text for text in earlier):
+        return Action("none", "this run's report is already on the Issue")
+    name = run.get("displayName") or test_run_id
+    body = (f"`{name}` load-tested a candidate fix for this Issue. Azure Load Testing sent the finished run to an Azure "
+            f"Function in resource group `{resource_group}`, which wrote this report.\n\n{report}\n\n{tag}")
+    return Action("comment", "the run's description names this Issue", number, body=body)

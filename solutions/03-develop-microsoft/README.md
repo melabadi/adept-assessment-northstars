@@ -6,7 +6,7 @@ Every pull request to RequestHub waits for a person to check the same team rules
 
 ## Where it fits
 
-**Phase 3 of 7: Develop.** The GitHub counterpart is [03-develop-github](../03-develop-github/), where the Copilot cloud agent writes a change. Here, Azure reviews one.
+**Phase 3 of 7: Develop.** The GitHub counterpart is [03-develop-github](../03-develop-github/), where the Copilot cloud agent writes a change. Here, Azure reviews one. To run both on one pull request, follow the [Develop solution combo](../../PRESENTING.md#develop-copilot-writes-azure-reviews-a-person-decides).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -15,7 +15,7 @@ Every pull request to RequestHub waits for a person to check the same team rules
 | Does it build, do the tests pass? | The reviewer pulls the branch, or waits for CI. | Built and tested in an isolated Azure sandbox; the review says what passed, what failed, and what was flaky. |
 | What deserves attention | The reviewer reads the whole diff to find out. | A Foundry agent explains each failed rule, flags what no rule covers (for example SQL built from user input), and says what the person should decide. |
 | Who decides | A person. | Still a person. The review is a comment; it never approves or requests changes. |
-| Is the reviewer any good? | Unknown. | Measured on ten labelled pull requests of this repository, in Foundry's Evaluation view. |
+| Is the reviewer any good? | Unknown. | Measured on ten labelled changes, recreated as pull requests of your repository, in Foundry's Evaluation view. |
 
 ## How it works
 
@@ -64,7 +64,7 @@ sequenceDiagram
 - **A PASS is evidence, not proof.** The checker looks for the usual ways each rule gets broken (see [`sandbox/review_rules.py`](sandbox/review_rules.py)). A change it has no pattern for, such as a new body for `CanAccessDepartment` or a test that no longer asserts anything, can pass. The review says so, and the person still reads the diff.
 - **The webhook is signed, and still untrusted.** GitHub signs every delivery with a secret that `azd up` generated, and the Function refuses any request whose signature doesn't match. Even a signed delivery only names a pull request: the Function then reads the pull request, its head commit, and its labels from GitHub's API. The one other way in is a dry run, `POST /api/dry-runs` with `{"pr": <number>}`, which is what `eval_reviewer.py` sends. It needs the Function's key, which only people who can manage the Function can read; it skips the open, draft, default-branch, and label checks, and never posts.
 - **Only this repository's branches, and only on the label.** A pull request from a fork is never built or reviewed, not even in a dry run: otherwise its code would run in the sandbox, and reach the agent, on every push, without anyone approving it. The Function reads the branch's repository from GitHub's API and queues nothing for anything else. A real review also needs the `review:azure` label, read from GitHub's API too, and only people with triage access can apply labels. So on a public repository, nobody outside the repository can start a review: their pull requests reach Azure only as webhook calls that start no review, and comments are not sent at all. `test_reviewer_function.py` covers this.
-- **The pull request is untrusted.** Its code, comments, test output, and description are data for the agent, never instructions. Text from the pull request or the model is posted inert: no HTML or HTML entities, no links, no @mentions, and a backtick can't hide any of them. GUIDs and Azure host names are removed before anything is posted.
+- **The pull request is untrusted.** Its code, comments, test output, and description are data for the agent, never instructions. Text from the pull request or the model is posted inert: no HTML or HTML entities, no links or images, no @mentions, no references to Issues or pull requests, and no math. Zero-width spaces do the breaking, so the text reads the same, and no run of backticks can hide any of it. The review is posted with the token owner's account, so this keeps it from notifying anyone or adding "mentioned this" to another Issue in their name. GUIDs and Azure host names are removed before anything is posted.
 - **No stale reviews.** A review is posted on the commit it reviewed, and only if that commit is still the pull request's head when the review is ready. If someone pushed in the meantime, the review is skipped: the newer push has its own on the way. (Adding the label again, reopening, or marking the pull request ready reviews the same commit again.)
 - **No secret goes into a sandbox, or into an app setting.** The GitHub token and the webhook secret live in Key Vault, which takes no traffic from the internet; only the Function's identity can read them. The token goes only to GitHub's API: when GitHub redirects an archive download to a short-lived link, the Function follows the link without the token. The sessions get only the archives and the scripts. The Function's log names each review by its id, and holds no token, webhook secret, diff, or review.
 - **Least privilege.** The token can read code and write pull request reviews in this one repository. The Function's managed identity can read the secrets in the solution's Key Vault (which holds only those two), run sessions in the two pools, call the agent, and use its own storage account; the vault and the storage account accept no keys and no traffic from the internet. The agent's identity can run sessions in the run pool only.
@@ -103,10 +103,15 @@ solutions/03-develop-microsoft/
 ├── demo/
 │   ├── fast-track.patch        the demo change: approvers may approve their own low-priority requests
 │   └── keep-the-guard.patch    the follow-up: keep the guard and add a regression test
-├── eval_cases.jsonl            ten labelled pull requests of this repository
+├── eval_cases.jsonl            ten labelled cases, each with the findings its review must state
+├── eval_changes/               each case's change: the app/ part of its original pull request (and its lab branch's)
+├── eval_prs.py                 --setup and --cleanup: the cases as closed pull requests of your repository, reused
+├── grader_checks.jsonl         a right and a wrong review per finding, same words and same file: only the conclusion differs
 ├── review_graders.py           the five checks that score the reviewer (Foundry code-based evaluators)
-├── eval_reviewer.py            dry-runs the reviewer on the labelled pull requests and evaluates the results in Foundry
+├── eval_reviewer.py            dry-runs the reviewer on the labelled cases and evaluates the results in Foundry;
+│                               --check-graders grades the fixed reviews in grader_checks.jsonl instead
 ├── test_eval_reviewer.py       tests for the scoring rules (python -m unittest)
+├── test_eval_prs.py            tests for the evaluation's pull requests: what they contain, and which ones count
 ├── test_configure_github.py    tests for the hooks: which webhook they touch, and that they never print its URL
 ├── test_reviewer_function.py   tests for the Function: the judge runs first, results travel as files, reviews only
 │                               comment, the token goes only to GitHub, forks and unsigned deliveries start nothing
@@ -174,11 +179,21 @@ Run these once, in PowerShell 7. You create one GitHub token and store it; `azd 
 
    Without the token, `azd up` still deploys everything and warns you, but creates no webhook, so no pull request is reviewed until you set the token and run `azd up` again.
 
-4. **Check it end to end** with a dry run on pull request #36, which posts nothing. It takes about 3 minutes and should print a row of ✅.
+4. **Create the evaluation's pull requests, and check it end to end.** The evaluation dry-runs the reviewer on ten labelled changes, which must be pull requests of your repository. `--setup` makes them once from [`eval_changes/`](eval_changes/): for each case, two branches, `eval/pr-review/<id>-base` and `eval/pr-review/<id>`, and one pull request between them, closed at once. Its commits are marked `[skip ci]`, so no workflow runs on them, and only a dry run ever reviews them. It keeps their numbers in the azd environment (`REVIEWER_EVAL_PRS`) and reuses them. Then a dry run on one of them, which posts nothing, checks the whole path. Setup took 2 minutes the first time and 7 seconds the second; the dry run takes about 3 minutes and should print a row of `pass`.
 
    ```powershell
-   python eval_reviewer.py --cases 36 --local
+   python eval_reviewer.py --setup
+   python eval_reviewer.py --cases admins-decide --local
    ```
+
+   ```text
+   Setting up the evaluation's pull requests in <owner>/<repo>:
+     confirm-routing        #268 (created)
+     ...
+     index-no-cache         #277 (created)
+   ```
+
+   Each case came from a pull request of the original repository, kept as its `example` in [`eval_cases.jsonl`](eval_cases.jsonl): `admins-decide` is [#36](https://github.com/melabadi/adept-assessment-northstars/pull/36). A copy of this repository needs the history of `main`, as a fork or a mirror push has: each case starts from a commit of it.
 
 ## Before each session
 
@@ -189,7 +204,7 @@ Run these once, in PowerShell 7. You create one GitHub token and store it; `azd 
   - Azure portal: the resource group `rg-ai-sdlc-develop` > its Application Insights resource (`appi-…`) > **Monitoring** > **Logs**, in **KQL mode**, with the query from step 3.
   - Foundry portal: your project > **Agents** > `requesthub-pr-reviewer`, and **Evaluation** with the last run of *Azure pull request reviewer: labelled pull requests*.
   - PowerShell 7 at the repository root, on `main`, with this README's demo commands.
-- [ ] **Start early:** for fresh evaluation results, run `python eval_reviewer.py` (in `solutions/03-develop-microsoft`) about 20 minutes before; otherwise show the last run.
+- [ ] **Start early:** for fresh evaluation results, run `python eval_reviewer.py` (in `solutions/03-develop-microsoft`) about 20 minutes before; otherwise show the last run. Show its table as it came out: it is the first grading of these reviews. If Foundry graded once more, the script says so and why, apart from the table. Don't run it again until every row passes: a failed check is a result.
 - [ ] **Timings:** about 20 minutes on stage. Each review takes about two and a half minutes from the label or the push; talk through the Function's log while it works.
 
 ## Run the demo
@@ -272,7 +287,7 @@ git push
 
 ### 7. Show how good the reviewer is (about 3 min)
 
-[`eval_reviewer.py`](eval_reviewer.py) dry-runs the reviewer on ten real pull requests of this repository, labelled known-good, flagged (a good change that a rule rightly sends to a person), or known-bad, and scores each result with five checks. In the Foundry portal, open **Evaluation** > *Azure pull request reviewer: labelled pull requests* and its latest run: one row per pull request, one column per check.
+[`eval_reviewer.py`](eval_reviewer.py) dry-runs the reviewer on ten labelled changes, known-good, flagged (a good change that a rule rightly sends to a person), or known-bad, and scores each result with five checks. Each is a closed pull request of your repository that `--setup` made from a real pull request of the original repository ([Set up](#set-up), step 4). In the Foundry portal, open **Evaluation** > *Azure pull request reviewer: labelled pull requests* and its latest run: one row per pull request, one column per check.
 
 Run it about 20 minutes before the session; it takes 9 to 13 minutes, a few more if Foundry grades it twice. It exits with 0 only when every check passed for every pull request. A pull request without a result fails every check (exit 1). A check that couldn't grade an item, or a Foundry run that is incomplete, has errored items, or disagrees with the local scores, exits with 2. Foundry's code-based evaluators sometimes fail every item of one check; the script then grades the same results in Foundry once more.
 
@@ -281,20 +296,26 @@ cd solutions/03-develop-microsoft
 python eval_reviewer.py
 ```
 
-![The evaluation in PowerShell: ten dry runs through the Function, each Succeeded in 137 to 163 seconds; an aligned table of the ten labelled pull requests (known-good, flagged, and known-bad) with pass in all five checks and 10/10 per check, whose columns carry the evaluators' names, with a legend giving each check's title; then the Foundry evaluation run for agent v4, where each of the five evaluators reports passed 10, failed 0](images/08-evaluation-terminal.png)
+![The evaluation in PowerShell: ten dry runs through the Function on the closed pull requests #268 to #277 that setup made, each Succeeded in 150 to 263 seconds; an aligned table of the ten cases by name and pull request (known-good, flagged, and known-bad) with pass in all five checks and 10/10 per check, whose columns carry the evaluators' names, with a legend giving each check's title; then the Foundry evaluation run for agent v4: the first grading couldn't grade verbatim verdicts on any item, so the script graded the same results once more, and across the two gradings Foundry graded every check on every item, 10 passed and 0 failed each, matching the local scores](images/08-evaluation-terminal.png)
 
 ![The same run in the Foundry portal's Evaluation view: 10 labelled pull requests, agent v4, completed, with each of the five evaluators (rule verdicts, verdicts verbatim, advisory only, useful commentary, sandbox ran) at 100%, 10 of 10, and every row passing 5 of 5](images/09-foundry-evaluation.png)
 
-**Point out:** pull request #99 pastes the search term into a SQL query. The rules only see that the code changed without a test, and the sandbox only sees one search test fail; the agent names the SQL injection. The labels are the team's judgement of real pull requests, so any change to the rules, the agent, or the model is measured the same way.
+**Point out:** `sql-concatenation`, [pull request #99](https://github.com/melabadi/adept-assessment-northstars/pull/99) in the original repository, pastes the search term into a SQL query. The rules only see that the code changed without a test, and the sandbox only sees one search test fail; the agent names the SQL injection. The labels are the team's judgement of real pull requests, so any change to the rules, the agent, or the model is measured the same way.
+
+Then show that the commentary check reads conclusions, not keywords: `python eval_reviewer.py --check-graders` grades a right and a wrong review for each finding, which use the same words and point at the same file and line. No dry run is needed; Foundry grades them in about 5 minutes, 10 when it has to grade once more, so start it before the session, and on stage run `python eval_reviewer.py --check-graders --local`, which grades the same reviews on your machine in a second. `sql-concatenation/reported` is the review "There is no SQL injection here." on #99: it mentions injection and points at `RequestWorkflow.cs`, so it earns the evidence half of the credit and fails. So does `sql-concatenation/prevents`, "The query prevents SQL injection." raised as a concern: a verb such as prevents, avoids, or stops denies what it governs. The held-out reviews are for changes outside the ten cases, written after the check was frozen. Two of them show where the check still misreads, and the table lists them with a `*`: "still rules out self-approval" passes, though it denies the finding, and "drops the check that prevented requests from leaking" fails, though it states the leak.
+
+![python eval_reviewer.py --check-graders: Foundry graded 26 fixed reviews, twice because it couldn't grade rule_verdicts on the first run. Every right review passes all five checks, and every wrong one, including sql-concatenation/reported and sql-concatenation/prevents, fails only useful_commentary, except two held-out reviews marked with an asterisk and listed under the table as known misses: fast-track/rules-out passes and department-leak/dropped-guard fails. Paired 13 of 13 and held-out 11 of 13 graded as labelled, and Foundry graded all 26 the same way as the local checks](images/10-check-graders.png)
+
+**Point out:** a known-bad finding counts only when a concern asserts it, at the place it happens. Right words with the wrong conclusion fail, Foundry's evaluators run the same code as the local check, and the check's known misses are listed, not hidden.
 
 ## What to observe
 
 - **Minutes, not hours.** The first review arrives about two and a half minutes after the label, and again after every push.
 - **The same rules every time.** Five team rules, checked by a script from `main` with evidence for each verdict. A model can't talk its way past a FAIL.
 - **Evidence without pulling the branch.** The change was built and 81 tests ran in an isolated Azure session; the review says what passed and what was flaky.
-- **Attention where it matters.** The agent explains the failures and points at what no rule catches: SQL built from user input in #99, or a pull request whose code no longer matches its title.
+- **Attention where it matters.** The agent explains the failures and points at what no rule catches: SQL built from user input in the `sql-concatenation` case (#99), or a pull request whose code no longer matches its title.
 - **A person decides.** The Function posts every review as a comment (`COMMENT`), never as an approval or a change request, and its token can't merge (it can't write code). The token's Pull requests permission could approve a pull request, so the guard is the Function's code, and a test fails if `APPROVE` or `REQUEST_CHANGES` appears anywhere in it. Change it only through a reviewed pull request, like any other code.
-- **Measured, not anecdotal.** Ten labelled pull requests and five checks in Foundry's Evaluation view, run again after every change to the rules, the agent, or the model.
+- **Measured, not anecdotal.** Ten labelled cases and five checks in Foundry's Evaluation view, run again after every change to the rules, the agent, or the model. The commentary check scores what the agent concludes and where it points, not the words it uses: "There is no SQL injection here" or "The query prevents SQL injection" on the `sql-concatenation` case earns half the credit for pointing at the right file, and fails. The AI writes the commentary, deterministic checks score the rules and the commentary, and a person decides the pull request.
 
 ## Reset and clean up
 
@@ -307,9 +328,10 @@ gh pr close demo/fast-track --delete-branch --comment "Demo finished; closing wi
 
 To remove everything:
 
-1. `azd down --purge` in this folder. Its predown hook deletes the webhook first; then azd deletes the resource group and the Foundry account with its evaluations, and purges the account and the Key Vault, so the same names can be used again at once.
-2. On GitHub, delete the fine-grained token: **Settings** > **Developer settings** > **Fine-grained tokens**.
-3. `gh label delete "review:azure"` if you no longer need the label. Past pull requests lose it.
+1. `python eval_reviewer.py --cleanup` in this folder, while you still have the azd environment: it deletes the evaluation's twenty `eval/pr-review/*` branches and forgets their pull requests, which stay closed.
+2. `azd down --purge` in this folder. Its predown hook deletes the webhook first; then azd deletes the resource group and the Foundry account with its evaluations, and purges the account and the Key Vault, so the same names can be used again at once.
+3. On GitHub, delete the fine-grained token: **Settings** > **Developer settings** > **Fine-grained tokens**.
+4. `gh label delete "review:azure"` if you no longer need the label. Past pull requests lose it.
 
 ## Use it in your own repository
 
@@ -321,7 +343,7 @@ Copy this folder and change:
 - **The agent:** the instructions in [`reviewer-agent.yaml`](reviewer-agent.yaml) describe RequestHub; describe your application instead. `python publish_reviewer_agent.py` publishes a new version.
 - **Where the scripts live:** the `REVIEW_SCRIPTS_PATH` app setting in [`infra/resources.bicep`](infra/resources.bicep) (default `solutions/03-develop-microsoft/sandbox`), and `REVIEW_CHECKER_REF` in the azd environment (default `main`) for the branch the Function reads them from.
 - **The review's steps:** [`function/reviewer/pipeline.py`](function/reviewer/pipeline.py), with the tests in [`test_reviewer_function.py`](test_reviewer_function.py) that keep the judge first, the token away from the sessions, and the review a comment. `azd deploy` runs them first and stops if one fails.
-- **The evaluation:** replace [`eval_cases.jsonl`](eval_cases.jsonl) with your own labelled pull requests.
+- **The evaluation:** replace [`eval_cases.jsonl`](eval_cases.jsonl) with your own labelled changes: an `id`, the commit of your default branch the change starts from (`root`), and the change itself as `eval_changes/<id>.patch` (`git diff --binary <root> <head> -- <your app folder>`), plus `eval_changes/<id>.base.patch` when it targeted another branch; then run `python eval_reviewer.py --setup`. For each flagged or known-bad one, list the findings its review must state: a few positive words that say the problem (`sql injection`, `alter* the query`) and the file where it is. A known-bad finding counts only as a concern. Add a right and a wrong review per finding to [`grader_checks.jsonl`](grader_checks.jsonl), with the same words and the same file, and run `python eval_reviewer.py --check-graders`: it shows, here and in Foundry, that the check tells them apart.
 - **For a team, prefer a GitHub App to a personal token:** a GitHub App's installation token isn't tied to a person and can be limited to the same two permissions.
 - **What Azure keeps:** the Function logs one line per step to Application Insights, with the review's id, the commit, and counts, but no code, diff, or review; Log Analytics keeps it for 30 days. A dry run's result, including the review it would have posted, stays in the storage account's `dry-runs` container for 7 days, then a lifecycle rule deletes it. Only the Function's identity has a data role on that storage account, which has no public network access.
 
@@ -338,4 +360,6 @@ Copy this folder and change:
 | **Recent Deliveries** show 202, but no review appears. | Run step 3's query. If the review's last lines say `failed at '<step>'`, the pull request got a comment that the review couldn't finish; remove and add the label to try again. `failed at 'check the team rules'` with "the rule checker wrote no verdicts (exit code 2)" means the checker couldn't read the archives: run it on the same pull request on your machine, `python sandbox/review_rules.py --base <merge-base folder> --head <head folder>`. A line that says `not posted: <commit> was pushed while this review ran` is expected: the newer push gets its own review. |
 | A review says a web test failed with "Test timed out in 5000ms". | The sandbox's four vCPUs are shared by the test workers, so a test can take longer than on CI. [`run_change.sh`](sandbox/run_change.sh) gives each web test 30 seconds and repeats a failed run once, and the review calls a test that passes on the rerun flaky. |
 | `eval_reviewer.py` stops with "This operation requires the following opt-in preview feature(s): Evaluations=V1Preview". | Custom evaluators are in preview and need an opt-in header, which the script sends. If the preview changes, run with `--local`: the local scores use the same checks. |
+| `eval_reviewer.py` stops with "the evaluation's pull requests aren't set up in &lt;owner&gt;/&lt;repo&gt;". | The cases have no pull request in that repository yet, for example in a new copy. Run `python eval_reviewer.py --setup` once: it creates them, or finds the ones it created before. It accepts only pull requests on its own `eval/pr-review/*` branches, in this repository, opened by the owner, a member, or a collaborator. |
+| `--setup` stops with "commit … isn't in … history". | The copy doesn't have the history of `main`, for example one created from a template. Make it a fork, or push a full clone (`git push --mirror`), then run `--setup` again. |
 | `eval_reviewer.py` ends with "COULD NOT GRADE: Foundry graded pr_review_&lt;check&gt; on 0 of 10 items". | Foundry's code-based evaluators (preview) failed every item of that check twice in a row; in the run's results, each item says "An error occurred during grading". The local scores above the error stand. A few minutes later, run `python eval_reviewer.py --reuse`: it grades the same results in Foundry again, without new dry runs (about 4 minutes). |
