@@ -58,7 +58,8 @@ def definition(spec: dict, profile: str, model: str, search_endpoint: str, searc
             project_connection_id=search_connection_id, index_name=spec["search"]["index"],
             query_type=spec["search"]["query_type"], filter=standards.scope_filter(spec, profile),
             top_k=spec["search"]["top_k"])]))
-    # Reasoning models (gpt-5 family) take a reasoning effort and reject temperature; other models take temperature.
+    # Reasoning models (the gpt-5 and gpt-6 families) take a reasoning effort and reject temperature; other models take
+    # temperature.
     sampling = {}
     if spec.get("temperature") is not None:
         sampling["temperature"] = spec["temperature"]
