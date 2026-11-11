@@ -34,7 +34,7 @@ description: Build, check, and explain the evidence of a RequestHub release on G
 ## Failure handling
 - `built from main: FAIL`: dispatch the candidate on `main` (`gh workflow run ... --ref main`).
 - `new version: FAIL`: the version exists or is not higher than the latest demo release; pick a higher version or reset the demo.
-- `environment: FAIL`: create the `release-github` environment and restrict it to `main` (see the solution README, Set up).
+- `environment: FAIL`: create the `release-github` environment and restrict it to `main` (see the solution README, One-time setup).
 - `checksums: FAIL ... changed after the candidate run`: an asset was edited or replaced. Do not approve; build a new candidate.
 - `tests: FAIL`: a report disagrees with the manifest, or a suite failed. Investigate with the workflow-investigation skill.
 - `candidate run: FAIL ... in_progress`: wait for the run to finish, then verify again.
