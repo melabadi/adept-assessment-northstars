@@ -10,7 +10,7 @@ What GitHub and Copilot recorded during [the run in See it work](../README.md#se
 
 | UTC | What happened | Source |
 | --- | --- | --- |
-| 14:53:49 | The owner started the release candidate, version `1.0.0`, on `main` at [`fc79733`](https://github.com/melabadi/adept-assessment-northstars/commit/fc79733f46f2fdafff8282c12858707711383a94) | [run 40710469161](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40710469161) |
+| 14:53:49 | The owner started the release candidate, version `1.0.0`, on `main` at [`fc79733`](https://github.com/melabadi/adept-assessment-northstars/commit/9cc6055caa7b2b84e1cba919a2fa6dea8d63ac54) | [run 40710469161](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40710469161) |
 | 14:53:53 to 14:54:01 | Preflight | [run 40710469161](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40710469161) |
 | 14:54:03 to 14:55:29 | In parallel: the API and worker tests (1 min 26 s), the web UI tests (36 s), and the API and worker images (1 min 20 s and 51 s) | [run 40710469161](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40710469161) |
 | 14:55:26 to 14:56:56 | The deployment check on the pushed images: smoke and browser tests | [run 40710469161](https://github.com/melabadi/adept-assessment-northstars/actions/runs/40710469161) |

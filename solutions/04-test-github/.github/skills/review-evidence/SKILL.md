@@ -47,8 +47,8 @@ review is not proof of correctness. This skill produces both kinds of evidence a
 
 ## Expected output
 ```
-| `8654a2fa4` | tests only: Add failing regression tests for #5 | ❌ 8 of 10 failed | must fail: proves the defect |
-| `f69668543` | head: Fix first-wins decisions ... | ✅ 10 of 10 passed | must pass: proves the fix |
+| `308844b54` | tests only: Add failing regression tests for #5 | ❌ 8 of 10 failed | must fail: proves the defect |
+| `0e3f97132` | head: Fix first-wins decisions ... | ✅ 10 of 10 passed | must pass: proves the fix |
 
 ✅ Proven: 8 of 10 selected tests fail at the tests-only commit, and all 10 pass at the head.
 - Copilot code review: 2 inline comment(s).

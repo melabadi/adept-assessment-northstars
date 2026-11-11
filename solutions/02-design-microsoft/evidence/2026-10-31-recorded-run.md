@@ -13,7 +13,7 @@ Each section lists the records of one run. GitHub's delivery ids are replaced wi
 
 ## The standards run
 
-Pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull/238) merged at 23:23:48 on 31 October as commit [`74e59ec`](https://github.com/melabadi/adept-assessment-northstars/commit/74e59ece58bf1450cd1d1f9e61332698e5d8503a). It added the keyword *Application Insights* to STD-OBS-001.
+Pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull/238) merged at 23:23:48 on 31 October as commit [`74e59ec`](https://github.com/melabadi/adept-assessment-northstars/commit/1baf5004d0cc6a447b5163649359b1b77d1c8d61). It added the keyword *Application Insights* to STD-OBS-001.
 
 | Time | Record |
 | --- | --- |
@@ -27,7 +27,7 @@ Pull request [#238](https://github.com/melabadi/adept-assessment-northstars/pull
 
 ## The evaluation
 
-The standards run started two Foundry evaluation runs, one per operating profile, on the ten labelled cases in [`eval_cases.jsonl` as of `74e59ec`](https://github.com/melabadi/adept-assessment-northstars/blob/74e59ece58bf1450cd1d1f9e61332698e5d8503a/solutions/02-design-microsoft/eval_cases.jsonl). In Foundry they are under the evaluation that was created on 29 October and is now named *Architecture advisor · labelled cases (earlier evaluators)*: when newer evaluator versions were registered on 10 November, it was renamed.
+The standards run started two Foundry evaluation runs, one per operating profile, on the ten labelled cases in [`eval_cases.jsonl` as of `74e59ec`](https://github.com/melabadi/adept-assessment-northstars/blob/1baf5004d0cc6a447b5163649359b1b77d1c8d61/solutions/02-design-microsoft/eval_cases.jsonl). In Foundry they are under the evaluation that was created on 29 October and is now named *Architecture advisor · labelled cases (earlier evaluators)*: when newer evaluator versions were registered on 10 November, it was renamed.
 
 | Run | Started | Results recorded | Cases passed | Checks passed | Checks not graded |
 | --- | --- | --- | --- | --- | --- |

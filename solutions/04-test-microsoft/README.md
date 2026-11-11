@@ -62,7 +62,7 @@ flowchart LR
 
 ## See it work
 
-On 31 October 2026, from 04:18 to 05:00 UTC, the solution ran once, end to end, against the real services in resource group `rg-ai-sdlc-test` (Central US), on RequestHub, this repository's sample app. The operator was a GitHub Copilot agent session working for the repository owner: it ran each command in PowerShell 7 and asked the Observability Agent's questions in the portal, signed in to Azure and GitHub as the owner. Azure Load Testing, the function, and GitHub did the rest. The test was [`loadtest/`](loadtest/) as of commit [49e9cf0](https://github.com/melabadi/adept-assessment-northstars/commit/49e9cf0), unchanged since, and the function ran an early version of pull request [#229](https://github.com/melabadi/adept-assessment-northstars/pull/229) ([the code that ran](evidence/2026-10-31-recorded-run.md#the-code-that-ran)).
+On 31 October 2026, from 04:18 to 05:00 UTC, the solution ran once, end to end, against the real services in resource group `rg-ai-sdlc-test` (Central US), on RequestHub, this repository's sample app. The operator was a GitHub Copilot agent session working for the repository owner: it ran each command in PowerShell 7 and asked the Observability Agent's questions in the portal, signed in to Azure and GitHub as the owner. Azure Load Testing, the function, and GitHub did the rest. The test was [`loadtest/`](loadtest/) as of commit [49e9cf0](https://github.com/melabadi/adept-assessment-northstars/commit/29a6873), unchanged since, and the function ran an early version of pull request [#229](https://github.com/melabadi/adept-assessment-northstars/pull/229) ([the code that ran](evidence/2026-10-31-recorded-run.md#the-code-that-ran)).
 
 Every step links evidence that opens without signing in: Issue [#215](https://github.com/melabadi/adept-assessment-northstars/issues/215), where the function posted both reports, and [what Azure recorded](evidence/2026-10-31-recorded-run.md), exported from the run records, the function's log, and the API's telemetry. Times are UTC. The portal screenshots show the operator's local time, UTC−4: 12:22 AM is 04:22.
 
@@ -82,7 +82,7 @@ The test is two files: [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-
 
 ![The Load Testing resource's Notifications page: the rule Report finished runs to GitHub, scoped to the test, with its action group](images/01-notification-rule.png)
 
-Evidence: the two files in the repository, unchanged since commit [49e9cf0](https://github.com/melabadi/adept-assessment-northstars/commit/49e9cf0). Each run's record carries the same 10 virtual users and five criteria ([the test runs](evidence/2026-10-31-recorded-run.md#the-test-runs)).
+Evidence: the two files in the repository, unchanged since commit [49e9cf0](https://github.com/melabadi/adept-assessment-northstars/commit/29a6873). Each run's record carries the same 10 virtual users and five criteria ([the test runs](evidence/2026-10-31-recorded-run.md#the-test-runs)).
 
 **What this shows:** the test is code in the repository, reviewed like any change, and Azure runs, judges, and reports it without a pipeline to maintain.
 
