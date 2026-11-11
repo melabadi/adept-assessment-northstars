@@ -108,6 +108,15 @@ BUILD_LOG = stamped([
     "##[error]Process completed with exit code 1.",
 ])
 
+# `tsc -b` writes this format when its output isn't a terminal, as on a runner, with paths from the web folder.
+TYPECHECK_LOG = stamped([
+    "> example-web@0.0.0 typecheck",
+    "> tsc -b",
+    "",
+    "src/lib/format.ts(12,7): error TS2322: Type 'string' is not assignable to type 'number'.",
+    "##[error]Process completed with exit code 1.",
+])
+
 SETUP_LOG = stamped([
     "Starting postgres service container",
     "Error response from daemon: failed to create the container: no space left on device",
@@ -257,6 +266,11 @@ class ParseLogTests(unittest.TestCase):
                          [("app/src/Example.Core/Workflow.cs", 88, "CS1002")])
         self.assertEqual(parsed["errors"][0]["message"], ["; expected"])
 
+    def test_reads_a_typescript_compiler_error(self):
+        parsed = facts_script.parse_log(TYPECHECK_LOG)
+        self.assertEqual([(e["file"], e["line"], e["code"]) for e in parsed["errors"]], [("src/lib/format.ts", 12, "TS2322")])
+        self.assertEqual(parsed["errors"][0]["message"], ["Type 'string' is not assignable to type 'number'."])
+
     def test_keeps_the_lines_before_the_first_error_when_nothing_else_explains_it(self):
         parsed = facts_script.parse_log(SETUP_LOG)
         self.assertEqual(parsed["tests"], [])
@@ -300,6 +314,13 @@ class CollectTests(unittest.TestCase):
         [error] = facts_of(folder)["other_failures"]
         self.assertEqual((error["kind"], error["file"], error["line"], error["in_pull_request"]),
                          ("build", "app/src/Example.Core/Workflow.cs", 88, True))
+
+    def test_a_typescript_error_is_matched_to_the_file_the_pull_request_changes(self):
+        files = [{"filename": "app/web/src/lib/format.ts", "status": "modified", "patch": "+export const n: number = '1';"}]
+        _, folder, _ = collect(FakeGitHub(logs={11: TYPECHECK_LOG}, files=files))
+        [error] = facts_of(folder)["other_failures"]
+        self.assertEqual((error["kind"], error["file"], error["line"], error["in_pull_request"]),
+                         ("build", "app/web/src/lib/format.ts", 12, True))
 
     def test_a_unit_test_path_is_matched_to_the_file_the_pull_request_changes(self):
         files = [{"filename": "app/web/src/lib/format.test.ts", "status": "added", "patch": "+test"}]
