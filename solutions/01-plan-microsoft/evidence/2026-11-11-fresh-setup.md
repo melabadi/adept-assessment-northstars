@@ -78,6 +78,8 @@ SUCCESS: Your application was provisioned and deployed to Azure in 58 seconds.
 
 **5. Other solutions' workflows saw this run's Issues.** In the copy, all the solutions' workflows are active. Each label the Function app applied, 25 in all, started a run of *Operate · GitHub · agentic incident triage*, and each was skipped before a runner started. The Function app's comment on the review Issue started *Design · GitHub · agentic design review*, whose 16-second pre-activation job found no `/design-review` command and stopped. No model ran. *Try it first* now says so.
 
+**6. The agent's Microsoft Entra objects outlived the clean-up.** When the `postprovision` hook published `requirements-analyst`, at 17:49:07, Foundry created in Microsoft Entra ID an agent identity blueprint, which is an app registration owned by the person who published it, with its principal, and an agent identity, a service principal ([agent identities in Foundry](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)). They're named after the Foundry account: `aif-<token>-plan-requirements-analyst-<hex>-AgentIdentityBlueprint` and `aif-<token>-plan-requirements-analyst-AgentIdentity`. `azd down --purge` didn't remove them, and the checks at 18:15 didn't look in Microsoft Entra ID, so this file first said that there was nothing there to remove. The pair was found after the teardown, once [02-design-microsoft's fresh setup](../../02-design-microsoft/evidence/2026-11-11-fresh-setup.md#what-didnt-match-the-readme-and-what-changed) had found the same for its agents: at 20:39, the blueprint, its principal, and the agent identity were all still active. Another session removed them, with the owner's approval: by 20:59:31, nothing named after the account was left in the directory, and Entra's recycle bin held only the blueprint's principal, deleted at 20:58:55. The app registration and the agent identity had been purged from it. A blueprint's principal can't be purged ([deleting agent identity objects](https://learn.microsoft.com/entra/agent-id/howto-delete-agent-identity#permanently-delete-agent-identity-objects)), so it stays there until Entra removes it, 30 days after its deletion. [Clean up](../README.md#clean-up) now deletes the agent identity, then the blueprint, before `azd down`, as 02-design-microsoft's does. Run against this pair before its removal, with a read in place of each deletion, those lines selected the agent identity, whose `servicePrincipalType` is `ServiceIdentity`, then the blueprint's app registration, and left out the blueprint's principal, of type `Application`, which goes with its app registration. They have to run before `azd down`: in this setup's azd environment, `azd env get-value FOUNDRY_ACCOUNT_NAME` now answers `key not found`.
+
 **The README also gained:** how to check the `gpt-6-luna` quota before deploying, a reminder to run azd in the shell where `pip install` ran (its hooks run that `python`), and the measured times above in place of its estimates.
 
 ## The run
@@ -157,12 +159,14 @@ Checked at 18:15:
 - No resource tagged `azd-env-name=ai-sdlc-plan-fresh`, and no role assignment on the group, anywhere in the subscription.
 - `gpt-6-luna` quota in use: back to 500.
 - The local azd environment no longer holds the token.
+- Microsoft Entra ID wasn't checked. The agent's blueprint and agent identity were still there: see finding 6.
 
 What is left:
 
 - **Three deployment records** at subscription scope, as for every azd deployment: those of `azd up` and `azd provision`, and the empty one that `azd down` records. They cost nothing. Their `githubToken` parameter keeps only its type, `SecureString`, and no value.
 - **The GitHub token** `ai-sdlc-plan-fresh`, which can only read and write Issues in the copy. The owner chose to keep it until it expires, on 28 February 2027. Nothing uses it: the Key Vault that held it was purged, and the azd environment no longer has it.
-- **In the copy,** the six closed Issues and the seven labels the run used. The solution creates no Microsoft Entra app registration, so there was none to remove.
+- **In the copy,** the six closed Issues and the seven labels the run used.
+- **In Microsoft Entra ID's recycle bin,** the agent identity blueprint's principal, as in finding 6, until Entra removes it 30 days after its deletion, around 11 December 2026. Checked at 20:59:51, nothing else named after the Foundry account is in the directory or the recycle bin.
 
 ## What it cost
 

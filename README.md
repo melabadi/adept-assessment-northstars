@@ -89,7 +89,16 @@ gh repo create <owner>/ai-sdlc --private --source . --push
 git remote -v
 ```
 
-`git remote -v` lists only `origin`, your copy, so the solutions' scripts and `gh` commands act on it. Don't add this repository back as a remote named `upstream`: `gh` prefers that name over `origin`, and would file your Issues here. To take later updates, pull without a remote: `git pull https://github.com/melabadi/adept-assessment-northstars.git main`. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
+`git remote -v` lists only `origin`, your copy, so the solutions' scripts and `gh` commands act on it. Don't add this repository back as a remote named `upstream`: `gh` prefers that name over `origin`, and would file your Issues here. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
+
+To take later updates, pull without a remote, then push them to your copy:
+
+```powershell
+git pull --no-rebase --no-edit https://github.com/melabadi/adept-assessment-northstars.git main
+git push
+```
+
+`--no-rebase` merges the updates with any commits your copy's `main` has of its own, such as the one 02-design-microsoft's step 1 merges: with git's default settings, a plain `git pull` stops there with `Need to specify how to reconcile divergent branches`. `--no-edit` keeps the merge's default message. The push matters to the solutions that read files from your copy's `main`, such as 02-design-microsoft's standards and 03-develop-microsoft's rule checker. A copy with the ruleset of the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy) refuses a push to `main`: there, run `git switch -c updates` before the pull, then `git push -u origin updates`, `gh pr create --base main --fill`, and `gh pr merge --merge --delete-branch`. Merge with a merge commit, not a squash, which would drop the shared history and make the next pull merge the same updates again.
 
 The push can run your copy's four push workflows once (CI, Repository checks, Copilot setup steps, and the Secure lab tooling checks), each only when the push changes files it watches: at most about 5 minutes of GitHub-hosted runners, 10 as billed in a private repository. A copy made from main on 11 November, whose newest commit changed only Markdown files, ran only Repository checks, for 15 seconds ([the fresh setup of 01-plan-microsoft](solutions/01-plan-microsoft/evidence/2026-11-11-fresh-setup.md)). Nothing else runs until you set a solution up.
 
