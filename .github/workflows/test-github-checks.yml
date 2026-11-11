@@ -1,20 +1,29 @@
 # Test · GitHub: checks this solution's tooling on every pull request that changes it.
-#  Unit tests for the review-evidence skill's trust boundaries: only the owner's, members', and collaborators' reviews
-#  count as the reviewer decision, Copilot is recognized by its exact bot accounts, and everything the evidence report
-#  and the proof quote from GitHub or from a pull request is inert (no @mention, no reference to an Issue or a pull
-#  request, and no link, image, or HTML), because the report is posted with a person's token. A pull request that changes
-#  where its checks are defined is flagged before them, because its checks ran with its own version of its workflows.
-#  The tests run offline against a fake `gh`, with synthetic data.
+#  - Unit tests for the review-evidence skill's trust boundaries: only the owner's, members', and collaborators' reviews
+#    count as the reviewer decision, Copilot is recognized by its exact bot accounts, and everything the evidence report
+#    and the proof quote from GitHub or from a pull request is inert (no @mention, no reference to an Issue or a pull
+#    request, and no link, image, or HTML), because the report is posted with a person's token. A pull request that
+#    changes where its checks are defined is flagged before them, because its checks ran with its own version of its
+#    workflows.
+#  - Unit tests for the ci-investigation skill: the facts the agentic CI failure investigation works from (failing tests,
+#    their messages and locations, whether the pull request adds or changes each one, and main's result), and that
+#    nothing reaches its agent unless the run is a failed run of an open pull request from a branch of this repository,
+#    by the owner, a member, a collaborator, or Copilot.
+#  - The agentic workflow's lock file is exactly what the pinned gh-aw compiler produces from its source, so the workflow
+#    that runs is the workflow that was reviewed.
+#  The unit tests run offline against a fake `gh`, with synthetic data.
 # Only pull requests that change this solution start it; other solutions' pull requests never do.
-name: Test · GitHub · check the review-evidence tooling
+name: Test · GitHub · check the review-evidence and CI investigation tooling
 
 on:
   pull_request:
     paths:
       - 'solutions/04-test-github/**'
-      - '.github/agents/test-github.agent.md'
+      # gh-aw v1.2 lock files record every custom agent's frontmatter, so any agent change can make the lock file stale.
+      - '.github/agents/**'
       - '.github/skills/failure-reproduction/**'
       - '.github/skills/review-evidence/**'
+      - '.github/skills/ci-investigation/**'
       - '.github/workflows/test-github-*'
       - '.github/ISSUE_TEMPLATE/04-test-github-*'
   workflow_dispatch:
@@ -22,9 +31,12 @@ on:
 permissions:
   contents: read
 
+env:
+  GH_AW_VERSION: v1.2.2 # pinned compiler; recompile and commit the lock file when you change it
+
 jobs:
   tests:
-    name: Review-evidence unit tests
+    name: Review-evidence and CI investigation unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -35,3 +47,23 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m unittest discover -s solutions/04-test-github/tests -v
+
+  agentic-workflow:
+    name: CI investigation lock file is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install gh-aw ${{ env.GH_AW_VERSION }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh extension install github/gh-aw --pin "$GH_AW_VERSION"
+      - name: Compile in strict mode and compare with the committed lock file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh aw compile test-github-ci-investigation --strict --validate --no-check-update
+          git diff --exit-code -- .github/workflows/test-github-ci-investigation.lock.yml \
+            || { echo "::error::Run 'gh aw compile test-github-ci-investigation' with gh-aw $GH_AW_VERSION, then 'python tools/sync_solutions.py --pull .github/workflows/test-github-ci-investigation.lock.yml', and commit."; exit 1; }
