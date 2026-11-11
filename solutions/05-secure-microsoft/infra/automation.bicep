@@ -30,9 +30,9 @@ param containerAppsEnvironmentName string
 param storageAccountId string
 param policyAssignmentName string
 param appInsightsConnectionString string
-@description('Chat model for the remediation agent (GlobalStandard deployment).')
-param modelName string = 'gpt-5-mini'
-param modelVersion string = '2025-08-07'
+@description('Chat model for the remediation agent (GlobalStandard deployment). The deployment is named after the model.')
+param modelName string = 'gpt-6-luna'
+param modelVersion string = '2026-09-22'
 @description('Model capacity in thousands of tokens per minute.')
 param modelCapacity int = 50
 
