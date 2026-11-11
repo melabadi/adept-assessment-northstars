@@ -11,7 +11,7 @@
 # The results are also in /mnt/data/run/summary.json, which the reviewer downloads as a file, because a session cuts a
 # command's output after 4 KB. `start` puts {"state": "not-finished"} there, and the run replaces it when it ends.
 #
-# The run installs Node 22, the .NET 10 SDK, and PostgreSQL in the session, then runs what the repository's CI runs:
+# The run installs Node 26, the .NET 10 SDK, and PostgreSQL in the session, then runs what the repository's CI runs:
 # the API's integration tests (dotnet test, against PostgreSQL in the session), and the web UI's typecheck and unit
 # tests. A failed web test run is repeated once, and the summary reports both runs, so a flaky test shows up as flaky.
 #
@@ -35,19 +35,19 @@ run() {
   mark extract
   tar xzf "$DATA/head.tgz" --strip-components=1 -C "$SRC" > "$RUN/extract.log" 2>&1
 
-  # Toolchain: what CI installs (.github/workflows/ci.yml): the latest .NET 10 SDK and Node 22.
+  # Toolchain: what CI installs (.github/workflows/ci.yml): the latest .NET 10 SDK and Node 26.
   mark setup
   export DEBIAN_FRONTEND=noninteractive DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 PATH=/opt/dotnet:$PATH
   export NVM_DIR=$HOME/.nvm
   {
-    . "$NVM_DIR/nvm.sh" && nvm install 22 && nvm alias default 22
+    . "$NVM_DIR/nvm.sh" && nvm install 26 && nvm alias default 26
     curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
     bash /tmp/dotnet-install.sh --channel 10.0 --install-dir /opt/dotnet
     apt-get update -qq && apt-get install -y -qq postgresql
     service postgresql start
     su postgres -c "psql -q -c \"CREATE USER requesthub WITH SUPERUSER PASSWORD 'devpass';\""
   } > "$RUN/setup.log" 2>&1
-  . "$NVM_DIR/nvm.sh" > /dev/null 2>&1; nvm use 22 > /dev/null 2>&1
+  . "$NVM_DIR/nvm.sh" > /dev/null 2>&1; nvm use 26 > /dev/null 2>&1
 
   # API: the same command as CI, with PostgreSQL in this session.
   if [ -f "$SRC/app/RequestHub.slnx" ]; then

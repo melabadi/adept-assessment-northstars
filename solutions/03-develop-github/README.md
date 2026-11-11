@@ -342,7 +342,7 @@ git fetch --quiet origin main; git grep -c "triage.confirmed" origin/main -- app
 
 print `.github/agents/develop-github.agent.md`, then nothing: the agent is on your default branch, and the feature isn't. The skills, the bounds workflow, and the issue form are active too, because the copy's root `.github/` folder mirrors this solution's.
 
-Steps 6 and 7 run RequestHub on your machine, so they need the [.NET 10 SDK](https://dotnet.microsoft.com/download), [Node.js 22](https://nodejs.org/), PostgreSQL on `localhost:5432` (user `requesthub`, password `devpass`; the [app README](../../app/README.md#run-it-locally) has a one-line Docker command), [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli), and the browser that the browser tests drive. Install it once:
+Steps 6 and 7 run RequestHub on your machine, so they need the [.NET 10 SDK](https://dotnet.microsoft.com/download), [Node.js 26](https://nodejs.org/), PostgreSQL on `localhost:5432` (user `requesthub`, password `devpass`; the [app README](../../app/README.md#run-it-locally) has a one-line Docker command), [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli), and the browser that the browser tests drive. Install it once:
 
 ```powershell
 npm ci --prefix app/web

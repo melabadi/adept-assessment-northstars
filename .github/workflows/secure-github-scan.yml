@@ -68,10 +68,10 @@ jobs:
           ref: ${{ needs.entitlement.outputs.sha }}
           path: target
           persist-credentials: false
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
-      - uses: github/codeql-action/init@3ce22a6e336a7fcc318bc58ae1986395bdc83ba7 # v4.35.4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: csharp
           build-mode: manual
@@ -79,7 +79,7 @@ jobs:
           queries: security-extended
       - name: Build only RequestHub source under analysis (no deployment)
         run: dotnet build target/app/RequestHub.slnx -c Release
-      - uses: github/codeql-action/analyze@3ce22a6e336a7fcc318bc58ae1986395bdc83ba7 # v4.35.4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           output: out/sarif
           upload: never
@@ -93,7 +93,7 @@ jobs:
         run: >-
           python trusted/.github/skills/finding-triage/finding_triage.py sarif
           --input out/sarif --expect "$EXPECT" --sha "$SCANNED_SHA" --out out/finding.json
-      - uses: github/codeql-action/upload-sarif@3ce22a6e336a7fcc318bc58ae1986395bdc83ba7 # v4.35.4
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         if: inputs.publish_alerts
         with:
           sarif_file: out/sarif
