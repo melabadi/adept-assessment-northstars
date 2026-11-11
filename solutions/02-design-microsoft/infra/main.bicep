@@ -20,7 +20,9 @@ param principalId string
 param principalType string = 'User'
 
 @description('GitHub repository (owner/name) the advisor answers and writes ADR drafts to. Set by the preprovision hook.')
-param githubRepository string
+// The empty default lets azd reach that hook: azd asks for, or without a terminal stops on, a parameter that has
+// neither a value nor a default before any hook runs. The hook stops azd when it can't name the repository.
+param githubRepository string = ''
 
 @description('Name proposed for the GitHub App on GitHub\'s registration page (the person creating it can change it).')
 param githubAppName string = 'AI-SDLC design advisor'

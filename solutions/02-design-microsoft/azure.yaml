@@ -4,6 +4,8 @@
 #   postprovision  sync the standards index, Foundry IQ knowledge bases, advisor agents, and evaluators
 #   predeploy      run the offline tests: a broken gate never reaches Azure
 #   postdeploy     report whether GitHub is connected (python setup_azure.py github connects it)
+# The hooks are interactive so their output stays on screen: the README's "What you should see" quotes it. azd shows
+# a hook that isn't interactive in an 8-line pane that it clears once the hook succeeds.
 name: ai-sdlc-design-microsoft
 metadata:
   template: ai-sdlc-design-microsoft@2.0.0
@@ -20,27 +22,35 @@ hooks:
     windows:
       shell: pwsh
       run: python setup_azure.py prepare
+      interactive: true
     posix:
       shell: sh
       run: python3 setup_azure.py prepare
+      interactive: true
   postprovision:
     windows:
       shell: pwsh
       run: python setup_azure.py foundry
+      interactive: true
     posix:
       shell: sh
       run: python3 setup_azure.py foundry
+      interactive: true
   predeploy:
     windows:
       shell: pwsh
       run: python -m unittest -q test_advisor
+      interactive: true
     posix:
       shell: sh
       run: python3 -m unittest -q test_advisor
+      interactive: true
   postdeploy:
     windows:
       shell: pwsh
       run: python setup_azure.py github --check
+      interactive: true
     posix:
       shell: sh
       run: python3 setup_azure.py github --check
+      interactive: true
