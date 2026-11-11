@@ -252,7 +252,7 @@ def prepare() -> int:
         print("Moved GITHUB_TOKEN to PLAN_GITHUB_TOKEN in the azd environment.")
     if not values.get("PLAN_GITHUB_TOKEN"):
         print("PLAN_GITHUB_TOKEN is not set yet: the Function app deploys, but can't create Issues until you set it "
-              "(README, Set up) and run `azd provision` again.")
+              "(README, One-time setup) and run `azd provision` again.")
     return 0
 
 

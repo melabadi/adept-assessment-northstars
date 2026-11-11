@@ -324,15 +324,15 @@ def check_build(s: dict) -> None:
     code, out = run("az", "acr", "task", "show", "--registry", s["registry"], "--name", "build-api", "--only-show-errors", "--output", "json")
     if code:
         report("WARN", "Build", "the build task build-api is not set up",
-               "See the README, Set up: a person creates it with a token for this repository. Until then, build from a "
-               "clone with az acr build; the release starts the same way.")
+               "See the README, One-time setup, step 3: a person creates it with a token for this repository. Until "
+               "then, build from a clone with az acr build; the release starts the same way.")
         return
     task = json.loads(out)
     triggers = (task.get("trigger") or {}).get("sourceTriggers") or []
     if any("pullrequest" in [e.lower() for e in t.get("sourceTriggerEvents") or []] for t in triggers):
         report("FAIL", "Build", "build-api can be started by a pull request",
                "A pull request, from a fork too, would build its own code and push it, and every push starts a release "
-               "into Azure. Keep only commits to main: define Update-BuildTask (README, Set up, step 3), then run "
+               "into Azure. Keep only commits to main: define Update-BuildTask (README, One-time setup, step 3), then run "
                "Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; "
                "sourceTriggerEvents = @('commit') }) } }")
         return
@@ -341,8 +341,8 @@ def check_build(s: dict) -> None:
            "build-api builds every commit to main" if enabled else "build-api exists; its commit trigger is off",
            f"Pushes to main do not start builds. Start one for a commit of main with: az acr task run --registry "
            f"{s['registry']} --name build-api --context <repository URL>.git#<commit> --set commit=<commit> (README, "
-           "Run the demo, step 2) — or turn the trigger on: define Update-BuildTask first (README, Set up, step 3), then "
-           "call it with 'Enabled'. az acr task update fails on the source trigger in Azure CLI 2.91.")
+           "Use it the first time) — or turn the trigger on: define Update-BuildTask first (README, One-time setup, "
+           "step 3), then call it with 'Enabled'. az acr task update fails on the source trigger in Azure CLI 2.91.")
 
 
 def check_workbook(s: dict) -> None:

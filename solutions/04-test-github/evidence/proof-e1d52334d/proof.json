@@ -1,0 +1,148 @@
+{
+  "verdict": "proven",
+  "reason": "5 of 7 selected tests fail at the tests-only commit `8de3d60fb`, and 7 of 7 pass at the head `e1d52334d`.",
+  "base": "df99c1b0e011fbe8d93178d5c1bde115e4357e50",
+  "head": "e1d52334df6c372dcf44e7cec4965bfb180f54d5",
+  "headTitle": "Recheck department access during decision recovery",
+  "testsOnly": {
+    "sha": "8de3d60fb425ca76d3d6bc3e94042fa9a02deb53",
+    "title": "Refine duplicate decision regression assertions"
+  },
+  "commits": [
+    {
+      "sha": "cb01c4422fcfa3920c65d6dc97acfbd57f45f1b3",
+      "title": "Initial plan"
+    },
+    {
+      "sha": "9e550ce8746775bcd63e64d4cabcb294c8938ff7",
+      "title": "Add failing regression tests for #100"
+    },
+    {
+      "sha": "8de3d60fb425ca76d3d6bc3e94042fa9a02deb53",
+      "title": "Refine duplicate decision regression assertions"
+    },
+    {
+      "sha": "a92d4b313e1eb202c6a80e2af50fa49883a59e23",
+      "title": "Refine duplicate decision regression assertions"
+    },
+    {
+      "sha": "e1d52334df6c372dcf44e7cec4965bfb180f54d5",
+      "title": "Recheck department access during decision recovery"
+    }
+  ],
+  "tests": [
+    "Concurrent_decisions_by_two_approvers_record_only_the_first_decision",
+    "Concurrent_double_click_records_one_decision_and_returns_conflicts_for_the_rest",
+    "Concurrent_retries_with_the_same_key_return_the_original_decision",
+    "Decision_retry_with_same_idempotency_key_returns_original_without_duplicate_side_effects",
+    "Later_decision_returns_conflict_with_the_existing_decision",
+    "Requester_cannot_self_approve_after_another_approver_has_decided",
+    "Search_treats_percent_and_underscore_as_literal_characters"
+  ],
+  "selection": "added or changed by the tests-only commit",
+  "otherTests": [],
+  "runs": {
+    "testsOnly": {
+      "sha": "8de3d60fb425ca76d3d6bc3e94042fa9a02deb53",
+      "log": "tests-only-8de3d60fb.log",
+      "report": "tests-only-8de3d60fb.ctrf.json",
+      "exitCode": 2,
+      "total": 7,
+      "passed": 2,
+      "failed": 5,
+      "tests": [
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Later_decision_returns_conflict_with_the_existing_decision",
+          "status": "failed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_double_click_records_one_decision_and_returns_conflicts_for_the_rest",
+          "status": "failed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Decision_retry_with_same_idempotency_key_returns_original_without_duplicate_side_effects",
+          "status": "failed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Requester_cannot_self_approve_after_another_approver_has_decided",
+          "status": "passed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_retries_with_the_same_key_return_the_original_decision",
+          "status": "failed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_decisions_by_two_approvers_record_only_the_first_decision",
+          "status": "failed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Search_treats_percent_and_underscore_as_literal_characters",
+          "status": "passed"
+        }
+      ],
+      "failedTests": [
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Later_decision_returns_conflict_with_the_existing_decision",
+          "message": "Assert.Equal() Failure: Values differ · Expected: Conflict · Actual: Created"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_double_click_records_one_decision_and_returns_conflicts_for_the_rest",
+          "message": "Assert.Equal() Failure: Values differ · Expected: 1 · Actual: 2"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Decision_retry_with_same_idempotency_key_returns_original_without_duplicate_side_effects",
+          "message": "Assert.Equal() Failure: Values differ · Expected: OK · Actual: Created"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_retries_with_the_same_key_return_the_original_decision",
+          "message": "Assert.Equal() Failure: Values differ · Expected: 7 · Actual: 0"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_decisions_by_two_approvers_record_only_the_first_decision",
+          "message": "Assert.Single() Failure: The collection did not contain any matching items · Expected: (predicate expression) · Collection: [StatusCode: 500, ReasonPhrase: 'Internal Server Error', Version: 1.1, Content"
+        }
+      ]
+    },
+    "head": {
+      "sha": "e1d52334df6c372dcf44e7cec4965bfb180f54d5",
+      "log": "head-e1d52334d.log",
+      "report": "head-e1d52334d.ctrf.json",
+      "exitCode": 0,
+      "total": 7,
+      "passed": 7,
+      "failed": 0,
+      "tests": [
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_double_click_records_one_decision_and_returns_conflicts_for_the_rest",
+          "status": "passed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Search_treats_percent_and_underscore_as_literal_characters",
+          "status": "passed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Requester_cannot_self_approve_after_another_approver_has_decided",
+          "status": "passed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_decisions_by_two_approvers_record_only_the_first_decision",
+          "status": "passed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Decision_retry_with_same_idempotency_key_returns_original_without_duplicate_side_effects",
+          "status": "passed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Later_decision_returns_conflict_with_the_existing_decision",
+          "status": "passed"
+        },
+        {
+          "name": "RequestHub.Tests.RequestLifecycleTests.Concurrent_retries_with_the_same_key_return_the_original_decision",
+          "status": "passed"
+        }
+      ],
+      "failedTests": []
+    }
+  },
+  "missingAtHead": []
+}
