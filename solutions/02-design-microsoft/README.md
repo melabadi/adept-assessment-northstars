@@ -347,7 +347,7 @@ Comments and pull requests then appear under your name, and you rotate the token
 
    ```powershell
    python evaluate.py                    # 3 to 7 minutes: one Foundry run per profile on eval_cases.jsonl
-   python evaluate.py --check-graders    # about 3 minutes: your right and wrong answers, graded here and in Foundry
+   python evaluate.py --check-graders    # about 4 minutes: your right and wrong answers, graded here and in Foundry
    ```
 
    **What you should see:** `evaluate.py` ends with the last run of each profile, for example `10/10 cases passed`. Its summary keeps the first attempt, each retry, and what couldn't be graded apart: it starts a profile's run again only when Foundry's preview grader couldn't score it, never because a case failed. `--check-graders` shows each right answer passing and each wrong one failing, and whether Foundry graded them exactly as `checks.py` does.
@@ -457,7 +457,7 @@ To evaluate without changing a standard, run `python evaluate.py` from the solut
 
 ![python evaluate.py: the small-team agent passed 5 of 5; Foundry could not grade the enterprise agent's first run, so run 2 started by itself and passed 5 of 5. The summary reads: first attempt 5 passed, 0 failed, 5 could not be graded, the five enterprise cases listed; the retry and why; the last run of each profile 10 of 10 cases in 520 seconds](images/09-evaluate.png)
 
-`python evaluate.py --check-graders` (about 3 minutes, no agent asked) grades a right and a wrong answer to every labelled question, which quote the same sentences of the same standards. The wrong answer to E05, for example, quotes STD-AI-001's *Approvals, rejections, payments, and access grants always require a human decision* and still recommends automatic approval above 95% confidence. Its run on 10 November:
+`python evaluate.py --check-graders` (about 4 minutes, 4 minutes 22 seconds on 11 November, no agent asked) grades a right and a wrong answer to every labelled question, which quote the same sentences of the same standards. The wrong answer to E05, for example, quotes STD-AI-001's *Approvals, rejections, payments, and access grants always require a human decision* and still recommends automatic approval above 95% confidence. Its run on 10 November:
 
 ![python evaluate.py --check-graders: 30 fixed answers. Every wrong answer passes citations and fails grounding (E07's also fails conflicts); every right answer passes all five checks, except held-out H06's, a known misread listed under the table. Paired: 18 of 18 graded as labelled, and Foundry graded 18 of 18 exactly as checks.py did; held-out: 11 of 12, and Foundry graded 12 of 12 the same way](images/09-check-graders.png)
 
