@@ -308,8 +308,9 @@ It runs from the default branch and replays the repair pull request whose number
 repair from the screenshot run; in a fresh copy, `replay_setup.py` makes a reference repair instead. Either way the
 workflow first checks that the pull request's branch is in this repository and that it targets a `lab/secure-*` branch.
 It fetches the commits from the PR record, so deleted lab branches do not need to be recreated.
-Manual dispatch still accepts another same-repository repair PR targeting `lab/secure-*`. A run with neither the
-variable nor a `pr` input fails at once and says what setup is missing. In a copy with no pull request history, the
+Manual dispatch still accepts another same-repository repair PR targeting `lab/secure-*`. Until `SECURE_REPLAY_PR`
+is set, scheduled runs are skipped, so a fresh copy does not produce nightly setup failures. A manual dispatch with
+neither the variable nor a `pr` input still fails at once and says what setup is missing. In a copy with no pull request history, the
 reference repair replayed in 87 seconds: 6 of the 10 regression cases failed before the repair and all 10 passed after,
 as with #105.
 

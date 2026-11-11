@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   replay:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'schedule' || vars.SECURE_REPLAY_PR != '')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
