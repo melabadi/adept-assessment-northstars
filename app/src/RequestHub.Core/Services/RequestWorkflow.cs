@@ -225,7 +225,7 @@ public sealed partial class RequestWorkflow(
             return WorkflowError.Validation("Outcome must be 'Approved' or 'Rejected'.");
         }
 
-        var comment = input.Comment?.Trim();
+        var comment = input.Comment;
         if (outcome == DecisionOutcome.Rejected && string.IsNullOrEmpty(comment))
         {
             return WorkflowError.Validation("A comment is required when rejecting a request.");
@@ -258,11 +258,6 @@ public sealed partial class RequestWorkflow(
             return new WorkflowError("decision.self_approval", "You cannot decide on your own request.", 403);
         }
 
-        if (request.Decision is { } existing)
-        {
-            return ExistingDecisionOutcome(existing, user, key);
-        }
-
         var now = clock.GetUtcNow();
         var decision = new ApprovalDecision
         {
@@ -280,19 +275,7 @@ public sealed partial class RequestWorkflow(
         AddAudit(request.Id, user.Id, "decision.recorded", now, new { request = request.PublicId, outcome = outcome.ToString() });
         AddNotification(request, request.RequesterId, "request.decided", now, new { outcome = outcome.ToString() });
 
-        try
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        catch (Exception ex) when (ex is DbUpdateConcurrencyException || (ex is DbUpdateException dbEx && IsUniqueViolation(dbEx)))
-        {
-            // A concurrent decision won the race (double click, retry, or a second approver).
-            db.ChangeTracker.Clear();
-            RequestHubTelemetry.DecisionConflicts.Add(1);
-            var winner = await db.Decisions.AsNoTracking().Include(d => d.DecidedBy)
-                .FirstAsync(d => d.RequestId == request.Id, ct);
-            return ExistingDecisionOutcome(winner, user, key);
-        }
+        await db.SaveChangesAsync(ct);
 
         RequestHubTelemetry.DecisionsRecorded.Add(1, new KeyValuePair<string, object?>("outcome", outcome.ToString()));
         logger.LogInformation("Decision {Outcome} recorded on {RequestId} by {UserId}", outcome, request.PublicId, user.Id);
