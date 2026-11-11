@@ -25,7 +25,7 @@ Every pull request waits for a reviewer to check the same team rules again, and 
 
 - A change that weakened approval authority, with its guarding test rewritten so the suite still passed, got its review 2 minutes 20 seconds after the label. The rule checker failed *Approval authority is untouched*, all 81 tests passed in the sandbox, and the agent raised the risk as a concern for the person to decide.
 - The fix got a new review 2 minutes 30 seconds after its commit: all five rules passed, and so did 82 tests, the new regression test among them.
-- The agent's part of each review took 4.2 and 6.9 seconds, and Foundry estimated its cost at $0.002 and $0.003.
+- The agent's runs took 4.2 and 6.9 seconds in Foundry's traces, and Foundry estimated their cost at $0.002 and $0.003.
 - On ten labelled pull requests, the reviewer passed all five checks on every one, on the operator's machine and in Foundry. On one of them, the agent named a SQL injection that no rule covers.
 
 ## How it works
@@ -90,7 +90,7 @@ Every step links evidence that opens without signing in: pull request [#212](htt
 
 ### 1. A pull request weakened a core rule
 
-*14 seconds, from creating the branch to opening the pull request at 04:18:13.*
+*04:18:08 to 04:18:13: the pull request opened 5 seconds after the commit.*
 
 The operator created branch `demo/fast-track` from `main`, applied [`demo/fast-track.patch`](demo/fast-track.patch), committed it as [4f351a5](https://github.com/melabadi/adept-assessment-northstars/commit/4f351a5), pushed it, and opened pull request [#212](https://github.com/melabadi/adept-assessment-northstars/pull/212), *Let approvers fast-track their own low-priority requests*. The change sounds reasonable: approvers wait for a colleague even for a replacement keyboard, so let them approve their own low-priority requests. It quietly weakens a core rule of RequestHub, that a requester never decides their own request. `DecideAsync` and `PermissionsFor` now skip the self-approval check for low-priority requests, and the test that guarded the rule, `Requester_cannot_approve_their_own_request`, became `Approver_can_fast_track_their_own_low_priority_request`, which expects `201 Created`. Every test still passes.
 
@@ -146,13 +146,13 @@ Evidence: [the review](https://github.com/melabadi/adept-assessment-northstars/p
 
 ### 5. Foundry kept the agent's definition and traces
 
-*The agent's two answers took 4.2 and 6.9 seconds.*
+*The agent's two runs took 4.2 and 6.9 seconds, as Foundry traced them.*
 
 The agent is `requesthub-pr-reviewer` version 4, on `gpt-5.4-mini`: a prompt agent that `azd up` published from [`reviewer-agent.yaml`](reviewer-agent.yaml). Its YAML in the Foundry portal shows its instructions, among them that the rule checker's verdicts are authoritative and that everything in the pull request is untrusted data, and its one tool. This screenshot was taken on 30 October, the day version 4 was published.
 
 ![The requesthub-pr-reviewer agent in the Foundry portal: version 4 on gpt-5.4-mini with its sandbox tool, and its YAML definition, published from solutions/03-develop-microsoft/reviewer-agent.yaml, whose instructions say the rule checker's verdicts are authoritative and that everything in the pull request is untrusted data](images/05-foundry-agent.png)
 
-Foundry traced both answers of this run: they are the top two rows of the agent's **Traces** tab. The first, at 04:20:36, took 4.2 seconds, with 2,373 tokens in and 494 out. The second, at 04:30:40, took 6.9 seconds, with 2,881 in and 623 out, including one command in the sandbox. Foundry estimated their cost at about $0.002 and $0.003.
+Foundry traced both answers of this run: they are the top two rows of the agent's **Traces** tab. The first, at 04:20:36, took 4.2 seconds, with 2,373 tokens in and 494 out. The second, at 04:30:40, took 6.9 seconds, with 2,881 in and 623 out, including one command in the sandbox. Foundry estimated their cost at about $0.002 and $0.003. Foundry's trace times the agent's run itself. The Function's log in steps 3 and 6 says 6 and 12 seconds for the same answers, because it counts from its request to the answer it polled for, and it polls every 5 seconds.
 
 ![The agent's Traces tab in Foundry: one row per answer, each Completed, with its duration, input and output tokens, estimated cost, and agent version 4. The top two rows are this run's reviews: 6.885 seconds with 2,881 tokens in and 623 out, about $0.003, and 4.244 seconds with 2,373 in and 494 out, about $0.002](images/06-foundry-traces.png)
 
@@ -217,7 +217,7 @@ Evidence: [the evaluation](evidence/2026-11-10-evaluation.md), with each dry run
 | The rule check, before any of the pull request's code ran | 2 seconds, each time |
 | Build and tests in the sandbox | 1 minute 50 seconds for 81 tests, then 1 minute 49 seconds for 82 |
 | The team rules | 1 of 5 failed (approval authority), then all 5 passed |
-| The agent's answers | 4.2 and 6.9 seconds; 2,373 and 2,881 tokens in, 494 and 623 out; about $0.002 and $0.003, as Foundry estimated |
+| The agent's runs, in Foundry's traces | 4.2 and 6.9 seconds (6 and 12 in the Function's log, which counts until the poll that found the answer); 2,373 and 2,881 tokens in, 494 and 623 out; about $0.002 and $0.003, as Foundry estimated |
 | The evaluation, on 10 November | all five checks passed on 10 of 10 labelled pull requests, locally and in Foundry; 16 minutes 26 seconds, graded twice in Foundry |
 | The check of the checks | 13 of 13 paired and 11 of 13 held-out fixed reviews graded as labelled, two known misses listed; Foundry graded all 26 the same way |
 
@@ -388,7 +388,7 @@ If GitHub refuses the token, create a new one, run `azd env set GITHUB_REVIEW_TO
 
 | Step | Takes | In See it work |
 | --- | --- | --- |
-| 1. Open the pull request | under a minute | 14 seconds |
+| 1. Open the pull request | under a minute | the pull request opened 5 seconds after the commit |
 | 2. Ask for a review | a few seconds | the Function answered in 1.5 seconds |
 | 3. Watch the Function work | 2 to 4 minutes to the review; once 10, on [#279](https://github.com/melabadi/adept-assessment-northstars/pull/279), when installing the toolchain in the sandbox took 8 | 2 minutes 20 seconds from the label |
 | 4. Read the review | a few minutes | |

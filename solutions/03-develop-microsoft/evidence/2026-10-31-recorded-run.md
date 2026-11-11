@@ -83,7 +83,7 @@ $kql = "traces | where timestamp between (datetime(2026-10-31T04:18:00Z) .. date
 
 ## The agent's traces
 
-Foundry traces every answer of the agent to the same Application Insights resource: `invoke_agent` is the whole answer, `chat` a call to the model with its tokens, and `execute_tool` a command the agent ran in the sandbox. The agent's **Traces** tab in the Foundry portal shows the same answers ([step 5's screenshot](../README.md#5-foundry-kept-the-agents-definition-and-traces)), with Foundry's estimate of their cost: about $0.002 and $0.003.
+Foundry traces every answer of the agent to the same Application Insights resource: `invoke_agent` is the whole answer, `chat` a call to the model with its tokens, and `execute_tool` a command the agent ran in the sandbox. The agent's **Traces** tab in the Foundry portal shows the same answers ([step 5's screenshot](../README.md#5-foundry-kept-the-agents-definition-and-traces)), with Foundry's estimate of their cost: about $0.002 and $0.003. An `invoke_agent` span times the agent's run itself; [the Function's log](#the-functions-log) says 6 and 12 seconds for the same answers, because it counts from its request to the answer it polled for, and it polls every 5 seconds.
 
 ```powershell
 $kql = "dependencies | where timestamp between (datetime(2026-10-31T04:18:00Z) .. datetime(2026-10-31T04:31:00Z)) | where name startswith 'invoke_agent' or name startswith 'chat ' or name startswith 'execute_tool' | order by timestamp asc | project utc = format_datetime(timestamp, 'HH:mm:ss.fff'), span = name, duration_ms = tolong(duration), tokens_in = tolong(customDimensions['gen_ai.usage.input_tokens']), tokens_out = tolong(customDimensions['gen_ai.usage.output_tokens'])"
