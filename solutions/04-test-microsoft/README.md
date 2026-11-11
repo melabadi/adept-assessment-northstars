@@ -260,17 +260,18 @@ The app lives in [`app/`](../../app/README.md). This solution deploys its own co
 
 ### Prerequisites
 
+- Your copy of the repository on GitHub, from the root README's [Set it up yourself](../../README.md).
 - An Azure subscription where you can create resource groups, Microsoft Entra app registrations, and role assignments, for example as Owner.
 - A region that offers PostgreSQL Flexible Server, Azure Load Testing, and the Observability Agent (the examples use `centralus`).
 - Access to Azure Copilot in your tenant, for the Observability Agent step.
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) with the `load` extension (in preview; tested with 2.1.0), the [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd), and the [GitHub CLI](https://cli.github.com/) for the Issue checks.
-- A GitHub account that can open Issues in the repository, to create the token Azure posts with.
+- A GitHub account that can open Issues in your copy, to create the token Azure posts with.
 - Python 3.12 or later, and PowerShell 7 for the commands below.
 - For a local run of the journey: the [.NET 10 SDK](https://dotnet.microsoft.com/download) and PostgreSQL (see [`app/README.md`](../../app/README.md#run-it-locally)).
 
 ### Quick start
 
-From the root of your copy of the repository:
+From the root of your copy of the repository, which the root README's [Set it up yourself](../../README.md) makes once for every solution:
 
 ```powershell
 cd solutions/04-test-microsoft
