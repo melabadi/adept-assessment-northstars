@@ -5,7 +5,7 @@ Design decisions often live in meeting notes and people's memories: reviewers ca
 ![Copilot's ADR compares the two options against the same constraints, citing each standard by id and version, for the small-team and the enterprise profile](images/05-adr-options.png)
 
 - **See it work:** [a real run on this repository](#see-it-work), step by step. Copilot CLI and the Copilot cloud agent each proposed an ADR for the same design question; the checks, Copilot code review, a reviewer's requests, and the decision followed, with a screenshot and a link anyone can open for every step.
-- **Add it to your repository:** [copy 13 files, adapt them to your standards and code, and set them up once](#add-it-to-your-repository). Copying took 8 to 9 seconds when this README was checked; the rest is writing down your standards, four labels, compiling the agentic design review, a token for it, and a pull request.
+- **Add it to your repository:** [copy 13 files, adapt them to your standards and code, and set them up once](#add-it-to-your-repository). Copying took 7 seconds when this README was checked; the rest is writing down your standards, four labels, compiling the agentic design review, a token for it, and a pull request.
 - **Try it first in a copy of this repository:** [four labels and a token to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution. A run then needs about 7 minutes of Copilot CLI, or 12 minutes of the Copilot cloud agent, working unattended.
 
 ## Why it matters
@@ -29,6 +29,7 @@ The value: a reviewable design, grounded in your standards and your code, in min
 - **About 4 minutes** for each Copilot code review (4 minutes 7 seconds and 4 minutes 27 seconds). Both named the decisions that belong to people.
 - **Minutes for a revision:** 1 minute 14 seconds with Copilot CLI, and 3 minutes 36 seconds from a `@copilot` request to Copilot's commit.
 - **10 seconds** for the ADR check to fail an acceptance that named an agent as the decider; with a person named, it passed. A removed response field failed the contract check in 10 seconds too.
+- **About 5 minutes** for `/design-review` to answer, in three live runs on 11 November 2026: a design question, an ADR pull request, and a breaking contract change. Each agent used 19 to 24 AI credits.
 
 The Microsoft counterpart, [02-design-microsoft](../02-design-microsoft/), answers design questions with a Foundry agent grounded in the standards. The [Design combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr) uses both on one question and one pull request: the Foundry advisor cites the standards, and this solution's agent completes its draft into one ADR that these checks verify.
 
@@ -62,15 +63,15 @@ flowchart LR
 - **Who can start it.** gh-aw's role check admits only commenters with write access. The Issue's author must be the owner, a member, or a collaborator. A pull request's head must be a branch of this repository, checked through the API before the agent starts: Copilot's pull requests are such branches, and a fork's are not. A pull request's author must also be trusted, or be the Copilot coding agent.
 - **What the agent can do.** It runs with a read-only token, no file edits, read-only shell commands, and GitHub tools in read-only mode. Those tools show only content from trusted authors and this repository's branches (`min-integrity: approved`), and its instructions treat the Issue, the pull request, and the code as data, never as instructions.
 - **What it can write.** One comment, and only the two labels above. gh-aw's own reports stay in the run instead of becoming Issues.
-- **What checks its output.** Threat detection reads the comment before it is posted, and a run it flags applies nothing. The contract verdict comes from `contract_diff.py` on the default branch, run before the pull request's branch is checked out, so neither the model nor the pull request decides it. Each run's agent is capped at 150 AI credits, and its threat detection at 10.
+- **What checks its output.** Threat detection reads the comment before it is posted, and a run it flags applies nothing. The contract verdict comes from `contract_diff.py` on the default branch, run before the pull request's branch is checked out, so neither the model nor the pull request decides it. Each run's agent is capped at 60 AI credits, and its threat detection at 10.
 
 **Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. A Copilot code review that someone else requests on their own pull request uses their Copilot plan, not yours. A fork's pull request that changes an ADR gets the ADR checks, with a read-only token and no secrets, once someone with write access approves the run; the checker comes from the base branch. Every comment starts a short run of the agentic workflow, but its agent runs only for a `/design-review` from someone with write access: never on an outsider's Issue or a fork's pull request.
 
 ## See it work
 
-This run took place on 28 October 2026, from 15:26 to 17:07 UTC, on `main` at [`55bae46`](https://github.com/melabadi/adept-assessment-northstars/commit/4eb745cd7a1a82799954c70bf0414d8e329a6219). The operator was a GitHub Copilot agent session working for the repository owner, signed in to GitHub as the owner: it ran each command in PowerShell 7 and took the reviewer's and the architect's steps. Copilot and GitHub Actions did the rest. The same question went to Copilot twice, side by side: to Copilot CLI in a terminal, which became pull request [#125](https://github.com/melabadi/adept-assessment-northstars/pull/125), and to the Copilot cloud agent through Issue [#117](https://github.com/melabadi/adept-assessment-northstars/issues/117), which became pull request [#120](https://github.com/melabadi/adept-assessment-northstars/pull/120). Every link below opens without signing in. The workflow run pages show each run's status and job times to anyone; their summaries and logs need a GitHub sign-in, so the screenshots show them. Every screenshot comes from this run.
+This run took place on 28 October 2026, from 15:26 to 17:07 UTC, on `main` at [`55bae46`](https://github.com/melabadi/adept-assessment-northstars/commit/4eb745cd7a1a82799954c70bf0414d8e329a6219). The operator was a GitHub Copilot agent session working for the repository owner, signed in to GitHub as the owner: it ran each command in PowerShell 7 and took the reviewer's and the architect's steps. Copilot and GitHub Actions did the rest. The same question went to Copilot twice, side by side: to Copilot CLI in a terminal, which became pull request [#125](https://github.com/melabadi/adept-assessment-northstars/pull/125), and to the Copilot cloud agent through Issue [#117](https://github.com/melabadi/adept-assessment-northstars/issues/117), which became pull request [#120](https://github.com/melabadi/adept-assessment-northstars/pull/120). Every link below opens without signing in. The workflow run pages show each run's status and job times to anyone; their summaries and logs need a GitHub sign-in, so the screenshots show them. Every screenshot in steps 1 to 9 comes from this run.
 
-The agent, the skills, and the workflow were those at `55bae46`. What the run found added two rules to the checker and the agent afterwards ([step 7](#7-the-reviewer-asked-for-changes-and-copilot-revised-the-adrs), [Results and value](#results-and-value)). The agentic design review (`/design-review`) came later still, and isn't part of this run: [How it works](#how-it-works) describes it.
+The agent, the skills, and the workflow were those at `55bae46`. What the run found added two rules to the checker and the agent afterwards ([step 7](#7-the-reviewer-asked-for-changes-and-copilot-revised-the-adrs), [Results and value](#results-and-value)). The agentic design review (`/design-review`) came later still, and has [its own recorded run](#the-agentic-design-review-recorded-on-11-november-2026), on 11 November 2026, after step 9.
 
 | Step | When (UTC) | Who | How long |
 | --- | --- | --- | --- |
@@ -222,6 +223,52 @@ At 16:45:54 UTC the operator pushed the edited contract to a scratch branch and 
 
 **What this shows:** API compatibility was a deterministic report against the contract, not an opinion: removing a field failed, as STD-API-001 requires.
 
+### The agentic design review, recorded on 11 November 2026
+
+The agentic design review came after the run above. Its own run took place on 11 November 2026, from 14:48 to 15:08 UTC, minutes after its merge in [#342](https://github.com/melabadi/adept-assessment-northstars/pull/342). The operator was again a GitHub Copilot agent session working for the repository owner. It filed a design question, opened two pull requests, and commented `/design-review` on each; GitHub Actions and Copilot did the rest. The workflow was the same in all three runs, while other solutions' changes moved `main` between them. Every link below opens without signing in, and [`evidence/2026-11-11-agentic-design-review.md`](evidence/2026-11-11-agentic-design-review.md) keeps what needs a sign-in: the exact AI credits from `gh aw audit`, and the contract step's output. The workflow then capped each run's agent at 150 AI credits; [What it costs](#what-it-costs) gives today's cap.
+
+| Review of | `/design-review` (UTC) | 👀 after | Review after | Agent's AI credits | Labels added |
+| --- | --- | --- | --- | --- | --- |
+| [A design question](#a-design-question) | 14:48:37 | 31 s | 5 min 6 s | 20.28 | `adr-needed`, `standards-conflict` |
+| [An ADR pull request](#an-adr-pull-request) | 14:56:32 | 38 s | 5 min 5 s | 23.91 | `standards-conflict` |
+| [A breaking contract change](#a-breaking-contract-change) | 15:02:43 | 35 s | 5 min 18 s | 19.14 | `adr-needed` |
+
+Each agent ran on Claude Sonnet 5.5, the model `auto` chose, and each threat detection on Claude Haiku 5.5 for about 1 AI credit.
+
+#### A design question
+
+At 14:48:37 UTC the operator filed Issue [#348](https://github.com/melabadi/adept-assessment-northstars/issues/348) with the issue form's text, the same as #117's, and commented `/design-review`. gh-aw reacted 31 seconds later, once its gates had passed:
+
+![The /design-review comment, marked Owner and Author, with one eyes reaction](images/agentic-00-command.png)
+
+[The run](https://github.com/melabadi/adept-assessment-northstars/actions/runs/43042077185) took 5 minutes 32 seconds: 2 minutes 46 seconds for the agent, and 1 minute 16 seconds for threat detection. [The review](https://github.com/melabadi/adept-assessment-northstars/issues/348#issuecomment-6799100906) arrived at 14:53:43, 5 minutes 6 seconds after the command, and the workflow added both labels:
+
+![The review on Issue 348: twelve standards with their versions and quoted sentences, the conflict between STD-OBS-002 and STD-SEC-002 and the two profiles' different answers, the code and API operations affected, no contract change for an Issue, ADR needed, and the next step to assign the design-github agent](images/agentic-01-issue-review.png)
+
+It quoted twelve standards, found the conflict between STD-OBS-002 and STD-SEC-002 and the profiles' different answers, named the code and API operations involved, and proposed handing the Issue to the `design-github` agent. Each of its quotes matches its standard word for word.
+
+**What this shows:** a design question got the standards that apply, their conflicts, and the case for an ADR in about five minutes, before anyone started on a design.
+
+#### An ADR pull request
+
+At 14:56:32 UTC the operator opened pull request [#354](https://github.com/melabadi/adept-assessment-northstars/pull/354) with the ADR that Copilot CLI wrote in this page's recorded run, unchanged from `03c9e71`, and commented `/design-review`. [The run](https://github.com/melabadi/adept-assessment-northstars/actions/runs/43043368208) took 5 minutes 37 seconds, and [the review](https://github.com/melabadi/adept-assessment-northstars/pull/354#issuecomment-6799284287) arrived at 15:01:37, 5 minutes 5 seconds after the command:
+
+![The review on pull request 354: the standards that apply, the logging conflict the ADR leaves open, the ADR file and the code it depends on, no contract change, ADR needed and this pull request is that ADR so no adr-needed label, and the next step for a person to review and name the deciders](images/agentic-02-adr-review.png)
+
+It recognized the pull request as the ADR, so it added only `standards-conflict`, and handed the decision back: "a person reviews the ADR, resolves the logging conflict and the two-profile recommendation, and names the deciders before merging."
+
+**What this shows:** on an ADR, the review checked the proposal against the standards and left the decision with people.
+
+#### A breaking contract change
+
+At 15:02:43 UTC the operator opened scratch pull request [#356](https://github.com/melabadi/adept-assessment-northstars/pull/356), which removed `providerTraceId` from `RecommendationDto` as in [step 9](#9-a-breaking-api-change-failed-the-contract-check), and commented `/design-review`. Before the agent started, the workflow's own step ran `contract_diff.py` from `main` against the merge base, and printed one breaking change ([its output](evidence/2026-11-11-agentic-design-review.md#the-contract-steps-output-in-run-43044381144)). [The run](https://github.com/melabadi/adept-assessment-northstars/actions/runs/43044381144) took 5 minutes 45 seconds, and [the review](https://github.com/melabadi/adept-assessment-northstars/pull/356#issuecomment-6799435298) arrived at 15:08:01, 5 minutes 18 seconds after the command:
+
+![The review on pull request 356: STD-API-001 and the sentence that removing fields requires a new major version, the contract file, RequestWorkflow.cs and four web UI files that still use the field, the two triage endpoints, the contract verdict Breaking change with 1 breaking and 0 additive changes, ADR needed, and the next step for a person to drop the change or write an ADR](images/agentic-03-contract-review.png)
+
+Its *API contract* section is the tool's verdict and counts, copied. The agent added what the tool can't see: line 462 of `RequestWorkflow.cs` still emits the field, and four web UI files still read it. The workflow added `adr-needed`. At 15:14 UTC the operator closed #348, #354, and #356 without merging, and deleted the two branches.
+
+**What this shows:** the contract verdict came from the deterministic tool, not the model, while the agent found what only reading the code could.
+
 ## Results and value
 
 **What the run left behind:**
@@ -230,6 +277,7 @@ At 16:45:54 UTC the operator pushed the edited contract to a scratch branch and 
 - Seven runs of the checks: five passed, and two failed for the reasons the checks exist: an acceptance that named an agent, and a breaking contract change.
 - Two new rules, in the checker and in the agent's instructions ([#150](https://github.com/melabadi/adept-assessment-northstars/pull/150)). Neither the checker of that day nor the two code reviews noticed that GitHub couldn't render the sequence diagrams, or that the cloud agent's ADR cited seven files by their absolute path on its runner (`/home/runner/work/...`). When this README was checked, today's checker still passed Copilot CLI's ADR at `03c9e71`, and reported the seven absolute paths in the cloud agent's at `e35f775`.
 - The person's part: approving the workflow runs on Copilot's pull request twice, asking for two revisions, and accepting with a named (synthetic) architect at `9a820c0`.
+- From the agentic design review's run of 11 November: Issue [#348](https://github.com/melabadi/adept-assessment-northstars/issues/348) and pull requests [#354](https://github.com/melabadi/adept-assessment-northstars/pull/354) and [#356](https://github.com/melabadi/adept-assessment-northstars/pull/356), closed, each with its review comment and labels, and [what the runs recorded](evidence/2026-11-11-agentic-design-review.md).
 
 **What was measured:**
 
@@ -246,14 +294,24 @@ At 16:45:54 UTC the operator pushed the edited contract to a scratch branch and 
 | A breaking contract change, checked on demand | failed in 17 s, *API contract compatibility* after 10 s |
 | GitHub-hosted runner time for the whole run, Copilot's sessions and code reviews included | 27.7 min of job time: 11.7 for the cloud agent's session, 4.1 for its revision, 8.2 for the two code reviews, 2.4 for the 14 jobs of the design checks, and 1.2 for this repository's two other workflows. 52 min as billed in a private repository, where each job is rounded up to a whole minute |
 
+The agentic design review's run of 11 November 2026 measured:
+
+| Measure | Three reviews: a design question, an ADR pull request, a breaking contract change |
+| --- | --- |
+| `/design-review` to the 👀 reaction | 31 s, 38 s, and 35 s |
+| `/design-review` to the review comment | 5 min 6 s, 5 min 5 s, and 5 min 18 s |
+| The agent's AI credits, as `gh aw audit` reported | 20.28, 23.91, and 19.14 |
+| Threat detection's AI credits, as the comments' footers round them | about 1 each |
+| GitHub-hosted runner time per review | 313 s, 313 s, and 328 s of job time in six jobs; 9 min each as billed in a private repository |
+
 **What a team gets:**
 
-- **Time.** Copilot drafted the ADR, ran the contract tool and the checker, and revised the ADR on request, unattended. The person's part was the question, the review, the requests, and the decision.
+- **Time.** Copilot drafted the ADR, ran the contract tool and the checker, and revised the ADR on request, unattended, and `/design-review` answered a design question in about five minutes. The person's part was the question, the review, the requests, and the decision.
 - **Risk removed.** An ADR that cites a standard, a version, or a file that doesn't exist fails, and so does a diagram GitHub can't render. An API change that breaks the contract fails. A conflict between standards reaches a person as an open question instead of being settled silently, and Copilot code review looks for what checks can't: unstated assumptions, missed standards, and data flows.
 - **Evidence a reviewer or auditor can follow.** Each ADR lives in a pull request with its checks, the API contract report, Copilot's review, and the commit that names who decided.
 - **People stay in charge.** Copilot only proposes: the check fails any accepted ADR that doesn't name the people who decided. Workflows on Copilot's pull requests run only after a person approves them, and the checker, the contract tool, and the standards come from the base branch.
 
-**The metric to track when you adopt it:** time from a design question to a reviewable ADR with green checks, from handing the question to Copilot to the first passing checks on its pull request. With the cloud agent, both timestamps are on GitHub: the assignment on the Issue, and the checks on the pull request. The recorded run measured 13 minutes 53 seconds with Copilot CLI (15:41:38 to 15:55:31 UTC: Copilot's 6 minutes 43 seconds, then the operator's commit, push, and pull request), and 40 minutes 34 seconds with the cloud agent, 28 minutes 14 seconds of them waiting for a person to start the runs. In the [Design combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr) of 10 November 2026, the same agent completed a Foundry advisor's draft into one ADR in 5 minutes 16 seconds, and the checks passed 18 seconds after its commit ([#281](https://github.com/melabadi/adept-assessment-northstars/pull/281)). Track alongside it the review rounds before a decision, and the conflicts and unknowns found before review compared with those found later. Compare both with design decisions made before you adopted it. A target such as "a reviewable design within a day of the question" is your team's goal, never a result to report.
+**The metric to track when you adopt it:** time from a design question to a reviewable ADR with green checks, from handing the question to Copilot to the first passing checks on its pull request. With the cloud agent, both timestamps are on GitHub: the assignment on the Issue, and the checks on the pull request. The recorded run measured 13 minutes 53 seconds with Copilot CLI (15:41:38 to 15:55:31 UTC: Copilot's 6 minutes 43 seconds, then the operator's commit, push, and pull request), and 40 minutes 34 seconds with the cloud agent, 28 minutes 14 seconds of them waiting for a person to start the runs. In the [Design combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr) of 10 November 2026, the same agent completed a Foundry advisor's draft into one ADR in 5 minutes 16 seconds, and the checks passed 18 seconds after its commit ([#281](https://github.com/melabadi/adept-assessment-northstars/pull/281)). Track alongside it the review rounds before a decision, and the conflicts and unknowns found before review compared with those found later. With `/design-review`, also track how often its `adr-needed` label matched what the architect decided. Compare both with design decisions made before you adopted it. A target such as "a reviewable design within a day of the question" is your team's goal, never a result to report.
 
 ## Add it to your repository
 
@@ -281,7 +339,7 @@ Remove-Item -Recurse -Force $src
 git status --short --untracked-files=all
 ```
 
-What you should see: 13 new files, in 8 to 9 seconds when this README was checked; the other files in `.github/` stay. The brief, the standards, and the screenshots stay behind, because they describe RequestHub: use them as examples for yours. Then change what assumes RequestHub:
+What you should see: 13 new files, in 7 seconds when this README was checked; the other files in `.github/` stay. The brief, the standards, and the screenshots stay behind, because they describe RequestHub: use them as examples for yours. Then change what assumes RequestHub:
 
 | File | As shipped, for RequestHub | Change it to |
 | --- | --- | --- |
@@ -367,7 +425,7 @@ The checker reads `id` and `version`, from the nearest `standards/` folder above
 On your own design question, the steps are those of [See it work](#see-it-work):
 
 1. **Write the brief** in your inputs folder: the problem, the accepted requirements, the constraints and operating profiles, and the open question, as in [`inputs/reviewed-brief.md`](inputs/reviewed-brief.md). Point `adr-task.md` and the issue form at it.
-2. **Optional: ask for a design review.** At any point, comment `/design-review` on the design question's Issue or on a pull request, from an account with write access. Anything after the command in the same comment tells the review what to focus on. What you should see: 👀 on your comment within seconds, then one comment headed *Design review*: the standards that apply, any conflict between them, the code and API affected, the contract verdict for a pull request, whether an ADR is needed, and the next step. `adr-needed` or `standards-conflict` is added when it applies. `gh run list --workflow design-github-agentic-review.lock.yml --limit 1` shows the run.
+2. **Optional: ask for a design review.** At any point, comment `/design-review` on the design question's Issue or on a pull request, from an account with write access. Anything after the command in the same comment tells the review what to focus on. What you should see: 👀 on your comment in under a minute, then one comment headed *Design review*, about 5 minutes after yours in the [recorded runs](#the-agentic-design-review-recorded-on-11-november-2026): the standards that apply, any conflict between them, the code and API affected, the contract verdict for a pull request, whether an ADR is needed, and the next step. `adr-needed` or `standards-conflict` is added when it applies. `gh run list --workflow design-github-agentic-review.lock.yml --limit 1` shows the run.
 3. **Hand it to Copilot.** From your terminal, on a new branch:
 
    ```powershell
@@ -406,7 +464,7 @@ On your own design question, the steps are those of [See it work](#see-it-work):
 
 Setting it up uses no AI credits. Each design question draws on your Copilot plan, for Copilot CLI or the cloud agent and for Copilot code review, and on GitHub Actions. In the recorded run, Copilot CLI reported 29.19 AI credits for the ADR and 5.72 for its revision; the AI credits of the cloud agent's sessions and of the code reviews weren't recorded. On standard GitHub-hosted runners, the cloud agent's session took 11.7 minutes and its revision 4.1, the two Copilot code reviews 8.2 together, and the design checks 7 to 14 seconds a job: 2.4 minutes for all 14 jobs of the run. Those minutes are free in a public repository. In a private one they count against your plan's included usage, with each job rounded up to a whole minute: 2 minutes for each push to a design pull request ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
 
-Each `/design-review` draws on the Copilot plan of the person whose token is `COPILOT_GITHUB_TOKEN`. `max-ai-credits` in the workflow caps each run's agent at 150 AI credits and its threat detection at 10 ([gh-aw's cost management](https://github.github.com/gh-aw/reference/cost-management/)). Every comment in the repository starts a run of the workflow: unless the comment is `/design-review` from someone with write access, the run ends after its first job, without the agent. In a private repository, those short runs count against your Actions minutes too.
+Each `/design-review` draws on the Copilot plan of the person whose token is `COPILOT_GITHUB_TOKEN`. In the [three recorded reviews](#the-agentic-design-review-recorded-on-11-november-2026), each agent used 19.14 to 23.91 AI credits, and each threat detection about 1. `max-ai-credits` in the workflow is a hard stop: 60 AI credits for each run's agent, which gh-aw starts warning at 80% of that budget, and 10 for its threat detection. By default, gh-aw also blocks new runs once the workflow has used 5,000 AI credits in 24 hours; `max-daily-ai-credits` changes that ([gh-aw's cost management](https://github.github.com/gh-aw/reference/cost-management/)). On standard GitHub-hosted runners, each review took 313 to 328 seconds of job time in six jobs: 9 minutes as billed in a private repository. Every comment in the repository starts a run of the workflow: unless the comment is `/design-review` from someone with write access, the run ends after its first job, without the agent. Ten such runs on 11 November took 9 to 22 seconds of job time each, billed as 1 minute each in a private repository.
 
 ## Try it first in a copy of this repository
 
@@ -538,7 +596,7 @@ gh issue comment <issue> --body "/design-review"
 gh pr comment <pr> --body "/design-review"
 ```
 
-The review answers with one comment, as [Use it the first time](#use-it-the-first-time), step 2, describes. On a pull request, its contract verdict comes from `contract_diff.py`, as in step 9.
+The review answers with one comment, about 5 minutes after yours in the [recorded runs](#the-agentic-design-review-recorded-on-11-november-2026), as [Use it the first time](#use-it-the-first-time), step 2, describes. On a pull request, its contract verdict comes from `contract_diff.py`, as in step 9.
 
 ### Reset the copy for another run
 
@@ -586,7 +644,8 @@ Apart from that token, which you create, this solution creates no secret, GitHub
 ├── README.md
 ├── adr-task.md                         the task Copilot CLI receives; the issue form asks the same
 ├── adr-from-advisor-task.md            the Design combo's task: complete the Foundry advisor's draft into one ADR
-├── images/                             screenshots from the recorded run, and two from the Design combo
+├── evidence/                           what the agentic design review's recorded runs logged behind a sign-in
+├── images/                             screenshots from the recorded runs, and two from the Design combo
 ├── inputs/
 │   └── reviewed-brief.md               synthetic reviewed requirements and the open design question
 ├── standards/
