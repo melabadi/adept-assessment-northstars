@@ -278,7 +278,7 @@ These are the steps that set the solution up on this repository, with what to ch
 
 ### Prerequisites
 
-- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. This solution creates no Microsoft Entra app registration.
+- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. The solution registers no app of its own in Microsoft Entra ID, but when it publishes the agent, Foundry creates an agent identity blueprint there, an app registration that you own, and an agent identity: [Clean up](#clean-up) removes them.
 - An Azure subscription where you can create a resource group and role assignments, for example as Owner.
 - Quota for `gpt-6-luna`, version 2026-09-22 (Global Standard, 50,000 tokens per minute), in your region, and the Flex Consumption plan available there. We used `eastus2`. `az cognitiveservices usage list --location eastus2 --query "[?name.value=='OpenAI.GlobalStandard.gpt-6-luna']" -o table` shows your quota there, in thousands of tokens per minute: `Limit` minus `CurrentValue` must be at least 50.
 - Permission to create a fine-grained personal access token for the repository.
@@ -444,6 +444,8 @@ Allow about 15 minutes in all: the fresh setup took 13, step by step in [One-tim
 - a storage account (`st…`) for the run records, the queue `plan-steps`, and the Function app's code, and a Key Vault (`kv-…`) for the GitHub token, both without public network access, reached through three private endpoints;
 - the Function app's managed identity, with the Foundry User role, data access to its storage, and read access to Key Vault's secrets.
 
+Outside the resource group, in Microsoft Entra ID, Foundry creates the agent's agent identity blueprint, an app registration that you own, and its agent identity when the hook publishes the agent. `azd down` doesn't remove them: [Clean up](#clean-up) does.
+
 ### Check the starting state
 
 About a minute, from `solutions/01-plan-microsoft`, before each run of the steps below:
@@ -603,11 +605,16 @@ The first line cancels every run that hasn't finished: a run that waits for a de
 When you no longer need the solution, from its folder, in your repository or in the copy:
 
 ```powershell
+$account = azd env get-value FOUNDRY_ACCOUNT_NAME
+az ad sp list --display-name "$account-" -o json | ConvertFrom-Json | Where-Object servicePrincipalType -eq ServiceIdentity | ForEach-Object { az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($_.id)" }
+az ad app list --display-name "$account-" -o json | ConvertFrom-Json | Where-Object displayName -like '*-AgentIdentityBlueprint' | ForEach-Object { az ad app delete --id $_.id }
 azd down --purge
 azd env set PLAN_GITHUB_TOKEN ''
 ```
 
-`azd down --purge` lists what it deletes and asks you to confirm; `--force` skips the question. It removes the resource group: the Foundry account and project, Application Insights, the Function app with its network, storage, and Key Vault. `--purge` also removes the soft-deleted Foundry account, Key Vault, and Log Analytics workspace, so their names can be reused. It took 4 minutes 54 seconds in our fresh setup. The second line removes the token from your local azd environment. Then revoke the token on GitHub: **Settings › Developer settings › Fine-grained tokens** › the token › **Delete**. The solution creates no Microsoft Entra app registration, so nothing outside the resource group needs removing. The Issues the runs created, and their labels, stay in the repository; [the reset](#reset-the-copy-for-another-run) closes the open ones.
+The first three lines remove what Foundry created in Microsoft Entra ID when it published the agent, which `azd down` leaves behind: the agent identity of `requirements-analyst`, then its agent identity blueprint, an app registration owned by whoever published the agent ([agent identities in Foundry](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)). Both are named after the Foundry account, for example `aif-<token>-plan-requirements-analyst-AgentIdentity`. Deleting the blueprint also deletes its principal, and would delete the agent identity too, but only hours or days later ([agent identity deletion](https://learn.microsoft.com/entra/agent-id/concept-agent-identity-deletion)): that's why the agent identity goes first. Run the lines as the person who published the agent, the blueprint's owner, and before `azd down`, which forgets the account's name. Entra keeps what they delete in its recycle bin for 30 days, and the blueprint's principal can't be purged from it: it stays there until the 30 days are over.
+
+`azd down --purge` lists what it deletes and asks you to confirm; `--force` skips the question. It removes the resource group: the Foundry account and project, Application Insights, the Function app with its network, storage, and Key Vault. `--purge` also removes the soft-deleted Foundry account, Key Vault, and Log Analytics workspace, so their names can be reused. It took 4 minutes 54 seconds in our fresh setup. The last line removes the token from your local azd environment. Then revoke the token on GitHub: **Settings › Developer settings › Fine-grained tokens** › the token › **Delete**. The Issues the runs created, and their labels, stay in the repository; [the reset](#reset-the-copy-for-another-run) closes the open ones.
 
 ## What's in this folder
 
