@@ -409,6 +409,27 @@ class ResultsTravelAsFiles(unittest.TestCase):
         self.assertIn("Approval authority is untouched", net.posts[0]["body"])
 
 
+class SetupErrors(unittest.TestCase):
+    """A setup step that failed in the run session shows in the review and in the log as an error with its reason."""
+
+    def check(self, summary: dict, review_line: str, log_part: str) -> None:
+        result, logs = review(FakeNetwork(summary=json.dumps(summary)), dry_run=True)
+        self.assertIn(review_line, result["review"])
+        self.assertTrue(any(f"build and tests: {log_part}" in line for line in logs), logs)
+
+    def test_without_a_database_no_api_test_runs_and_the_review_says_why(self):
+        reason = "PostgreSQL isn't running: the download of PostgreSQL 16.15.0 doesn't match its pinned SHA-256"
+        self.check(dict(SUMMARY, api={"status": "error", "reason": reason}),
+                   f"- API integration tests: ❌ error: {reason}. No API test ran.",
+                   f"API error ({reason}), web 14 of 14 passed")
+
+    def test_a_setup_step_that_failed_shows_with_its_reason(self):
+        reason = "Node 26 didn't install: timed out after 300 s"
+        self.check(dict(SUMMARY, web={"status": "error", "reason": reason}),
+                   f"- Web UI: ❌ error: {reason}. Nothing ran.",
+                   f"API 67 of 67 passed, web error ({reason})")
+
+
 class GitHubAccess(unittest.TestCase):
     def test_reviews_are_comments_only(self):
         for net in (FakeNetwork(), FakeNetwork(judge_writes=False)):

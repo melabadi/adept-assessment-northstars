@@ -183,6 +183,8 @@ def sandbox_section(raw: object) -> list[str]:
         api_line = f"✅ {counts(api)}{took}"
     elif api.get("status") == "failed":
         api_line = f"❌ {counts(api) or 'failed, see the log'}{took}.{failed_names(api)}"
+    elif api.get("status") == "error":
+        api_line = f"❌ error: {plain(api.get('reason'), 200) or 'the sandbox gave no reason'}. No API test ran."
     else:
         api_line = "not run (this change has no API solution)"
     lines += ["", f"- API integration tests: {api_line}"]
@@ -198,7 +200,9 @@ def sandbox_section(raw: object) -> list[str]:
             unit = f"❌ {counts(rerun or tests)}, also on a rerun.{failed_names(rerun or tests)}"
         lines.append(f"- Web UI: typecheck {typecheck} · unit tests {unit}")
     elif web_status == "error":
-        lines.append("- Web UI: ❌ dependencies didn't install, so nothing ran.")
+        reason = plain(web.get("reason"), 200)
+        lines.append(f"- Web UI: ❌ error: {reason}. Nothing ran." if reason
+                     else "- Web UI: ❌ dependencies didn't install, so nothing ran.")
     else:
         lines.append("- Web UI: not run (this change has no web UI)")
     times = [f"toolchain setup {duration(summary.get('setup_seconds'))}" if duration(summary.get("setup_seconds")) else "",

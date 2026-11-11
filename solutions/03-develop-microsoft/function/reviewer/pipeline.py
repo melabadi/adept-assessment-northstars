@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -95,15 +96,19 @@ def describe_build(summary: str) -> str:
     if not isinstance(data, dict) or "api" not in data:
         return "the build didn't finish in time" if isinstance(data, dict) and data.get("state") == "not-finished" else "no results"
 
-    def part(name: str, tests: object, status: object) -> str:
+    def part(name: str, tests: object, status: object, reason: object = None) -> str:
         if isinstance(tests, dict) and isinstance(tests.get("total"), int):
             failed = tests.get("failed") or 0
             return f"{name} {failed} of {tests['total']} failed" if failed else f"{name} {tests.get('passed')} of {tests['total']} passed"
+        if status == "error":  # the session wrote the reason, so the log keeps one printable line of it
+            why = re.sub(r"[^\x20-\x7e]", "?", " ".join(str(reason or "").split()))[:160]
+            return f"{name} error ({why or 'no reason given'})"
         return f"{name} {status or 'not run'}"
 
     api, web = data.get("api") or {}, data.get("web") or {}
     took = f" in {duration(data['seconds'])}" if isinstance(data.get("seconds"), (int, float)) else ""
-    return f"{part('API', api, api.get('status'))}, {part('web', web.get('tests'), web.get('status'))}{took}"
+    return (f"{part('API', api, api.get('status'), api.get('reason'))}, "
+            f"{part('web', web.get('tests'), web.get('status'), web.get('reason'))}{took}")
 
 
 def build_and_test(run, runner: bytes, head_archive: bytes, settings: Settings, tools: Tools, say, warn) -> str:
