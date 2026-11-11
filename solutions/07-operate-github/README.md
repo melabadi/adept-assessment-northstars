@@ -88,7 +88,7 @@ The screenshot shows the sample report as GitHub renders the file; #109's descri
 
 ### 2. The agentic workflow triaged it
 
-The `incident` label started **Operate · GitHub · triage an incident** at 15:01:29 UTC; the runs that the two other labels started were skipped within seconds. (The workflow, then compiled with gh-aw v0.93.5, has since been renamed **Operate · GitHub · agentic incident triage** and recompiled with v1.2.2.) Fifty-five seconds after the filing, the incident had an 👀 reaction and a [status comment](https://github.com/melabadi/adept-assessment-northstars/issues/109#issuecomment-6472529613) that links to the run. The run's six jobs ([evidence](evidence/triage-run-40711748423.md)):
+The `incident` label started **Operate · GitHub · triage an incident** at 15:01:29 UTC; the runs that the two other labels started were skipped within seconds. (The workflow, then compiled with gh-aw v0.93.5, has since been renamed **Operate · GitHub · agentic incident triage** and recompiled with v1.2.2. Its first run on v1.2.2, on 11 November 2026, triaged incident [#338](https://github.com/melabadi/adept-assessment-northstars/issues/338) the same way, in 5 minutes 24 seconds: [evidence](evidence/triage-run-43040562679.md).) Fifty-five seconds after the filing, the incident had an 👀 reaction and a [status comment](https://github.com/melabadi/adept-assessment-northstars/issues/109#issuecomment-6472529613) that links to the run. The run's six jobs ([evidence](evidence/triage-run-40711748423.md)):
 
 | Job | What it did | Time |
 | --- | --- | --- |
@@ -352,7 +352,7 @@ On your own incident, the steps are those of [See it work](#see-it-work):
 
 Setting it up uses no AI credits. Each incident draws on Copilot's AI credits and on GitHub Actions. In the recorded run, the agentic triage used 23.84 AI credits for the agent and 0.58 for detection, Copilot's session on the follow-up reported 20.3, and Copilot CLI's drafts in option B reported 10.64 in a run on 1 November 2026, and 9.72 with Copilot CLI 1.0.109 on 11 November.
 
-The triage caps its own spending. Each run stops at 60 AI credits for the agent (`max-ai-credits`) and 10 for threat detection, and gh-aw warns the agent from 80% of its cap. The triage comments of the nine runs in this repository before these caps report 17 to 24 AI credits for the agent and about 1 for detection, so the agent's cap is 2.5 times the most a run used. gh-aw also skips the agent of any new run once the workflow's runs have used 5000 AI credits in 24 hours, unless you set another limit with `max-daily-ai-credits`.
+The triage caps its own spending. Each run stops at 60 AI credits for the agent (`max-ai-credits`) and 10 for threat detection, and gh-aw warns the agent from 80% of its cap. The triage comments of the nine runs in this repository before these caps report 17 to 24 AI credits for the agent and about 1 for detection, so the agent's cap is 2.5 times the most a run used. The first run under the caps, on 11 November 2026, used 23.22 for the agent and 0.87 for detection ([evidence](evidence/triage-run-43040562679.md#ai-credits)). gh-aw also skips the agent of any new run once the workflow's runs have used 5000 AI credits in 24 hours, unless you set another limit with `max-daily-ai-credits`.
 
 The recorded run used 14.4 minutes of standard GitHub-hosted runners: 5.2 for the triage, 3.9 for Copilot's session, 2.2 for the proof, 2.9 for CI, and 0.1 for this repository's feature bounds check. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 23 minutes for the recorded run, because each job is rounded up to a whole minute. The length of your test suite changes the proof and CI minutes ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
 
@@ -504,7 +504,7 @@ gh-aw labels the Issues it opens, such as **[aw] Detection Runs**, with `agentic
 ```text
 07-operate-github/
 ├── README.md
-├── evidence/                                       the recorded run's triage jobs and tool calls and its proof, exported from GitHub; Copilot CLI 1.0.109's drafts
+├── evidence/                                       the recorded run's triage jobs and tool calls and its proof, exported from GitHub; the first run on gh-aw v1.2.2; Copilot CLI 1.0.109's drafts
 ├── images/                                         screenshots from the runs in this README, and from the Operate combo (combo-*)
 ├── incidents/
 │   └── inc-2041-notification-backlog.md            the sample incident report, in the form's format: becomes the incident Issue
