@@ -1706,8 +1706,7 @@
           "status",
           "departmentAtRecommendation",
           "createdBy",
-          "createdAt",
-          "providerTraceId"
+          "createdAt"
         ],
         "type": "object",
         "properties": {
@@ -1759,12 +1758,6 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
-          },
-          "providerTraceId": {
-            "type": [
-              "null",
-              "string"
-            ]
           }
         }
       },
