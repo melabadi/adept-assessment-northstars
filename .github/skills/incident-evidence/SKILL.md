@@ -7,7 +7,7 @@ description: Triage a RequestHub incident Issue into an evidence-based record. P
 
 Turns an incident report into a record a team can act on without guessing. The output separates what was **observed**, what is **suspected**, and what is **missing**. People reviewing it can then see how strong each conclusion is.
 
-The **Operate · GitHub · triage an incident** workflow uses this skill automatically when an Issue gets the `incident` label. Without that workflow, for example when the repository has no `COPILOT_GITHUB_TOKEN` secret, a person runs the same triage with Copilot CLI and the `operate-github` agent: Copilot drafts the results, as in [Drafting the results with Copilot CLI](#drafting-the-results-with-copilot-cli), and the person files them.
+The **Operate · GitHub · agentic incident triage** workflow, a GitHub Agentic Workflow, uses this skill automatically when an Issue gets the `incident` label. Without that workflow, for example when the repository has no `COPILOT_GITHUB_TOKEN` secret, a person runs the same triage with Copilot CLI and the `operate-github` agent: Copilot drafts the results, as in [Drafting the results with Copilot CLI](#drafting-the-results-with-copilot-cli), and the person files them.
 
 ## Inputs
 
