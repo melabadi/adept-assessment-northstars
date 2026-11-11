@@ -5,7 +5,7 @@ A release is often approved on trust: test results are pasted somewhere after th
 ![The published release: the tag on the tested commit, the two container image digests, and the four test suites, of which the smoke and browser tests ran against those images](images/00-release.png)
 
 - **See it work:** [a real run on this repository](#see-it-work), step by step. Version 1.0.0 went from **Run workflow** to a draft release with its evidence in 3 minutes 25 seconds, and with Copilot's summary in 7 minutes 48 seconds. Two attempts to approve it the wrong way were refused, and the approval published it in 50 seconds.
-- **Add it to your repository:** [copy 18 files, adapt the build and test jobs to your code, and set it up once](#add-it-to-your-repository). The setup's commands took seconds when this README was checked: 6 to copy the files, 2 to compile Copilot's summary, and 3 for the unit tests. The rest is two `gh api` calls for the environment, a settings page for reviewers, a token for Copilot's summary, a pull request, and the changes your build and tests need.
+- **Add it to your repository:** [copy 18 files, adapt the build and test jobs to your code, and set it up once](#add-it-to-your-repository). The setup's commands took seconds when this README was checked: 8 to copy the files, 2 to compile Copilot's summary, and 2 for the unit tests. The rest is two `gh api` calls for the environment, a settings page for reviewers, a token for Copilot's summary, a pull request, and the changes your build and tests need.
 - **Try it first in a copy of this repository:** [a few minutes to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution. A run then takes 6 to 13 minutes of GitHub Actions and Copilot working unattended, and about a minute to approve.
 
 ## Why it matters
@@ -114,6 +114,8 @@ The last job gated on the four reports and created the draft release, *RequestHu
 
 ![The test evidence summary: 60 API, 14 web, 9 smoke, and 6 browser tests, none failed, gate passed, and a link to the draft release](images/02-test-gate.png)
 
+Since this run, the web stage builds on Node 26 ([#330](https://github.com/melabadi/adept-assessment-northstars/pull/330)), and the browser tests no longer install packages from Ubuntu's mirrors, which a candidate couldn't reach twice on 11 November ([#364](https://github.com/melabadi/adept-assessment-northstars/pull/364)). [Run 43049509629](https://github.com/melabadi/adept-assessment-northstars/actions/runs/43049509629), later that day, ran both: Chromium launched, the browser tests passed 6 of 6, and the candidate took 2 minutes 22 seconds ([evidence](evidence/2026-11-11-validation-run.md#the-run)).
+
 **What this shows:** the smoke and browser tests that gated the release ran against the exact images that would ship, the other suites on the same commit, and every report went into the draft with its checksum.
 
 ### 3. Copilot appended a summary for the approver
@@ -128,7 +130,7 @@ The agent job's summary listed one request, `update_release`:
 
 Copilot used 15.28 AI credits and threat detection 0.52, as the run's usage records show ([evidence](evidence/2026-10-28-recorded-run.md#what-copilot-used)). After the update, GitHub listed the draft as `untagged-…`, because an update that leaves out a draft's tag name removes it. The draft kept its title, which is how the approval workflow found it, and publishing set the tag again.
 
-Since this run, the workflow was renamed *Release · GitHub · agentic release summary* and compiled with gh-aw v1.2.2 ([#341](https://github.com/melabadi/adept-assessment-northstars/pull/341)). Its trigger now also checks the candidate's workflow file, and Copilot has no GitHub tools: a step before it keeps only your team's pull request titles ([How it works](#how-it-works)).
+Since this run, the workflow was renamed *Release · GitHub · agentic release summary* and compiled with gh-aw v1.2.2 ([#341](https://github.com/melabadi/adept-assessment-northstars/pull/341)). Its trigger also checks the candidate's workflow file, and Copilot has no GitHub tools: a step before it keeps only your team's pull request titles ([#364](https://github.com/melabadi/adept-assessment-northstars/pull/364), [How it works](#how-it-works)). [Run 43049916687](https://github.com/melabadi/adept-assessment-northstars/actions/runs/43049916687), on 11 November 2026, ran all of it in 6 minutes 32 seconds. Copilot read 15 pull requests, none of them withheld, and its evidence line put only the smoke and browser tests on the images. It used 13.42 AI credits, and threat detection 0.62. GitHub again listed the draft as `untagged-…` after the update, and the update also re-rendered the notes above the summary, which the approval workflow writes again when it publishes ([evidence](evidence/2026-11-11-validation-run.md)).
 
 **What this shows:** Copilot's only write was one append to the draft, checked before it was applied; it couldn't change the evidence, approve, or publish.
 
@@ -261,7 +263,7 @@ Remove-Item -Recurse -Force $src
 git status --short --untracked-files=all
 ```
 
-What you should see: 18 new files, in 6 seconds when this README was checked; the other files in `.github/` and `tests/` stay. Then change what assumes RequestHub:
+What you should see: 18 new files, in 8 seconds when this README was checked; the other files in `.github/` and `tests/` stay. Then change what assumes RequestHub:
 
 | File, under `.github/` unless named | As shipped, for RequestHub | Change it to |
 | --- | --- | --- |
@@ -357,7 +359,7 @@ The steps are those of [See it work](#see-it-work). Replace `demo-v1.0.0` with y
 
 ### What it costs
 
-Setting it up uses no AI credits. Each release uses GitHub Actions for the candidate and the approval, and the Copilot plan of the token's owner for Copilot's summary: 15.79 AI credits in the recorded run, 15.28 for the summary and 0.52 for threat detection. Six runs of the summary, from 27 October to 10 November 2026, used 13.64 to 15.61 AI credits for the summary and 0.52 for threat detection each. The workflow caps them at 50 and 10 AI credits a run: gh-aw warns Copilot as it nears its cap and refuses its requests at the cap, and if threat detection reaches its cap, the run applies nothing. The optional Copilot CLI sessions use the plan of whoever runs them: 8.48 AI credits for the brief and 5.67 for the explanation. The five runs used 11.9 minutes of standard GitHub-hosted runners: 6.1 for the candidate, 4.5 for Copilot's summary, and 1.3 for the three approval runs. Those minutes are free in a public repository. In a private one they count against your plan's included minutes: 22 minutes for the recorded run, because each job is rounded up to a whole minute. Your own build and test suites change the candidate's minutes. Container registry storage and bandwidth are currently free, and the runs' artifacts count against your Actions storage in a private repository until they expire ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [GitHub Packages billing](https://docs.github.com/en/billing/concepts/product-billing/github-packages), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
+Setting it up uses no AI credits. Each release uses GitHub Actions for the candidate and the approval, and the Copilot plan of the token's owner for Copilot's summary: 15.79 AI credits in the recorded run, 15.28 for the summary and 0.52 for threat detection. Six runs of the summary on gh-aw v0.93.5, from 27 October to 10 November 2026, used 13.64 to 15.61 AI credits for the summary and 0.52 for threat detection each, and the run on gh-aw v1.2.2 on 11 November used 13.42 and 0.62 ([evidence](evidence/2026-11-11-validation-run.md#what-copilot-used)). The workflow caps them at 50 and 10 AI credits a run: gh-aw warns Copilot as it nears its cap and refuses its requests at the cap, and if threat detection reaches its cap, the run applies nothing. The optional Copilot CLI sessions use the plan of whoever runs them: 8.48 AI credits for the brief and 5.67 for the explanation. The five runs used 11.9 minutes of standard GitHub-hosted runners: 6.1 for the candidate, 4.5 for Copilot's summary, and 1.3 for the three approval runs. Those minutes are free in a public repository. In a private one they count against your plan's included minutes: 22 minutes for the recorded run, because each job is rounded up to a whole minute. Your own build and test suites change the candidate's minutes. Container registry storage and bandwidth are currently free, and the runs' artifacts count against your Actions storage in a private repository until they expire ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [GitHub Packages billing](https://docs.github.com/en/billing/concepts/product-billing/github-packages), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
 
 ## Try it first in a copy of this repository
 
@@ -397,8 +399,8 @@ The steps have the numbers of [See it work](#see-it-work), which shows what each
 | Step | How long it took in the recorded run |
 | --- | --- |
 | 1. Start the release candidate | seconds |
-| 2. Watch the candidate | 3 min 25 s (between 2 min 33 s and 7 min 4 s across seven runs from `main`) |
-| 3. Watch Copilot's summary | 4 min 52 s, starting 3 s after the candidate (between 3 min 59 s and 6 min 9 s across six runs) |
+| 2. Watch the candidate | 3 min 25 s (between 2 min 22 s and 7 min 4 s across eight runs from `main`) |
+| 3. Watch Copilot's summary | 4 min 52 s, starting 3 s after the candidate (between 3 min 59 s and 6 min 32 s across seven runs) |
 | 4. Review the draft, optionally with a brief from Copilot | 3 min 20 s for the brief |
 | 5. Try to approve from another branch | 22 s |
 | 6. Optional: tamper with the evidence, try to approve, and ask Copilot why | 16 s, then 1 min 11 s for Copilot's explanation |
@@ -526,7 +528,9 @@ Your published releases and their tags stay: they are your release history. To d
 06-release-github/
 ├── README.md
 ├── requirements.txt                       no packages: the scripts use the Python standard library
-├── evidence/2026-10-28-recorded-run.md    the recorded run: timeline, Copilot's summary as it wrote it, the Copilot CLI sessions
+├── evidence/
+│   ├── 2026-10-28-recorded-run.md         the recorded run: timeline, Copilot's summary as it wrote it, the Copilot CLI sessions
+│   └── 2026-11-11-validation-run.md       the first run on gh-aw v1.2.2: timeline, what Copilot read and wrote, its usage
 ├── images/                                screenshots from the recorded run, used in this README
 ├── tests/                                 unit tests for the scripts, with small JUnit fixtures (offline, fake GitHub API)
 └── .github/
@@ -548,6 +552,7 @@ Your published releases and their tags stay: they are your release history. To d
 - **Copilot's summary fails at `Validate COPILOT_GITHUB_TOKEN secret`.** The secret is missing, or it is an OAuth token (`gho_…`) instead of a fine-grained token. Create it as in [one-time step 4](#one-time-setup). The candidate and the approval don't depend on it.
 - **Copilot's summary fails at `Collect the release candidate's evidence` with `is not a successful release candidate`.** The run id given to **Run workflow** isn't a successful run of `release-github-candidate.yml` that a person started on `main` in this repository; the error says which condition failed. Copilot didn't start. Give the id of the candidate run whose draft you want summarized.
 - **`gh release view`, `download`, or `upload` with `demo-v1.0.0` says `release not found`, but the draft exists.** Copilot's summary updated the draft, and GitHub removed its pending tag name. `gh release list` shows it as `untagged-…`: use that name, or look it up by its title as in [step 4 of the copy](#the-steps). The approval workflow finds it by its title and sets the tag when it publishes.
+- **After Copilot's summary, the draft's notes look different: `@` mentions shown as code, the test counts no longer right-aligned.** gh-aw v1.2.2's append re-renders the whole body, not only the summary it adds; nothing is removed ([evidence](evidence/2026-11-11-validation-run.md#what-github-did-with-the-update)). The approval workflow writes the notes above the summary again from the evidence when it publishes.
 - **`verify` shows `images: SKIP` on your machine.** Your token can't read packages, so the local check proves nothing either way. Run `gh auth refresh -s read:packages`, then `$env:GHCR_TOKEN = gh auth token`. The approval workflow always checks the images with its own token.
 - **`gh workflow run` answers that the workflow was not found.** Workflows started from **Run workflow** run from the default branch: merge them first ([one-time step 5](#one-time-setup)).
 - **The lock-file check fails.** Either your gh-aw isn't the pinned version, or a custom agent in `.github/agents/` was added, removed, or had its frontmatter changed since the last compile: the compiled workflow records every agent's frontmatter, its name, description, and tools, so any such change changes the lock file. `gh aw version` must print `v1.2.2`, the version in `release-github-checks.yml`; when this README was checked, v0.93.5 compiled a different lock file from the same source. Run `gh extension remove gh-aw`, then `gh extension install github/gh-aw --pin v1.2.2`, and compile again.
