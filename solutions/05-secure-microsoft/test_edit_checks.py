@@ -20,7 +20,22 @@ sys.path.insert(0, str(HERE / "function"))
 from posture import checks  # noqa: E402
 
 EDITABLE = "solutions/05-secure-microsoft/infra/resources.bicep"
-CONTENT = (HERE / "infra" / "resources.bicep").read_text(encoding="utf-8")
+LIVE = (HERE / "infra" / "resources.bicep").read_text(encoding="utf-8")
+# The lines between the posture:editable markers as the solution ships them, before any fix. The fixture is the live file
+# with these lines, so the tests still run after someone merges a fix: the predeploy hook runs them before azd deploy.
+SHIPPED_REGION = ("    // Without a private endpoint, RequestHub reaches Blob storage through the account's public endpoint. Where an Azure\n"
+                  "    // Policy closes public endpoints, as in many organizations, RequestHub cannot reach the account at all.\n"
+                  "    storagePrivateEndpoint: false\n")
+
+
+def with_region(text: str, region: str) -> str:
+    """The file with the lines between its posture:editable marker lines replaced by region."""
+    start = text.index("\n", text.index("// posture:editable-begin")) + 1
+    end = text.rindex("\n", 0, text.index("// posture:editable-end")) + 1
+    return text[:start] + region + text[end:]
+
+
+CONTENT = with_region(LIVE, SHIPPED_REGION)
 SETTING = "storagePrivateEndpoint: false"
 INSIDE = CONTENT[CONTENT.index("    // Without a private endpoint"):CONTENT.index(SETTING) + len(SETTING)]
 BEGIN_LINE = CONTENT[CONTENT.index("    // posture:editable-begin"):CONTENT.index("\n", CONTENT.index("// posture:editable-begin")) + 1]
@@ -30,6 +45,19 @@ GOOD = "    // Reach Blob storage through a private endpoint in the app's virtua
 def problems(find: str, replace: str) -> list[str]:
     return checks.edit_problems(CONTENT, {"decision": "change", "path": EDITABLE, "find": find, "replace": replace},
                                 EDITABLE)
+
+
+class Fixture(unittest.TestCase):
+    def test_the_tests_still_run_after_a_fix_is_merged(self):
+        # A merged fix removes the lines the fixture used to be cut from, and every later azd deploy then failed in its
+        # predeploy tests.
+        merged = with_region(LIVE, GOOD + "\n")
+        self.assertNotIn(SETTING, merged)
+        self.assertEqual(with_region(merged, SHIPPED_REGION), CONTENT)
+
+    def test_before_a_fix_the_fixture_is_the_live_file(self):
+        if SETTING in LIVE:
+            self.assertEqual(CONTENT, LIVE)
 
 
 class Accepted(unittest.TestCase):

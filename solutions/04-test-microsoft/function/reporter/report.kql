@@ -9,12 +9,15 @@ let ended = datetime(__END__);
 // Under load, Application Insights keeps only a sample of the requests. ItemCount says how many requests a kept row
 // stands for, so the sums estimate the real counts wherever the sampler records it. In practice the counts can still
 // run below the client's; the report says so.
+// On Container Apps, AppVersion names the revision that served the request (<app>--<suffix>). Only the suffix is kept:
+// the app's name carries the deployment's unique token.
 AppRequests
 | where TimeGenerated between (started .. ended)
 | where Name has '/api/'
+| extend revision = extract(@'--([a-z0-9-]+)$', 1, AppVersion)
 | summarize requests = sum(ItemCount), server_errors = sumif(ItemCount, toint(ResultCode) >= 500),
     denied = sumif(ItemCount, ResultCode in ('401', '403')), p95 = percentilew(DurationMs, ItemCount, 95),
     delayed = sumif(ItemCount, isnotempty(tostring(Properties['requesthub.fault.queue_delay_ms']))),
-    newest = max(TimeGenerated)
+    newest = max(TimeGenerated), revisions = make_set_if(revision, isnotempty(revision), 10)
     by Name
 | order by Name asc

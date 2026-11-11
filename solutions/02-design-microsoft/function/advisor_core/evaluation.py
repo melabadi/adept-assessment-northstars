@@ -6,7 +6,8 @@ evaluators. Each evaluator embeds checks.py, the same code as the Function's gat
 
   advisor_citations   every cited standard exists, has the cited version, and is quoted word for word
   advisor_access      nothing outside the profile's scope was retrieved or cited (negative access test)
-  advisor_grounding   an answer cites at least one standard and every standard the case expects
+  advisor_grounding   cites every standard the case expects, quotes the sentence that supports the expected conclusion,
+                      and states that conclusion, never the one the case rules out (checks.conclusion_misses)
   advisor_abstention  answers or abstains as labelled, and an abstention carries no recommendation
   advisor_conflicts   reports the contradiction the case expects
 
@@ -31,7 +32,9 @@ EVALUATORS = {
                   "excerpt is quoted word for word without leaving out a negation."),
     "access": ("Scope respected", "Nothing outside the operating profile's scope was retrieved or cited, including the "
                "standards the case forbids."),
-    "grounding": ("Grounded", "An answer cites at least one standard, and every standard the case expects."),
+    "grounding": ("Grounded", "Cites every standard the case expects, quotes the sentence that supports the expected "
+                  "conclusion, and states that conclusion, never the one the case rules out. A correct quote alone "
+                  "passes Citations, not this check."),
     "abstention": ("Abstains when it should", "Answers or abstains as the case expects; an abstention has no "
                    "recommendation and lists what is unknown."),
     "conflicts": ("Conflicts flagged", "Reports the contradiction between standards that the case expects (passes "
@@ -41,9 +44,16 @@ GRADE = '''
 
 
 def grade(sample, item) -> float:
-    """Called by Foundry once per evaluation item. 1.0 passes, 0.0 fails."""
+    """Called by Foundry once per evaluation item. 1.0 passes, 0.0 fails.
+
+    The answer to grade arrives in item["sample"] (grader checks, which carry fixed answers), or, when Foundry asked
+    an agent, in the sample argument, or as flattened "sample.output_text" and "sample.output_items" fields."""
     try:
-        return 1.0 if verdict(evaluate_item(item), "{kind}") else 0.0
+        answer = item.get("sample") if isinstance(item.get("sample"), dict) else {{}}
+        if not answer.get("output_text"):
+            answer = sample if isinstance(sample, dict) and sample.get("output_text") else {{
+                "output_text": item.get("sample.output_text"), "output_items": item.get("sample.output_items")}}
+        return 1.0 if verdict(evaluate_item(dict(item, sample=answer)), "{kind}") else 0.0
     except Exception:  # a missing or malformed answer fails every check
         return 0.0
 '''
@@ -57,11 +67,16 @@ ITEM_SCHEMA = {
         "expectStandards": {"type": "array", "items": {"type": "string"}},
         "forbidStandards": {"type": "array", "items": {"type": "string"}},
         "expectConflict": {"type": "array", "items": {"type": "string"}},
+        "expectConclusion": {"type": "string", "description": "JSON: the claims a right answer states and never states, "
+                                                              "and the evidence it quotes (checks.conclusion_misses)"},
         "standards": {"type": "string", "description": "JSON: id -> {version, text} of every indexed standard"},
         "permitted": {"type": "string", "description": "JSON: ids the profile's scope filter retrieves"},
     },
     "required": ["id", "profile", "question", "expectAnswerable", "standards", "permitted"],
 }
+GRADER_EVAL_NAME = "Architecture advisor · grader checks"
+GRADER_ITEM_SCHEMA = {**ITEM_SCHEMA, "properties": {**ITEM_SCHEMA["properties"], "sample": {
+    "type": "object", "description": "A fixed answer, where Foundry puts an agent's: output_text and output_items"}}}
 
 
 def evaluator_name(kind: str) -> str:
@@ -104,33 +119,35 @@ def register_evaluators(project) -> dict[str, str]:
     return versions
 
 
-def ensure_eval(openai, model: str, versions: dict[str, str]) -> str:
-    """The evaluation (cases schema + the five evaluators at the given versions); reused while nothing changed."""
+def ensure_eval(openai, model: str, versions: dict[str, str], name: str = EVAL_NAME, fixed_answers: bool = False) -> str:
+    """The evaluation (cases schema + the five evaluators at the given versions); reused while nothing changed.
+    fixed_answers: items carry their answer in item["sample"] (grader checks) instead of asking an agent."""
     import openai as openai_errors
 
     signature = ",".join(f"{kind}:{versions[kind]}" for kind in EVALUATORS)
     for existing in openai.evals.list(limit=100):
-        if existing.name == EVAL_NAME and (existing.metadata or {}).get("evaluators") == signature:
+        if existing.name == name and (existing.metadata or {}).get("evaluators") == signature:
             return existing.id
     criteria = [{"type": "azure_ai_evaluator", "name": evaluator_name(kind), "evaluator_name": evaluator_name(kind),
                  "evaluator_version": versions[kind],
                  "initialization_parameters": {"deployment_name": model, "pass_threshold": 0.5}} for kind in EVALUATORS]
+    schema = GRADER_ITEM_SCHEMA if fixed_answers else ITEM_SCHEMA
     for _ in range(12):  # a new evaluator version takes a few seconds to appear in the catalog
         try:
             created = openai.evals.create(
-                name=EVAL_NAME, metadata={"evaluators": signature},
-                data_source_config={"type": "custom", "item_schema": ITEM_SCHEMA, "include_sample_schema": True},
+                name=name, metadata={"evaluators": signature},
+                data_source_config={"type": "custom", "item_schema": schema, "include_sample_schema": not fixed_answers},
                 testing_criteria=criteria)
             break
         except openai_errors.NotFoundError:
             time.sleep(15)
     else:
         raise RuntimeError("the evaluators did not appear in the Foundry evaluator catalog")
-    # Keep one evaluation under EVAL_NAME: earlier ones (older evaluator code) keep their runs under another name.
+    # Keep one evaluation under its name: earlier ones (older evaluator code) keep their runs under another name.
     for existing in openai.evals.list(limit=100):
-        if existing.name == EVAL_NAME and existing.id != created.id:
+        if existing.name == name and existing.id != created.id:
             try:
-                openai.evals.update(existing.id, name=f"{EVAL_NAME} (earlier evaluators)")
+                openai.evals.update(existing.id, name=f"{name} (earlier evaluators)")
             except Exception:  # renaming is cosmetic; the new evaluation is ready either way
                 pass
     return created.id
@@ -142,6 +159,7 @@ def items(cases: list[dict], every: dict[str, dict], permitted: list[str]) -> li
     return [{"item": {"id": c["id"], "profile": c["profile"], "question": c["question"],
                       "expectAnswerable": c["expectAnswerable"], "expectStandards": c["expectStandards"],
                       "forbidStandards": c["forbidStandards"], "expectConflict": c["expectConflict"],
+                      "expectConclusion": json.dumps(c.get("expectConclusion") or {}, sort_keys=True),
                       "standards": snapshot, "permitted": allowed}} for c in cases]
 
 
@@ -170,6 +188,31 @@ def start(project, model: str, cases: list[dict], search_endpoint: str, credenti
         runs.append({"profile": profile, "evalId": eval_id, "runId": run.id, "agent": f"{agent['name']} v{agent['version']}",
                      "cases": [c["id"] for c in mine]})
     return runs
+
+
+def fixed_answer_items(rows: list[dict], cases: dict[str, dict], every: dict[str, dict],
+                       permitted: dict[str, list[str]]) -> list[dict]:
+    """Evaluation items for grader_checks.jsonl: each answer's labelled case, with the fixed answer in item["sample"],
+    where Foundry puts an agent's answer, and the standards it retrieved as a knowledge tool result. The item's id is
+    the answer's id (E05/right)."""
+    built = []
+    for row in rows:
+        case = cases[row["case"]]
+        item = items([case], every, permitted[case["profile"]])[0]["item"]
+        documents = [{"content": json.dumps({"id": standard})} for standard in row["retrieved"]]
+        item.update(id=row["id"], sample={"output_text": json.dumps(row["answer"]), "output_items": [
+            {"type": "tool_result", "tool_result": json.dumps({"documents": documents})}]})
+        built.append({"item": item})
+    return built
+
+
+def start_grader_checks(project, model: str, built: list[dict], label: str) -> dict:
+    """Grade fixed answers (fixed_answer_items) with the same five evaluators, in their own evaluation."""
+    openai = project.get_openai_client()
+    eval_id = ensure_eval(openai, model, register_evaluators(project), GRADER_EVAL_NAME, fixed_answers=True)
+    run = openai.evals.runs.create(eval_id=eval_id, name=f"{len(built)} fixed answers · {label}",
+                                   data_source={"type": "jsonl", "source": {"type": "file_content", "content": built}})
+    return {"evalId": eval_id, "runId": run.id}
 
 
 def status(openai, eval_id: str, run_id: str) -> dict:

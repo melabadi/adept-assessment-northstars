@@ -10,8 +10,9 @@
 # the cloud agent edits its pull request description many times, and each edit would queue a run that waits for
 # approval. After retargeting a pull request onto a lab/test-** branch, push a commit to start the proof.
 # The full test suite still runs in CI. Copilot code review and comments from people are not part of this check: they
-# inform the reviewer, and a person decides. The proof script comes from the base branch, so a pull request cannot
-# change how it is judged, and no credentials are left in the checkout while the pull request's tests run.
+# inform the reviewer, and a person decides. The proof script comes from the base branch, and no credentials are left
+# in the checkout while the pull request's tests run. GitHub still runs a pull request's own copy of this file, so a
+# pull request that changes it can make its own proof say anything: the review-evidence report flags such a pull request.
 name: Test · GitHub · prove the fix test-first
 
 on:

@@ -6,10 +6,21 @@ The report has three sections:
   1. Deterministic acceptance decides whether the change can merge: the pull request's checks, and the regression tests
      run at two known commits (they must fail at the tests-only commit and pass at the head). The proof comes from the
      latest "Test · GitHub · prove the fix test-first" workflow run for the head (its regression-proof artifact), or
-     from a local prove_fix.py run with --run.
+     from a local prove_fix.py run with --run. Its checks ran with the pull request's own version of its workflows, so
+     they can't vouch for a pull request that changes where its checks and proof are defined: when it changes anything
+     under CHECK_DEFINITIONS (.github/workflows/, .github/actions/, .github/skills/, tools/), the section starts with a
+     warning that lists those files, before the checks. It warns as well when the changed files can't all be read.
   2. Review comments inform the reviewer: Copilot code review and comments from people. They do not decide, and an
      empty review is not evidence that the change is correct.
-  3. Reviewer decision: the GitHub reviews that approved the change or requested changes.
+  3. Reviewer decision: the GitHub reviews that approved the change or requested changes, by the repository's owner,
+     members, and collaborators (author_association OWNER, MEMBER, or COLLABORATOR). Reviews by anyone else are listed
+     as not counted, without their text.
+
+With --comment the report is posted with your token, so it never speaks for anyone else: everything it quotes from
+GitHub (the title, check names, review notes, comments, replies, logins, and what the proof quotes from the pull
+request) is made inert. It can't @-mention anyone, which would start Copilot in your name, or refer to an Issue or a
+pull request, and it can't add a link, an image, or HTML. Copilot is recognized by its exact bot accounts, not by a
+login that merely starts with "Copilot".
 
 Usage
   python .github/skills/review-evidence/review_evidence.py --pr 42             print the report
@@ -17,6 +28,9 @@ Usage
                                                                               the report this account posted before
   python .github/skills/review-evidence/review_evidence.py --pr 42 --run       prove it locally instead of reading the
                                                                               workflow's proof (.NET SDK, PostgreSQL)
+
+Run it from a checkout of the default branch, not of the pull request: a pull request's own copy of this skill could
+leave the warning out.
 
 Needs the GitHub CLI, signed in with read access to the repository (and write access for --comment).
 
@@ -37,7 +51,17 @@ import prove_fix  # noqa: E402  (the sibling script in this skill)
 REPO = prove_fix.REPO
 MARKER = "<!-- review-evidence -->"
 ARTIFACT = "regression-proof"
-COPILOT = ("copilot-pull-request-reviewer", "Copilot")
+TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
+COPILOT_REVIEWER = "copilot-pull-request-reviewer[bot]"  # Copilot code review submits its reviews as this bot
+COPILOT = "Copilot"  # Copilot code review's inline comments, and the cloud agent's replies
+# The paths that hold what decides how a pull request is checked. GitHub runs a pull request's own version of its
+# workflows, and they decide what runs and from which commit. Workflows here run scripts from .github/skills/
+# (checkers restored from the base branch, where a change judges every later pull request once merged) and from tools/
+# (the mirror check, from the pull request's checkout, which also keeps the solution folders' copies of .github/ equal
+# to the ones here). In your own repository, list the paths that hold what your workflows run.
+CHECK_DEFINITIONS = (".github/workflows/", ".github/actions/", ".github/skills/", "tools/")
+LISTED = 20  # check-definition files the warning names; it counts the rest
+inert, cell, code = prove_fix.inert, prove_fix.cell, prove_fix.code
 
 
 def gh(*args: str, check: bool = True, stdin: str | None = None) -> str:
@@ -54,9 +78,10 @@ def gh(*args: str, check: bool = True, stdin: str | None = None) -> str:
 
 
 def gh_list(endpoint: str) -> list[dict]:
-    """Every item of a paginated REST list (one compact JSON object per line, so it works on older GitHub CLIs too)."""
+    """Every item of a paginated REST list (one compact JSON object per line, so it works on older GitHub CLIs too).
+    Lines end only at \\n: jq writes some other characters that str.splitlines() treats as line breaks (U+0085) as is."""
     out = gh("api", "--paginate", f"{endpoint}?per_page=100", "--jq", ".[]")
-    return [json.loads(line) for line in out.splitlines() if line.strip()]
+    return [json.loads(line) for line in out.split("\n") if line.strip()]
 
 
 def first_line(text: str | None, width: int = 160) -> str:
@@ -84,8 +109,40 @@ def checks(number: int) -> list[str]:
         latest[(check.get("workflowName") or "", check.get("name") or check.get("context") or "?")] = check
     if not latest:
         return ["No checks yet. Workflows on Copilot's pull requests wait until a person selects **Approve and run workflows**.", ""]
-    rows = [f"| {workflow or '–'} · {name} | {check_result(check)} |" for (workflow, name), check in latest.items()]
+    rows = [f"| {cell(workflow) or '–'} · {cell(name)} | {check_result(check)} |" for (workflow, name), check in latest.items()]
     return ["| Check | Result |", "|---|---|", *rows, ""]
+
+
+def own_checks(repo: str, number: int, changed_files: object) -> list[str]:
+    """The warning that opens section 1 when the pull request changes files in CHECK_DEFINITIONS, listed as inert code
+    spans; or when its changed files can't all be read, because silence would then look like nothing to flag. GitHub
+    lists at most 3,000 changed files, and `changed_files` is how many it says the pull request changes."""
+    unsure = ("read its changes under " + ", ".join(f"`{path}`" for path in CHECK_DEFINITIONS)
+              + " before you trust its checks and proof.")
+    try:
+        files = [f for f in gh_list(f"repos/{repo}/pulls/{number}/files") if isinstance(f, dict)]
+    except (prove_fix.ProofError, ValueError) as exc:
+        print(f"warning: could not list the pull request's changed files: {exc}", file=sys.stderr)
+        return ["> [!WARNING]", "> This report couldn't read the pull request's changed files, so it can't tell whether "
+                f"the pull request changes where its checks are defined: {unsure}", ""]
+    paths = sorted({path for f in files for path in (f.get("filename"), f.get("previous_filename"))
+                    if isinstance(path, str) and path.lower().startswith(CHECK_DEFINITIONS)})
+    paragraphs = []
+    if paths:
+        more = [f"> - and {len(paths) - LISTED} more: see the pull request's changed files"] if len(paths) > LISTED else []
+        paragraphs.append(["> Its checks ran with this pull request's own version of its workflows, and it changes files "
+                           "where its checks and proof are defined, so they can't vouch for it: read these files first.",
+                           ">", *(f"> - {code(path)}" for path in paths[:LISTED]), *more])
+    total = prove_fix.count(changed_files)
+    if total > len(files):
+        paragraphs.append([f"> GitHub listed only {len(files)} of this pull request's {total} changed files, so this "
+                           f"report can't tell whether the others change where its checks are defined: {unsure}"])
+    if not paragraphs:
+        return []
+    lines = ["> [!WARNING]"]
+    for paragraph in paragraphs:
+        lines += [*([">"] if len(lines) > 1 else []), *paragraph]
+    return [*lines, ""]
 
 
 def workflow_proof(head: str, workflow: str) -> tuple[dict | None, str]:
@@ -107,8 +164,23 @@ def workflow_proof(head: str, workflow: str) -> tuple[dict | None, str]:
     return proof, f"Source: [workflow run]({latest['url']}). Both test outputs are kept in its `{ARTIFACT}` artifact."
 
 
-def is_copilot(login: str) -> bool:
-    return login.startswith(COPILOT)
+def is_bot(user: dict | None, login: str) -> bool:
+    """Whether `user` is GitHub's bot account `login`. Anyone can register a login that starts with "Copilot"; nobody can
+    register a [bot] login or GitHub's own Copilot account, and a person's account is never of type Bot."""
+    return isinstance(user, dict) and user.get("login") == login and user.get("type") == "Bot"
+
+
+def is_copilot(user: dict | None) -> bool:
+    return is_bot(user, COPILOT_REVIEWER) or is_bot(user, COPILOT)
+
+
+def login_of(item: dict) -> str:
+    return str((item.get("user") or {}).get("login") or "ghost")
+
+
+def who(item: dict) -> str:
+    """The author of a review or comment, written so it doesn't notify them."""
+    return inert("@" + login_of(item), 80)
 
 
 def headline(body: str | None) -> str:
@@ -118,39 +190,47 @@ def headline(body: str | None) -> str:
     return ": ".join(part for part in (title, summary) if part)
 
 
+def vote(review: dict, bold: bool = False) -> str:
+    """A review that approved or requested changes, for example 'approved by @login on 2026-10-27', with the @ made inert."""
+    state = str(review.get("state") or "").replace("_", " ").lower()
+    return f"{f'**{state}**' if bold else state} by {who(review)} on {str(review.get('submitted_at') or '')[:10]}"
+
+
 def reviews(repo: str, number: int) -> list[str]:
     submitted = gh_list(f"repos/{repo}/pulls/{number}/reviews")
     inline = gh_list(f"repos/{repo}/pulls/{number}/comments")
-    # Copilot code review submits reviews as copilot-pull-request-reviewer; the cloud agent replies in threads as Copilot.
-    copilot_reviews = [r for r in submitted if r["user"]["login"].startswith(COPILOT[0])]
+    copilot_reviews = [r for r in submitted if is_bot(r.get("user"), COPILOT_REVIEWER)]
     review_ids = {r["id"] for r in copilot_reviews}
     copilot_inline = [c for c in inline if c.get("pull_request_review_id") in review_ids and not c.get("in_reply_to_id")]
-    replies = [c for c in inline if c.get("in_reply_to_id") and c["user"]["login"] == COPILOT[1]]
-    people_inline = [c for c in inline if not is_copilot(c["user"]["login"])]
+    replies = [c for c in inline if c.get("in_reply_to_id") and is_bot(c.get("user"), COPILOT)]
+    people_inline = [c for c in inline if not is_copilot(c.get("user"))]
 
     lines = ["### 2. Review comments (inform the reviewer; they do not decide)", ""]
     if copilot_reviews:
-        verdict = headline(copilot_reviews[-1].get("body"))
-        lines.append(f"- **Copilot code review:** {verdict + ' ' if verdict else ''}({len(copilot_inline)} inline comment(s))")
-        lines += [f"  - `{c['path']}`: {first_line(c['body'])}" for c in copilot_inline[:8]]
+        summary = inert(headline(copilot_reviews[-1].get("body")))
+        lines.append(f"- **Copilot code review:** {summary + ' ' if summary else ''}({len(copilot_inline)} inline comment(s))")
+        lines += [f"  - {code(c.get('path'))}: {inert(first_line(c.get('body')))}" for c in copilot_inline[:8]]
     else:
         lines.append("- **Copilot code review:** not requested or not finished yet.")
     if replies:
-        lines.append(f"- **Copilot (author) replied** in {len(replies)} thread(s): {first_line(replies[-1]['body'])}")
+        lines.append(f"- **Copilot (author) replied** in {len(replies)} thread(s): {inert(first_line(replies[-1].get('body')))}")
     if people_inline:
-        people = ", ".join(sorted({f"@{c['user']['login']}" for c in people_inline}))
+        people = ", ".join(sorted({who(c) for c in people_inline}))
         lines.append(f"- **People:** {len(people_inline)} inline comment(s) from {people}.")
     lines += ["- No comments does not mean correct: the checks above and a person decide.", ""]
 
-    decisions = [r for r in submitted if not is_copilot(r["user"]["login"]) and r["state"] in ("APPROVED", "CHANGES_REQUESTED")]
+    votes = [r for r in submitted if r.get("state") in ("APPROVED", "CHANGES_REQUESTED") and not is_copilot(r.get("user"))]
+    decisions = [r for r in votes if r.get("author_association") in TRUSTED]
+    not_counted = [r for r in votes if r.get("author_association") not in TRUSTED]
     lines += ["### 3. Reviewer decision", ""]
-    if decisions:
-        for r in decisions:
-            note = first_line(r.get("body"))
-            lines.append(f"- **{r['state'].replace('_', ' ').lower()}** by @{r['user']['login']} on {r['submitted_at'][:10]}"
-                         + (f": {note}" if note else ""))
-    else:
+    for r in decisions:
+        note = inert(first_line(r.get("body")))
+        lines.append(f"- {vote(r, bold=True)}" + (f": {note}" if note else ""))
+    if not decisions:
         lines.append("- Pending. A person approves or requests changes on the pull request, then runs this again to record it.")
+    if not_counted:
+        lines.append("- Not counted, because only the repository's owner, members, and collaborators decide: "
+                     + ", ".join(vote(r) for r in not_counted) + ".")
     return lines
 
 
@@ -181,9 +261,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         repo = json.loads(gh("repo", "view", "--json", "nameWithOwner"))["nameWithOwner"]
-        pr = json.loads(gh("pr", "view", str(args.pr), "--json", "number,title,headRefOid"))
-        lines = [MARKER, f"## Review evidence for #{pr['number']}: {pr['title']}", "",
-                 "### 1. Deterministic acceptance (decides whether this can merge)", "", *checks(args.pr)]
+        pr = json.loads(gh("pr", "view", str(args.pr), "--json", "number,title,headRefOid,changedFiles"))
+        lines = [MARKER, f"## Review evidence for #{pr['number']}: {inert(pr['title'], 200)}", "",
+                 "### 1. Deterministic acceptance (decides whether this can merge)", "",
+                 *own_checks(repo, args.pr, pr.get("changedFiles")), *checks(args.pr)]
         if args.run:
             base, head = prove_fix.fetch_pr(args.pr)
             out = Path("out/regression-proof") / f"pr-{args.pr}"

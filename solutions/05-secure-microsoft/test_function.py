@@ -16,12 +16,15 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "function"))
+sys.path.insert(0, str(HERE))
 
-from posture import auth, checks, flows, messages  # noqa: E402
+from posture import auth, checks, clients, flows, messages  # noqa: E402
 from posture.config import Settings  # noqa: E402
+from test_edit_checks import CONTENT, GOOD, INSIDE, SETTING  # noqa: E402  the editable file as shipped, before any fix
 
 REPOSITORY = "octo/requesthub"
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
@@ -30,10 +33,6 @@ RG = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai-s
 STORAGE = RG + "/providers/Microsoft.Storage/storageAccounts/stexample"
 EDITABLE = "solutions/05-secure-microsoft/infra/resources.bicep"
 MODULE = "app/infra/requesthub.bicep"
-CONTENT = (HERE / "infra" / "resources.bicep").read_text(encoding="utf-8")
-SETTING = "storagePrivateEndpoint: false"
-INSIDE = CONTENT[CONTENT.index("    // Without a private endpoint"):CONTENT.index(SETTING) + len(SETTING)]
-GOOD = "    // Reach Blob storage through a private endpoint in the app's virtual network.\n    storagePrivateEndpoint: true"
 SETTINGS = Settings(
     repository=REPOSITORY, resource_group_id=RG, storage_account_id=STORAGE, assessment_key="cdc78c07",
     policy_definition_name="6edd7eda", policy_assignment_name="requesthub-storage-private-link",
@@ -168,15 +167,12 @@ class FakeAzure:
     def start_policy_evaluation(self, resource_group_id):
         self.calls.append("start_policy_evaluation")
 
-    def job_container(self, job_id):
-        self.calls.append("job_container")
+    def start_job(self, job_id):
+        # Only the job's id: the Function starts the job as it is defined, never with a template override.
+        self.calls.append("start_job")
         if self.job_fails:
             raise flows.HttpError("Azure Resource Manager", 403, "AuthorizationFailed")
-        return {"name": "whatif", "image": "mcr.microsoft.com/azure-cli", "command": ["python3"], "env": []}
-
-    def start_job(self, job_id, container, args):
-        self.calls.append("start_job")
-        self.jobs.append(args)
+        self.jobs.append(job_id)
 
     def ask_agent(self, endpoint, agent_name, document):
         self.calls.append("ask_agent")
@@ -282,8 +278,9 @@ class PreviewFlow(unittest.TestCase):
         result, github, azure = self.preview(pull_request())
         self.assertTrue(result["started"])
         self.assertEqual(github.writes(), [("POST", "statuses/" + "a" * 40)])
+        # The pending status is the job's work list (whatif.py --pending): set first, then the job starts as defined.
         self.assertEqual(github.statuses["a" * 40][0]["state"], "pending")
-        self.assertEqual(azure.jobs, [["--pull-request", "5"]])
+        self.assertEqual(azure.jobs, [SETTINGS.whatif_job_id])
 
     def test_no_preview_without_an_infra_change_or_when_closed(self):
         for pull, files in ((pull_request(), [{"filename": "README.md"}]), (pull_request(state="closed"), None)):
@@ -307,6 +304,26 @@ class PreviewFlow(unittest.TestCase):
         with self.assertRaises(flows.HttpError):
             flows.preview(5, SETTINGS, FakeAzure(job_fails=True), github)
         self.assertEqual([s["state"] for s in github.statuses["a" * 40]], ["error", "pending"])
+
+
+class JobStart(unittest.TestCase):
+    """The Function starts the what-if job as it is defined. Azure refuses a template override at start without write
+    access on the job (JobStartOverrideAuthorizationFailed), and the Function's identity may only start it."""
+
+    def test_the_start_request_carries_no_template(self):
+        sent = []
+
+        class Identity:
+            def token(self, scope):
+                return "token"
+
+        def send(service, method, url, *, headers, body=None, timeout=30):
+            sent.append((method, url.split("?", 1)[0], body))
+            return 202, None
+
+        with mock.patch.object(clients, "send", send):
+            clients.Azure(Identity()).start_job(SETTINGS.whatif_job_id)
+        self.assertEqual(sent, [("POST", clients.ARM + SETTINGS.whatif_job_id + "/start", None)])
 
 
 class IntakeExistingFix(unittest.TestCase):
@@ -376,7 +393,8 @@ class IntakeFlow(unittest.TestCase):
         pull = github.pulls[result["pullRequest"]]
         self.assertTrue(pull["draft"])
         self.assertIn("Remediates #101.", pull["body"])
-        self.assertEqual(azure.jobs, [["--pull-request", str(result["pullRequest"])]])
+        self.assertEqual(azure.jobs, [SETTINGS.whatif_job_id])
+        self.assertEqual(github.statuses["b" * 40][0]["state"], "pending")  # the new pull request's head waits for it
         self.assertIn(f"drafted a fix: #{result['pullRequest']}. The Azure what-if preview runs on it now",
                       github.comments[101][-1]["body"])
 
@@ -532,6 +550,28 @@ class VerifyFlow(unittest.TestCase):
         self.assertIn("next run tries again", result["result"])
         self.assertEqual((result["evaluationStarted"], result["policyChecks"]), (True, 4))
         self.assertEqual(github.writes(), [])
+
+    def test_it_waits_for_the_results_it_reports(self):
+        class LaggingEvidence(FakeAzure):
+            """Seen live: queried by assignment name, Azure Policy reported the fix compliant, while the query by policy
+            definition, the evidence on the Issue, still returned the earlier evaluation."""
+
+            def __init__(self, lag: int, **options):
+                super().__init__(**options)
+                self.lag = lag
+
+            def policy_states(self, resource_group_id, odata_filter):
+                self.calls.append("policy_states")
+                if "policyAssignmentName eq" in odata_filter:
+                    return [policy(state="Compliant")]
+                self.lag -= 1
+                return [dict(s, complianceState="Compliant" if self.lag < 0 else "NonCompliant") for s in self.states]
+
+        github = FakeGitHub(issues=[self.ISSUE])
+        result = self.verify(github, LaggingEvidence(lag=2, approved=1))
+        self.assertEqual(result["result"], "verified")
+        self.assertEqual((result["evaluationStarted"], result["policyChecks"]), (True, 3))
+        self.assertIn("`requesthub-storage-private-link` (this resource group) | Compliant ✅", github.comments[7][-1]["body"])
 
     def test_verified_once_unless_reopened_and_only_trusted_markers_count(self):
         closed = dict(self.ISSUE, state="closed")

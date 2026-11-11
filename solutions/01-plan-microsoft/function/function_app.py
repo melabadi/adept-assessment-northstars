@@ -1,7 +1,9 @@
 """The Plan · Microsoft run as an Azure Function app (Flex Consumption, Python 3.12): three functions, no state in memory.
 
   runs           HTTP, with the Function app's key. runs.py, in the solution folder, calls it for the presenter.
-                   POST   /api/runs         start a run; body {"compareWithPullRequest": 129} is optional
+                   POST   /api/runs         start a run; body {"compareWithPullRequest": 129} is optional, and
+                                            {"evaluatePullRequest": 129} evaluates that pull request's brief instead
+                                            of drafting one (the Plan solution combo)
                    GET    /api/runs         the runs in progress, the newest runs, and whether GitHub takes the token
                    GET    /api/runs/{run}   one run: its state and every event so far
                    DELETE /api/runs/{run}   cancel a run that hasn't published; closes its review Issue
@@ -132,10 +134,14 @@ def handle_runs(req: func.HttpRequest, run_id: str | None, next_steps: func.Out[
         except ValueError:
             return answer({"error": "the body must be JSON"}, 400)
         pull_request = (body or {}).get("compareWithPullRequest")
-        if pull_request is not None and (not isinstance(pull_request, int) or isinstance(pull_request, bool) or pull_request < 1):
-            return answer({"error": "compareWithPullRequest must be a pull request number"}, 400)
-        record = steps.start(services(), pull_request)
-        next_steps.set(message(record["id"], "draft"))
+        evaluate = (body or {}).get("evaluatePullRequest")
+        for name, value in (("compareWithPullRequest", pull_request), ("evaluatePullRequest", evaluate)):
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+                return answer({"error": f"{name} must be a pull request number"}, 400)
+        if pull_request is not None and evaluate is not None:
+            return answer({"error": "a run compares with a pull request or evaluates one, not both"}, 400)
+        record = steps.start(services(), pull_request, evaluate)
+        next_steps.set(message(record["id"], steps.first_step(record)))
         return answer(steps.summary(record), 202)
     if req.method == "GET" and not run_id:
         return answer(steps.overview(services()))

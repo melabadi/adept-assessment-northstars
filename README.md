@@ -5,7 +5,7 @@ Fourteen working demos show how to add AI to each phase of the software developm
 - **GitHub**: GitHub Copilot (custom agents, skills, the cloud agent, code review) with GitHub Enterprise (Actions, Issues, environments, rulesets, code security).
 - **Microsoft**: AI that runs in Azure. Microsoft Foundry agents and evaluations, Copilot in Azure, and Azure services (AI Search, Load Testing, Defender for Cloud, Azure Policy, Container Apps, Azure SRE Agent), orchestrated in Azure. GitHub only holds the code, pull requests, and Issues.
 
-Each solution is self-contained, and its README is the demo script: every step has the command or click, a screenshot from a live run, how long it takes, and what to point out. Pick one, open its README, and run it. To plan a session with several demos (formats, what to start early, costs), see [PRESENTING.md](PRESENTING.md).
+Each solution is self-contained, and its README is the demo script: every step has the command or click, a screenshot from a live run, how long it takes, and what to point out. Pick one, open its README, and run it. To plan a session with several demos (formats, what to start early, costs), to run a phase's two solutions together on one change, or to follow one requirement from Plan to Test, see [PRESENTING.md](PRESENTING.md).
 
 ## The fourteen solutions
 
@@ -57,7 +57,7 @@ Each solution README lists anything else it needs.
 ```text
 app/         RequestHub: API, worker, web UI, tests, API contract, and the Bicep modules that host it
 solutions/   the fourteen solutions, one folder each
-tools/       repository tooling: sync_solutions.py (mirror check), screenshot.mjs and redact.py (masked screenshots)
+tools/       repository tooling: sync_solutions.py (mirror check), check_links.py (links and anchors), screenshot.mjs and redact.py (masked screenshots)
 .github/     shared CI, Copilot setup steps and instructions, plus the mirrored solution files
 ```
 

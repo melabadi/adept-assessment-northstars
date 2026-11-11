@@ -2,19 +2,21 @@
 """Start and follow the Plan · Microsoft run from your shell. The run happens in Azure, in the solution's Function app;
 this script only calls the app's HTTP function, with the app's key.
 
-  python runs.py start [--compare-with-pull-request N] [--no-follow]
+  python runs.py start [--compare-with-pull-request N | --evaluate-pull-request N] [--no-follow]
       Starts a run, then prints what it does as it happens: the agent's draft, each evaluation attempt, and the review
       Issue it opens. It stops following when the run waits for a person, or ends. Ctrl+C stops following, not the run.
       --compare-with-pull-request N also scores the Copilot brief on 01-plan-github pull request N, in the same
-      evaluation run. --no-follow prints the new run's id and returns at once.
+      evaluation run. --evaluate-pull-request N drafts nothing: Foundry evaluates only the Copilot brief on pull
+      request N, at its head commit, and the run opens an evaluation Issue for the product owner (the Plan solution
+      combo); 01-plan-github then publishes that revision only. --no-follow prints the new run's id and returns at once.
 
   python runs.py status
       The runs in progress, the five newest runs, and whether GitHub accepts the Function app's token (the one in
       Key Vault), with its expiry date. The README's starting-state check runs this.
 
   python runs.py show RUN [--follow]
-      Everything one run did so far. --follow keeps printing until the run ends: published, rejected, timed out,
-      cancelled, or failed.
+      Everything one run did so far. --follow keeps printing until the run ends: published, evaluated, rejected, timed
+      out, cancelled, or failed.
 
   python runs.py cancel (RUN ... | --all)
       Cancels unfinished runs; --all cancels every run in progress. A run that waits for a person gets a comment on
@@ -24,7 +26,8 @@ Configuration (environment variables, or read from `azd env get-values`, run in 
 FUNCTION_APP_NAME, and GITHUB_REPOSITORY, all set by `azd provision`. The script asks the Azure CLI, signed in as you,
 for the Function app's host name and key. It never prints or saves either.
 
-Exit codes: 0 done, 1 the run failed or wasn't found, 2 configuration or connection error.
+Exit codes: 0 done, 1 the run failed or wasn't found, or its evaluation's gates didn't pass, 2 configuration or
+connection error.
 """
 from __future__ import annotations
 
@@ -42,7 +45,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 WAITING = "awaiting_review"
-FINISHED = ("published", "rejected", "timed_out", "cancelled", "failed")
+FINISHED = ("published", "evaluated", "rejected", "timed_out", "cancelled", "failed")
 POLL_SECONDS = 3
 
 
@@ -129,6 +132,16 @@ def outcome(api: Api, run: dict) -> int:
     if state == WAITING:
         print(f"\nThe review Issue waits for a person: {api.issue_url(review)}\n"
               f"Apply the brief-approved label to publish the backlog, or close the Issue to reject it.")
+    elif state == "evaluated":
+        revision = run.get("revision") or {}
+        pull_request, sha = revision.get("pullRequest"), (revision.get("sha") or "")[:7]
+        issue = (run.get("evaluationIssue") or {}).get("issue")
+        print(f"\nFoundry's evaluation of pull request #{pull_request} at revision {sha}: {api.issue_url(issue)}")
+        if not (run.get("evaluation") or {}).get("passed"):
+            print(f"The gates didn't pass, so 01-plan-github won't publish revision {sha}.")
+            return 1
+        print(f"Decide and tick its open items, then apply brief-approved to pull request #{pull_request}: "
+              f"01-plan-github publishes revision {sha} only.")
     elif state == "failed":
         error = run.get("error") or {}
         print(f"\nThe run failed: {error.get('code')}: {error.get('message')}")
@@ -156,8 +169,11 @@ def follow(api: Api, run_id: str, until: tuple[str, ...], seen: int = 0) -> int:
         return 0
 
 
-def start(api: Api, pull_request: int | None, keep_following: bool) -> int:
-    status, run = api.call("POST", "", {"compareWithPullRequest": pull_request} if pull_request else {})
+def start(api: Api, pull_request: int | None, evaluate: int | None, keep_following: bool) -> int:
+    body = {"compareWithPullRequest": pull_request} if pull_request else {}
+    if evaluate:
+        body = {"evaluatePullRequest": evaluate}
+    status, run = api.call("POST", "", body)
     if status != 202:
         print(f"error: the Function app refused the run: {run.get('error', status)}", file=sys.stderr)
         return 2
@@ -165,7 +181,8 @@ def start(api: Api, pull_request: int | None, keep_following: bool) -> int:
     if not keep_following:
         print(f"Follow it with: python runs.py show {run['id']} --follow")
         return 0
-    print("Following it until it waits for a person (Ctrl+C stops following, not the run):\n")
+    until = "it opens the evaluation Issue" if evaluate else "it waits for a person"
+    print(f"Following it until {until} (Ctrl+C stops following, not the run):\n")
     return follow(api, run["id"], (WAITING, *FINISHED))
 
 
@@ -228,8 +245,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     start_cmd = commands.add_parser("start", help="start a run and follow it until it waits for a person")
-    start_cmd.add_argument("--compare-with-pull-request", type=int, metavar="N",
-                           help="also score the Copilot brief on this 01-plan-github pull request")
+    pull_requests = start_cmd.add_mutually_exclusive_group()
+    pull_requests.add_argument("--compare-with-pull-request", type=int, metavar="N",
+                               help="also score the Copilot brief on this 01-plan-github pull request")
+    pull_requests.add_argument("--evaluate-pull-request", type=int, metavar="N",
+                               help="draft nothing: evaluate only the Copilot brief on this 01-plan-github pull request, "
+                                    "at its head commit, and open an evaluation Issue for the product owner")
     start_cmd.add_argument("--no-follow", action="store_true", help="print the run's id and return at once")
     commands.add_parser("status", help="runs in progress, the newest runs, and the GitHub token's state")
     show_cmd = commands.add_parser("show", help="everything one run did so far")
@@ -243,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("cancel needs run ids or --all")
     api = Api()
     if args.command == "start":
-        return start(api, args.compare_with_pull_request, not args.no_follow)
+        return start(api, args.compare_with_pull_request, args.evaluate_pull_request, not args.no_follow)
     if args.command == "status":
         return status(api)
     if args.command == "show":
