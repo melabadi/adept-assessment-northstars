@@ -225,8 +225,8 @@ public sealed partial class RequestWorkflow(
             return WorkflowError.Validation("Outcome must be 'Approved' or 'Rejected'.");
         }
 
-        var comment = input.Comment;
-        if (outcome == DecisionOutcome.Rejected && string.IsNullOrEmpty(comment))
+        var comment = input.Comment?.Trim();
+        if (string.IsNullOrEmpty(comment))
         {
             return WorkflowError.Validation("A comment is required when rejecting a request.");
         }
