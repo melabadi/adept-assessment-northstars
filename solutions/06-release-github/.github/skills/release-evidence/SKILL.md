@@ -15,7 +15,7 @@ description: Build, check, and explain the evidence of a RequestHub release on G
 - The scripts in this folder (standard library only, Python 3.12+; each has `--help`):
   - `summarize_tests.py`: counts every JUnit report and fails the gate on a missing report, zero tests, or any failure.
   - `smoke_test.py`: runs the business flow against running release images (health, build SHA, submit, triage, decision, history, self-approval refused, notifications delivered).
-  - `release_evidence.py`: `preflight`, `assemble`, `verify`, and `approve`.
+  - `release_evidence.py`: `preflight`, `assemble`, `verify`, and `approve`, plus `summary-inputs`, which the agentic release summary runs before Copilot starts.
 
 ## Procedure
 1. Start a candidate from `main`: `gh workflow run release-github-candidate.yml -f version=1.2.0`. Follow it with `gh run watch <run-id>`. Preflight refuses other branches, versions already released, and a missing `release-github` environment.

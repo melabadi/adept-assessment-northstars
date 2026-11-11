@@ -12,6 +12,12 @@ Subcommands
              approval record. Read-only; anyone with access to the repository can run it.
   approve    Used by the approval workflow: runs every verify check, checks the approver, then writes
              approval-record.json and the final release notes. It never publishes; the workflow does that with gh.
+  summary-inputs
+             Used by the agentic release summary before Copilot starts: checks that the run is a successful release
+             candidate of this repository on main, copies its manifest and test results, and lists each pull request in
+             GitHub's generated notes with its author, in pull-requests.json, and the files it changed, in
+             changed-files.txt. A title is kept only when the author is the owner, a member, a collaborator, or
+             Copilot. The generated notes never reach Copilot.
 
 Draft releases are found by tag, or by their title ("RequestHub demo-vX.Y.Z (demo)") when GitHub has removed the
 draft's pending tag name. GitHub does that when an API update of a draft omits the tag name, as the AI summary's
@@ -27,6 +33,7 @@ Usage
   python release_evidence.py verify --tag demo-v1.0.0
   python release_evidence.py approve --tag demo-v1.0.0 --approver <login> --run-id <id> --workdir release \
       --notes release-notes.md
+  python release_evidence.py summary-inputs --run-id <candidate run id> --out summary-inputs
 
 Run a subcommand with --help for all of its options.
 Exit codes: 0 success, 1 a check failed, 2 usage or GitHub error.
@@ -66,6 +73,11 @@ APPROVAL = "approval-record.json"
 TEST_SUMMARY = "test-summary.json"
 WHATS_CHANGED = "whats-changed.md"
 SMOKE_RESULTS = "smoke-results.json"
+EVIDENCE_ARTIFACT = "release-evidence"  # the candidate's artifact for the agentic release summary
+PULL_REQUESTS = "pull-requests.json"
+CHANGED_FILES = "changed-files.txt"
+TRUSTED_AUTHORS = ("OWNER", "MEMBER", "COLLABORATOR")
+COPILOT_LOGIN = "Copilot"  # the Copilot cloud agent opens its pull requests as this bot
 SERVICES = ("api", "worker")
 APPROVER_ROLES = ("admin", "maintain")
 # key: (label, what ran, report file name)
@@ -846,6 +858,116 @@ def cmd_approve(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------------------------------- summary inputs
+
+def trusted_author(pr: dict) -> bool:
+    """Whether a pull request's title may reach the summary's model: its author is the owner, a member, a collaborator,
+    or Copilot. A title is the author's own words, and its author can still edit it after the merge."""
+    user = pr.get("user") or {}
+    copilot = user.get("login") == COPILOT_LOGIN and user.get("type") == "Bot"
+    return pr.get("author_association") in TRUSTED_AUTHORS or copilot
+
+
+def listed_pull_requests(whats_changed: str, repo: str) -> list[int]:
+    """The pull requests in GitHub's generated release notes, in order. Only the link that GitHub ends each line with
+    counts, so a title can't add a pull request to the list."""
+    link = re.compile(rf"^\* .+ in {re.escape(server_url())}/{re.escape(repo)}/pull/(\d+)$")
+    numbers: list[int] = []
+    for line in whats_changed.splitlines():
+        match = link.match(line.strip())
+        if match and int(match.group(1)) not in numbers:
+            numbers.append(int(match.group(1)))
+    return numbers
+
+
+def closed_pull_requests(repo: str, numbers: list[int]) -> dict[int, dict]:
+    """The listed pull requests, read from the newest closed ones until every number is found."""
+    wanted, found, page = set(numbers), {}, 1
+    while wanted - found.keys():
+        batch = api(f"repos/{repo}/pulls?state=closed&sort=created&direction=desc&per_page=100&page={page}") or []
+        found.update({pr["number"]: pr for pr in batch if pr.get("number") in wanted})
+        if len(batch) < 100:
+            break
+        page += 1
+    return found
+
+
+def check_candidate_run(repo: str, run_id: int) -> None:
+    """The same rule as the workflow's if: a successful run of this repository's candidate workflow file, started by a
+    person on main. A dispatched summary names its run by hand, so the rule is checked here as well."""
+    run = api(f"repos/{repo}/actions/runs/{run_id}", ok404=True)
+    if run is None:
+        raise UsageError(f"run {run_id} not found in {repo}")
+    problems = []
+    if run.get("path") != CANDIDATE_WORKFLOW:
+        problems.append(f"it runs {run.get('path')}, not {CANDIDATE_WORKFLOW}")
+    if (run.get("head_repository") or {}).get("full_name") != repo:
+        problems.append("its branch is in another repository")
+    if run.get("event") != "workflow_dispatch":
+        problems.append(f"it was started by {run.get('event')}, not workflow_dispatch")
+    if run.get("head_branch") != "main":
+        problems.append(f"it ran on {run.get('head_branch')}, not main")
+    if run.get("conclusion") != "success":
+        problems.append(f"its conclusion is {run.get('conclusion') or run.get('status')}, not success")
+    if problems:
+        raise UsageError(f"run {run_id} is not a successful release candidate of {repo}: " + "; ".join(problems))
+
+
+def download_artifact(repo: str, run_id: int, name: str, folder: Path) -> None:
+    proc = gh(["run", "download", str(run_id), "--repo", repo, "--name", name, "--dir", str(folder)])
+    if proc.returncode != 0:
+        raise GitHubError(f"gh run download {run_id} --name {name}: {(proc.stderr or proc.stdout).strip()}")
+
+
+def cmd_summary_inputs(args: argparse.Namespace) -> int:
+    repo = detect_repo(args.repo)
+    check_candidate_run(repo, args.run_id)
+    out = args.out
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    with tempfile.TemporaryDirectory(prefix="release-evidence-") as tmp:
+        download_artifact(repo, args.run_id, EVIDENCE_ARTIFACT, Path(tmp))
+        evidence = Path(tmp) / "release"
+        if not (evidence / MANIFEST).is_file():
+            raise UsageError(f"the {EVIDENCE_ARTIFACT} artifact of run {args.run_id} has no release/{MANIFEST}")
+        # The generated notes and the release notes carry every title; they stay here.
+        for name in (MANIFEST, TEST_SUMMARY, SMOKE_RESULTS):
+            if (evidence / name).is_file():
+                shutil.copy2(evidence / name, out / name)
+        notes_path = evidence / WHATS_CHANGED
+        whats_changed = notes_path.read_text(encoding="utf-8") if notes_path.is_file() else ""
+
+    manifest = json.loads((out / MANIFEST).read_text(encoding="utf-8"))
+    tag = manifest.get("tag") or ""
+    # Published releases are visible to a read-only token; drafts are not.
+    status = "published" if api(f"repos/{repo}/releases/tags/{tag}", ok404=True) else "draft"
+    (out / "status.txt").write_text(status + "\n", encoding="utf-8")
+
+    numbers = listed_pull_requests(whats_changed, repo)
+    found = closed_pull_requests(repo, numbers) if numbers else {}
+    pulls, changed = [], []
+    for number in numbers:
+        pr = found.get(number) or {}
+        trusted = bool(pr) and trusted_author(pr)
+        listed = api(f"repos/{repo}/pulls/{number}/files?per_page=100", paginate=True) if pr else []
+        files = [f.get("filename") for f in listed or []]
+        pulls.append({"number": number, "author": (pr.get("user") or {}).get("login"),
+                      "author_association": pr.get("author_association"),
+                      "title": pr.get("title") if trusted else None, "title_withheld": not trusted,
+                      "changed_files": len(files)})
+        changed += [f"#{number} {name}\n" for name in files]
+    inputs = {"tag": tag, "previous_tag": manifest.get("previous_tag"), "pull_requests": pulls}
+    (out / PULL_REQUESTS).write_text(json.dumps(inputs, indent=2) + "\n", encoding="utf-8")
+    (out / CHANGED_FILES).write_text("".join(changed), encoding="utf-8")
+
+    withheld = ", ".join(f"#{p['number']}" for p in pulls if p["title_withheld"]) or "none"
+    line = f"{len(pulls)} pull requests for `{tag}` ({status}); titles withheld: {withheld}"
+    write_summary(f"### What Copilot reads\n\n{line}\n")
+    print(f"Collected the summary's inputs in {out}: {line}")
+    return 0
+
+
 # --------------------------------------------------------------------------------------------------- CLI
 
 def main(argv: list[str] | None = None) -> int:
@@ -900,12 +1022,18 @@ def main(argv: list[str] | None = None) -> int:
                            help="refuse when the approver also requested the release")
             p.add_argument("--notes", type=Path, required=True, help="file for the final release notes")
 
+    p = sub.add_parser("summary-inputs",
+                       help="collect what the agentic release summary reads, with pull request titles only from trusted authors")
+    common(p)
+    p.add_argument("--run-id", type=int, required=True, help="run id of a successful release candidate run on main")
+    p.add_argument("--out", type=Path, required=True, help="folder for the summary's inputs (emptied first)")
+
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     try:
         return {"preflight": cmd_preflight, "assemble": cmd_assemble, "verify": cmd_verify,
-                "approve": cmd_approve}[args.command](args)
+                "approve": cmd_approve, "summary-inputs": cmd_summary_inputs}[args.command](args)
     except (GitHubError, UsageError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
