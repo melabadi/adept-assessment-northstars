@@ -30,7 +30,18 @@ review is not proof of correctness. This skill produces both kinds of evidence a
 3. **Assemble the report** and post it on the pull request:
    `python .github/skills/review-evidence/review_evidence.py --pr <n> --comment`.
    Section 1 (checks and the proof) decides; section 2 (Copilot and people's comments) informs; section 3 records the
-   decision.
+   decision. A pull request's checks run with its own version of its workflows, so they can't vouch for one that
+   changes where its checks and proof are defined: when the pull request changes anything under the paths in
+   `CHECK_DEFINITIONS` (here `.github/workflows/`, `.github/actions/`, `.github/skills/`, and `tools/`), section 1
+   opens with a warning that lists those files, before the checks. Read those files first. The warning also says when
+   the changed files can't all be read. Run the report from the default branch, never from the pull request's checkout:
+   its copy of this skill could leave the warning out.
+   Only reviews from the repository's owner, members, and collaborators (`author_association` `OWNER`,
+   `MEMBER`, or `COLLABORATOR`) count as the decision; anyone else's review is listed as not counted, without its text.
+   The report is posted with your token, so everything it quotes from GitHub (the title, check names, review notes,
+   comments, logins, and the commit titles, test names, and messages in the proof) is inert: it can't @-mention anyone,
+   which would start Copilot in your name, or refer to an Issue or a pull request, and it can't add a link, an image,
+   or HTML.
 4. **Decide.** Read the tests themselves: do they assert the behavior the Issue describes? Then approve or request
    changes as a GitHub review, and run step 3 again: it updates the same comment with the decision.
 
@@ -55,3 +66,8 @@ Exit codes of `prove_fix.py`: 0 proven, 1 not proven, 2 setup error.
   them. The proof covers the tests committed before the fix.
 - A proof says ✅ but the tests assert something trivial: the proof shows the order of evidence, not test quality.
   The reviewer still reads the tests.
+- `Not counted` in section 3: that review's author is not the repository's owner, a member, or a collaborator, so the
+  review never decides, whatever it says. If that person should decide, add them as a collaborator first.
+- A warning at the top of section 1: the pull request changes where its checks are defined. Read the listed files
+  before you trust its checks or its proof; one that the pull request rewrote looks exactly like a real one. If the
+  report says it couldn't read all the changed files, read the pull request's `.github/` and `tools/` changes yourself.

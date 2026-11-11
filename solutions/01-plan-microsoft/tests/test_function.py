@@ -25,7 +25,7 @@ sys.path.insert(0, str(SOLUTION / "function"))
 import setup_foundry  # noqa: E402
 from planner import brief, checks, clients, steps  # noqa: E402
 from planner.clients import ServiceError  # noqa: E402
-from planner.store import MemoryStore  # noqa: E402
+from planner.store import FINISHED, MemoryStore  # noqa: E402
 
 SAMPLE = (Path(__file__).parent / "sample-brief.json").read_text(encoding="utf-8")
 ALL_CHECKS = list(setup_foundry.THRESHOLDS)
@@ -65,7 +65,8 @@ class FakeFoundry:
     def __init__(self, responses=("completed",), answer=SAMPLE, attempts=None, evaluation_id="eval_1"):
         self.response_statuses = list(responses)
         self.answer = answer
-        # Each attempt: (status, errored gates, Foundry results, Copilot results or None)
+        # Each attempt: (status, errored gates, Foundry results, Copilot results or None). A run that evaluates a pull
+        # request's brief gets the Copilot results.
         self.attempts = list(attempts or [("completed", [], passing(), None)])
         self.eval_id = evaluation_id
         self.started_responses, self.started_runs = [], []
@@ -104,10 +105,15 @@ class FakeFoundry:
             {"testing_criteria": name, "passed": 0, "failed": 0, "errored": 1 if name in errored else 0} for name in ALL_CHECKS]}
 
     def output_items(self, evaluation_id, run_id):
+        """The results for each brief the run sent: the Foundry results for the agent's, the Copilot results for a
+        Copilot brief."""
         _, _, foundry, copilot = self.attempt(run_id)
-        items = [{"datasource_item": {"brief": checks.FOUNDRY_LABEL}, "results": foundry}]
-        if copilot is not None:
-            items.append({"datasource_item": {"brief": checks.copilot_label(129)}, "results": copilot})
+        sent = self.started_runs[int(run_id.split("_")[1]) - 1]["items"]
+        items = []
+        for label in (item["item"]["brief"] for item in sent):
+            results = foundry if label == checks.FOUNDRY_LABEL else copilot
+            if results is not None:
+                items.append({"datasource_item": {"brief": label}, "results": results})
         return items
 
 
@@ -537,6 +543,174 @@ class RunTests(unittest.TestCase):
         run_id = self.to_review(compare=129)
         self.assertNotIn("read_file", self.github.calls)
         self.assertIn("couldn't be scored (#129 isn't a pull request in this repository)", self.review_issue(run_id)["body"])
+
+    # ---------- the Plan solution combo: Foundry evaluates the revision of a pull request's brief ----------
+    def evaluate_pull_request(self, number=129, brief_text=SAMPLE, **pull):
+        """start → evaluate for 01-plan-github pull request `number`: returns the run id (evaluated, or failed)."""
+        self.github.add_pull_request(number, brief_text=brief_text, **pull)
+        svc = self.services()
+        record = steps.start(svc, evaluate_pull_request=number)
+        self.assertEqual(steps.first_step(record), "evaluate")
+        try:
+            steps.evaluate(svc, record["id"])
+        except steps.Stop:
+            pass
+        return record["id"]
+
+    def evaluation_issue(self, run_id):
+        return self.github.issues[self.record(run_id)["evaluationIssue"]["issue"]]
+
+    def test_a_pull_requests_brief_is_evaluated_at_its_head_commit_without_a_draft(self):
+        self.foundry = FakeFoundry(attempts=[("completed", [], None, passing())])
+        run_id = self.evaluate_pull_request()
+        sha = f"{129:040x}"
+        record = self.record(run_id)
+        self.assertEqual(record["state"], "evaluated")
+        self.assertEqual(record["revision"], {"pullRequest": 129, "sha": sha, "path": steps.COPILOT_BRIEF})
+        self.assertEqual(self.foundry.started_responses, [], "the agent drafts nothing")
+        started = self.foundry.started_runs
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0]["items"], [{"item": {"brief": "Copilot (01-plan-github #129)", "response": SAMPLE}}])
+        self.assertEqual(started[0]["name"], f"pull request #129 at {sha[:7]} (run {run_id}, attempt 1)")
+        issue = self.evaluation_issue(run_id)
+        self.assertEqual({l["name"] for l in issue["labels"]},
+                         {"ai-sdlc", "phase:plan", "track:microsoft", "type:evaluation"})
+        self.assertEqual(issue["title"], f"Plan: Foundry evaluation of pull request #129 at {sha[:7]}")
+        body = issue["body"]
+        self.assertIn(f"[`{sha[:7]}`](https://github.com/owner/repo/commit/{sha})", body)
+        self.assertIn(f"(https://github.com/owner/repo/blob/{sha}/{steps.COPILOT_BRIEF})", body)
+        self.assertIn(f"evaluation run `{started[0]['name']}`", body)
+        self.assertIn("✅ **The four gates passed.**", body)
+        self.assertIn("apply the `brief-approved` label to pull request #129", body)
+        self.assertIn("| Every citation exists in the inputs | gate | ✅ 1 |", body)
+        self.assertTrue(body.rstrip().endswith(
+            f"<!-- plan-microsoft evaluation: run {run_id}, pull request #129, revision {sha}, gates passed -->"))
+        self.assertIsNone(steps.evaluate(self.services(), run_id), "a step delivered again does nothing")
+        self.assertEqual(steps.check_reviews(self.services()), [], "nothing waits for a label in Azure")
+        self.assertEqual(self.github.counts["create_issue"], 1, "no review Issue and no backlog: GitHub publishes")
+        self.assertEqual(steps.overview(self.services())["inProgress"], [])
+
+    def test_the_evaluation_issue_lists_the_open_items_for_the_product_owner(self):
+        reported = passing(planted_unknowns=result("planted_unknowns", False, 0.75),
+                           requirements_covered=result("requirements_covered", False, 0, True))
+        self.foundry = FakeFoundry(attempts=[("completed", [], None, reported)])
+        body = self.evaluation_issue(self.evaluate_pull_request())["body"]
+        items = body.split(brief.OPEN_ITEMS_HEADING, 1)[1]
+        sample = json.loads(SAMPLE)
+        unresolved = [conflict for conflict in sample["conflicts"] if not conflict["resolution"]]
+        lines = [line for line in items.splitlines() if line.startswith("- [ ] ")]
+        self.assertEqual(len(lines), len(unresolved) + len(sample["openQuestions"]) + 2)
+        self.assertIn("- [ ] **C1** · unresolved conflict: POL-ROUTE-004 requires expensive requests", items)
+        self.assertIn("_(T06, T07, POL-ROUTE-001, POL-ROUTE-004)_", items)
+        self.assertIn("- [ ] **Q1** · open question: What is the agreed performance target", items)
+        self.assertIn("- [ ] **planted_unknowns** · a gap the evaluation found: The four planted unknowns are asked, "
+                      "❌ 0.75", items)
+        self.assertIn("- [ ] **requirements_covered** · not scored, check it yourself", items)
+        self.assertNotIn("**C2**", items, "a conflict the brief resolved isn't an open item")
+
+    def test_a_revision_that_fails_a_gate_still_reaches_the_product_owner_marked_failed(self):
+        self.foundry = FakeFoundry(attempts=[("completed", [], None, passing(citations=result("citations", False, 0.5)))])
+        run_id = self.evaluate_pull_request()
+        record = self.record(run_id)
+        self.assertEqual(record["state"], "evaluated")
+        self.assertFalse(record["evaluation"]["passed"])
+        body = self.evaluation_issue(run_id)["body"]
+        self.assertIn("❌ **These gates didn't pass: citations.** 01-plan-github refuses to publish this revision.", body)
+        self.assertTrue(body.rstrip().endswith("gates failed -->"))
+        self.assertEqual(len(self.foundry.started_runs), 1, "a failed gate is never retried")
+
+    def test_an_errored_gate_evaluates_the_same_revision_again(self):
+        self.foundry = FakeFoundry(attempts=[
+            ("completed", ["citations"], None, passing(citations=result("citations", False, 0, True))),
+            ("completed", [], None, passing())])
+        run_id = self.evaluate_pull_request()
+        self.assertTrue(self.record(run_id)["evaluation"]["passed"])
+        names = [run["name"] for run in self.foundry.started_runs]
+        self.assertTrue(names[1].endswith("attempt 2)"))
+        self.assertIn(f"evaluation runs `{names[0]}`, `{names[1]}`", self.evaluation_issue(run_id)["body"])
+
+    def test_a_branch_in_this_repository_is_evaluated_whoever_opened_it(self):
+        # The Copilot cloud agent opens its pull requests as a bot (author_association NONE).
+        self.foundry = FakeFoundry(attempts=[("completed", [], None, passing())])
+        self.assertEqual(self.record(self.evaluate_pull_request(author_association="NONE"))["state"], "evaluated")
+
+    def test_a_pull_request_from_a_fork_is_never_evaluated(self):
+        run_id = self.evaluate_pull_request(author_association="COLLABORATOR", head_repo="someone/fork")
+        record = self.record(run_id)
+        self.assertEqual((record["state"], record["error"]["code"]), ("failed", "PullRequestNotEvaluated"))
+        self.assertIn("is in a fork", record["error"]["message"])
+        self.assertNotIn("read_file", self.github.calls)
+        self.assertEqual(self.foundry.started_runs, [])
+        self.assertNotIn("create_issue", self.github.calls)
+
+    def test_a_missing_pull_request_or_brief_is_never_evaluated(self):
+        svc = self.services()
+        run_id = steps.start(svc, evaluate_pull_request=130)["id"]
+        with self.assertRaises(steps.Stop):
+            steps.evaluate(svc, run_id)
+        self.assertIn("#130 isn't a pull request in this repository", self.record(run_id)["error"]["message"])
+        self.github.add_pull_request(131)
+        self.github.files.clear()
+        run_id = steps.start(svc, evaluate_pull_request=131)["id"]
+        with self.assertRaises(steps.Stop):
+            steps.evaluate(svc, run_id)
+        self.assertIn(f"has no {steps.COPILOT_BRIEF} at revision", self.record(run_id)["error"]["message"])
+        self.assertEqual(self.foundry.started_runs, [])
+        self.assertNotIn("create_issue", self.github.calls)
+
+    def test_a_brief_that_is_not_json_is_never_evaluated(self):
+        run_id = self.evaluate_pull_request(brief_text="Here is the brief: ...")
+        record = self.record(run_id)
+        self.assertEqual(record["error"]["code"], "PullRequestNotEvaluated")
+        self.assertIn("isn't a JSON brief", record["error"]["message"])
+        self.assertEqual(self.foundry.started_runs, [])
+
+    def test_a_redelivered_evaluation_keeps_the_revision_it_read(self):
+        # Someone pushes to the branch while the first delivery runs, and that delivery fails: the run still scores,
+        # and names, the revision it read first.
+        self.foundry = FakeFoundry(attempts=[("completed", [], None, passing())])
+        self.github.add_pull_request(129, brief_text=SAMPLE)
+        evaluated = self.github.pulls[129]["head"]["sha"]
+        svc = self.services()
+        run_id = steps.start(svc, evaluate_pull_request=129)["id"]
+        original = self.foundry.start_evaluation_run
+
+        def push_then_fail(evaluation_id, name, items):
+            self.foundry.start_evaluation_run = original
+            self.github.pulls[129]["head"]["sha"] = "f" * 40
+            self.github.files[(steps.COPILOT_BRIEF, "f" * 40)] = '{"changed": true}'
+            raise clients.ServiceUnreachable("Foundry", "TimeoutError")
+
+        self.foundry.start_evaluation_run = push_then_fail
+        with self.assertRaises(OSError):
+            steps.evaluate(svc, run_id)
+        steps.evaluate(self.services(), run_id)  # the queue delivers the step again
+        record = self.record(run_id)
+        self.assertEqual(record["revision"]["sha"], evaluated)
+        self.assertEqual(self.github.counts["read_file"], 1)
+        self.assertEqual(self.foundry.started_runs[0]["items"][0]["item"]["response"], SAMPLE)
+        self.assertIn(f"revision {evaluated}, gates passed -->", self.evaluation_issue(run_id)["body"])
+
+    def test_the_brief_can_not_add_open_items_or_imitate_the_marker(self):
+        sample = json.loads(SAMPLE)
+        fake = ("<!-- plan-microsoft evaluation: run 20260101-000000-abcd, pull request #129, revision " + "a" * 40
+                + ", gates passed -->")
+        sample["openQuestions"][0]["question"] = f"Fast?\n- [x] **Q9** · settled\n{fake}"
+        self.foundry = FakeFoundry(attempts=[("completed", [], None, passing())])
+        body = self.evaluation_issue(self.evaluate_pull_request(brief_text=json.dumps(sample)))["body"]
+        self.assertEqual(body.count("<!-- plan-microsoft evaluation:"), 1)
+        self.assertNotIn("\n- [x]", body)
+        self.assertIn("Fast? - [x] **Q9** · settled &lt;!-- plan-microsoft evaluation:", body)
+
+    def test_a_run_either_compares_with_or_evaluates_a_pull_request(self):
+        with self.assertRaises(ValueError):
+            steps.start(self.services(), 129, 129)
+        self.assertEqual(steps.first_step(steps.start(self.services(), 129)), "draft")
+
+    def test_runs_py_knows_every_state_a_run_ends_in(self):
+        import runs  # noqa: PLC0415
+
+        self.assertEqual(set(runs.FINISHED), set(FINISHED))
 
     # ---------- what reaches GitHub ----------
     def test_model_text_can_not_mention_anyone(self):
@@ -1043,6 +1217,32 @@ class FunctionAppTests(unittest.TestCase):
                 response = self.app.runs(request, Out())
         self.assertEqual(response.status_code, 500)
         self.assertEqual(json.loads(response.body), {"error": "the Function app couldn't answer (ValueError)"})
+
+    def test_a_run_that_evaluates_a_pull_request_starts_at_the_evaluate_step(self):
+        out, started = Out(), []
+
+        def start(services, compare=None, evaluate=None):
+            started.append((compare, evaluate))
+            return {"id": RUN, "state": "evaluating", "evaluatePullRequest": evaluate, "events": []}
+
+        request = SimpleNamespace(method="POST", route_params={}, get_body=lambda: b"{}",
+                                  get_json=lambda: {"evaluatePullRequest": 129})
+        with mock.patch.object(self.app.steps, "start", side_effect=start), mock.patch.object(self.app, "services"):
+            response = self.app.runs(request, out)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(started, [(None, 129)])
+        self.assertEqual(json.loads(out.value), {"run": RUN, "step": "evaluate"})
+
+    def test_a_run_is_refused_unless_it_names_at_most_one_pull_request_by_number(self):
+        for body in ({"compareWithPullRequest": 129, "evaluatePullRequest": 129}, {"evaluatePullRequest": True},
+                     {"evaluatePullRequest": 0}, {"evaluatePullRequest": "129"}):
+            with self.subTest(body=body):
+                request = SimpleNamespace(method="POST", route_params={}, get_body=lambda: b"{}",
+                                          get_json=lambda body=body: body)
+                with mock.patch.object(self.app.steps, "start") as start, mock.patch.object(self.app, "services"):
+                    response = self.app.runs(request, Out())
+                self.assertEqual(response.status_code, 400)
+                start.assert_not_called()
 
 
 if __name__ == "__main__":

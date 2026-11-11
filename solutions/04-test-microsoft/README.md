@@ -6,7 +6,7 @@ Most teams find out how their app behaves under load in production: a realistic 
 
 ## Where it fits
 
-**Phase 4 of 7: Test.** The GitHub counterpart is [04-test-github](../04-test-github/), where Copilot proves a functional fix with a regression test. This solution proves service-level behavior under load, with the AI and the orchestration in Azure. GitHub holds the code, the pull requests that change the test, and the Issues.
+**Phase 4 of 7: Test.** The GitHub counterpart is [04-test-github](../04-test-github/), where Copilot proves a functional fix with a regression test. This solution proves service-level behavior under load, with the AI and the orchestration in Azure. GitHub holds the code, the pull requests that change the test, and the Issues. To load-test the commit that its counterpart proved, on one change, follow the [Test solution combo](../../PRESENTING.md#test-copilot-proves-the-repair-azure-load-tests-the-same-commit).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -42,12 +42,12 @@ flowchart LR
 - **Azure Load Testing** runs [`loadtest/locustfile.py`](loadtest/locustfile.py) on managed engines with the settings and criteria in [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml). Its run dashboard shows client and server metrics side by side and an experimental **AI summary and insights**. The test has a weekday schedule, created paused, and a notification rule that sends every finished run to an action group.
 - **Two managed identities** sign the virtual users in. Requesters submit synthetic requests; approvers, a different identity, decide some of them, because RequestHub never lets anyone decide their own request. Each run deletes the requests it submitted, so the seeded data is all that remains.
 - **RequestHub** enforces the same roles and department access as for people. Every few journeys the test also checks that an invalid token gets 401 and a request from another department gets 403. The API marks every request it slows down on purpose with the telemetry property `requesthub.fault.queue_delay_ms`.
-- **A Python Azure Function** ([`function/`](function/), Flex Consumption, in its own virtual network) handles every notification with its own managed identity. The action group calls its HTTP route with a function key, which every `azd provision` renews on both sides together. The route reads the run from Azure Load Testing (Load Test Reader), accepts it only if it belongs to this test and ended in the last hour, so a replay or a forged call never posts, and answers at once. The function then waits without holding anything open: a check that finds no verdict yet, or Application Insights still without the run's last requests, queues the next check a minute later. When both are in, it runs [`report.kql`](function/reporter/report.kql) on the API's telemetry (Log Analytics Reader) for the report and its verdict, and posts through GitHub's Issues API, one report at a time. It opens this test's Issue or comments on it, and closes it only when a run that started after the Issue opened passes and the report finds no injected delay. Its GitHub token, a fine-grained token a person created for this repository only, is a Key Vault secret that only the function's identity can read. Every decision is plain Python with unit tests ([`test_reporter.py`](test_reporter.py)), which azd runs before every deploy.
+- **A Python Azure Function** ([`function/`](function/), Flex Consumption, in its own virtual network) handles every notification with its own managed identity. The action group calls its HTTP route with a function key, which every `azd provision` renews on both sides together. The route reads the run from Azure Load Testing (Load Test Reader), accepts it only if it belongs to this test and ended in the last hour, so a replay or a forged call never posts, and answers at once. The function then waits without holding anything open: a check that finds no verdict yet, or Application Insights still without the run's last requests, queues the next check a minute later. When both are in, it runs [`report.kql`](function/reporter/report.kql) on the API's telemetry (Log Analytics Reader) for the report and its verdict, and posts through GitHub's Issues API, one report at a time. It opens this test's Issue or comments on it, and closes it only when a run that started after the Issue opened passes and the report finds no injected delay. The report names the run and the API revision that served it, from the telemetry. A candidate run, which [`candidate.py`](candidate.py) starts against a commit it deployed as its own revision, also names the commit, and the function comments its report on the GitHub Issue that the run names, passed or failed. Its GitHub token, a fine-grained token a person created for this repository only, is a Key Vault secret that only the function's identity can read. Every decision is plain Python with unit tests ([`test_reporter.py`](test_reporter.py)), which azd runs before every deploy.
 - **The Azure Copilot Observability Agent**, in Application Insights › Logs, answers questions about the API's telemetry in plain language and runs the KQL itself.
 - **GitHub** holds the code, the pull requests that change the test, and the Issues. No workflow, Copilot agent, or skill is involved.
 - **People** decide what a failure means, check what the AI says against the evidence, and decide whether a release ships.
 
-**Outside contributions.** Nothing here listens to GitHub. Azure Load Testing's action group calls the function, which acts only on its own Issue: open, labeled `load-test` (a label only people with triage access can apply), titled with the test's id, and opened by the owner, a member, or a collaborator. It reads its hidden run markers only in that Issue's body and in comments from those people, so an outsider's comment can't make a run look already reported. On a public repository, nobody outside it can start a test run or get a run reported, nobody outside it can stop a report, and the function never comments on or closes an Issue they open. `test_reporter.py` covers these checks.
+**Outside contributions.** Nothing here listens to GitHub. Azure Load Testing's action group calls the function, which acts only on its own Issue: open, labeled `load-test` (a label only people with triage access can apply), titled with the test's id, and opened by the owner, a member, or a collaborator. It reads its hidden run markers only in that Issue's body and in comments from those people, so an outsider's comment can't make a run look already reported. The one other place it posts is the Issue that a candidate run's description names: only people who may start load tests write that description, and the function comments only on an open Issue, never a pull request, that the owner, a member, or a collaborator opened. On a public repository, nobody outside it can start a test run or get a run reported, nobody outside it can stop a report, and the function never comments on or closes an Issue they open. `test_reporter.py` covers these checks.
 
 ## What's in this folder
 
@@ -62,8 +62,8 @@ flowchart LR
 │   ├── function_app.py           two thin functions: the action group's HTTP route and the queue of report steps
 │   ├── reporter/
 │   │   ├── flow.py               accept a notification, wait for the verdict and the telemetry, post the report
-│   │   ├── report.py             the report and its six verdicts
-│   │   ├── report.kql            the API's requests during the run, per operation, counting the injected delay
+│   │   ├── report.py             the report, its six verdicts, and the build the run tested
+│   │   ├── report.kql            the API's requests during the run, per operation, counting the injected delay and naming the revisions that served them
 │   │   ├── issues.py             which Issue to open, comment on, or close
 │   │   └── services.py           Azure Load Testing, Log Analytics, the queue, Key Vault, and GitHub
 │   ├── host.json
@@ -71,6 +71,8 @@ flowchart LR
 ├── test_reporter.py              the function's offline unit tests; azd runs them before every deploy
 ├── sync_test.py                  azd hooks: check the scenario, then copy the test, notification rule, and schedule into Azure
 ├── slowdown.py                   demo helper: inject or remove the expiring slowdown on the deployed API
+├── candidate.py                  deploy one commit as an API revision named after it, load-test it, and restore the API
+├── test_candidate.py             candidate.py's offline unit tests; azd runs them before every deploy too
 ├── azd_env.py                    reads settings from this solution's azd environment
 ├── requirements.txt              Python packages (Locust pinned to the engines' version)
 ├── azure.yaml                    azd project: infra, the shared app's api and worker, and the reporter function
@@ -162,6 +164,7 @@ About 5 minutes, from `solutions/04-test-microsoft`.
 
    - **The database is not `Ready`:** start it with `az postgres flexible-server start -g rg-ai-sdlc-test -n $pg`, which takes 3 to 5 minutes. A tenant policy can stop the server on a schedule, and the API then fails its readiness probe.
    - **A slowdown is configured:** run `python slowdown.py off` (1 to 3 minutes).
+   - **The API revision's name starts with `c`** (in the `slowdown.py status` line): a commit from [Optional: load-test one commit](#optional-load-test-one-commit) still serves the traffic. Run `python candidate.py restore` (about a minute).
    - **A `load-test` Issue is open:** close it with `gh issue close <number>`, so step 6 opens a fresh one.
    - **The token:** in the portal, open the function app (resource group `rg-ai-sdlc-test` › the Function App › **Overview** › `report_run` › **Invocations**). If its newest invocation failed with GitHub 401, the token expired or was revoked: create a new one (see [Set up](#let-azure-post-to-github-once-by-a-person)).
 
@@ -271,9 +274,9 @@ Open the function app (resource group `rg-ai-sdlc-test` › the Function App ›
 
 ![report_run's invocations in the function app, one per reported run, all successful, and the details of the After the slowdown invocation: a new message on the test-runs queue, then After the slowdown: FAILED, verdict expected-failure (468 server requests, 150 with the injected delay), and After the slowdown: opened Issue #215 (no Issue is open for this test), in 3.1 seconds](images/06-function-run.png)
 
-![Issue #215, which the function opened: [load-test requesthub-journey] RequestHub journey missed its performance criteria, open, with the load-test label. Its report: After the slowdown FAILED with 10 virtual users for 126 s; Expected failure, because 150 server requests carried requesthub.fault.queue_delay_ms; my-requests at 1,580 ms and team-queue at 1,570 ms failed their 1,000 ms limit, while the error rate, decide, and submit passed](images/06-issue-opened.png)
+![Issue #297, which the function opened: [load-test requesthub-journey] RequestHub journey missed its performance criteria, open, with the load-test label. Its report: After the slowdown FAILED, run slowdown-20261110-132045, with 10 virtual users for 123 s; Expected failure, because 133 server requests carried requesthub.fault.queue_delay_ms; API revision: the server requests in the run's window came from revision 0000027; my-requests at 1,600 ms and team-queue at 1,590 ms failed their 1,000 ms limit, while the error rate, decide, and submit passed](images/06-issue-opened.png)
 
-**Point out:** the report proves the cause. Its verdict says 150 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (150 against 198 list requests) because under load Application Insights keeps only a sample of the API's requests, and the report says so. The Issue names the run and the resource group, never a host name or an id.
+**Point out:** the report proves the cause. Its verdict says 133 server requests carried the injected delay, so it labels the run an expected failure, a rehearsal of the gate, not an acceptance run. The server-side counts run below the client's (133 against 198 list requests) because under load Application Insights keeps only a sample of the API's requests, and the report says so. The Issue names the run, the API revision that served it, and the resource group, never a host name or a GUID. This Issue, and its closing in step 8, come from a later rehearsal than the portal screenshots of steps 5 to 7 (Issue #215, 150 delayed requests), so their numbers differ slightly.
 
 ### 7. AI explains, people verify
 
@@ -294,7 +297,7 @@ In the run shown, the agent ruled out failures, the database, and resource press
 **Point out:** the two AI tools read the same run differently, and the evidence on screen settles it.
 
 - The run's summary blames the App container and finds the database efficient, which the server metrics in step 5 support. But it reads the journey's deliberate 403 checks as a spike in failed requests, and its *5 VUs* counts the users per request (the run had 10).
-- The agent's first answer ruled out the usual suspects without naming the cause. Asked to check the hypothesis, it confirmed it, and every number it gave matches our own KQL. Select **Reasoned for** to see the queries it ran. Its 155 delayed requests cover 30 minutes: the report's 150 from the run's own window, the four timing calls from step 4, and one that started less than a second after the run's recorded end. Its 171 others are the Baseline's 167 list requests and the four timing calls from the starting-state check.
+- The agent's first answer ruled out the usual suspects without naming the cause. Asked to check the hypothesis, it confirmed it, and every number it gave matches our own KQL. Select **Reasoned for** to see the queries it ran. Its 155 delayed requests cover 30 minutes: the 150 that this run's report counted in its own window, the four timing calls from step 4, and one that started less than a second after the run's recorded end. Its 171 others are the Baseline's 167 list requests and the four timing calls from the starting-state check.
 
 AI finds leads quickly; people check them, and the criteria and the report decide.
 
@@ -312,7 +315,7 @@ az load test-run create --load-test-resource $lt -g rg-ai-sdlc-test --test-id re
 
 The run passes, and the report finds no injected delay. About 2 minutes later the function comments on the Issue with the passing report and closes it.
 
-![Issue #215, closed, at the function's comment: After the fix passed every criterion. Closing. Its report: PASSED with 10 virtual users for 120 s; Accepted, because the journey met every criterion and no server request carried the rehearsal slowdown; my-requests at 74 ms and team-queue at 73 ms against 1,000 ms, decide at 130 ms and submit at 256 ms against 1,500 ms, and 0 percent errors](images/08-issue-closed.png)
+![Issue #297, closed, at the function's comment: After the fix passed every criterion. Closing. Its report: PASSED, run fix-20261110-133741, with 10 virtual users for 118 s; Accepted, because the journey met every criterion and no server request carried the rehearsal slowdown; API revision: the server requests in the run's window came from revision 0000028; my-requests at 92 ms and team-queue at 84 ms against 1,000 ms, decide at 282 ms and submit at 270 ms against 1,500 ms, and 0 percent errors](images/08-issue-closed.png)
 
 **Point out:** nobody had to remember to follow up. The Issue opened on the failure and closed itself on the next accepted run. A run that passes while the slowdown is still on, or a replay of an older run, leaves it open.
 
@@ -329,6 +332,26 @@ Only enable it while the environment stays up: a run against a stopped database 
 ### Optional: compare two runs
 
 On the test page, select the Baseline run and the failed run, then **Compare**: the dashboard overlays their client-side metrics.
+
+### Optional: load-test one commit
+
+*About 15 minutes: about 4 to build and deploy the commit, 8 to 9 to the verdict, and about 2 for the report.*
+
+When a commit has already passed another check, for example a repair that [04-test-github](../04-test-github/) proves test-first, load-test that exact commit before anyone accepts it. [`candidate.py`](candidate.py) builds the commit's API image in the registry, with the commit baked in, deploys it as an API revision named after the commit, and starts a run that names both:
+
+```powershell
+$sha = gh pr view <pr> --json headRefOid -q .headRefOid   # or the full SHA of a commit on one of this repository's branches
+python candidate.py deploy $sha
+python candidate.py run --issue <issue>                   # the GitHub Issue that the commit fixes
+```
+
+`deploy` first checks that the commit is on a branch of this repository, and refuses it otherwise: GitHub also serves a fork's pull request commits through this repository, and a fork's code never reaches Azure. It then exports the commit's `app/` folder with `git archive`, builds `requesthub-api:<sha>` in Azure Container Registry (2 minutes 9 seconds in our run), deploys it as revision `c` plus the first 7 characters of the SHA, waits until that revision serves all traffic, deactivates the others, and checks that `/api/meta` reports the commit. `run` starts the journey as `candidate-<7 characters>-<time>`, with the description `Commit <sha> on API revision c<7 characters> for Issue #<issue>`.
+
+The function's report names the run, the commit, and the revision, and checks the revision against the API's telemetry: *Every server request in the run's window came from that revision.* A failing run still opens or comments on this test's Issue, as in step 6. Passed or failed, the function also comments its report on the Issue that the run names. Leave out `--issue` to report only as in steps 6 and 8.
+
+When you're done, put the API back on its normal image: `python candidate.py restore` (about a minute).
+
+**Point out:** one commit, one revision, one run. The report names all three, and the API's own telemetry confirms which revision served the load.
 
 ### Optional: change the journey on your machine
 
@@ -356,14 +379,15 @@ Expect `PASS` from the check, `Cleanup: deleted ... requests owned by u-ben`, an
 - **Pass/fail, not a chart.** The criteria are code, reviewed in pull requests. A slowdown of 1.5 seconds on one endpoint fails the run within minutes.
 - **AI suggests, people verify.** The run's AI summary and the Observability Agent read the same run differently: the summary took the journey's deliberate denials for failures, and the agent ruled out the usual suspects but needed a precise question to confirm the injected delay. A lead checked against the telemetry, the criteria, and the report settle it.
 - **Follow-up without anyone remembering.** The Issue opens on the first failure, collects later failures as comments, and closes itself on the next accepted run.
-- **Least access.** The function's identity can only read test runs, the API's telemetry, and one Key Vault secret. Its GitHub token reaches one repository and only its Issues, and only Key Vault holds it. The Issues name runs and the resource group, never hosts or ids.
+- **Least access.** The function's identity can only read test runs, the API's telemetry, and one Key Vault secret. Its GitHub token reaches one repository and only its Issues, and only Key Vault holds it. The Issues name runs, commits, API revisions, and the resource group, never hosts or GUIDs.
 
 ## Reset and clean up
 
-After each demo, make sure the slowdown is off and no Issue is left open:
+After each demo, make sure the slowdown is off, the API runs its normal image, and no Issue is left open:
 
 ```powershell
 python slowdown.py status     # "no slowdown configured", or run: python slowdown.py off
+python candidate.py restore   # "Nothing to restore", or it puts the normal image back after a candidate
 gh issue list --label load-test --state open
 ```
 

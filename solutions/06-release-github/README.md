@@ -6,7 +6,7 @@ Getting a release out the door usually means chasing test results, writing notes
 
 ## Where it fits
 
-**Phase 6 of 7: Release and deploy.** The Microsoft counterpart is [06-release-microsoft](../06-release-microsoft/), which promotes and rolls back Container Apps revisions. This solution prepares and approves the release; it does not deploy to Azure.
+**Phase 6 of 7: Release and deploy.** The Microsoft counterpart is [06-release-microsoft](../06-release-microsoft/), which promotes and rolls back Container Apps revisions. This solution prepares and approves the release; it does not deploy to Azure. To have Azure stage and promote the exact image this solution tested, follow the [Release solution combo](../../PRESENTING.md#release-github-tests-one-image-azure-stages-that-digest-a-person-decides).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -106,7 +106,7 @@ Run once from the repository root.
 
    `gh secret list` now shows `COPILOT_GITHUB_TOKEN`. In an organization with Copilot and centralized billing, add `copilot-requests: write` to the workflow's permissions instead and recompile; no token is needed.
 
-The workflows, skills, and agent are already active because the repository's root `.github/` folder mirrors them. The container images are created in GitHub Container Registry on the first run, private like the repository.
+The workflows, skills, and agent are already active because the repository's root `.github/` folder mirrors them. The container images are created in GitHub Container Registry on the first run, as private packages, even in a public repository.
 
 ## Before each session
 

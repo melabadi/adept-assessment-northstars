@@ -6,7 +6,7 @@ Turning workshop notes into a backlog is slow, and it is easy to lose track of w
 
 ## Where it fits
 
-**Phase 1 of 7: Plan and specify.** The GitHub counterpart is [01-plan-github](../01-plan-github/). Both start from the same transcript and planted problems, and a person approves before anything reaches the backlog. Here everything between the transcript and the backlog runs in Azure; there it runs in GitHub Copilot and GitHub Actions.
+**Phase 1 of 7: Plan and specify.** The GitHub counterpart is [01-plan-github](../01-plan-github/). Both start from the same transcript and planted problems, and a person approves before anything reaches the backlog. Here everything between the transcript and the backlog runs in Azure; there it runs in GitHub Copilot and GitHub Actions. To run it with its GitHub counterpart on one brief, follow the [Plan solution combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes).
 
 | | Today | With this solution |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ flowchart LR
 
 Azure services sign in to each other with managed identities: the Function app to Foundry, storage, Key Vault, and Application Insights, and Foundry to Application Insights. Tenant policy turns off public network access on storage and Key Vault, so the Function app reaches both through private endpoints in its own virtual network, and storage accepts no shared keys. Reaching GitHub needs a credential: a fine-grained token limited to this repository's Issues. `azd provision` passes it to Bicep as a secure parameter, which deployment history never shows, and stores it as the Key Vault secret `github-token`. Only the Function app's identity can read it. The code keeps it in memory for up to five minutes, and never writes it to a log, a response, or a run record: a token with a line break inside is refused without being quoted, and an error the code didn't write itself is logged by its type only, because Python's own errors can quote a request.
 
-**Outside contributions.** Nothing in this solution listens to GitHub, so on a public repository nobody outside it can start a run: the start endpoint needs the Function app's key, which only Azure holds, and `runs.py` reads it with your Azure sign-in each time, so no copy of the key is stored anywhere else. A run acts only on its review Issue's `brief-approved` label, which only people with triage access can apply, or on the Issue being closed, which only its author and people with triage access can do. It reads no comments. When it looks for its own Issues by their hidden marker, it counts only Issues opened by the repository's owner, members, and collaborators, so an outsider who copies a marker into an Issue can't stand in for the review Issue or make a publish look done. The optional comparison reads a pull request's brief only when the pull request's branch is in this repository, not a fork: only people with write access push branches here, or the Copilot cloud agent when one of them assigns it.
+**Outside contributions.** Nothing in this solution listens to GitHub, so on a public repository nobody outside it can start a run: the start endpoint needs the Function app's key, which only Azure holds, and `runs.py` reads it with your Azure sign-in each time, so no copy of the key is stored anywhere else. A run acts only on its review Issue's `brief-approved` label, which only people with triage access can apply, or on the Issue being closed, which only its author and people with triage access can do. It reads no comments. When it looks for its own Issues by their hidden marker, it counts only Issues opened by the repository's owner, members, and collaborators, so an outsider who copies a marker into an Issue can't stand in for the review Issue or make a publish look done. The optional comparison, and the evaluation of a pull request's brief in the [Plan solution combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes), read the brief only when the pull request's branch is in this repository, not a fork: only people with write access push branches here, or the Copilot cloud agent when one of them assigns it.
 
 **Model and call mode.** The agent runs on `gpt-4.1` in background mode: the call returns at once, and the step polls until the brief is ready, 16 to 24 seconds later in our runs. Every brief in our runs passed the four gates whenever the sandbox scored them. `gpt-4.1` retires on 2027-04-14. To move to a reasoning model such as `gpt-5.4`, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), replace `temperature` with `reasoning_effort: low` in `agent.yaml`, and run `azd provision`.
 
@@ -145,7 +145,7 @@ Azure services sign in to each other with managed identities: the Function app t
    Its hooks test the code, publish to Foundry, and deploy the Function app. The publish hook prints, for example:
 
    ```text
-   unit tests: 78 passed
+   unit tests: 92 passed
    vector store plan-inputs-9a000f952f98: uploaded
    agent requirements-analyst v1: new version (gpt-4.1)
    evaluator plan_structure v1: new version
@@ -159,7 +159,7 @@ Azure services sign in to each other with managed identities: the Function app t
    - **Token name:** `ai-sdlc-plan-microsoft`. **Expiration:** 30 days.
    - **Repository access:** **Only select repositories**, then this repository.
    - **Repository permissions:** **Issues: Read and write**. GitHub adds Metadata: Read-only on its own.
-   - Only if you want the optional comparison with 01-plan-github's Copilot brief: also **Contents: Read-only**, so the run can read that pull request and its brief.
+   - Only if you want the optional comparison with 01-plan-github's Copilot brief, or the Plan solution combo: also **Contents: Read-only**, so the run can read that pull request and its brief.
 
    With these permissions the token can create, label, comment on, and close Issues, and link sub-issues and dependencies, in this repository only.
 
@@ -190,10 +190,10 @@ Set up before the Function app replaced the Logic App? `azd up` adds the Functio
    python runs.py status
    ```
 
-   ![The starting-state check in PowerShell 7: 78 unit tests pass, setup_foundry.py reports the vector store, agent requirements-analyst v10 on gpt-4.1, the seven evaluators, and the evaluation plan-brief-checks as reused, no open Issue, runs.py status shows no run in progress and the five newest runs, and the GitHub token in Key Vault answers HTTP 200 with its expiry date](images/00-starting-state.png)
+   ![The starting-state check in PowerShell 7: 92 unit tests pass, setup_foundry.py reports the vector store, agent requirements-analyst v10 on gpt-4.1, the seven evaluators, and the evaluation plan-brief-checks as reused, no open Issue, runs.py status shows no run in progress and the five newest runs, and the GitHub token in Key Vault answers HTTP 200 with its expiry date](images/00-starting-state.png)
 
    You should see:
-   - `unit tests: 78 passed`, then every Foundry line ending in `reused`: the agent, the seven evaluators, and the evaluation match this folder;
+   - `unit tests: 92 passed`, then every Foundry line ending in `reused`: the agent, the seven evaluators, and the evaluation match this folder;
    - `Open Issues (track:microsoft): 0` and `Runs in progress: 0`. Otherwise run [Reset and clean up](#reset-and-clean-up) first;
    - `GitHub token in Key Vault: HTTP 200` and an expiry date after your session. Anything else means a new token: [Set up](#set-up), steps 2 and 3.
 

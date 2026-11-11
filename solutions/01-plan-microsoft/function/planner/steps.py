@@ -1,6 +1,6 @@
 """The run, one step at a time. function_app.py calls these from Azure Functions; the tests call them with fakes.
 
-  start()          POST /api/runs. Saves a new record (queued); the caller queues the draft step.
+  start()          POST /api/runs. Saves a new record (queued); the caller queues its first step (first_step(): draft).
   draft()          Queue step. Asks the Foundry agent for the brief in background mode, and polls every 5 seconds
                    until the answer is ready. A response that fails is asked for once more.
   evaluate()       Queue step. Scores the brief with the Foundry evaluation, polling every 15 seconds. When the
@@ -18,6 +18,13 @@
   publish()        Queue step. Creates the epic and its four tasks, links each task to the epic as a sub-issue, marks
                    the tasks' "blocked by" dependencies, comments the links on the review Issue, and closes it.
   cancel()         DELETE /api/runs/{run}. Ends an unfinished run, and closes its review Issue if it has one.
+
+A run started with evaluatePullRequest (the Plan solution combo) drafts nothing: it starts at evaluate(), which reads the
+Copilot brief on a 01-plan-github pull request at its head commit, keeps that revision for the rest of the run, scores
+only that brief, and opens an evaluation Issue for the product owner: the revision, the evaluation run, the scores, and
+the brief's open items, whether the gates passed or not. The run then ends as evaluated. It never publishes:
+01-plan-github's publisher publishes that revision, and only that one, once a person has decided the open items and
+approved the pull request.
 
 Each step starts by loading the run's record and checking its state, so a step that runs twice (a queue message
 delivered again) does nothing the second time, and a cancelled run stops at its next poll. The steps save their progress
@@ -63,6 +70,7 @@ PUBLISH_REQUEUES = 2
 STEP_STALE = timedelta(minutes=45)
 COPILOT_BRIEF = "solutions/01-plan-github/brief/backlog.json"
 RUN_ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
+REVISION = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 STEP_OF = {"queued": "draft", "drafting": "draft", "evaluating": "evaluate"}
 
 
@@ -176,18 +184,32 @@ def summary(record: dict) -> dict:
 
 
 # ---------- start ----------
-def start(services: Services, compare_with_pull_request: int | None = None) -> dict:
+def start(services: Services, compare_with_pull_request: int | None = None,
+          evaluate_pull_request: int | None = None) -> dict:
+    """Saves a new run. With evaluate_pull_request, the run evaluates that pull request's Copilot brief instead of
+    drafting one, so it starts at the evaluate step (first_step())."""
+    if compare_with_pull_request and evaluate_pull_request:
+        raise ValueError("a run compares with a pull request or evaluates one, not both")
     now = services.now()
     run_id = f"{now.astimezone(timezone.utc):%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
-    text = "queued"
-    if compare_with_pull_request:
+    state, text = "queued", "queued"
+    if evaluate_pull_request:
+        state = "evaluating"
+        text = (f"queued: Foundry evaluates the Copilot brief on 01-plan-github pull request #{evaluate_pull_request} "
+                f"at its head commit, and drafts nothing")
+    elif compare_with_pull_request:
         text += f"; the Copilot brief from 01-plan-github pull request #{compare_with_pull_request} is scored alongside"
-    record = {"id": run_id, "state": "queued", "created": iso(now), "updated": iso(now),
-              "compareWithPullRequest": compare_with_pull_request,
+    record = {"id": run_id, "state": state, "created": iso(now), "updated": iso(now),
+              "compareWithPullRequest": compare_with_pull_request, "evaluatePullRequest": evaluate_pull_request,
               "events": [{"at": iso(now), "step": "start", "text": text}]}
     services.store.create(record)
     services.log(f"run {run_id} [start] {text}")
     return record
+
+
+def first_step(record: dict) -> str:
+    """The step to queue for a new run: an evaluation of a pull request's brief has no draft."""
+    return "evaluate" if record.get("evaluatePullRequest") else "draft"
 
 
 # ---------- draft ----------
@@ -282,6 +304,61 @@ def copilot_brief(services: Services, pull_request: int) -> tuple[str | None, st
         return None, str(error)
 
 
+def read_revision(services: Services, run: Run) -> None:
+    """Reads the Copilot brief that the run evaluates, at the pull request's head commit, and keeps both: a step
+    delivered again scores the same revision even if the branch moved since. The same rule as copilot_brief(): only a
+    branch in this repository, never a fork's. A GitHub error the queue can't fix ends the run before Foundry sees
+    anything; one that may pass (no answer) is raised, and the queue delivers the step again."""
+    pull_request = run.record["evaluatePullRequest"]
+    nothing = "Nothing was evaluated."
+    try:
+        github = services.github()
+        try:
+            pull = github.pull_request(pull_request)
+        except ServiceError as error:
+            if error.status == 404:
+                run.fail("evaluate", "PullRequestNotEvaluated",
+                         f"#{pull_request} isn't a pull request in this repository. {nothing}")
+            raise
+        if not same_repository(pull, github.repository):
+            run.fail("evaluate", "PullRequestNotEvaluated", f"The branch of pull request #{pull_request} is in a fork, "
+                                                            f"and a fork's files never reach Foundry. {nothing}")
+        sha = str((pull.get("head") or {}).get("sha") or "")
+        if not REVISION.match(sha):
+            run.fail("evaluate", "PullRequestNotEvaluated", f"GitHub named no head commit for pull request "
+                                                            f"#{pull_request}. {nothing}")
+        try:
+            text = github.read_file(COPILOT_BRIEF, sha)
+        except ServiceError as error:
+            if error.status == 404:
+                run.fail("evaluate", "PullRequestNotEvaluated", f"Pull request #{pull_request} has no {COPILOT_BRIEF} "
+                                                                f"at revision {sha[:7]}. {nothing}")
+            raise
+    except TokenMissing as error:
+        run.fail("evaluate", "GitHubTokenMissing", str(error))
+    except ServiceError as error:
+        run.fail("evaluate", "GitHubRefused", f"{error}, when the run read pull request #{pull_request}. {nothing}")
+    try:
+        brief.parse_brief(text)
+    except ValueError:
+        run.fail("evaluate", "PullRequestNotEvaluated", f"{COPILOT_BRIEF} at revision {sha[:7]} isn't a JSON brief. "
+                                                        f"{nothing}")
+    run.record["revision"] = {"pullRequest": pull_request, "sha": sha, "path": COPILOT_BRIEF}
+    run.record["briefText"] = text
+    run.event("evaluate", f"read the Copilot brief on 01-plan-github pull request #{pull_request} at revision "
+                          f"{sha[:7]}: Foundry evaluates this revision")
+    run.save()
+
+
+def evaluation_run_name(services: Services, run: Run, attempt: int) -> str:
+    """The evaluation run's name in Foundry. For a pull request's brief it names the revision, so the run in the
+    Foundry portal says which commit it scored."""
+    revision = run.record.get("revision")
+    if revision:
+        return f"pull request #{revision['pullRequest']} at {revision['sha'][:7]} (run {run.id}, attempt {attempt})"
+    return f"brief {services.now():%Y-%m-%d %H:%M} (run {run.id}, attempt {attempt})"
+
+
 def first_attempt(services: Services, run: Run) -> dict:
     """The evaluation's progress, saved in the record: the attempts started, the scores kept, the attempt in flight."""
     settings = services.settings
@@ -311,13 +388,18 @@ def score(services: Services, run: Run) -> None:
 
     The checks are code, so a brief's score never changes: each check keeps the first result the grading sandbox
     scored, from whichever attempt, and the evaluation runs again only while a gate has no scored result yet. Progress is
-    saved after each attempt starts and ends, so a step delivered again continues instead of starting over."""
+    saved after each attempt starts and ends, so a step delivered again continues instead of starting over.
+
+    A pull request's brief (evaluatePullRequest) is the only brief scored, and a gate that didn't pass doesn't end the
+    run: the evaluation Issue tells the product owner, and 01-plan-github's publisher refuses that revision."""
     settings = services.settings
     pull_request = run.record.get("compareWithPullRequest")
+    evaluated = run.record.get("evaluatePullRequest")
     progress = run.record.get("evaluation") or {}
     if not progress.get("evaluationId"):
         progress = first_attempt(services, run)
-    items = [{"item": {"brief": checks.FOUNDRY_LABEL, "response": run.record["briefText"]}}]
+    label = checks.copilot_label(evaluated) if evaluated else checks.FOUNDRY_LABEL
+    items = [{"item": {"brief": label, "response": run.record["briefText"]}}]
     if run.record.get("copilotBriefText") is not None:
         items.append({"item": {"brief": checks.copilot_label(pull_request), "response": run.record["copilotBriefText"]}})
     while True:
@@ -325,9 +407,10 @@ def score(services: Services, run: Run) -> None:
             if progress["attempts"] >= EVALUATION_ATTEMPTS:
                 break
             progress["attempts"] += 1
-            name = f"brief {services.now():%Y-%m-%d %H:%M} (run {run.id}, attempt {progress['attempts']})"
+            name = evaluation_run_name(services, run, progress["attempts"])
             started = services.foundry.start_evaluation_run(progress["evaluationId"], name, items)
             progress.update(runId=started.get("id"), pending=True)
+            progress.setdefault("runNames", []).append(name)
             run.event("evaluate", f"attempt {progress['attempts']} of the evaluation {settings.evaluation} started")
             run.save()
         evaluation_run = wait_for_evaluation(services, run, progress["evaluationId"],
@@ -335,7 +418,7 @@ def score(services: Services, run: Run) -> None:
         status = evaluation_run.get("status")
         if status == "completed":
             output = services.foundry.output_items(progress["evaluationId"], progress["runId"])
-            found = checks.results_for(output, checks.FOUNDRY_LABEL)
+            found = checks.results_for(output, label)
             if len(found) == 1:
                 progress["latest"] = found[0]
                 checks.keep_scored(progress["scored"], found[0])
@@ -362,18 +445,23 @@ def score(services: Services, run: Run) -> None:
             break
     results = checks.combine(progress["latest"], progress["scored"])
     not_passed = checks.gates_not_passed(results)
-    if not_passed:
+    if not_passed and not evaluated:
         run.fail("evaluate", "BriefFailedEvaluation", f"The evaluation ended as '{progress['status']}', and these gates "
                                                       f"didn't pass: {', '.join(not_passed)}. Nothing was sent to GitHub.")
     copilot_results = (checks.combine(progress["copilotLatest"], progress["copilotScored"])
                        if progress["copilotLatest"] else None)
     seconds = run.seconds_since(parse_iso(progress["started"]))
     progress.update({
-        "seconds": seconds, "passed": True, "foundry": results, "copilot": copilot_results,
+        "seconds": seconds, "passed": not not_passed, "notPassed": not_passed, "finished": True,
+        "foundry": None if evaluated else results, "copilot": results if evaluated else copilot_results,
         "copilotError": (progress.get("copilotError") or "no result") if pull_request and not copilot_results else None,
     })
-    run.event("evaluate", f"the four gates passed after {seconds} s: {checks.passed_count(results)} of {len(results)} "
-                          f"checks passed")
+    if not_passed:
+        run.event("evaluate", f"these gates didn't pass after {seconds} s: {', '.join(not_passed)}; "
+                              f"{checks.passed_count(results)} of {len(results)} checks passed")
+    else:
+        run.event("evaluate", f"the four gates passed after {seconds} s: {checks.passed_count(results)} of "
+                              f"{len(results)} checks passed")
     run.save()
 
 
@@ -414,13 +502,55 @@ def open_review(services: Services, run: Run) -> None:
     run.save()
 
 
+def open_evaluation(services: Services, run: Run) -> None:
+    """Puts the evaluation of a pull request's brief where the product owner works: a GitHub Issue that names the
+    revision, the evaluation run, the verdict, the scores, and the brief's open items as a task list. The run ends
+    here, as evaluated: 01-plan-github's publisher reads the Issue, and publishes this revision only once its gates
+    passed and a person ticked every open item."""
+    settings = services.settings
+    evaluation, revision = run.record["evaluation"], run.record["revision"]
+    try:
+        github = services.github()
+        marker = brief.evaluation_marker(run.id, revision["pullRequest"], revision["sha"], evaluation["passed"])
+        existing = existing_issue(github, marker, brief.EVALUATION_LABELS)
+        if existing:
+            number = existing["number"]
+        else:
+            body = brief.evaluation_issue_body(
+                run_id=run.id, repository=github.repository, revision=revision, evaluation=settings.evaluation,
+                run_names=evaluation.get("runNames") or [], results=evaluation.get("copilot") or [],
+                not_passed=evaluation.get("notPassed") or [], brief=brief.parse_brief(run.record["briefText"]))
+            number = github.create_issue(brief.evaluation_title(revision), body, brief.EVALUATION_LABELS)["number"]
+    except TokenMissing as error:
+        run.fail("review", "GitHubTokenMissing", str(error))
+    except ServiceError as error:
+        run.fail("review", "GitHubRefused", f"{error}, when the run opened the evaluation Issue.")
+    run.record["evaluationIssue"] = {"issue": number, "opened": iso(services.now())}
+    run.record["state"] = "evaluated"
+    pull_request = revision["pullRequest"]
+    if evaluation["passed"]:
+        then = (f"the product owner resolves its open items, then applies {brief.APPROVAL_LABEL} to pull request "
+                f"#{pull_request}")
+    else:
+        then = f"the gates didn't pass, so 01-plan-github won't publish revision {revision['sha'][:7]}"
+    run.event("review", f"opened evaluation Issue #{number} for revision {revision['sha'][:7]}: {then}")
+    run.save()
+
+
 def evaluate(services: Services, run_id: str, owner: str = "") -> str | None:
     run = Run(services, run_id)
     if run.state != "evaluating":
         return None
-    if not (run.record.get("evaluation") or {}).get("passed"):  # delivered again after scoring: don't score twice
+    evaluated = run.record.get("evaluatePullRequest")
+    if evaluated and not run.record.get("revision"):
+        read_revision(services, run)
+    progress = run.record.get("evaluation") or {}
+    if not (progress.get("passed") or progress.get("finished")):  # delivered again after scoring: don't score twice
         score(services, run)
-    open_review(services, run)
+    if evaluated:
+        open_evaluation(services, run)
+    else:
+        open_review(services, run)
     return None
 
 

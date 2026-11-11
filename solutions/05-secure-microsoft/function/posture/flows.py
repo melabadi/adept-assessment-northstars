@@ -61,8 +61,9 @@ def _definition_filter(s) -> str:
     return f"resourceId eq '{s.storage_account_id}' and policyDefinitionName eq '{s.policy_definition_name}'"
 
 
-def _assignment_filter(s) -> str:
-    return f"resourceId eq '{s.storage_account_id}' and policyAssignmentName eq '{s.policy_assignment_name}'"
+def _ours(states: list[dict], s) -> list[dict]:
+    """This solution's assignment, among every assignment of the definition."""
+    return [x for x in states if x.get("policyAssignmentName") == s.policy_assignment_name]
 
 
 # ---------------------------------------------------------------- intake
@@ -182,7 +183,9 @@ def _record_confirmation(assessment: dict, s, github) -> dict:
 
 # ---------------------------------------------------------------- preview
 def preview(number: int, s, azure, github) -> dict:
-    """Start the what-if job for one pull request, read again from GitHub's API. Only the number comes from the caller."""
+    """Start the what-if job for one pull request, read again from GitHub's API. Only the number comes from the caller.
+    The pending commit status is the job's work list: the job starts as defined and previews every open pull request
+    whose head commit has it (whatif.py --pending), so the Function never chooses what the job runs."""
     number = int(number)
     pull = github.call("GET", f"pulls/{number}")
     refused = checks.outside_pull_request(pull, s.repository)
@@ -201,8 +204,7 @@ def preview(number: int, s, azure, github) -> dict:
         github.call("POST", f"statuses/{sha}", {"state": "pending", "context": checks.STATUS_CONTEXT,
                                                 "description": "Azure what-if preview is running in Azure (posture-whatif job)"})
         try:
-            container = azure.job_container(s.whatif_job_id)
-            azure.start_job(s.whatif_job_id, container, ["--pull-request", str(number)])
+            azure.start_job(s.whatif_job_id)
         except Exception:
             github.call("POST", f"statuses/{sha}", {"state": "error", "context": checks.STATUS_CONTEXT,
                                                     "description": "The preview could not start in Azure; see the posture Function app's logs"})
@@ -225,17 +227,20 @@ def verify(s, azure, github, now=_now, sleep=time.sleep, polls: int = 40, poll_s
         return {"result": "already verified", "issue": number}
 
     progress = {"evaluationStarted": False, "policyChecks": 1}
-    if not _compliant(azure.policy_states(s.resource_group_id, _assignment_filter(s))):
+    # One query is both the wait and the evidence: every assignment of the definition on the storage account. Seen live, a
+    # query by assignment name reported the fix compliant while this one still returned the earlier evaluation.
+    every = azure.policy_states(s.resource_group_id, _definition_filter(s))
+    if not _compliant(_ours(every, s)):
         # The evaluation's own status URL is at subscription scope, where the identity has no access: poll the results.
         azure.start_policy_evaluation(s.resource_group_id)
         progress["evaluationStarted"] = True
         for _ in range(polls):
             sleep(poll_seconds)
             progress["policyChecks"] += 1
-            if _compliant(azure.policy_states(s.resource_group_id, _assignment_filter(s))):
+            every = azure.policy_states(s.resource_group_id, _definition_filter(s))
+            if _compliant(_ours(every, s)):
                 break
-    every = azure.policy_states(s.resource_group_id, _definition_filter(s))
-    if not _compliant([x for x in every if x.get("policyAssignmentName") == s.policy_assignment_name]):
+    if not _compliant(_ours(every, s)):
         return {"result": "Azure Policy does not report the storage account compliant yet; the next run tries again",
                 "issue": number, **progress}
     try:

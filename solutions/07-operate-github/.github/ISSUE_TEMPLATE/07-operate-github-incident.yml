@@ -8,7 +8,9 @@ body:
       value: |
         Write down **what you observed**, with UTC times and where each fact came from. Sanitize logs first: no secrets, tokens, customer data, or personal data.
 
-        If you have write access to this repository, creating this Issue starts **Operate · GitHub · triage an incident**. Within minutes it comments with a classification, a sourced timeline, and its hypotheses, and opens one follow-up Issue. Otherwise a maintainer starts it by removing the `incident` label and applying it again. People decide what happens next.
+        If you have write access to this repository, creating this Issue starts **Operate · GitHub · triage an incident**. Within minutes it comments with a classification, a sourced timeline, and its hypotheses, and opens one follow-up Issue. People decide what happens next.
+
+        If you don't, the triage doesn't start, even when a maintainer applies the `incident` label again: it only reads reports filed by the repository's owner, members, and collaborators. A maintainer reads your report and, if it is an incident, files it again in their own words.
   - type: dropdown
     id: status
     attributes:

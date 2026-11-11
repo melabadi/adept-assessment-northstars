@@ -21,9 +21,10 @@ The review has three parts, always in this order, and nothing in the second or t
   1. Team rules: the checker's verdict line and its own Markdown table, copied from judge.json word for word.
   2. Sandbox: the build and test results.
   3. Commentary from the reviewer agent: summary, observations, notes on rule results, what the person should decide.
-Text that came from the pull request or from the model is made inert: one line, no HTML, no @mentions. GUIDs and Azure
-host names are replaced, so not even a manipulated agent can post tenant details. Error messages are never posted, only
-error codes; the details stay in the reviewer's logs.
+Text that came from the pull request or from the model is made inert: one line, no HTML, no links or images, no
+@mentions, no references to Issues or pull requests (they would add "mentioned this" to their timelines in the name of
+the token's owner), and no math. GUIDs and Azure host names are replaced, so not even a manipulated agent can post
+tenant details. Error messages are never posted, only error codes; the details stay in the reviewer's logs.
 
 Usage
   python3 format_review.py --judge judge.json --input review-input.json --agent agent.json
@@ -59,6 +60,8 @@ def redact(text: str) -> str:
 
 ASCII_PUNCTUATION = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 WWW = re.compile(r"(?i)www\.")
+REFERENCE = re.compile(r"(?i)(#|GH-)(?=\d)")  # #123, GH-123, owner/repo#123: links to an Issue, and a note on its timeline
+MAX_BACKTICKS = 80  # GitHub's Markdown parser (cmark-gfm) never opens a code span with a longer run of backticks
 
 
 def unmention(text: str) -> str:
@@ -67,17 +70,21 @@ def unmention(text: str) -> str:
 
 
 def inert_text(text: str) -> str:
-    """Text outside code spans: no HTML or entities, no mentions, no links, no autolinked URLs."""
+    """Text outside code spans: no HTML or entities, no links or images, no autolinked URLs, no references to Issues or
+    pull requests, no math (GitHub reads $...$ and $`...`$ as math, whatever the escaping), no mentions. Zero-width
+    spaces do the breaking, so the text reads the same."""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = text.replace("[", "\\[").replace("]", "\\]")
     text = WWW.sub("www\u200b.", text.replace("://", ":/\u200b/"))
+    text = REFERENCE.sub("\\g<1>\u200b", text).replace("$", "\u200b$\u200b")
     return unmention(text)
 
 
 def plain(value: object, limit: int = 500) -> str:
-    """Untrusted text as inert Markdown on one line. Code spans are found the way GitHub (CommonMark) finds them: a run
-    of backticks opens a span only if a run of the same length closes it, and a backslash-escaped backtick is a literal
-    one. Inside a span nothing is interpreted, so only mentions are neutralized there; everything outside is escaped."""
+    """Untrusted text as inert Markdown on one line. Code spans are found the way GitHub (cmark-gfm) finds them: a run of
+    at most 80 backticks opens a span only if a run of the same length closes it, and a backslash-escaped backtick is a
+    literal one. Inside a span nothing is interpreted, so only mentions are neutralized there; everything outside is
+    escaped, and so is every backtick that opens no span."""
     text = redact(" ".join(str(value or "").split()))
     if len(text) > limit:
         text = text[: limit - 1].rstrip() + "…"
@@ -93,11 +100,12 @@ def plain(value: object, limit: int = 500) -> str:
             continue
         if c == "`":
             n = len(text) - i - len(text[i:].lstrip("`"))
-            close = next((m.start() for m in re.finditer(r"`+", text[i + n:]) if len(m.group(0)) == n), None)
+            close = None if n > MAX_BACKTICKS else next(
+                (m.start() for m in re.finditer(r"`+", text[i + n:]) if len(m.group(0)) == n), None)
             out.append(inert_text("".join(outside)))
             outside = []
             if close is None:
-                out.append("\\`" * n)  # an unclosed run is literal text: escape it so it can't pair up later
+                out.append("\\`" * n)  # literal backticks: escape them so they can't pair up later
                 i += n
                 continue
             out.append("`" * n + unmention(text[i + n:i + n + close]) + "`" * n)
