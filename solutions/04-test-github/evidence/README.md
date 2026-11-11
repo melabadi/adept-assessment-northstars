@@ -1,6 +1,6 @@
-# Evidence from the recorded run
+# Evidence from the runs
 
-These are the two proofs from the run in [See it work](../README.md#see-it-work), on pull request [#101](https://github.com/melabadi/adept-assessment-northstars/pull/101), 28 October 2026. Each folder holds four files from one proof run's `regression-proof` artifact, copied unchanged. The runs and their artifacts need a GitHub sign-in, and the artifacts expire on 26 January 2027; these copies stay.
+These are the two proofs from the run in [See it work](../README.md#see-it-work), on pull request [#101](https://github.com/melabadi/adept-assessment-northstars/pull/101), 28 October 2026, and the record of the CI failure investigation's runs of 11 November 2026 (step 10). Each proof folder holds four files from one proof run's `regression-proof` artifact, copied unchanged. The runs and their artifacts need a GitHub sign-in, and the artifacts expire on 26 January 2027; these copies stay.
 
 | Folder | Proof run (UTC) | Head | Verdict |
 | --- | --- | --- | --- |
@@ -19,3 +19,7 @@ The artifacts also hold each run's console log, which isn't copied here. While a
 gh run download 40716499194 -R melabadi/adept-assessment-northstars --name regression-proof --dir out/proof-e1d52334d
 (Get-FileHash out/proof-e1d52334d/proof.json).Hash -eq (Get-FileHash solutions/04-test-github/evidence/proof-e1d52334d/proof.json).Hash
 ```
+
+## The CI failure investigation
+
+[`ci-investigation-2026-11-11.md`](ci-investigation-2026-11-11.md) records the four runs of the agentic CI failure investigation on pull requests [#359](https://github.com/melabadi/adept-assessment-northstars/pull/359) and [#360](https://github.com/melabadi/adept-assessment-northstars/pull/360), in step 10. It holds when each run started and ended, each job's time, the threat detection's verdict, the AI credits of the agent and the detection, and the agent's tool calls in the two runs whose comments stay on the pull requests. The times come from the GitHub API. The rest is copied unchanged from the runs' `agent`, `detection`, and `usage` artifacts, which expire on 9 February 2027. The file ends with the commands that compare it with GitHub.

@@ -4,9 +4,9 @@ Every pull request waits for a reviewer to check the same team rules again, and 
 
 ![The review the Azure pull request reviewer posted on the demo pull request: the team rules table, where Approval authority is untouched fails because DecideAsync and PermissionsFor changed and the other four rules pass; the sandbox results, 67 of 67 API integration tests and 14 of 14 web unit tests passed; and commentary from requesthub-pr-reviewer v4 on gpt-5.4-mini, whose concern says approvers can now decide their own low-priority requests and that the person should confirm this is intended policy](images/04-first-review.png)
 
-- **[See it work](#see-it-work):** a real run on RequestHub, this repository's sample app. A change that let approvers approve their own requests, with the test that guarded the rule rewritten to pass, got a review 2 minutes 20 seconds after the label: one of the five team rules failed, all 81 tests passed, and the agent named the risk. The fix got a new review 2 minutes 30 seconds after its commit, and an evaluation on ten labelled pull requests passed every check.
-- **[Add it to your repository](#add-it-to-your-repository):** about 30 minutes of one-time setup in Azure and GitHub, once the rules and the build describe your code.
-- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 30 minutes to set it up on RequestHub, then about 45 minutes for the steps of See it work.
+- **[See it work](#see-it-work):** a real run on RequestHub, this repository's sample app. A change that let approvers approve their own requests, with the test that guarded the rule rewritten to pass, got a review 2 minutes 20 seconds after the label: one of the five team rules failed, all 81 tests in the sandbox passed, and the agent named the risk. The fix got a new review 2 minutes 30 seconds after its commit, and an evaluation on ten labelled pull requests passed every check.
+- **[Add it to your repository](#add-it-to-your-repository):** about 15 minutes of one-time setup in Azure and GitHub, in a fresh setup we timed, once the rules and the build describe your code.
+- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 20 minutes to set it up on RequestHub, in a fresh setup we timed, then about 30 minutes for the steps of See it work.
 
 ## Why it matters
 
@@ -64,8 +64,8 @@ sequenceDiagram
 | --- | --- |
 | **GitHub** | Holds the code and the pull request. The `review:azure` label asks for a review; a repository webhook, signed with a secret, tells Azure. `azd up` creates both with your GitHub CLI. Nothing runs in GitHub Actions, and nothing depends on GitHub Copilot. |
 | **Azure Functions** (Flex Consumption, Python) | One app, [`function/`](function/). Its webhook function, `github_webhook`, checks GitHub's signature, reads the pull request from GitHub's REST API with a fine-grained token, and queues a review only if one may run, all within GitHub's 10-second limit. Its queue-triggered function, `review`, takes one review from the queue: it drives the two sandbox sessions, starts the agent and polls for its answer, and posts the review. It logs one line per step to Application Insights. Two more endpoints start and read the dry runs that `eval_reviewer.py` uses. It reads the GitHub token and the webhook secret from Key Vault with its managed identity. The app runs in its own virtual network and reaches its storage, which holds the queue, and Key Vault through private endpoints. |
-| **Azure Container Apps dynamic sessions** | Two pools of Shell sessions. The **judge** pool has no network: it runs the rule checker ([`sandbox/review_rules.py`](sandbox/review_rules.py)) on the code as data and, at the end, writes the review ([`sandbox/format_review.py`](sandbox/format_review.py)). The **run** pool builds and tests the pull request ([`sandbox/run_change.sh`](sandbox/run_change.sh)): for RequestHub, .NET 10 and the API's integration tests against PostgreSQL, then Node 22 and the web UI's typecheck and unit tests. |
-| **Microsoft Foundry** | Hosts the `requesthub-pr-reviewer` prompt agent on `gpt-5.4-mini` ([`reviewer-agent.yaml`](reviewer-agent.yaml)). Its one tool, `runInSandbox`, reads files in the run session with the project's managed identity. Every answer is traced to Application Insights, and the evaluations live in the project. |
+| **Azure Container Apps dynamic sessions** | Two pools of Shell sessions, which are in [preview](https://learn.microsoft.com/azure/container-apps/sessions-tutorial-shell). The **judge** pool has no network: it runs the rule checker ([`sandbox/review_rules.py`](sandbox/review_rules.py)) on the code as data and, at the end, writes the review ([`sandbox/format_review.py`](sandbox/format_review.py)). The **run** pool builds and tests the pull request ([`sandbox/run_change.sh`](sandbox/run_change.sh)): for RequestHub, .NET 10 and the API's integration tests against PostgreSQL 16, then Node 26 and the web UI's typecheck and unit tests. PostgreSQL comes from the zonky project's builds of it on Maven Central, pinned by version and SHA-256, so nothing comes from Ubuntu's package archive. Each setup step has a time limit, and a step that fails shows in the review as an error with its reason. |
+| **Microsoft Foundry** | Hosts the `requesthub-pr-reviewer` prompt agent ([`reviewer-agent.yaml`](reviewer-agent.yaml)) on `gpt-6-luna`, model version 2026-09-22; in this repository's deployment it is agent version 6. Its one tool, `runInSandbox`, reads files in the run session with the project's managed identity. Every answer is traced to Application Insights, and the evaluations live in the project. |
 | **The person** | Adds the label, reads the review, and decides. |
 
 **Why you can trust the review.**
@@ -92,7 +92,7 @@ Every step links evidence that opens without signing in: pull request [#212](htt
 
 *04:18:08 to 04:18:13: the pull request opened 5 seconds after the commit.*
 
-The operator created branch `demo/fast-track` from `main`, applied [`demo/fast-track.patch`](demo/fast-track.patch), committed it as [4f351a5](https://github.com/melabadi/adept-assessment-northstars/commit/4f351a5), pushed it, and opened pull request [#212](https://github.com/melabadi/adept-assessment-northstars/pull/212), *Let approvers fast-track their own low-priority requests*. The change sounds reasonable: approvers wait for a colleague even for a replacement keyboard, so let them approve their own low-priority requests. It quietly weakens a core rule of RequestHub, that a requester never decides their own request. `DecideAsync` and `PermissionsFor` now skip the self-approval check for low-priority requests, and the test that guarded the rule, `Requester_cannot_approve_their_own_request`, became `Approver_can_fast_track_their_own_low_priority_request`, which expects `201 Created`. Every test still passes.
+The operator created branch `demo/fast-track` from `main`, applied [`demo/fast-track.patch`](demo/fast-track.patch), committed it as [4f351a5](https://github.com/melabadi/adept-assessment-northstars/commit/4f351a5), pushed it, and opened pull request [#212](https://github.com/melabadi/adept-assessment-northstars/pull/212), *Let approvers fast-track their own low-priority requests*. The change sounds reasonable: approvers wait for a colleague even for a replacement keyboard, so let them approve their own low-priority requests. It quietly weakens a core rule of RequestHub, that a requester never decides their own request. `DecideAsync` and `PermissionsFor` now skip the self-approval check for low-priority requests, and the test that guarded the rule, `Requester_cannot_approve_their_own_request`, became `Approver_can_fast_track_their_own_low_priority_request`, which expects `201 Created`. The API integration tests and the web unit tests, which are what the sandbox runs, all still pass. The repository's CI also runs browser tests, and one of them, which still expects the self-approval message, failed on this commit, as it did in [a fresh setup](evidence/2026-11-11-fresh-setup.md#what-didnt-match-the-readme-and-what-changed) on 11 November.
 
 ![The demo pull request's Files changed tab: in RequestWorkflow.cs, DecideAsync and PermissionsFor now block self-approval only when the request's priority isn't Low; in RequestLifecycleTests.cs, the test Requester_cannot_approve_their_own_request was renamed Approver_can_fast_track_their_own_low_priority_request and now expects HttpStatusCode.Created instead of Forbidden](images/01-files-changed.png)
 
@@ -100,7 +100,7 @@ This screenshot comes from the run of 30 October on pull request [#175](https://
 
 Evidence: commit [4f351a5](https://github.com/melabadi/adept-assessment-northstars/commit/4f351a5) and [the timeline](evidence/2026-10-31-recorded-run.md#timeline).
 
-**What this shows:** a change can pass every test and still break the rule that matters most, which is what a busy reviewer can miss.
+**What this shows:** a change can pass its unit and integration tests and still break the rule that matters most, which is what a busy reviewer can miss.
 
 ### 2. A label asked for a review
 
@@ -120,7 +120,7 @@ Evidence: the label on [#212](https://github.com/melabadi/adept-assessment-north
 
 *04:18:27 to 04:20:43: 2 minutes 16 seconds in the Function.*
 
-The `review` function took the review from the queue and logged one line per step, each starting with the review's id. It read #212 at 4f351a5 at 04:18:29. By 04:18:34, the rule checker from `main` had read both trees as data, in the judge's session, which has no network: 1 of 5 rules failed. Only then did the pull request's code start to build, in its own session. At 04:20:35, API 67 of 67 and web 14 of 14 tests had passed, in 1 minute 50 seconds. The agent answered in 6 seconds without running anything in the sandbox, and at 04:20:43 the Function posted a COMMENT review on 4f351a5 and deleted both sessions.
+The `review` function took the review from the queue and logged one line per step, each starting with the review's id. It read #212 at 4f351a5 at 04:18:29. By 04:18:34, the rule checker from `main` had read both trees as data, in the judge's session, which has no network: 1 of 5 rules failed. Only then did the pull request's code start to build, in its own session. At 04:20:35, API 67 of 67 and web 14 of 14 tests had passed, in 1 minute 50 seconds. The agent answered in 6 seconds without running anything in the sandbox, and at 04:20:43 the Function posted a COMMENT review on 4f351a5 and deleted both sessions. In this run, the session installed PostgreSQL with apt from Ubuntu's package archive; since 11 November 2026 it comes from Maven Central instead (see [Troubleshooting](#troubleshooting)).
 
 ![The review's log in Application Insights: eight lines, each starting with the review's id. The Function queued #212 from the labeled event and read it at commit 4f351a5; the rule checker from main read both trees in the judge's session in 2 seconds, and 1 of 5 rules failed; only then did the pull request's code start building, in its own session; API 67 of 67 and web 14 of 14 tests passed in 1 minute 50 seconds; agent requesthub-pr-reviewer v4 answered in 6 seconds; a COMMENT review was posted on 4f351a5; done in 2 minutes 15 seconds, sessions deleted](images/03-function-logs.png)
 
@@ -194,6 +194,8 @@ That evening, after Copilot's review of #298 led to a stricter commentary check,
 
 ![python eval_reviewer.py --check-graders: Foundry graded 26 fixed reviews, twice because it couldn't grade rule_verdicts on the first run. Every right review passes all five checks, and every wrong one, including sql-concatenation/reported and sql-concatenation/prevents, fails only useful_commentary, except two held-out reviews marked with an asterisk and listed under the table as known misses: fast-track/rules-out passes and department-leak/dropped-guard fails. Paired 13 of 13 and held-out 11 of 13 graded as labelled, and Foundry graded all 26 the same way as the local checks](images/10-check-graders.png)
 
+Since 11 November, the agent runs as version 6 on `gpt-6-luna`, and this evaluation passed every check on every case on it, locally and in Foundry. On the new model, the evaluation had first failed version 5 on one check: its concern on `sql-concatenation` left the problem's name to the summary, and one sentence added to the agent's instructions fixed that ([evidence](evidence/2026-11-11-evaluation.md)).
+
 Evidence: [the evaluation](evidence/2026-11-10-evaluation.md), with each dry run as the Function logged it and Foundry's run records; the ten pull requests [#268](https://github.com/melabadi/adept-assessment-northstars/pull/268) to [#277](https://github.com/melabadi/adept-assessment-northstars/pull/277); and the description of [#298](https://github.com/melabadi/adept-assessment-northstars/pull/298).
 
 **What this shows:** the reviewer's quality is measured on labelled changes, by checks that read conclusions rather than keywords, so any change to the rules, the agent, or the model can be compared with the last run.
@@ -224,7 +226,7 @@ Evidence: [the evaluation](evidence/2026-11-10-evaluation.md), with each dry run
 **What a team gets.**
 
 - **Time saved.** The first look at a pull request arrives minutes after the label, with the rules checked and the change built and tested, instead of when a reviewer has time to pull the branch: here, 2 minutes 20 seconds after the label and 2 minutes 30 seconds after the fix.
-- **Risk removed.** A change that passed every test but weakened approval authority was flagged by a check the change itself couldn't influence, and the agent pointed at what no rule covers. The pull request's code runs only in its own sandbox session, which never sees a secret. The reviewer can't approve: the Function posts every review as a comment (`COMMENT`), never as an approval or a change request, and its token can't merge, because it can't write code. The token's Pull requests permission could approve a pull request, so the guard is the Function's code, and a test fails if `APPROVE` or `REQUEST_CHANGES` appears anywhere in it.
+- **Risk removed.** A change that passed its API and web unit tests but weakened approval authority was flagged by a check the change itself couldn't influence, and the agent pointed at what no rule covers. The pull request's code runs only in its own sandbox session, which never sees a secret. The reviewer can't approve: the Function posts every review as a comment (`COMMENT`), never as an approval or a change request, and its token can't merge, because it can't write code. The token's Pull requests permission could approve a pull request, so the guard is the Function's code, and a test fails if `APPROVE` or `REQUEST_CHANGES` appears anywhere in it.
 - **Evidence a reviewer or an auditor can follow.** Each review names its commit and its id, and each verdict carries its evidence. The Function's log and Foundry's traces tie each review to its steps and its model use, and the evaluation scores the reviewer on labelled changes, in Foundry, after every change to the rules, the agent, or the model.
 
 **The metric to track when you adopt it:** the time from the label to the first review (2 minutes 20 seconds in See it work), and how often a FAIL or a concern led to a change before merge. Compare both with how pull requests were reviewed before. Run the evaluation after every change to the rules, the agent, or the model, and track its pass counts. A target is a goal you set, never a result.
@@ -238,7 +240,7 @@ These are the steps that set the solution up on RequestHub, with what to change 
 - Your repository on GitHub, where you have admin rights: the setup adds a webhook and a label with your GitHub CLI. No GitHub Copilot plan is needed.
 - The tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI 1.37 or later.
 - An Azure subscription where you can create a resource group and role assignments (Owner, or Contributor plus Role Based Access Control Administrator).
-- A region with Microsoft Foundry, `gpt-5.4-mini` (GlobalStandard, 150K tokens per minute of quota), Azure Container Apps dynamic sessions, and the Azure Functions Flex Consumption plan, for those resources. The default, East US 2, has all four; to use another, run `azd env set AZURE_AI_LOCATION <region>` before `azd up`. The resource group and monitoring go to the region you give `azd env new`.
+- A region with Microsoft Foundry, `gpt-6-luna` version 2026-09-22 (GlobalStandard, 150K tokens per minute of quota; Azure retires this version on 11 March 2028), Azure Container Apps dynamic sessions, and the Azure Functions Flex Consumption plan, for those resources. The default, East US 2, has all four; to use another, run `azd env set AZURE_AI_LOCATION <region>` before `azd up`. The resource group and monitoring go to the region you give `azd env new`. `az cognitiveservices usage list --location eastus2 --query "[?name.value=='OpenAI.GlobalStandard.gpt-6-luna']" -o table` shows your model quota there, in thousands of tokens per minute: `Limit` minus `CurrentValue` must be at least 150.
 - A build and tests that run on Linux in a fresh shell: the run session installs your toolchain at the start of every review.
 
 ### What to copy and what to change
@@ -249,9 +251,10 @@ Copy this folder into your repository, for example as `review/`, without `demo/`
 | --- | --- | --- |
 | [`sandbox/review_rules.py`](sandbox/review_rules.py) | The rule checker: five RequestHub rules, each a function that reads the base and head trees and returns PASS or FAIL with evidence | Your rules, and RequestHub's paths at the top (`WORKFLOW`, `MIGRATIONS`, `CONTRACT`, `TEST_FILE`, `API_CODE`). Keep it standard-library Python: it runs in a session without network access. Update its tests in [`sandbox/test_sandbox_scripts.py`](sandbox/test_sandbox_scripts.py). |
 | [`sandbox/format_review.py`](sandbox/format_review.py) | Writes the review: the verdicts word for word, the sandbox's results, then the agent's commentary, all posted inert | `RULE_IDS`, your rules' ids. Keep `redact()` and the inert-text handling. |
-| [`sandbox/run_change.sh`](sandbox/run_change.sh) | Installs RequestHub's toolchain (.NET 10, Node 22, PostgreSQL) and runs its tests (`dotnet test --solution app/RequestHub.slnx`, then `npm ci`, `npm run typecheck`, and `npm test` in `app/web`) | Your toolchain and your test commands. Keep the `start`, `status`, and `summary` commands and the shape of `run/summary.json`, which `format_review.py` and the Function read. Results travel as files because a session cuts a command's output after 4 KB: put any new result in a file too. |
+| [`sandbox/run_change.sh`](sandbox/run_change.sh) | Installs RequestHub's toolchain, each step with a time limit: .NET 10, Node 26, and PostgreSQL 16 from Maven Central, pinned by version and SHA-256. Then runs its tests (`dotnet test --solution app/RequestHub.slnx`, then `npm ci`, `npm run typecheck`, and `npm test` in `app/web`) | Your toolchain and your test commands: one `setup` step per tool, with its time limit, so a step that fails shows in the review as an error with its reason. If your tests need PostgreSQL, keep `install_postgres` and use your tests' password; for another version, change `PG_VERSION` and `PG_SHA256` (Maven Central publishes each jar's `.sha256` next to it). Keep the `start`, `status`, and `summary` commands and the shape of `run/summary.json`, which `format_review.py` and the Function read. Results travel as files because a session cuts a command's output after 4 KB: put any new result in a file too. |
 | [`reviewer-agent.yaml`](reviewer-agent.yaml) | The Foundry agent: its instructions, the sandbox tool, and the strict output schema | The instructions, which describe RequestHub, and the rule ids in the schema's `rule_id` enum. `azd provision` publishes a new version when the file changes. |
 | [`infra/resources.bicep`](infra/resources.bicep) | Foundry, the model, two session pools, and the Function with its network, storage, Key Vault, and roles | The `REVIEW_SCRIPTS_PATH` app setting, `solutions/03-develop-microsoft/sandbox`: the folder of your copy of `sandbox/`, for example `review/sandbox`. |
+| [`infra/main.bicep`](infra/main.bicep) | The deployment's parameters, among them the model: `gpt-6-luna`, version 2026-09-22, at 150K tokens per minute | Nothing, unless you want another model: change `modelName`, `modelVersion`, and `modelCapacity`, and run `azd provision`. It deploys the model next to the old one and publishes a new agent version on it. Run the evaluation, then delete the old deployment: `az cognitiveservices account deployment delete -g (azd env get-value AZURE_RESOURCE_GROUP) -n (azd env get-value FOUNDRY_ACCOUNT_NAME) --deployment-name <old model>`. |
 | [`review_graders.py`](review_graders.py) and [`test_eval_reviewer.py`](test_eval_reviewer.py) | The five checks that score the reviewer, and their tests | The number of rules (`len(rules) != 5`) and the rule ids in the tests. |
 | [`eval_cases.jsonl`](eval_cases.jsonl), [`eval_changes/`](eval_changes/), and [`grader_checks.jsonl`](grader_checks.jsonl) | RequestHub's ten labelled cases, their changes, and the fixed right and wrong reviews | Your own labelled changes, as in [Use it the first time](#use-it-the-first-time). Until you have them, leave the evaluation out: `--setup` refuses cases whose commits aren't in your history. |
 | [`eval_prs.py`](eval_prs.py) | Makes each case a closed pull request of your repository | It stages only `app/` (`git add --all app`) and fetches `main` to find each case's starting commit: name your code's folders and your default branch. |
@@ -261,7 +264,13 @@ Leave [`function/`](function/) as it is: it runs the review for any repository.
 
 ### One-time setup
 
-Allow about 30 minutes, once the files describe your code. On RequestHub, adding the Function and its network to a running environment took 2 minutes 52 seconds (`azd provision`) and deploying it 46 seconds (`azd deploy`); we haven't timed a first `azd up` of this version in an empty subscription.
+About 15 minutes, once the files describe your code. A fresh setup on 11 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, took ([the evidence](evidence/2026-11-11-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Sign in: `pip install -r requirements.txt` | 2 minutes 17 seconds, in a new virtual environment |
+| 2. Create the reviewer's GitHub token | a few minutes for a person on GitHub; not timed |
+| 3. Deploy: `azd up` | 4 minutes 43 seconds, before the token was stored; 2 minutes 34 seconds when run again with it, which wrote it to Key Vault and created the webhook |
 
 #### 1. Sign in
 
@@ -304,7 +313,7 @@ azd creates the resource group `rg-<environment name>` with the resources in [Ho
 - **predeploy** runs the Function's unit tests: code that breaks a rule of the review never reaches Azure.
 - **postdeploy** connects the repository with your GitHub CLI. It creates the label, checks that GitHub accepts the token, waits until the Function refuses an unsigned delivery (which it does only once it has read the webhook secret from Key Vault), and creates one webhook that sends signed `pull_request` events to the Function. It reads the Function's address from Azure and never prints it.
 
-**What you should see:** the preprovision hook prints `GitHub repository: <owner>/<repo>`, the postprovision hook prints `published new version: requesthub-pr-reviewer v1 (model gpt-5.4-mini)`, and `azd up` ends with `SUCCESS` after the postdeploy hook printed:
+**What you should see:** the preprovision hook prints `GitHub repository: <owner>/<repo>`, the postprovision hook prints `published new version: requesthub-pr-reviewer v1 (model gpt-6-luna)`, the predeploy hook's unit tests end with `OK`, and `azd up` ends with `SUCCESS` after the postdeploy hook printed:
 
 ```text
 Label review:azure in <owner>/<repo>: ready.
@@ -336,11 +345,11 @@ Then make it part of your workflow:
 
 ### What it costs
 
-While deployed, about $23 a month, for the three private endpoints ($0.01 an hour each) and their DNS zones that keep the Function's storage and Key Vault off the internet. The Function costs nothing while no one asks for a review, and Key Vault charges per operation, fractions of a cent here. At list prices, each review costs about $0.07: two sandbox sessions at $0.03 each (sessions are billed in one-hour increments), less than $0.01 of `gpt-5.4-mini` tokens (Foundry estimated $0.002 and $0.003 for the reviews in See it work), and less than $0.01 of Function time (about 270 GB-seconds; the first 100,000 each month are free). An evaluation of ten cases costs under $1. Application Insights and Log Analytics stay within their free monthly allowance at this volume. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+While deployed, about $23 a month, for the three private endpoints ($0.01 an hour each) and their DNS zones that keep the Function's storage and Key Vault off the internet. The Function costs nothing while no one asks for a review, and Key Vault charges per operation, fractions of a cent here. At list prices, each review costs about $0.07: two sandbox sessions at $0.03 each (sessions are billed in one-hour increments), less than $0.01 of `gpt-6-luna` tokens (in the [evaluation of 11 November](evidence/2026-11-11-evaluation.md#the-agents-model-use), ten answers cost $0.0092 in all, at list prices), and less than $0.01 of Function time (about 270 GB-seconds; the first 100,000 each month are free). An evaluation of ten cases costs under $1. Application Insights and Log Analytics stay within their free monthly allowance at this volume. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
 
 ## Try it first in a copy of this repository
 
-Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your code; RequestHub itself isn't deployed, because the sandbox builds and tests its code.
+Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your code; RequestHub itself isn't deployed, because the sandbox builds and tests its code. In the copy, the other solutions' workflows also see the demo pull request and the reset's comment. In our fresh setup, each of the demo's two commits started CI (its API, web UI, and browser tests, about 3 minutes) and two checks that passed in 9 to 13 seconds, *Develop · GitHub · feature bounds* and *Operate · GitHub · prove the regression test*; CI's browser tests failed on the first commit, as [step 1](#1-a-pull-request-weakened-a-core-rule) explains. The reset's comment started *Design · GitHub · agentic design review*, which stopped after a 19-second check. The evaluation's pull requests started nothing, and no model ran in GitHub.
 
 ### Quick start
 
@@ -367,9 +376,9 @@ Setting up the evaluation's pull requests in <owner>/<repo>:
   index-no-cache         #<number> (created)
 ```
 
-The dry run on `admins-decide` posts nothing and ends with a row of `pass`. On 10 November, `--setup` took 2 minutes 7 seconds the first time and 7 seconds the second, and the dry run of `admins-decide` took 196 seconds.
+The dry run on `admins-decide` posts nothing and ends with a row of `pass`. On 10 November, `--setup` took 2 minutes 7 seconds the first time and 7 seconds the second, and the dry run of `admins-decide` took 196 seconds; in the fresh setup of 11 November, 2 minutes 0 seconds and 134 seconds.
 
-Allow about 30 minutes in all. While deployed, the copy costs what [What it costs](#what-it-costs) says.
+Allow about 20 minutes in all: in that fresh setup, the Quick start's commands took 14 minutes 26 seconds, including an `azd up` that stopped, which the README's fixes since then avoid, and a second `azd up` once the token was stored ([the evidence](evidence/2026-11-11-fresh-setup.md#timeline)); the owner created the token meanwhile. While deployed, the copy costs what [What it costs](#what-it-costs) says.
 
 ### Check the starting state
 
@@ -386,17 +395,17 @@ If GitHub refuses the token, create a new one, run `azd env set GITHUB_REVIEW_TO
 
 ### How long each step takes
 
-| Step | Takes | In See it work |
-| --- | --- | --- |
-| 1. Open the pull request | under a minute | the pull request opened 5 seconds after the commit |
-| 2. Ask for a review | a few seconds | the Function answered in 1.5 seconds |
-| 3. Watch the Function work | 2 to 4 minutes to the review; once 10, on [#279](https://github.com/melabadi/adept-assessment-northstars/pull/279), when installing the toolchain in the sandbox took 8 | 2 minutes 20 seconds from the label |
-| 4. Read the review | a few minutes | |
-| 5. Open the agent and its traces | a few minutes | |
-| 6. Push a fix | 2 to 4 minutes to its review | 2 minutes 30 seconds from the commit |
-| 7. Measure the reviewer | about 15 minutes, a few more when Foundry grades twice; then 3 to 8 minutes per Foundry grading for `--check-graders`, or a second with `--local` | 16 minutes 26 seconds; then 11 minutes 26 seconds for `--check-graders`, graded twice |
+| Step | Takes | In See it work | In the fresh setup |
+| --- | --- | --- | --- |
+| 1. Open the pull request | under a minute | the pull request opened 5 seconds after the commit | 6 seconds from `git fetch` to the pull request |
+| 2. Ask for a review | a few seconds | the Function answered in 1.5 seconds | the Function answered in 1.2 seconds |
+| 3. Watch the Function work | 2 to 4 minutes to the review; once 10, on [#279](https://github.com/melabadi/adept-assessment-northstars/pull/279), when installing the toolchain in the sandbox took 8 | 2 minutes 20 seconds from the label | 2 minutes 26 seconds from the label |
+| 4. Read the review | a few minutes | | read in the terminal |
+| 5. Open the agent and its traces | a few minutes | | read in the terminal, and the traces from Application Insights |
+| 6. Push a fix | 2 to 4 minutes to its review | 2 minutes 30 seconds from the commit | 2 minutes 24 seconds from the commit |
+| 7. Measure the reviewer | about 9 minutes, a few more when Foundry grades twice; then 3 to 8 minutes per Foundry grading for `--check-graders`, or a second with `--local` | 16 minutes 26 seconds; then 11 minutes 26 seconds for `--check-graders`, graded twice. On 11 November, 8 minutes 45 seconds, graded once | 8 minutes 43 seconds, graded once; then 3 minutes 36 seconds for `--check-graders`, graded once |
 
-All seven steps take about 45 minutes.
+All seven steps take about 30 minutes. In the fresh setup on 11 November, they took 20 minutes 22 seconds from step 1's first command to the last grading, with the reviews and the agent read in the terminal ([the evidence](evidence/2026-11-11-fresh-setup.md#the-run)).
 
 ### 1. Open a pull request with a risky change
 
@@ -480,7 +489,7 @@ The query from step 3 shows the new review's steps, under a new id.
 
 ### 7. Measure the reviewer
 
-*About 15 minutes, then 3 to 8 per Foundry grading of the fixed reviews. What you should see: [See it work, step 7](#7-an-evaluation-measured-the-reviewer).*
+*About 9 minutes, a few more when Foundry grades twice; then 3 to 8 per Foundry grading of the fixed reviews. What you should see: [See it work, step 7](#7-an-evaluation-measured-the-reviewer).*
 
 ```powershell
 cd solutions/03-develop-microsoft
@@ -514,11 +523,20 @@ The evaluation's ten closed pull requests stay: every later evaluation reuses th
 When you no longer need the solution, from its folder, in your repository or in the copy, while you still have the azd environment:
 
 1. `python eval_reviewer.py --cleanup` deletes the evaluation's twenty `eval/pr-review/*` branches and forgets their pull requests, which stay closed.
-2. `azd down --purge`. Its predown hook deletes the webhook first; then azd deletes the resource group and the Foundry account with its evaluations, and purges the account and the Key Vault, so the same names can be used again at once.
-3. On GitHub, delete the fine-grained token: **Settings › Developer settings › Personal access tokens › Fine-grained tokens**.
-4. `gh label delete "review:azure"`, if you no longer need the label. Past pull requests lose it.
+2. Remove the agent's identities in Microsoft Entra ID, which `azd down` leaves behind. When `azd up` published the agent, Foundry created an agent identity blueprint for it, an app registration owned by whoever ran `azd up`, and an agent identity under it ([agent identities in Foundry](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)). Run these lines as that person, before `azd down`, which forgets the account's name:
 
-The solution creates no Microsoft Entra app registration, so after these steps nothing of it is left in Azure. On GitHub, closed pull requests stay, as every pull request does.
+   ```powershell
+   $prefix = "$(azd env get-value FOUNDRY_ACCOUNT_NAME)-develop-$(azd env get-value REVIEWER_AGENT_NAME)-"
+   az ad sp list --display-name $prefix -o json | ConvertFrom-Json | Where-Object servicePrincipalType -eq ServiceIdentity | ForEach-Object { az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($_.id)" }
+   az ad app list --display-name $prefix -o json | ConvertFrom-Json | Where-Object displayName -like '*-AgentIdentityBlueprint' | ForEach-Object { az ad app delete --id $_.id }
+   ```
+
+   The agent identity goes first: deleting the blueprint deletes its principal and would delete the agent identity too, but only hours or days later ([agent identity deletion](https://learn.microsoft.com/entra/agent-id/concept-agent-identity-deletion)). Entra keeps what they delete in its recycle bin for 30 days, and the blueprint's principal can't be purged from it. Foundry also creates a shared blueprint and agent identity for the project, owned by the project's managed identity; they need nothing from you: Foundry removes them with the project, which `azd down` deletes.
+3. `azd down --purge --force`. Its predown hook deletes the webhook first; then azd deletes the resource group and the Foundry account with its evaluations, and purges the account, the Key Vault, and the Log Analytics workspace, so the same names can be used again at once. It took 4 minutes 16 seconds in our fresh setup. Without `--force`, azd lists what it will delete and asks you to confirm, after the predown hook has deleted the webhook: if you answer no, `azd hooks run postdeploy` connects GitHub again.
+4. On GitHub, delete the fine-grained token: **Settings › Developer settings › Personal access tokens › Fine-grained tokens**. Then `azd env set GITHUB_REVIEW_TOKEN ''` removes it from your local azd environment.
+5. `gh label delete "review:azure"`, if you no longer need the label; it asks you to confirm. Past pull requests lose it.
+
+After these steps nothing of the solution is left in Azure but what Entra keeps in its recycle bin. On GitHub, closed pull requests stay, as every pull request does.
 
 ## What's in this folder
 
@@ -527,7 +545,10 @@ The solution creates no Microsoft Entra app registration, so after these steps n
 ├── README.md
 ├── evidence/                   what Azure recorded during the runs in See it work, exported for anyone to check
 │   ├── 2026-10-31-recorded-run.md   the review run: the Function's requests and log, and the agent's traces
-│   └── 2026-11-10-evaluation.md     the evaluation: each dry run, and Foundry's run records
+│   ├── 2026-11-10-evaluation.md     the evaluation: each dry run, and Foundry's run records
+│   ├── 2026-11-11-evaluation.md     the same evaluation after the move to gpt-6-luna, with the model's token use
+│   ├── 2026-11-11-sandbox-setup.md  why PostgreSQL comes from Maven Central now, and the runs that checked it
+│   └── 2026-11-11-fresh-setup.md    a setup from scratch that followed only this README, timed step by step
 ├── images/                     screenshots of the runs in See it work, and of the Develop combo (combo-*)
 ├── azure.yaml                  azd project: provisions infra/, deploys function/, and runs the hooks below
 ├── configure_github.py         azd hooks: the webhook secret, the review:azure label, a check of the token, and the
@@ -576,6 +597,8 @@ The solution creates no Microsoft Entra app registration, so after these steps n
 
 ## Troubleshooting
 
+- **`azd up` stops at once with `missing required inputs` and names `githubRepository`, or asks you for it.** azd checks the Bicep parameters before it runs the hook that finds the repository. Since 11 November, [`infra/main.bicep`](infra/main.bicep) gives `githubRepository` an empty default, so azd reaches the hook, and the hook stops azd if it can't name the repository; if your copy predates that, run `azd env set GITHUB_REPOSITORY <owner>/<repository>` before `azd up`.
+- **`azd up` shows none of what its hooks print, not even the warning about the token.** azd shows a hook that isn't `interactive` in a small pane that it clears once the hook succeeds. Since 11 November, this folder's [`azure.yaml`](azure.yaml) makes every hook interactive; if yours predates that, `azd hooks run postdeploy` shows what [Deploy](#3-deploy) describes, because azd runs every hook interactively there.
 - **`azd up` or `azd hooks run postdeploy` prints "Webhook: not created, because GITHUB_REVIEW_TOKEN is not set."** The token isn't in the azd environment, so the hook created no webhook and no pull request is reviewed. Create the token ([step 2 of the setup](#2-create-the-reviewers-github-token)), run `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')`, then `azd up`.
 - **The webhook's Recent Deliveries (the repository's Settings › Webhooks) show 502 with "couldn't read pull request #&lt;n&gt; from GitHub: … GitHub answered HTTP 401", or 404.** GitHub refused the token. In a private repository, a missing or expired token returns 404. `azd hooks run postdeploy` checks the token and says what's wrong. Create a new fine-grained token, then run `azd env set GITHUB_REVIEW_TOKEN (Read-Host -MaskInput 'Fine-grained token')` and `azd provision`.
 - **Recent Deliveries show 401 with "invalid signature".** The webhook's secret on GitHub isn't the one the Function has, for example after the azd environment was recreated. Run `azd provision`, then `azd hooks run postdeploy`: both take the secret from the azd environment.
@@ -583,7 +606,8 @@ The solution creates no Microsoft Entra app registration, so after these steps n
 - **A delivery right after `azd deploy` shows 404.** The Function's code was still starting. The postdeploy hook waits until the Function answers before it connects GitHub; if a delivery came earlier, select it and **Redeliver**.
 - **Recent Deliveries show 200 with `"result": "ignored"`.** The event doesn't ask for a review, and `reason` says why. Only `labeled` with `review:azure`, and `synchronize`, `reopened`, or `ready_for_review` on a pull request that carries the label, start one, and only for an open, non-draft pull request into the default branch from a branch of the same repository. Opening a pull request with the label already set sends `labeled` too.
 - **Recent Deliveries show 202, but no review appears.** Run [step 3's query](#3-watch-the-function-work). If the review's last lines say `failed at '<step>'`, the pull request got a comment that the review couldn't finish; remove and add the label to try again. `failed at 'check the team rules'` with "the rule checker wrote no verdicts (exit code 2)" means the checker couldn't read the archives: run it on the same pull request on your machine, `python sandbox/review_rules.py --base <merge-base folder> --head <head folder>`. A line that says `not posted: <commit> was pushed while this review ran` is expected: the newer push gets its own review.
-- **A review took about 10 minutes instead of 2 to 4.** Installing the toolchain in the run session was slow: on [#279](https://github.com/melabadi/adept-assessment-northstars/pull/279), the review's sandbox section says *Toolchain setup 8 min 01 s*. Nothing needs fixing; the review arrives when the build and tests are done.
+- **A review took about 10 minutes instead of 2 to 4.** Installing the toolchain in the run session was slow: on [#279](https://github.com/melabadi/adept-assessment-northstars/pull/279), the review's sandbox section says *Toolchain setup 8 min 01 s*. Nothing needs fixing; the review arrives when the build and tests are done. A setup step that runs past its time limit shows as an error instead, as the next entry describes.
+- **A review's sandbox section says "❌ error:" for the API integration tests or the web UI.** A setup step in the run session failed or ran out of time, so the tests that need it didn't run, and the reason says which step and why; the other tests still ran. [`run_change.sh`](sandbox/run_change.sh) gives Node 26 and the .NET SDK 5 minutes each and PostgreSQL 2, so a download that can't finish ends the step within minutes, instead of holding the review until the Function stops waiting for the build, after 20 minutes. A reason that says a host couldn't be resolved, or that a download or step timed out, means the run session couldn't reach that host: remove and add the label later to try again. A download that doesn't match its pinned SHA-256 isn't the file that was pinned: compare `PG_SHA256` with the `.sha256` file that Maven Central publishes next to the jar. This is why PostgreSQL comes from Maven Central: on 11 November 2026, lookups of Ubuntu's package archive timed out instead of failing during an outage of Canonical's DNS, apt kept trying for 17 and a half minutes, and four dry runs took 19 to 20 minutes each and ran the API tests without a database ([evidence](evidence/2026-11-11-sandbox-setup.md)).
 - **A review says a web test failed with "Test timed out in 5000ms".** The sandbox's four vCPUs are shared by the test workers, so a test can take longer than on CI. [`run_change.sh`](sandbox/run_change.sh) gives each web test 30 seconds and repeats a failed run once, and the review calls a test that passes on the rerun flaky.
 - **`eval_reviewer.py` stops with "This operation requires the following opt-in preview feature(s): Evaluations=V1Preview".** Custom evaluators are in preview and need an opt-in header, which the script sends. If the preview changes, run with `--local`: the local scores use the same checks.
 - **`eval_reviewer.py` stops with "the evaluation's pull requests aren't set up in &lt;owner&gt;/&lt;repo&gt;".** The cases have no pull request in that repository yet, for example in a new copy. Run `python eval_reviewer.py --setup` once: it creates them, or finds the ones it created before. It accepts only pull requests on its own `eval/pr-review/*` branches, in that repository, opened by the owner, a member, or a collaborator.

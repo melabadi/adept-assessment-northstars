@@ -4,6 +4,8 @@
 #   preprovision           set the GitHub repository; move a GITHUB_TOKEN stored in the azd environment to PLAN_GITHUB_TOKEN
 #   postprovision          run the unit tests, then publish the agent, its evaluators, and the evaluation to Foundry
 #   predeploy              run the unit tests again: a broken step or grader never reaches Azure
+# preprovision and postprovision are interactive so their output stays on screen: the README's "What you should see"
+# quotes it. azd shows a hook that isn't interactive in an 8-line pane that it clears once the hook succeeds.
 name: ai-sdlc-plan-microsoft
 metadata:
   template: ai-sdlc-plan-microsoft@3.0.0
@@ -28,16 +30,20 @@ hooks:
     windows:
       shell: pwsh
       run: python setup_foundry.py prepare
+      interactive: true
     posix:
       shell: sh
       run: python3 setup_foundry.py prepare
+      interactive: true
   postprovision:
     windows:
       shell: pwsh
       run: python setup_foundry.py publish
+      interactive: true
     posix:
       shell: sh
       run: python3 setup_foundry.py publish
+      interactive: true
   predeploy:
     windows:
       shell: pwsh

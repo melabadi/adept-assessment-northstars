@@ -1,10 +1,13 @@
 # Python packages for this solution's scripts and tests (Python 3.12+): pip install -r requirements.txt
 # The Azure Function has its own list in function/requirements.txt.
-azure-ai-projects==2.9.0
-azure-functions==1.25.0
-azure-identity==1.26.0
-azure-search-documents==12.0.0
-openai==3.35.1
+azure-ai-projects==2.10.0
+# The tests import the Function. azure-functions 1.26.0, the Function's version, installs only on Python 3.10 to 3.12;
+# on Python 3.13 and later the tests use 1.25.0, the last release of the same major version that installs there.
+azure-functions==1.26.0; python_version < "3.13"
+azure-functions==1.25.0; python_version >= "3.13"
+azure-identity==1.27.0
+azure-search-documents==12.1.0
+openai==3.45.0
 PyJWT[crypto]==2.15.1
 pyyaml==6.0.3
 requests==2.34.2

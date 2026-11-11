@@ -7,7 +7,7 @@ React 19 + TypeScript single-page app for the RequestHub API (contract `requesth
 
 ## Prerequisites
 
-- Node.js 22.12+ and npm.
+- Node.js 26 or later, and npm.
 - For `npm run dev` and the e2e tests, the API running on <http://localhost:5080> (PostgreSQL on `localhost:5432`).
   From the repository root (PowerShell):
 

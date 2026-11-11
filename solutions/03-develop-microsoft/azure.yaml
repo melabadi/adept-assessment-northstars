@@ -8,6 +8,8 @@
 #   postdeploy     connect the repository: the review:azure label, a check of GITHUB_REVIEW_TOKEN, and, once the token
 #                  is set, a webhook that sends pull_request events to the Function
 #   predown        delete that webhook
+# The hooks are interactive so their output stays on screen: the README's "What you should see" quotes it. azd shows
+# a hook that isn't interactive in an 8-line pane that it clears once the hook succeeds.
 name: ai-sdlc-develop-microsoft
 metadata:
   template: ai-sdlc-develop-microsoft@2.0.0
@@ -24,34 +26,44 @@ hooks:
     windows:
       shell: pwsh
       run: python configure_github.py prepare
+      interactive: true
     posix:
       shell: sh
       run: python3 configure_github.py prepare
+      interactive: true
   postprovision:
     windows:
       shell: pwsh
       run: python publish_reviewer_agent.py
+      interactive: true
     posix:
       shell: sh
       run: python3 publish_reviewer_agent.py
+      interactive: true
   predeploy:
     windows:
       shell: pwsh
       run: python -m unittest -q test_reviewer_function
+      interactive: true
     posix:
       shell: sh
       run: python3 -m unittest -q test_reviewer_function
+      interactive: true
   postdeploy:
     windows:
       shell: pwsh
       run: python configure_github.py publish
+      interactive: true
     posix:
       shell: sh
       run: python3 configure_github.py publish
+      interactive: true
   predown:
     windows:
       shell: pwsh
       run: python configure_github.py remove
+      interactive: true
     posix:
       shell: sh
       run: python3 configure_github.py remove
+      interactive: true

@@ -1,6 +1,7 @@
-"""Tests for the reviewer's sandbox scripts: the rule checker (review_rules.py) and the review formatter (format_review.py).
+"""Tests for the reviewer's sandbox scripts: the rule checker (review_rules.py), the review formatter (format_review.py),
+and the summary that run_change.sh writes after the build and tests.
 
-Every case builds small source trees in memory, so the tests need no network, no Azure, and no GitHub.
+Every case builds small source trees or run folders in memory, so the tests need no network, no Azure, and no GitHub.
 Run from the repository root:  python -m unittest discover -s solutions/03-develop-microsoft/sandbox -v
 """
 from __future__ import annotations
@@ -10,6 +11,7 @@ import html
 import io
 import json
 import re
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -376,6 +378,29 @@ class ReviewFormatterTests(unittest.TestCase):
         self.sandbox = '{"state":"not-finished"}'
         self.assertIn("The build didn't finish in time", self.review(agent_response(ANSWER))["markdown"])
 
+    def test_a_setup_error_shows_its_reason_never_not_run(self):
+        self.sandbox = json.dumps({"setup_seconds": 304, "seconds": 340,
+                                   "api": {"status": "error", "reason": "PostgreSQL isn't running: couldn't resolve "
+                                                                        "repo1.maven.org to download PostgreSQL 16.15.0"},
+                                   "web": {"status": "error", "reason": "Node 26 didn't install: timed out after 300 s"}})
+        lines = self.review(agent_response(ANSWER))["markdown"].splitlines()
+        api = next(line for line in lines if line.startswith("- API integration tests:"))
+        web = next(line for line in lines if line.startswith("- Web UI:"))
+        self.assertEqual(api, "- API integration tests: ❌ error: PostgreSQL isn't running: couldn't resolve "
+                              "repo1.maven.org to download PostgreSQL 16.15.0. No API test ran.")
+        self.assertEqual(web, "- Web UI: ❌ error: Node 26 didn't install: timed out after 300 s. Nothing ran.")
+
+    def test_a_reason_from_the_session_is_inert(self):
+        # The pull request's code runs in the session before the summary is written, so it could rewrite a reason.
+        self.sandbox = json.dumps({"api": {"status": "error", "reason": "@octocat <h3>Approved</h3> https://evil.example #12"},
+                                   "web": {"status": "skipped"}})
+        api = next(line for line in self.review(agent_response(ANSWER))["markdown"].splitlines()
+                   if line.startswith("- API integration tests:"))
+        self.assertIn("@\u200boctocat", api)
+        self.assertNotIn("<h3>", api)
+        self.assertNotIn("https://", api)
+        self.assertNotIn("#12", api)
+
     def test_the_command_line_reads_the_three_files_the_logic_app_uploads(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
@@ -403,6 +428,65 @@ class ReviewFormatterTests(unittest.TestCase):
                 code = format_review.main(["--judge", str(folder / "judge.json"), "--input", str(folder / "review-input.json")])
         self.assertEqual(code, 2)
         self.assertNotIn("markdown", json.loads(out.getvalue()))
+
+
+RUN_CHANGE = Path(__file__).resolve().parent / "run_change.sh"
+TIMELINE = ("extract 100\nsetup-node 101\nsetup-dotnet 106\nsetup-postgres 121\napi-tests 125\nweb-install 170\n"
+            "web-typecheck 180\nweb-tests 190\ndone 200\n")
+COMPLETE_RUN = {"timeline": TIMELINE, "src/app/RequestHub.slnx": "", "src/app/web/package.json": "{}",
+                "setup-node.exit": "0", "setup-dotnet.exit": "0", "setup-postgres.exit": "0",
+                "api.exit": "0", "api.log": "  total: 67\n  failed: 0\n  succeeded: 67\n  skipped: 0\n",
+                "web-install.exit": "0", "web-typecheck.exit": "0", "web-tests.exit": "0",
+                "web-tests.log": "      Tests  14 passed (14)\n"}
+
+
+def build_summary(files: dict[str, str]) -> dict:
+    """Runs run_change.sh's summary step, the Python between <<'PY' and PY, on a run folder that holds these files."""
+    script = RUN_CHANGE.read_text(encoding="utf-8").split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    with tempfile.TemporaryDirectory() as folder:
+        run = Path(folder)
+        for name, content in files.items():
+            (run / name).parent.mkdir(parents=True, exist_ok=True)
+            (run / name).write_text(content, encoding="utf-8")
+        subprocess.run([sys.executable, "-", str(run)], input=script, text=True, check=True)
+        return json.loads((run / "summary.json").read_text(encoding="utf-8"))
+
+
+class BuildSummaryTests(unittest.TestCase):
+    """What run_change.sh's summary says about each setup step, and about tests that a failed step kept from running."""
+
+    def test_every_setup_step_is_reported_with_its_time(self):
+        summary = build_summary(COMPLETE_RUN)
+        self.assertEqual({name: (step["exit_code"], step["seconds"], step["reason"]) for name, step in summary["setup"].items()},
+                         {"node": (0, 5, None), "dotnet": (0, 15, None), "postgres": (0, 4, None)})
+        self.assertEqual(summary["setup_seconds"], 24)
+        self.assertEqual((summary["api"]["status"], summary["api"]["passed"], summary["api"]["total"]), ("passed", 67, 67))
+        self.assertEqual(summary["web"]["status"], "passed")
+
+    def test_without_a_database_the_api_tests_are_an_error_and_the_web_tests_still_run(self):
+        files = {name: content for name, content in COMPLETE_RUN.items() if not name.startswith("api.")}
+        files.update({"timeline": TIMELINE.replace("api-tests 125\n", ""), "setup-postgres.exit": "1",
+                      "setup-postgres.reason": "couldn't resolve repo1.maven.org to download PostgreSQL 16.15.0\n"})
+        summary = build_summary(files)
+        self.assertEqual(summary["api"], {"status": "error", "reason": "PostgreSQL isn't running: couldn't resolve "
+                                                                      "repo1.maven.org to download PostgreSQL 16.15.0"})
+        self.assertEqual((summary["web"]["status"], summary["web"]["tests"]["passed"]), ("passed", 14))
+
+    def test_a_setup_step_that_fails_or_times_out_makes_its_tests_an_error_with_the_reason(self):
+        summary = build_summary({"timeline": "extract 100\nsetup-node 101\nsetup-dotnet 401\nsetup-postgres 402\ndone 406\n",
+                                 "src/app/RequestHub.slnx": "", "src/app/web/package.json": "{}",
+                                 "setup-node.exit": "124", "setup-node.reason": "timed out after 300 s\n",
+                                 "setup-dotnet.exit": "1", "setup-postgres.exit": "0"})
+        self.assertEqual(summary["setup"]["node"], {"exit_code": 124, "seconds": 300, "reason": "timed out after 300 s"})
+        self.assertEqual(summary["web"], {"status": "error", "reason": "Node 26 didn't install: timed out after 300 s"})
+        self.assertEqual(summary["api"], {"status": "error", "reason": "the .NET 10 SDK didn't install: exit code 1"})
+
+    def test_postgresql_is_pinned_by_version_and_sha256_and_needs_no_apt(self):
+        script = RUN_CHANGE.read_text(encoding="utf-8")
+        self.assertRegex(script, r"\nPG_VERSION=16\.\d+\.\d+\n")
+        self.assertRegex(script, r"\nPG_SHA256=[0-9a-f]{64}\n")
+        self.assertIn('sha256sum --check --status', script)
+        self.assertNotIn("apt-get", script)
 
 
 class InertAssertions(unittest.TestCase):

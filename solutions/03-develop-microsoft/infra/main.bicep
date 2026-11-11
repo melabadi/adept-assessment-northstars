@@ -22,9 +22,10 @@ param principalId string
 @allowed(['User', 'ServicePrincipal'])
 param principalType string = 'User'
 
-@minLength(3)
-@description('GitHub repository (owner/name) whose pull requests are reviewed. Set it with `azd env set GITHUB_REPOSITORY`.')
-param githubRepository string
+@description('GitHub repository (owner/name) whose pull requests are reviewed. Set by the preprovision hook, from your clone, unless you set GITHUB_REPOSITORY first.')
+// The empty default lets azd reach that hook: azd asks for, or without a terminal stops on, a parameter that has
+// neither a value nor a default before any hook runs. The hook stops azd when it can't name the repository.
+param githubRepository string = ''
 
 @secure()
 @description('Fine-grained GitHub token for that repository only: Contents read, Pull requests read and write. Empty until you set GITHUB_REVIEW_TOKEN. Stored only in Key Vault.')
@@ -41,8 +42,8 @@ param checkerRef string = 'main'
 param reviewLabel string = 'review:azure'
 
 @description('Reasoning model for the reviewer agent.')
-param modelName string = 'gpt-5.4-mini'
-param modelVersion string = '2026-03-17'
+param modelName string = 'gpt-6-luna'
+param modelVersion string = '2026-09-22'
 
 @description('Model capacity in thousands of tokens per minute.')
 param modelCapacity int = 150

@@ -316,6 +316,32 @@ class ConclusionTests(unittest.TestCase):
                                         "standards": ["STD-AI-001"]}])
         self.assertEqual(checks.conclusion_misses({"rejects": ["approv* automat*"]}, wrong_option), [])
 
+    def test_e02_accepts_the_gateway_by_the_name_std_ops_002_gives_it(self):
+        """STD-OPS-002 names the central AI gateway "Azure API Management". Seen live on E02 from gpt-6-luna and
+        gpt-6.1-sol: "through the central Azure API Management AI gateway" puts six words between "through" and
+        "gateway", so E02 also accepts routing through API Management. A negation or a direct call still fails."""
+        label = {**next(c for c in CASES if c["id"] == "E02")["expectConclusion"], "evidence": {}}
+        for said in ("Call the production model endpoint through the central Azure API Management AI gateway, not directly "
+                     "from RequestHub.",
+                     "Have the API call the Foundry model endpoint through Azure API Management, the central AI gateway—not "
+                     "directly."):
+            self.assertEqual(checks.conclusion_misses(label, answer(summary=said, recommendation="")), [])
+        for said in ("Do not route calls through Azure API Management; the API calls the model endpoint itself.",
+                     "Route only usage reports through Azure API Management, and call the model endpoint directly."):
+            self.assertNotEqual(checks.conclusion_misses(label, answer(summary=said, recommendation="")), [])
+
+    def test_e04_accepts_a_minimized_or_allowlisted_set_of_fields(self):
+        """STD-SEC-002 is titled "Data minimization for AI services". Seen live on E04 from gpt-6-luna: "Use a minimized,
+        explicitly allowlisted set of fields" states the rule, while "only fields" sat in a clause that also held
+        "prohibit", which denies the whole clause. A negation or an attachment still fails."""
+        label = {**next(c for c in CASES if c["id"] == "E04")["expectConclusion"], "evidence": {}}
+        for said in ("Use a minimized, explicitly allowlisted set of fields shown to be necessary for triage; exclude "
+                     "attachments and personal data.",
+                     "Send the model a minimized set of fields."):
+            self.assertEqual(checks.conclusion_misses(label, answer(summary=said, recommendation="")), [])
+        for said in ("Do not allowlist fields; send the whole request.", "Allowlist fields, including attachments."):
+            self.assertNotEqual(checks.conclusion_misses(label, answer(summary=said, recommendation="")), [])
+
 
 class ResponseParsingTests(unittest.TestCase):
     def test_retrieval_is_read_from_a_foundry_iq_response(self):
@@ -459,6 +485,64 @@ class EvaluatorTests(unittest.TestCase):
                 known = {row["knownMiss"].split(":")[0]} if row.get("knownMiss") else set()
                 self.assertEqual(missed, known)
                 self.assertTrue(not known or row["split"] == "held-out", "a paired answer can't be a known miss")
+
+    def test_a_new_model_deployment_gets_its_own_evaluation(self):
+        """The evaluators' criteria name the model deployment. After the model changes, the old deployment can be
+        deleted: the evaluation is created again for the new one, and the old evaluation keeps its runs under a name
+        that gives its model. The same evaluators and deployment reuse the evaluation."""
+        versions = dict.fromkeys(evaluation.EVALUATORS, "7")
+        signature = ",".join(f"{kind}:7" for kind in evaluation.EVALUATORS)
+        old = mock.MagicMock(id="eval_old", metadata={"evaluators": signature, "model": "gpt-5.4-mini"})
+        old.name = evaluation.EVAL_NAME
+        openai = mock.MagicMock()
+        openai.evals.list.return_value = [old]
+        openai.evals.create.return_value = mock.MagicMock(id="eval_new")
+
+        self.assertEqual(evaluation.ensure_eval(openai, "gpt-6-luna", versions), "eval_new")
+        created = openai.evals.create.call_args.kwargs
+        self.assertEqual(created["metadata"], {"evaluators": signature, "model": "gpt-6-luna"})
+        self.assertEqual({c["initialization_parameters"]["deployment_name"] for c in created["testing_criteria"]},
+                         {"gpt-6-luna"})
+        openai.evals.update.assert_called_once_with("eval_old",
+                                                    name=f"{evaluation.EVAL_NAME} (earlier model gpt-5.4-mini)")
+
+        openai.evals.create.reset_mock()
+        self.assertEqual(evaluation.ensure_eval(openai, "gpt-5.4-mini", versions), "eval_old")
+        openai.evals.create.assert_not_called()
+
+        openai.evals.update.reset_mock()
+        old.metadata = {"evaluators": signature.replace(":7", ":6"), "model": "gpt-6-luna"}
+        evaluation.ensure_eval(openai, "gpt-6-luna", versions)
+        openai.evals.update.assert_called_once_with("eval_old", name=f"{evaluation.EVAL_NAME} (earlier evaluators)")
+
+
+class AgentPublishTests(unittest.TestCase):
+    """The Function names the agent, not a version, and Foundry answers with the latest version: that version must have
+    the definition from agent.yaml and the current model deployment."""
+
+    SMALL_TEAM = {**SPEC, "profiles": {"small-team": SPEC["profiles"]["small-team"]}}
+
+    def version(self, number: int, model: str):
+        body = agents.definition(self.SMALL_TEAM, "small-team", model, "https://search.example.net")
+        agent = mock.MagicMock(version=str(number), metadata={"definitionHash": agents.definition_hash(body)})
+        agent.name = "architecture-advisor-small-team"
+        return agent
+
+    def test_going_back_to_an_earlier_definition_publishes_it_again_as_the_latest_version(self):
+        """gpt-6-luna (v3), then gpt-6.1-sol (v5), then gpt-6-luna again must publish v6: reusing v3 would leave v5
+        answering every Issue, on gpt-6.1-sol. Running it again reuses v6."""
+        project = mock.MagicMock()
+        project.agents.list_versions.return_value = [self.version(3, "gpt-6-luna"), self.version(5, "gpt-6.1-sol")]
+        project.agents.create_version.return_value = self.version(6, "gpt-6-luna")
+
+        published = agents.publish(project, self.SMALL_TEAM, "gpt-6-luna", "https://search.example.net")
+        self.assertEqual((published["small-team"]["version"], published["small-team"]["reused"]), ("6", False))
+
+        project.agents.create_version.reset_mock()
+        project.agents.list_versions.return_value.append(self.version(6, "gpt-6-luna"))
+        published = agents.publish(project, self.SMALL_TEAM, "gpt-6-luna", "https://search.example.net")
+        self.assertEqual((published["small-team"]["version"], published["small-team"]["reused"]), ("6", True))
+        project.agents.create_version.assert_not_called()
 
 
 class ReportTests(unittest.TestCase):

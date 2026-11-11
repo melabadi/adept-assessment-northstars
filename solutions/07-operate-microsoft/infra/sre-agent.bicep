@@ -142,13 +142,13 @@ resource presenterAdministrator 'Microsoft.Authorization/roleAssignments@2022-04
   }
 }
 
-// Connectors are only exposed in the preview API version.
-#disable-next-line BCP081
-resource appInsightsConnector 'Microsoft.App/agents/connectors@2025-05-01-preview' = {
+resource appInsightsConnector 'Microsoft.App/agents/connectors@2026-01-01' = {
   parent: agent
   name: 'app-insights'
   properties: {
     dataConnectorType: 'AppInsights'
+    // The schema marks dataSource sensitive because it can hold a connection string; here it is a resource id.
+    #disable-next-line use-secure-value-for-secure-inputs
     dataSource: workloadAppInsights.id
     extendedProperties: {
       armResourceId: workloadAppInsights.id
@@ -160,12 +160,12 @@ resource appInsightsConnector 'Microsoft.App/agents/connectors@2025-05-01-previe
   dependsOn: [systemIdentityRoles]
 }
 
-#disable-next-line BCP081
-resource logAnalyticsConnector 'Microsoft.App/agents/connectors@2025-05-01-preview' = {
+resource logAnalyticsConnector 'Microsoft.App/agents/connectors@2026-01-01' = {
   parent: agent
   name: 'log-analytics'
   properties: {
     dataConnectorType: 'LogAnalytics'
+    #disable-next-line use-secure-value-for-secure-inputs
     dataSource: logAnalytics.id
     extendedProperties: {
       armResourceId: logAnalytics.id

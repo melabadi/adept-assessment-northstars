@@ -342,7 +342,8 @@ def check_build(s: dict) -> None:
            f"Pushes to main do not start builds. Start one for a commit of main with: az acr task run --registry "
            f"{s['registry']} --name build-api --context <repository URL>.git#<commit> --set commit=<commit> (README, "
            "Use it the first time) — or turn the trigger on: define Update-BuildTask first (README, One-time setup, "
-           "step 3), then call it with 'Enabled'. az acr task update fails on the source trigger in Azure CLI 2.91.")
+           "step 3), then call it with 'Enabled'. az acr task update fails on the source trigger in Azure CLI 2.91 "
+           "and 2.92.")
 
 
 def check_workbook(s: dict) -> None:

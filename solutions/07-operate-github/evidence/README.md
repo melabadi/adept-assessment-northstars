@@ -1,11 +1,13 @@
 # Evidence from the recorded run
 
-These files back [See it work](../README.md#see-it-work): the run of 28 October 2026, from incident [#109](https://github.com/melabadi/adept-assessment-northstars/issues/109) to its follow-up [#111](https://github.com/melabadi/adept-assessment-northstars/issues/111) and Copilot's pull request [#114](https://github.com/melabadi/adept-assessment-northstars/pull/114). The workflow runs' logs, summaries, and artifacts need a GitHub sign-in and expire on 26 January 2027; these copies stay.
+These files back [See it work](../README.md#see-it-work): the run of 28 October 2026, from incident [#109](https://github.com/melabadi/adept-assessment-northstars/issues/109) to its follow-up [#111](https://github.com/melabadi/adept-assessment-northstars/issues/111) and Copilot's pull request [#114](https://github.com/melabadi/adept-assessment-northstars/pull/114). The workflow runs' logs, summaries, and artifacts need a GitHub sign-in and expire on 26 January 2027; these copies stay. Two later checks are here too: option B with Copilot CLI 1.0.109, which ran on a person's machine, and the first run on gh-aw v1.2.2.
 
 | File | What it holds | Where it comes from |
 | --- | --- | --- |
 | [`triage-run-40711748423.md`](triage-run-40711748423.md) | The triage run's six jobs and their times, the threat detection's verdict, the AI credits of the agent and the detection, and the agent's tool calls, including the command that was refused (steps 2 and 3) | The GitHub API, and the run's `agent`, `detection`, and `usage` artifacts, copied unchanged |
 | [`proof-run-40713746544.md`](proof-run-40713746544.md) | The three runs on Copilot's commit: when a person started them and how long each job took, then the proof's output (steps 6 and 7) | The GitHub API, and the proof job's log |
+| [`copilot-cli-1.0.109.md`](copilot-cli-1.0.109.md) | Option B's drafting with Copilot CLI 1.0.109 on 11 November 2026: its time, AI credits, tool calls, and the two drafts ([Use it the first time](../README.md#use-it-the-first-time), step 2B) | Copilot CLI's output and the two draft files, copied unchanged except two lines that the file names |
+| [`triage-run-43040562679.md`](triage-run-43040562679.md) | The first run on gh-aw v1.2.2, on 11 November 2026, for incident [#338](https://github.com/melabadi/adept-assessment-northstars/issues/338): its jobs and times, the budgets and the network allow-list it ran with, the detection verdict, the AI credits, and the agent's tool calls | The GitHub API, and the run's `agent`, `detection`, and `usage` artifacts, copied unchanged |
 
 While the artifacts and logs last, compare a file with GitHub from the repository root, signed in to `gh`:
 

@@ -79,9 +79,11 @@ class FakeFoundry:
     def response(self, response_id):
         n = int(response_id.split("_")[1])
         self.polls[response_id] = self.polls.get(response_id, 0) + 1
+        status = self.response_statuses[min(n, len(self.response_statuses)) - 1]
+        if status == "lost":  # Foundry answered 404 for a background response it had started, for good
+            raise ServiceError("Foundry", 404, f"Response with id '{response_id}' not found.")
         if self.polls[response_id] < 2:
             return {"id": response_id, "status": "in_progress"}
-        status = self.response_statuses[min(n, len(self.response_statuses)) - 1]
         if status != "completed":
             return {"id": response_id, "status": status, "error": {"message": "The server is overloaded or not ready yet."}}
         return {"id": response_id, "status": "completed", "output": [
@@ -333,6 +335,25 @@ class RunTests(unittest.TestCase):
         record = self.record(run_id)
         self.assertEqual(record["state"], "failed")
         self.assertEqual(record["error"]["code"], "AgentDidNotFinish")
+        self.assertEqual(self.github.calls, [])
+
+    def test_a_response_foundry_lost_is_asked_for_once_more(self):
+        # Seen live on gpt-6-luna: Foundry answered 404 for a background response it had started, and kept answering
+        # 404. Polling it on every delivery could only fail the run.
+        self.foundry = FakeFoundry(responses=("lost", "completed"))
+        run_id = self.draft_only()
+        record = self.record(run_id)
+        self.assertEqual(record["state"], "evaluating")
+        self.assertEqual(len(self.foundry.started_responses), 2)
+        self.assertTrue(any("ended as 'lost'" in e["text"] and "asking once more" in e["text"] for e in record["events"]))
+
+    def test_two_lost_responses_fail_the_run_before_github(self):
+        self.foundry = FakeFoundry(responses=("lost", "lost"))
+        run_id = self.draft_only()
+        record = self.record(run_id)
+        self.assertEqual(record["state"], "failed")
+        self.assertEqual(record["error"]["code"], "AgentDidNotFinish")
+        self.assertEqual(len(self.foundry.started_responses), 2)
         self.assertEqual(self.github.calls, [])
 
     def test_an_answer_that_is_not_json_fails_the_run(self):

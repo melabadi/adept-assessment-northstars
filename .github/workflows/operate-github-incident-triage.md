@@ -1,5 +1,5 @@
 ---
-name: "Operate · GitHub · triage an incident"
+name: "Operate · GitHub · agentic incident triage"
 description: |
   Triages an incident Issue when it gets the `incident` label. It classifies the incident, writes an evidence-based
   timeline that keeps observed facts, hypotheses, and missing evidence apart, and opens one bounded follow-up Issue
@@ -21,14 +21,20 @@ permissions:
   contents: read
   issues: read
 engine: copilot
+# The agent needs no host beyond gh-aw's documented baseline: it reads the checkout with the commands below, and reaches
+# GitHub through gh-aw's MCP gateway and Copilot through gh-aw's API proxy, never directly.
+network: defaults
 tools:
   github:
     toolsets: [issues, repos]
   bash: [cat, grep, head, tail, ls, wc, sort]
+# A hard cap on each run's AI credits. gh-aw steers the agent from 80% of it (48); nine recorded runs used 17 to 24.
+max-ai-credits: 60
 safe-outputs:
   # A run that threat detection flags applies nothing: no comment, no labels, no follow-up. A person reads the run.
   threat-detection:
     continue-on-error: false
+    max-ai-credits: 10 # detection used about 1 in each recorded run
   add-comment:
     max: 1
     hide-older-comments: true
@@ -40,6 +46,7 @@ safe-outputs:
     title-prefix: "[follow-up] "
     labels: ["ai-sdlc", "phase:operate", "incident-followup"]
     max: 1
+    max-issue-artifacts: 0 # the follow-up carries no attachments
 timeout-minutes: 15
 ---
 

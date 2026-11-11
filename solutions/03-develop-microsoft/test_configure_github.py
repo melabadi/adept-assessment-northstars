@@ -116,6 +116,15 @@ class PrepareTests(unittest.TestCase):
         self.assertEqual(tools.env_files, [])
         self.assertIn("already set", out)
 
+    def test_without_an_owner_and_name_the_hook_stops_azd_and_stores_nothing(self):
+        # Without GITHUB_REPOSITORY, the fake `gh repo view` answers "{}", which isn't owner/name either.
+        for values in ({}, {"GITHUB_REPOSITORY": "requesthub"}):
+            tools = FakeTools([])
+            with self.subTest(values=values), mock.patch.object(configure_github, "run", tools.run), \
+                    mock.patch.object(configure_github, "azd_values", lambda v=values: v), self.assertRaises(SystemExit):
+                configure_github.prepare()
+            self.assertFalse(any(args[:2] == ("azd", "env") for args, _ in tools.calls), tools.calls)
+
 
 class PublishTests(unittest.TestCase):
     def test_without_a_token_no_webhook_is_created(self):

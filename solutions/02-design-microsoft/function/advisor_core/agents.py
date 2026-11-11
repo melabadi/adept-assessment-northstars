@@ -1,8 +1,10 @@
 """The architecture advisor agents in Foundry Agent Service: one prompt agent per operating profile, from agent.yaml.
 
-publish() creates a new agent version only when the definition changes (its hash is kept in the version's metadata),
-so running it twice changes nothing. Each version's metadata also records the profile and the scope filter its
-knowledge tool applies, which the gate reads to know what that agent version was allowed to see.
+publish() creates a new agent version only when the definition differs from the agent's latest version (its hash is
+kept in the version's metadata), so running it twice changes nothing. The Function names the agent, not a version, and
+Foundry answers with the latest version, so an older version is never reused: going back to an earlier definition, such
+as an earlier model, publishes it again as the latest version. Each version's metadata also records the profile and the
+scope filter its knowledge tool applies, which the gate reads to know what that agent version was allowed to see.
 
 agent.yaml chooses the knowledge tool:
   knowledge: foundry-iq       the profile's Foundry IQ knowledge base, through its MCP endpoint (default)
@@ -58,7 +60,8 @@ def definition(spec: dict, profile: str, model: str, search_endpoint: str, searc
             project_connection_id=search_connection_id, index_name=spec["search"]["index"],
             query_type=spec["search"]["query_type"], filter=standards.scope_filter(spec, profile),
             top_k=spec["search"]["top_k"])]))
-    # Reasoning models (gpt-5 family) take a reasoning effort and reject temperature; other models take temperature.
+    # Reasoning models (the gpt-5 and gpt-6 families) take a reasoning effort and reject temperature; other models take
+    # temperature.
     sampling = {}
     if spec.get("temperature") is not None:
         sampling["temperature"] = spec["temperature"]
@@ -74,6 +77,11 @@ def definition(spec: dict, profile: str, model: str, search_endpoint: str, searc
     )
 
 
+def definition_hash(body) -> str:
+    """A short hash of an agent definition, kept in each version's metadata to tell whether the definition changed."""
+    return hashlib.sha256(json.dumps(body.as_dict(), sort_keys=True).encode()).hexdigest()[:16]
+
+
 def publish(project, spec: dict, model: str, search_endpoint: str) -> dict[str, dict]:
     """Publish every profile's agent. Returns {profile: {name, version, reused, scopeFilter}}."""
     connection_id = None
@@ -83,12 +91,13 @@ def publish(project, spec: dict, model: str, search_endpoint: str) -> dict[str, 
     for profile in spec["profiles"]:
         name = agent_name(spec, profile)
         body = definition(spec, profile, model, search_endpoint, connection_id)
-        digest = hashlib.sha256(json.dumps(body.as_dict(), sort_keys=True).encode()).hexdigest()[:16]
+        digest = definition_hash(body)
         try:
             versions = list(project.agents.list_versions(agent_name=name))
         except Exception:  # first run: the agent does not exist yet
             versions = []
-        agent = next((v for v in versions if (v.metadata or {}).get("definitionHash") == digest), None)
+        latest = max(versions, key=lambda v: int(v.version) if str(v.version).isdigit() else -1, default=None)
+        agent = latest if latest is not None and (latest.metadata or {}).get("definitionHash") == digest else None
         reused = agent is not None
         if agent is None:
             agent = project.agents.create_version(
