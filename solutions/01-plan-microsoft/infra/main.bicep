@@ -23,9 +23,9 @@ param githubRepository string = ''
 @description('Fine-grained GitHub token for this repository only, with Issues read and write. Stored in Key Vault for the Function app. Empty until you set PLAN_GITHUB_TOKEN (README, One-time setup).')
 param githubToken string = ''
 
-@description('Chat model for the requirements analyst agent. agent.yaml sets temperature, so pick a non-reasoning model or switch agent.yaml to reasoning_effort.')
-param modelName string = 'gpt-4.1'
-param modelVersion string = '2025-04-14'
+@description('Model for the requirements analyst agent. gpt-6-luna is a reasoning model, so agent.yaml sets reasoning_effort; for a non-reasoning model, switch agent.yaml to temperature.')
+param modelName string = 'gpt-6-luna'
+param modelVersion string = '2026-09-22'
 
 @description('Model capacity in thousands of tokens per minute.')
 param modelCapacity int = 50

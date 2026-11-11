@@ -218,7 +218,15 @@ def wait_for_response(services: Services, run: Run, response: dict) -> dict:
     while response.get("status") in ("queued", "in_progress") and services.now() < deadline:
         services.sleep(RESPONSE_POLL_SECONDS)
         run.stop_if_cancelled()
-        response = services.foundry.response(response["id"])
+        try:
+            response = services.foundry.response(response["id"])
+        except ServiceError as error:
+            if error.status != 404:
+                raise
+            # Foundry lost a background response it had started once in our runs: it answered 404 from then on, so
+            # polling it again on the next delivery could only fail the run. Count it as an attempt that failed.
+            return {"id": response["id"], "status": "lost",
+                    "error": {"message": "Foundry no longer finds the response (HTTP 404)"}}
     return response
 
 

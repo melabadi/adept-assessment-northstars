@@ -26,7 +26,7 @@ it as hooks; run `publish` yourself after you change agent.yaml, the inputs, or 
 
 Configuration (environment variables, or read from `azd env get-values`, run in this folder):
   FOUNDRY_PROJECT_ENDPOINT   https://<account>.services.ai.azure.com/api/projects/<project>
-  FOUNDRY_MODEL_DEPLOYMENT   model deployment name, for example gpt-4.1
+  FOUNDRY_MODEL_DEPLOYMENT   model deployment name, for example gpt-6-luna
 Your identity needs the Foundry User role on the Foundry account; infra/resources.bicep grants it to whoever runs azd.
 
 Exit codes: 0 done, 2 configuration or service error.
@@ -127,7 +127,7 @@ def ensure_agent(project, spec: dict, model: str, vector_store_id: str):
     from azure.ai.projects.models import (FileSearchTool, PromptAgentDefinition, PromptAgentDefinitionTextOptions,
                                           Reasoning, TextResponseFormatJsonSchema)
     schema = strict_schema(json.loads((HERE / "backlog.schema.json").read_text(encoding="utf-8")))
-    # Reasoning models (gpt-5 family) take a reasoning effort and reject temperature; other models take temperature.
+    # Reasoning models such as gpt-6-luna take a reasoning effort and reject temperature; other models take temperature.
     settings = {}
     if spec.get("temperature") is not None:
         settings["temperature"] = spec["temperature"]
