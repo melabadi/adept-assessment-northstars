@@ -322,7 +322,7 @@ Then make it part of your workflow:
 
 ### What it costs
 
-Your app bills as it already does. While deployed, the solution adds about $0.75 a day for the reporting function's three private endpoints and their DNS zones, and about $0.25 per short test run: Azure Load Testing bills at least 10 virtual users per engine for 10 minutes per run, so a 2-minute run like RequestHub's bills 1.67 virtual user hours. The function runs on demand, a few seconds per run, within Flex Consumption's monthly free grant; Key Vault and the action group add a few cents a month. The root README compares [what the Microsoft solutions cost](../../README.md).
+Your app bills as it already does. While deployed, the solution adds about $0.75 a day for the reporting function's three private endpoints and their DNS zones, and about $0.25 per short test run: Azure Load Testing bills at least 10 virtual users per engine for 10 minutes per run, so a 2-minute run like RequestHub's bills 1.67 virtual user hours. The function runs on demand, a few seconds per run, within Flex Consumption's monthly free grant; Key Vault and the action group add a few cents a month. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
 
 ## Try it first in a copy of this repository
 
@@ -330,7 +330,7 @@ Optional: the same solution on RequestHub, before you adapt anything. It needs t
 
 ### Quick start
 
-From the root of your copy of the repository, which the root README's [Try it in a copy of this repository](../../README.md) makes once for every solution:
+From the root of your copy of the repository, which the root README's [Try it in a copy of this repository](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution:
 
 ```powershell
 cd solutions/04-test-microsoft
