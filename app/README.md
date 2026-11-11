@@ -26,7 +26,7 @@ flowchart LR
 
 ## Run it locally
 
-You need the [.NET 10 SDK](https://dotnet.microsoft.com/download), [Node.js 22](https://nodejs.org/), and PostgreSQL 16. Docker is the easiest way to get PostgreSQL.
+You need the [.NET 10 SDK](https://dotnet.microsoft.com/download), [Node.js 26](https://nodejs.org/), and PostgreSQL 16. Docker is the easiest way to get PostgreSQL.
 
 ```powershell
 # 1. PostgreSQL (user requesthub, password devpass)
