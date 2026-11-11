@@ -141,6 +141,33 @@ class JunitTests(unittest.TestCase):
 
 
 class ReplayWorkflowTests(unittest.TestCase):
+    def test_only_unconfigured_schedules_are_skipped_on_main(self):
+        workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
+        expression = re.search(r"^    if: (.+)$", workflow, re.MULTILINE).group(1)
+        self.assertEqual(
+            "github.ref == 'refs/heads/main' && "
+            "(github.event_name != 'schedule' || vars.SECURE_REPLAY_PR != '')",
+            expression,
+        )
+        for ref, event, configured, expected in (
+            ("refs/heads/main", "schedule", "", False),
+            ("refs/heads/main", "schedule", "105", True),
+            ("refs/heads/main", "workflow_dispatch", "", True),
+            ("refs/heads/main", "workflow_dispatch", "105", True),
+            ("refs/heads/feature", "schedule", "105", False),
+            ("refs/heads/feature", "workflow_dispatch", "", False),
+        ):
+            with self.subTest(ref=ref, event=event, configured=configured):
+                translated = expression
+                for name, value in (
+                    ("github.ref", ref),
+                    ("github.event_name", event),
+                    ("vars.SECURE_REPLAY_PR", configured),
+                ):
+                    translated = translated.replace(name, repr(value))
+                translated = translated.replace("&&", "and").replace("||", "or")
+                self.assertEqual(expected, eval(translated, {"__builtins__": {}}))
+
     def test_midnight_eastern_schedule_replays_the_configured_repair(self):
         workflow = (ROOT / ".github/workflows/secure-github-verify.yml").read_text()
         self.assertRegex(workflow, r"schedule:\s*\n\s*- cron: '0 0 \* \* \*'\s*\n\s*timezone: America/New_York")
