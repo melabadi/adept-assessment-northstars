@@ -251,14 +251,14 @@ A team that lets Copilot write bounded changes wants an independent review, run 
 
    **Point out:** Copilot's own 76 API tests and 18 web tests had passed; the reviewer's independent test found the defect.
 
-3. **Mark it ready and ask Azure** (10 seconds, then 2½ to 10 minutes of waiting). From the repository root:
+3. **Mark it ready and ask Azure** (10 seconds, then 2 to 4 minutes of waiting). From the repository root:
 
    ```powershell
    gh pr ready <number>
    gh pr edit <number> --add-label review:azure
    ```
 
-   That is all GitHub does: Azure's Function reads the pull request at its head commit, runs the team rules, builds and tests the change in a sandbox, and asks the Foundry agent (03-develop-microsoft steps 2 to 4). Earlier runs posted the review about 2½ minutes after the label; in this run it took 10 minutes, because the sandbox needed 8 minutes to set up its toolchain.
+   That is all GitHub does: Azure's Function reads the pull request at its head commit, runs the team rules, builds and tests the change in a sandbox, and asks the Foundry agent (03-develop-microsoft steps 2 to 4). The review arrives 2 to 4 minutes after the label, as 03-develop-microsoft's [How long each step takes](solutions/03-develop-microsoft/README.md#how-long-each-step-takes) says.
 
    ![The pull request's Labels box in the GitHub sidebar, showing the review:azure label](solutions/03-develop-microsoft/images/02-label.png)
 
@@ -275,7 +275,7 @@ A team that lets Copilot write bounded changes wants an independent review, run 
 
    ![Head commit 3e200b3; gh pr checks shows browser tests, web UI checks, API and worker tests, and the feature bounds check passing; Azure's review is a COMMENT on 3e200b3 with all 5 team rules passed, 76 of 76 API integration tests and 18 of 18 web unit tests passed in the sandbox](solutions/03-develop-microsoft/images/combo-01-same-commit.png)
 
-   Then open Azure's review on the pull request. In our run, the Foundry agent added one warning the rules can't catch: the confirmer's name is read back from audit details, so a change in their format would hide it without failing. It asked the person to look at that path.
+   Then open Azure's review on the pull request. In our run, the Foundry agent, then version 4 on `gpt-5.4-mini`, added one warning the rules can't catch: the confirmer's name is read back from audit details, so a change in their format would hide it without failing. It asked the person to look at that path. The agent now runs as version 6 on `gpt-6-luna`, so its commentary will differ.
 
    **Point out:** the same SHA everywhere. The reviewer's browser test passed in CI on the commit that Azure built and reviewed.
 
@@ -714,8 +714,8 @@ Each demo also runs live, in a copy of this repository, from its README's *Try i
 | [02-design-github](solutions/02-design-github/) | 25 min | If you show the Copilot cloud agent (step 3), assign it at least 30 minutes before; it takes about 12. Request Copilot's code review early: it takes 4 to 5 minutes. Comment `/design-review` at least 6 minutes before you show its answer: it took 5 minutes 5 seconds to 5 minutes 18 seconds in three runs. |
 | [02-design-microsoft](solutions/02-design-microsoft/) | 15 min | Run the Foundry evaluation (`python evaluate.py`, in the solution folder) about 15 minutes before step 8; it takes 3 to 7 minutes, plus 3 to 5 for each run it starts again because Foundry's preview grader couldn't score it. Show its summary as it came out: the first attempt's passed, failed, and ungraded cases, then each retry and why. In the run the README shows, the first attempt passed 5 cases, Foundry couldn't grade the other 5, and the retry's new answers passed them. Also start `python evaluate.py --check-graders` (about 3 minutes) for step 8's right and wrong answers. Open the agent's Playground in advance (it takes up to a minute to load). |
 | [03-develop-github](solutions/03-develop-github/) | 25 min | Create the Issue and assign it to Copilot at least 30 minutes before: it worked for 15 to 28 minutes across four runs. Run the Copilot CLI step (about 20 minutes) beforehand too. |
-| [03-develop-microsoft](solutions/03-develop-microsoft/) | 20 min | Run the reviewer's dry run on the `admins-decide` case (`python eval_reviewer.py --cases admins-decide --local`, about 3 minutes) to confirm its GitHub token still works; a new copy needs `python eval_reviewer.py --setup` once first. For fresh evaluation results, start `eval_reviewer.py` about 20 minutes before, and `eval_reviewer.py --check-graders` (5 to 10 minutes) for step 7's right and wrong reviews. |
-| [04-test-github](solutions/04-test-github/) | 20 min | Rebuild the lab branch and assign the Issue to Copilot at least 35 minutes before: it worked for 11 to 31 minutes across six runs. The optional Copilot CLI step took 17 minutes 50 seconds. To show a red CI run explained (step 10), open step 10's pull request about 7 minutes before: CI fails within about a minute, and the comment came 4 minutes 50 seconds to 5 minutes 44 seconds after it. |
+| [03-develop-microsoft](solutions/03-develop-microsoft/) | 20 min | Run the reviewer's dry run on the `admins-decide` case (`python eval_reviewer.py --cases admins-decide --local`, about 3 minutes) to confirm its GitHub token still works; a new copy needs `python eval_reviewer.py --setup` once first. For fresh evaluation results, start `eval_reviewer.py` about 10 minutes before (8 minutes 45 seconds and 8 minutes 57 seconds on 11 November), and `eval_reviewer.py --check-graders` (3 to 8 minutes per Foundry grading) for step 7's right and wrong reviews. |
+| [04-test-github](solutions/04-test-github/) | 20 min | Rebuild the lab branch and assign the Issue to Copilot at least 35 minutes before: it worked for 11 to 31 minutes across six runs. The optional Copilot CLI step took 17 minutes 50 seconds. To show a red CI run explained (step 10), open step 10's pull request about 7 minutes before: CI fails within about a minute, and the comment came 4 minutes 50 seconds to 5 minutes 44 seconds after it when no other investigation was running. |
 | [04-test-microsoft](solutions/04-test-microsoft/) | 30 min (45 fully live) | Start the baseline Azure Load Testing run from the portal about 10 minutes before its step: a run reaches its verdict in 7 to 9 minutes, and the Azure Function reports it 2 to 4 minutes later. Start the final passing run during questions. |
 | [05-secure-github](solutions/05-secure-github/) | 15 min | Prepare the lab and start the review and the cloud agent 30 to 45 minutes before: the review took about 6 minutes and the repair 15 in the screenshot run. |
 | [05-secure-microsoft](solutions/05-secure-microsoft/) | 25 min (15 with step 7 from screenshots) | Reset at least a day before, so that Defender for Cloud reports the account Unhealthy again, and start the database if a tenant policy stopped it (2 to 5 minutes). Nothing else: the Issue, the agent's draft pull request, and its what-if preview follow the click in about 2 minutes, `azd provision` takes about 6 (5 minutes 55 seconds on 11 November), and the Function `verify` 1 to 15. |
@@ -751,7 +751,7 @@ Each demo also runs live, in a copy of this repository, from its README's *Try i
 - Narrate while things run. Every README says what to show while you wait: the input files, the agent's instructions, the workflow definition.
 - Keep your account menu, the Foundry project's Home page, and Azure resources' Overview pages off the shared screen: they show your account, endpoints, and subscription. The READMEs' screenshots were captured with these details masked; a live screen isn't.
 - If a live step is slow or fails, switch to the README's *See it work*: its screenshots come from a real run of the same steps. Each README's **Troubleshooting** covers the failures we have seen.
-- Show evaluation results as they came out, in three parts: the **first attempt** (what passed and what failed the first time), the **retries** (a run started again only because Foundry's preview grader couldn't score it, with new answers from the agent), and what **could not be graded**. 02-design-microsoft's `evaluate.py` and 03-develop-microsoft's `eval_reviewer.py` print them apart. A failed case is a result: never run an evaluation again until it passes.
+- Show evaluation results as they came out, in three parts: the **first attempt** (what passed and what failed the first time), the **retries** (a run started again only because Foundry's preview grader couldn't score it, with new answers from the agent), and what **could not be graded**. 02-design-microsoft's `evaluate.py` prints them apart. 03-develop-microsoft's `eval_reviewer.py` has no retries of that kind: when Foundry's code-based evaluators, in preview, fail every item of a check, it grades the same answers once more and says so below its table of local scores. A failed case is a result: never run an evaluation again until it passes.
 - End each phase on its *Results and value*: what the AI did, what the person decided, and the evidence left behind.
 
 ### After the session

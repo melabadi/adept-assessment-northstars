@@ -47,7 +47,7 @@ solutions/<NN>-<phase>-<github|microsoft>/
 Four GitHub solutions, 02-design-github, 04-test-github, 06-release-github, and 07-operate-github, each ship a [GitHub Agentic Workflow](https://github.com/github/gh-aw): a Markdown source, and the `.lock.yml` that gh-aw compiles from it, which is what GitHub runs. All four pin gh-aw v1.2.2 as `GH_AW_VERSION` in their checks workflow, which fails a pull request whose lock file isn't what that version compiles. Edit the source in the solution and run `python tools/sync_solutions.py`, compile it at the root with `gh aw compile <workflow>`, then copy the lock file back with `python tools/sync_solutions.py --pull .github/workflows/<workflow>.lock.yml`. Never edit a lock file by hand.
 
 - **Every lock file records every custom agent.** gh-aw v1.2 and later record each custom agent's frontmatter (its name, model, and tools) in every lock file's `gh-aw-manifest` header. So each gh-aw solution's checks workflow also watches `.github/agents/**`. A pull request that changes an agent's frontmatter, or adds or removes an agent, recompiles every gh-aw lock file in the repository with the pinned version, and pulls each one back with `tools/sync_solutions.py --pull`.
-- **Budgets come from measured usage.** Set `max-ai-credits` to about 2.5 times the most a recorded run used, and say in a comment next to it which runs those were.
+- **Budgets come from measured usage.** Set `max-ai-credits` to about 2.5 to 3 times the most a recorded run used, and say in a comment next to it which runs those were.
 - **Who may start one, and whose text may reach it,** follow the rules for [outside contributions](#outside-contributions).
 
 ## Microsoft solutions on Azure
