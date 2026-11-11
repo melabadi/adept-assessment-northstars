@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -363,9 +364,11 @@ class PreflightTests(unittest.TestCase):
 
 
 class AiSummaryTriggerTests(unittest.TestCase):
-    """The AI release summary runs with COPILOT_GITHUB_TOKEN and can append to a release. Its workflow_run trigger matches
-    any run named like the candidate workflow on a branch named main, which a fork's pull request can add. So the
-    compiled workflow starts no job unless the run was dispatched in this repository, and gh-aw checks the actor's role."""
+    """The agentic release summary runs with COPILOT_GITHUB_TOKEN and can append to a release. Its workflow_run trigger
+    matches any run named like the candidate workflow on a branch named main, which a fork's pull request can add. So the
+    compiled workflow starts no job unless the run was dispatched in this repository, and gh-aw checks the actor's role.
+    What it applies is limited too: one append to a release, nothing when threat detection flags the run, and Copilot
+    sees only GitHub content that gh-aw's integrity filter rates approved (the owner, members, collaborators) or merged."""
 
     LOCK = SOLUTION / ".github" / "workflows" / "release-github-summary.lock.yml"
     DISPATCHED = ("github.event.workflow_run.event == 'workflow_dispatch'",
@@ -390,6 +393,23 @@ class AiSummaryTriggerTests(unittest.TestCase):
         text = self.LOCK.read_text(encoding="utf-8")
         self.assertIn('GH_AW_REQUIRED_ROLES: "admin,maintainer,write"', text)
         self.assertIn("activated: ${{ steps.check_membership.outputs.is_team_member == 'true' }}", text)
+
+    def test_a_run_that_threat_detection_flags_applies_nothing(self):
+        text = self.LOCK.read_text(encoding="utf-8")
+        self.assertIn('GH_AW_DETECTION_CONTINUE_ON_ERROR: "false"', text)
+        self.assertNotIn('GH_AW_DETECTION_CONTINUE_ON_ERROR: "true"', text)
+        self.assertIn("needs.detection.result == 'success'", self.job_condition(text, "safe_outputs"))
+
+    def test_copilot_can_only_append_to_one_release_from_trusted_content(self):
+        text = self.LOCK.read_text(encoding="utf-8")
+        quoted = re.search(r"^\s*GH_AW_SAFE_OUTPUTS_CONFIG: (\".*\")\s*$", text, re.MULTILINE).group(1)
+        outputs = json.loads(json.loads(quoted))
+        diagnostics = {"noop", "report_incomplete"}  # they write nothing here: no Issue, no comment
+        self.assertEqual(set(outputs) - diagnostics, {"update_release"})
+        self.assertEqual(outputs["update_release"]["max"], 1)
+        for permission in ("issues: write", "pull-requests: write", "discussions: write"):
+            self.assertNotIn(permission, text)
+        self.assertIn("GH_AW_GITHUB_MIN_INTEGRITY: 'approved'", text)
 
 
 class InvestigateTests(unittest.TestCase):
