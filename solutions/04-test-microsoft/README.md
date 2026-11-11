@@ -426,7 +426,7 @@ Open the function app (resource group `rg-ai-sdlc-test` › the Function App ›
 gh issue list --label load-test --state open
 ```
 
-Today's report also names the API revision that served the run, a line added after the recorded run.
+Today's report also names the run's id and the API revision that served it; both were added after the recorded run.
 
 ### 7. AI explains, people verify
 
