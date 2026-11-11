@@ -91,6 +91,16 @@ public sealed class RequestLifecycleTests(ApiFixture api) : IClassFixture<ApiFix
         var response = await api.As("u-chloe").PostJson("/api/requests/REQ-1009/decisions", new { outcome = "Rejected" });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+    [Fact]
+    public async Task Rejection_with_a_blank_comment_is_refused()
+    {
+        var id = (await (await api.As("u-ava").PostJson("/api/requests", NewRequest("Monitor arm for desk 2A-07"))).Read<RequestDetailDto>()).Id;
+        var response = await api.As("u-chloe").PostJson($"/api/requests/{id}/decisions", new { outcome = "Rejected", comment = "   " });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("validation.failed", await response.Code());
+        var detail = await (await api.As("u-ava").GetAsync($"/api/requests/{id}")).Read<RequestDetailDto>();
+        Assert.Equal("Submitted", detail.Status);
+    }
 
     [Fact]
     public async Task Decided_request_cannot_be_rerouted()
