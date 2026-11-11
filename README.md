@@ -5,7 +5,11 @@ Fourteen working demos show how to add AI to each phase of the software developm
 - **GitHub**: GitHub Copilot (custom agents, skills, the cloud agent, code review) with GitHub Enterprise (Actions, Issues, environments, rulesets, code security).
 - **Microsoft**: AI that runs in Azure. Microsoft Foundry agents and evaluations, Copilot in Azure, and Azure services (AI Search, Load Testing, Defender for Cloud, Azure Policy, Container Apps, Azure SRE Agent), orchestrated in Azure. GitHub only holds the code, pull requests, and Issues.
 
-Each solution is self-contained, and its README is the demo script: every step has the command or click, a screenshot from a live run, how long it takes, and what to point out. Pick one, open its README, and run it. To plan a session with several demos (formats, what to start early, costs), to run a phase's two solutions together on one change, or to follow one requirement from Plan to Test, see [PRESENTING.md](PRESENTING.md).
+In every demo, AI does the tedious part and a person keeps the decision.
+
+## Present it
+
+Present from the READMEs: there is nothing to start, deploy, or sign in to. Introduce the seven phases with the table below, then open a solution's README and walk down the page: why it matters, how it works, a run we recorded step by step, and its results and value. Every screenshot comes from that run, and every link opens for your audience too. [PRESENTING.md](PRESENTING.md) suggests formats and an order, the combos that put a phase's two solutions on one change, and one requirement followed from Plan to Test.
 
 ## The fourteen solutions
 
@@ -25,7 +29,7 @@ Everything a demo needs lives in its folder. The only shared piece is the app.
 
 ```text
 solutions/04-test-microsoft/
-├── README.md          what it shows, setup, the demo script, what to observe, how to adopt it
+├── README.md          the presentation (why it matters, how it works, a recorded run, results and value), then set-up, a live run, and how to adopt it
 ├── .github/           GitHub solutions: Copilot custom agent, skills, workflows, and issue templates. Microsoft solutions: only thin workflow triggers and issue templates
 ├── azure.yaml         (Microsoft solutions) azd project for the solution's own resource group
 ├── infra/             (Microsoft solutions) Bicep for that resource group
@@ -35,11 +39,29 @@ solutions/04-test-microsoft/
 
 GitHub only reads agents, skills, workflows, and issue templates from the repository's root `.github/` folder. The root therefore holds a synchronized copy of every solution's `.github/` files. Edit the solution's copy, then run `python tools/sync_solutions.py`. A check fails the pull request if the copies drift.
 
-## Before you start
+## Set it up yourself
+
+Each solution sets up on its own, so start with the one you want.
+
+1. **Make your own copy of this repository**, private or public, in your account or organization. In PowerShell 7, with `<owner>` your account or organization:
+
+   ```powershell
+   git clone https://github.com/melabadi/adept-assessment-northstars.git ai-sdlc
+   cd ai-sdlc
+   git remote rename origin upstream
+   gh repo create <owner>/ai-sdlc --private --source . --push
+   ```
+
+   The copy has `main` with its full history, and your repository becomes `origin`. The recorded runs in the READMEs keep their links to this repository's Issues and pull requests. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
+2. **Check the tools and access** in [Before you start](#before-you-start).
+3. **Follow the solution's README** from *Set it up yourself*: a quick start, then each step in detail. A Microsoft solution deploys into its own resource group with `azd up`, and its clean-up removes everything it created; [PRESENTING.md](PRESENTING.md#what-it-costs-while-it-is-deployed) lists what bills while it is deployed.
+4. **Bring it to your own repository.** Each README's *Use it in your own repository* says what to copy and what to change.
+
+### Before you start
 
 Every solution needs:
 
-- A copy of this repository on GitHub. The GitHub solutions need **GitHub Copilot Business or Enterprise** on it, and solutions that assign work to Copilot also need the **Copilot cloud agent** enabled for the repository.
+- Your copy of this repository on GitHub (step 1). The GitHub solutions need **GitHub Copilot Business or Enterprise** on it, and solutions that assign work to Copilot also need the **Copilot cloud agent** enabled for the repository.
 - [GitHub CLI](https://cli.github.com/) (`gh auth login`). The GitHub solutions also use [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli) (`copilot`); Visual Studio Code with GitHub Copilot works for their interactive steps too.
 - Python 3.12 or later for the solution scripts (`pip install -r requirements.txt` in the solution folder, when it has one).
 - [PowerShell 7.4 or later](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`). The READMEs' commands are written for it. Windows PowerShell 5.1 handles quotes and file encodings differently, and some commands fail there.

@@ -145,20 +145,23 @@ Change these yourself when you make a copy public. Nothing in the repository cha
 
 ## Solution READMEs
 
-Write for someone who has never seen the repository and will present the demo to an audience. Be complete: every step says what to do, what appears on screen (with a screenshot), and what to point out. No project-status sections. Write commands for PowerShell 7 (`pwsh`) and paste-test them; quote `gh api` paths that contain `{owner}/{repo}`, because PowerShell reads unquoted braces as a script block.
+A README serves two readers, in this order. A **presenter** shows the demo from the README alone, walking through a run that already happened: nothing to start, deploy, or sign in to. A **customer** then sets the solution up in a copy of the repository and runs it. Write for someone who has never seen the repository, with no project-status sections. Write commands for PowerShell 7 (`pwsh`) and paste-test them; quote `gh api` paths that contain `{owner}/{repo}`, because PowerShell reads unquoted braces as a script block.
 
-1. **Title and summary.** One paragraph: the problem and what AI changes. Follow it with the one screenshot that best shows the result.
-2. **Where it fits.** The SDLC phase, and how teams work today compared with this solution.
-3. **How it works.** A diagram (Mermaid renders on GitHub) and who does what: Copilot or Foundry, GitHub Actions or Azure, and the human.
-4. **What's in this folder.** An annotated file tree.
-5. **Prerequisites.**
-6. **Set up.** One-time steps, copy-paste ready, with what you should see when each one worked.
-7. **Before each session.** A checklist: how to confirm the demo is in its starting state, what to open in advance (tabs, terminals, files), what to start early because it takes long (Copilot sessions, deployments, load tests), and the timings.
-8. **Run the demo.** Numbered steps. Each step has the click path or command, a screenshot of what appears, how long it takes, and **Point out:** the one thing the audience should notice.
-9. **What to observe.** The impact to point out to the audience.
-10. **Reset and clean up.**
-11. **Use it in your own repository.** What to copy and what to change.
-12. **Troubleshooting.** Only problems someone actually hit.
+1. **Title and summary.** One paragraph: the problem and what AI changes. Then the one screenshot that best shows the result, and a line for each reader: how long it takes to present the recorded run, and how long to set it up yourself, linking both sections.
+2. **Why it matters.** The SDLC phase, how teams work today compared with this solution, and the value in a sentence or two, with the recorded run's headline results. Link the phase's combo in [PRESENTING.md](PRESENTING.md#solution-combos).
+3. **How it works.** A diagram (Mermaid renders on GitHub) and who does what: Copilot or Foundry, GitHub Actions or Azure, and the person who decides.
+4. **The recorded run.** One real run, end to end, in the past tense: when it ran, on which commit, and who started it. Numbered steps: each says what happened and who did it, how long it took, shows a screenshot, links its evidence, and ends with **Point out:** the one thing the audience should notice.
+5. **Results and value.** What the run left behind (the artifacts and the person's decision), what was measured, and what a team gets from it: time saved, risk removed, evidence a reviewer or auditor can follow. End with the metric to track in a pilot.
+6. **What's in this folder.** An annotated file tree.
+7. **Set it up yourself.** Prerequisites, then a quick start: the fewest copy-paste commands to a working copy, how long they take, and what the solution costs while it is deployed. Then each one-time step in detail, with what you should see when it worked.
+8. **Run it yourself.** Optional, for a live session or to check a new setup: how to confirm the starting state, what to start early, then the recorded run's steps with their commands or click paths, numbered the same. Don't repeat the recorded run's screenshots; name the step that shows the result.
+9. **Reset and clean up.**
+10. **Use it in your own repository.** What to copy and what to change.
+11. **Troubleshooting.** Only problems someone actually hit.
+
+**Evidence anyone can open.** Every link in the recorded run and its results opens without signing in: Issues, pull requests, commits, files in the repository, and evidence committed to the solution folder. Workflow logs and job summaries need a GitHub sign-in and expire, draft releases are visible only to people who can write to the repository, and the Azure and Foundry portals need an account in your tenant: show those as screenshots, or commit the evidence to the solution's `evidence/` folder after `python tools/redact.py check`.
+
+**Measured, never invented.** Every number, time, and link in the recorded run and its results comes from that run. If a step's screenshot comes from another run, say which. Keep what was measured apart from what a customer might aim for: a target is the customer's goal, never a result.
 
 ## Screenshots
 
@@ -194,8 +197,8 @@ Before you commit, run `python tools/redact.py check --changed`; it must print `
 
 A solution is done when:
 
-- The demo runs end to end against the real services, following its README from a clean state.
-- Every step of *Run the demo* that shows something on screen has a screenshot from a real run, captured with `tools/screenshot.mjs`, and `python tools/redact.py check --changed` prints `OK`.
+- *Set it up yourself* and *Run it yourself* work end to end against the real services from a clean state, following the README.
+- *The recorded run* is a real run of the demo. Every step has a screenshot from it, captured with `tools/screenshot.mjs`; every link in it opens without signing in; and `python tools/redact.py check --changed` prints `OK`.
 - The *Repository checks* workflow passes (mirrored files, and every relative link and `#anchor`: run `python tools/check_links.py` to list broken ones), and the app's CI passes if the app changed.
 - The pull request links the live evidence: workflow runs, Issues and pull requests the demo created, evaluation results, and screenshots where they help. When a step only works from the default branch (issue templates, label- or dispatch-triggered workflows), run it right after merging and add the evidence as a comment on the pull request.
 - It ships in its own pull request.
