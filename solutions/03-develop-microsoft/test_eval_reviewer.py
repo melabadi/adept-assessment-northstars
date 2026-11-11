@@ -298,6 +298,19 @@ class FoundryRunTests(unittest.TestCase):
             self.run_with(passed={"pr_review_useful_commentary": n - 1}, failed={"pr_review_useful_commentary": 1}), self.items)))
         self.assertFalse(eval_reviewer.grade_again(eval_reviewer.foundry_verdict(self.run_with(total=n - 1), self.items)))
 
+    def test_an_evaluation_is_reused_only_with_the_same_model_deployment(self):
+        from types import SimpleNamespace
+
+        def evaluation(deployment: str):
+            return SimpleNamespace(name=eval_reviewer.EVAL_NAME, testing_criteria=[
+                SimpleNamespace(name=name, initialization_parameters={"deployment_name": deployment, "pass_threshold": 1.0})
+                for name in review_graders.GRADERS])
+
+        old, new = evaluation("gpt-5.4-mini"), evaluation("gpt-6-luna")
+        self.assertIsNone(eval_reviewer.reusable_evaluation([old], "gpt-6-luna"))
+        self.assertIs(eval_reviewer.reusable_evaluation([new, old], "gpt-6-luna"), new)
+        self.assertIs(eval_reviewer.reusable_evaluation([new, old], "gpt-5.4-mini"), old)
+
 
 if __name__ == "__main__":
     unittest.main()
