@@ -342,6 +342,35 @@ class ConclusionTests(unittest.TestCase):
         for said in ("Do not allowlist fields; send the whole request.", "Allowlist fields, including attachments."):
             self.assertNotEqual(checks.conclusion_misses(label, answer(summary=said, recommendation="")), [])
 
+    def test_e04_accepts_an_allowlist_of_necessary_fields_described_at_length(self):
+        """Seen live on E04 from gpt-6-luna: "an explicitly documented allowlist of necessary non-personal request fields"
+        puts five words between "allowlist" and "fields", and a claim allows three, so E04 also accepts
+        "allowlist* necessar* field*". A claim without "fields" ("the minimum necessary set", "only those the use case
+        needs") would accept attachments too, so those words stay a misread."""
+        label = {**next(c for c in CASES if c["id"] == "E04")["expectConclusion"], "evidence": {}}
+        said = ("Use a minimized, explicitly documented allowlist of necessary non-personal request fields; do not include "
+                "attachments or personal data.")
+        self.assertEqual(checks.conclusion_misses(label, answer(summary="", recommendation=said)), [])
+        for said in ("Do not keep an allowlist of necessary request fields; send the whole request.",
+                     "Keep an allowlist of necessary request fields, including attachments.",
+                     "Send the minimum necessary set of attachments.",
+                     "Attachments: send only those the use case needs."):
+            self.assertNotEqual(checks.conclusion_misses(label, answer(summary="", recommendation=said)), [])
+
+    def test_e01_accepts_preferring_the_existing_api(self):
+        """Seen live on E01 from gpt-6-luna, twice: "Prefer the existing API behind ITriageProvider" and "Prefer the
+        existing API and ITriageProvider boundary". A negation, a separate service behind the existing API's gateway,
+        or an existing pattern of separate services still fails."""
+        label = {**next(c for c in CASES if c["id"] == "E01")["expectConclusion"], "evidence": {}}
+        for said in ("Prefer the existing API behind ITriageProvider, subject to the logging conflict being resolved by "
+                     "an architect.",
+                     "Prefer the existing API and ITriageProvider boundary for the initial implementation."):
+            self.assertEqual(checks.conclusion_misses(label, answer(summary="", recommendation=said)), [])
+        for said in ("Do not prefer the existing API; run the provider as a new separate service.",
+                     "Deploy a new separate service behind the existing API gateway.",
+                     "Prefer the existing pattern of one service per capability: build a separate triage service."):
+            self.assertNotEqual(checks.conclusion_misses(label, answer(summary="", recommendation=said)), [])
+
 
 class ResponseParsingTests(unittest.TestCase):
     def test_retrieval_is_read_from_a_foundry_iq_response(self):
