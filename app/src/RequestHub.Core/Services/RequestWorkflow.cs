@@ -44,7 +44,11 @@ public sealed partial class RequestWorkflow(
         var textSearch = !string.IsNullOrEmpty(term) && !Request.TryParsePublicId(term, out _);
         // Full-text style search straight in SQL (faster than two ILIKE expressions).
         var query = textSearch
-            ? db.Requests.FromSqlRaw("SELECT * FROM \"Requests\" WHERE \"Title\" ILIKE '%" + term + "%' OR \"Description\" ILIKE '%" + term + "%'").AsNoTracking()
+            ? db.Requests.FromSqlRaw(
+                "SELECT * FROM \"Requests\" WHERE \"Title\" ILIKE @titlePattern OR \"Description\" ILIKE @descriptionPattern",
+                new NpgsqlParameter("titlePattern", $"%{term}%"),
+                new NpgsqlParameter("descriptionPattern", $"%{term}%"))
+                .AsNoTracking()
             : db.Requests.AsNoTracking();
 
         var isStaff = user.HasRole(Roles.Reviewer) || user.HasRole(Roles.Approver) || user.IsAdmin;
