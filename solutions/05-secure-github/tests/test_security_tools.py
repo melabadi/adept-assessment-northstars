@@ -245,6 +245,53 @@ class ScanWorkflowTests(unittest.TestCase):
         self.assertEqual(2, self.workflow.count("ref: ${{ github.event.repository.default_branch }}"))
 
 
+class EndpointModelTests(unittest.TestCase):
+    """CodeQL sees the API's request input only through the endpoint models, so they must match the handlers."""
+
+    endpoints = ROOT.parents[1] / "app/src/RequestHub.Api/Endpoints/ApiEndpoints.cs"
+    models = ROOT / ".github/codeql/extensions/requesthub-endpoints/models/ApiEndpoints.model.yml"
+    # Parameters bound from dependency injection, and HttpContext, whose request CodeQL already models.
+    not_request_input = {
+        "HttpContext", "CancellationToken", "RequestWorkflow", "IOptionsMonitor<FaultOptions>", "TimeProvider",
+        "IConfiguration", "IHostEnvironment", "ITriageProvider", "RequestHubDbContext", "IAttachmentStore",
+        "StorageSettings", "DemoSeeder", "ILoggerFactory", "NotificationProcessor",
+    }
+
+    @staticmethod
+    def parameter_types(source, handler):
+        start = re.search(r"\bstatic [^;{=]*?\b" + handler + r"\(", source).end()
+        end, depth = start, 1
+        while depth:
+            depth += {"(": 1, ")": -1}.get(source[end], 0)
+            end += 1
+        types, current, depth = [], "", 0
+        for char in source[start:end - 1] + ",":
+            if char == "," and depth == 0:
+                declaration = re.sub(r"\[[^\]]*\]", " ", current).split("=")[0].split()
+                types.append(declaration[-2].rstrip("?"))
+                current = ""
+                continue
+            depth += {"<": 1, ">": -1, "(": 1, ")": -1}.get(char, 0)
+            current += char
+        return types
+
+    def test_every_request_input_of_every_mapped_handler_is_modeled_as_remote(self):
+        source = self.endpoints.read_text(encoding="utf-8")
+        expected = {}
+        for handler in re.findall(r'\.Map(?:Get|Post|Put|Delete|Patch)\("[^"]*",\s*(?:ApiEndpoints\.)?(\w+)\)', source):
+            types = self.parameter_types(source, handler)
+            if inputs := [i for i, type_ in enumerate(types) if type_ not in self.not_request_input]:
+                expected[handler] = inputs
+        modeled = {}
+        for row in re.findall(r"^\s+- (\[.+\])$", self.models.read_text(encoding="utf-8"), re.MULTILINE):
+            namespace, type_, _, name, signature, ext, output, kind, _ = json.loads(row.replace("False", "false"))
+            self.assertEqual(("RequestHub.Api.Endpoints", "ApiEndpoints", "", "", "remote"),
+                             (namespace, type_, signature, ext, kind))
+            first, last = re.fullmatch(r"Parameter\[(\d+)(?:\.\.(\d+))?\]", output).groups()
+            modeled[name] = list(range(int(first), int(last or first) + 1))
+        self.assertEqual(expected, modeled)
+
+
 replay = load("replay_setup", "replay_setup.py")
 REPO = "octo/requesthub"
 

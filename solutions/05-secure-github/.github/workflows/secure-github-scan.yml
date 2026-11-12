@@ -4,6 +4,7 @@ name: Secure · GitHub · CodeQL lab scan
 # where Copilot Autofix suggests a fix, and rescans Copilot's repair pull request. It also analyzes every push to a lab
 # branch, because a pull request's alerts are the ones its base branch's analysis doesn't have. A person can scan one
 # lab or repair branch from main, with an explicit expectation. A fork's pull request starts nothing.
+# CodeQL sees the API's request input through the model pack in .github/codeql/extensions.
 on:
   pull_request:
     branches: ['lab/secure-**']
@@ -86,6 +87,13 @@ jobs:
           ref: ${{ env.SCANNED_SHA }}
           path: target
           persist-credentials: false
+      # CodeQL reads the endpoint models from .github/codeql/extensions in the source root. A dispatch takes them from
+      # the default branch, like its checker; a pull request or a push, from the commit it analyzes, like its workflow.
+      - name: Use the default branch's CodeQL models
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          rm -rf target/.github/codeql
+          cp -R trusted/.github/codeql target/.github/codeql
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
