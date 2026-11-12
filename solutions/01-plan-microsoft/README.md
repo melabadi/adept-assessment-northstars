@@ -5,8 +5,8 @@ Turning workshop notes into a backlog takes days, and on the way it is easy to l
 ![Review Issue #214, opened by the Function app: drafted by the Foundry agent requirements-analyst in run 20261031-043915-5090 and scored by the evaluation plan-brief-checks, how to approve or reject, and the scores: the four gates and two reported checks at 1, key requirement paragraphs cited at 0.9](images/08-review-issue.png)
 
 - **[See it work](#see-it-work):** a real run on this repository's synthetic workshop notes. The agent drafted a cited brief in 22 seconds, Foundry's gates passed it, and 51 seconds after a reviewer approved it, the epic and its four tasks were Issues.
-- **[Add it to your repository](#add-it-to-your-repository):** about 15 minutes of one-time setup in Azure and GitHub (an estimate), once your notes, the agent's instructions, and the checks describe your work.
-- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 15 minutes to set it up (an estimate), then about 15 minutes for the steps of See it work, plus the time you take to review the brief.
+- **[Add it to your repository](#add-it-to-your-repository):** 13 minutes of one-time setup in Azure and GitHub, in a fresh setup we timed, once your notes, the agent's instructions, and the checks describe your work.
+- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** 13 minutes to set it up, in a fresh setup we timed, then about 15 minutes for the steps of See it work, plus the time you take to review the brief.
 
 ## Why it matters
 
@@ -278,9 +278,9 @@ These are the steps that set the solution up on this repository, with what to ch
 
 ### Prerequisites
 
-- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. This solution creates no Microsoft Entra app registration.
+- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. The solution registers no app of its own in Microsoft Entra ID, but when it publishes the agent, Foundry creates an agent identity blueprint there, an app registration that you own, and an agent identity: [Clean up](#clean-up) removes them.
 - An Azure subscription where you can create a resource group and role assignments, for example as Owner.
-- Quota for `gpt-6-luna`, version 2026-09-22 (Global Standard, 50,000 tokens per minute), in your region, and the Flex Consumption plan available there. We used `eastus2`.
+- Quota for `gpt-6-luna`, version 2026-09-22 (Global Standard, 50,000 tokens per minute), in your region, and the Flex Consumption plan available there. We used `eastus2`. `az cognitiveservices usage list --location eastus2 --query "[?name.value=='OpenAI.GlobalStandard.gpt-6-luna']" -o table` shows your quota there, in thousands of tokens per minute: `Limit` minus `CurrentValue` must be at least 50.
 - Permission to create a fine-grained personal access token for the repository.
 - Your notes and policies as Markdown files, with ids that the brief can cite (see the next section).
 - To read the agent's traces and the evaluation runs, a browser signed in to the [Azure portal](https://portal.azure.com) and the [Foundry portal](https://ai.azure.com).
@@ -304,7 +304,15 @@ Copy this folder into your repository, for example as `plan/`, without `images/`
 
 ### One-time setup
 
-About 15 minutes, an estimate: we timed only parts of it. On this repository, the provision that added the Function app's resources to an existing Foundry project, and stored the token, took 2 minutes 8 seconds in Azure, and the first deployment of the Function app about a minute.
+13 minutes in a fresh setup on 11 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new copy and a new resource group ([the evidence](evidence/2026-11-11-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Deploy: `pip install -r requirements.txt` | 2 minutes 2 seconds |
+| 1. Deploy: `azd up` | 5 minutes 10 seconds |
+| 2. Create the GitHub token | about 3 minutes, for a person on GitHub |
+| 3. Give the token to the Function app: `azd provision`, then `python runs.py status` | 2 minutes 23 seconds, then 14 seconds |
+| 4. Create the approval label | 1 second |
 
 #### 1. Deploy
 
@@ -315,11 +323,13 @@ cd plan
 pip install -r requirements.txt
 az login
 azd auth login
-azd env new <environment name> --location <region>
+azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
 azd up
 ```
 
-**What you should see:** before provisioning, the hook names the repository where the Function app will open its Issues, from `gh repo view` in your clone: `GitHub repository: <owner>/<repository>`. To choose another one, run `azd env set GITHUB_REPOSITORY <owner>/<repository>` before `azd up`. It also says `PLAN_GITHUB_TOKEN is not set yet`, which step 3 takes care of. `azd up` creates resource group `rg-<environment name>`, with the resources in [What azd up creates](#what-azd-up-creates). Its hooks run the unit tests, publish to Foundry, and deploy the Function app, and it ends with `SUCCESS`. The publish lines look like this:
+`--subscription` deploys to the subscription that `az` signed in to, where `runs.py` later looks for the Function app: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd up` asks you to pick one of your subscriptions. Run azd in the shell where `pip install` ran, with the same virtual environment active if you use one: its hooks run that `python`.
+
+**What you should see:** before provisioning, the hook names the repository where the Function app will open its Issues, from `gh repo view` in your clone: `GitHub repository: <owner>/<repository>`. To choose another one, run `azd env set GITHUB_REPOSITORY <owner>/<repository>` before `azd up`. It also says `PLAN_GITHUB_TOKEN is not set yet`, which step 3 takes care of. `azd up` creates resource group `rg-<environment name>`, with the resources in [What azd up creates](#what-azd-up-creates). Its hooks run the unit tests, publish to Foundry, and deploy the Function app, and after about 5 minutes it ends with `SUCCESS: Your application was provisioned and deployed to Azure in …`. The publish lines look like this:
 
 ```text
 unit tests: 94 passed
@@ -398,7 +408,7 @@ A run costs a cent or two: about $0.002 for the agent's draft, from [the tokens 
 
 ## Try it first in a copy of this repository
 
-Optional: the same solution on this repository's synthetic notes, before you adapt anything. It needs the [prerequisites](#prerequisites), with your copy as the repository.
+Optional: the same solution on this repository's synthetic notes, before you adapt anything. It needs the [prerequisites](#prerequisites), with your copy as the repository. In the copy, the other solutions' workflows also see this one's Issues and comments, and stop at once: in our fresh setup, the labels that one run applied started 25 runs of *Operate · GitHub · agentic incident triage*, all skipped, and its comment one run of *Design · GitHub · agentic design review*, which stopped after a 16-second check. No model ran.
 
 ### Quick start
 
@@ -409,7 +419,7 @@ cd solutions/01-plan-microsoft
 pip install -r requirements.txt
 az login
 azd auth login
-azd env new ai-sdlc-plan --location eastus2
+azd env new ai-sdlc-plan --subscription (az account show --query id -o tsv) --location eastus2
 azd up
 ```
 
@@ -422,7 +432,7 @@ python runs.py status
 gh label create brief-approved --color 0e8a16 --force
 ```
 
-Allow about 15 minutes in all, an estimate: [One-time setup](#one-time-setup) says what we timed. While deployed, the copy costs what [What it costs](#what-it-costs) says.
+Allow about 15 minutes in all: the fresh setup took 13, step by step in [One-time setup](#one-time-setup). While deployed, the copy costs what [What it costs](#what-it-costs) says.
 
 ### What azd up creates
 
@@ -433,6 +443,8 @@ Allow about 15 minutes in all, an estimate: [One-time setup](#one-time-setup) sa
 - the Function app (its name starts with `func-`) on the Flex Consumption plan `asp-plan`, integrated with the virtual network `vnet-plan`;
 - a storage account (`st…`) for the run records, the queue `plan-steps`, and the Function app's code, and a Key Vault (`kv-…`) for the GitHub token, both without public network access, reached through three private endpoints;
 - the Function app's managed identity, with the Foundry User role, data access to its storage, and read access to Key Vault's secrets.
+
+Outside the resource group, in Microsoft Entra ID, Foundry creates the agent's agent identity blueprint, an app registration that you own, and its agent identity when the hook publishes the agent. `azd down` doesn't remove them: [Clean up](#clean-up) does.
 
 ### Check the starting state
 
@@ -471,7 +483,7 @@ In our runs on `gpt-6-luna`, a run reached its review Issue 2 minutes 16 seconds
 | 9. The run's record | seconds | |
 | 10. Optional: score a Copilot brief | as long as any run | 8 minutes 19 seconds to its review Issue |
 
-Steps 1 to 9 take about 15 minutes, plus the time you take to review the brief: the run in See it work took 24 minutes 37 seconds from the start to the closed review Issue, 17 minutes 46 seconds of them the review.
+Steps 1 to 9 take about 15 minutes, plus the time you take to review the brief: the run in See it work took 24 minutes 37 seconds from the start to the closed review Issue, 17 minutes 46 seconds of them the review. In the fresh setup of 11 November, the run took 3 minutes 56 seconds, 31 seconds of them the review: the draft 46 seconds, the evaluation 95 seconds, the review Issue 2 minutes 34 seconds after the start, and the closed review Issue 51 seconds after the label ([the evidence](evidence/2026-11-11-fresh-setup.md)).
 
 ### 1. Read the notes
 
@@ -593,11 +605,16 @@ The first line cancels every run that hasn't finished: a run that waits for a de
 When you no longer need the solution, from its folder, in your repository or in the copy:
 
 ```powershell
+$prefix = "$(azd env get-value FOUNDRY_ACCOUNT_NAME)-$(azd env get-value FOUNDRY_PROJECT_NAME)-"
+az ad sp list --display-name $prefix -o json | ConvertFrom-Json | Where-Object displayName -like "$prefix*-AgentIdentity" | ForEach-Object { az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($_.id)" }
+az ad app list --display-name $prefix -o json | ConvertFrom-Json | Where-Object displayName -like "$prefix*-AgentIdentityBlueprint" | ForEach-Object { az ad app delete --id $_.id }
 azd down --purge
 azd env set PLAN_GITHUB_TOKEN ''
 ```
 
-`azd down --purge` removes the resource group: the Foundry account and project, Application Insights, the Function app with its network, storage, and Key Vault. `--purge` also removes the soft-deleted Foundry account and Key Vault, so their names can be reused. The second line removes the token from your local azd environment. Then revoke the token on GitHub: **Settings › Developer settings › Fine-grained tokens** › the token › **Delete**. The solution creates no Microsoft Entra app registration, so nothing outside the resource group needs removing. The Issues the runs created stay in the repository; [the reset](#reset-the-copy-for-another-run) closes the open ones.
+The first three lines remove what Foundry created in Microsoft Entra ID when it published the agent, which `azd down` leaves behind: the agent identity of `requirements-analyst`, then its agent identity blueprint, an app registration owned by whoever published the agent ([agent identities in Foundry](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)). Both are named after the Foundry account, its project, and the agent, for example `aif-<token>-plan-requirements-analyst-AgentIdentity`. The `*` in the lines' patterns stands for the agent's name, so they leave out the project's shared pair, `aif-<token>-plan-AgentIdentityBlueprint` and `aif-<token>-plan-AgentIdentity`, which Foundry also creates, owned by the project's managed identity alone: it needs nothing from you, because Foundry removes it with the project, which `azd down` deletes. Deleting the blueprint also deletes its principal, and would delete the agent identity too, but only hours or days later ([agent identity deletion](https://learn.microsoft.com/entra/agent-id/concept-agent-identity-deletion)): that's why the agent identity goes first. Run the lines as the person who published the agent, the blueprint's owner, and before `azd down`, which forgets the account's name. Entra keeps what they delete in its recycle bin for 30 days, and the blueprint's principal can't be purged from it: it stays there until the 30 days are over.
+
+`azd down --purge` lists what it deletes and asks you to confirm; `--force` skips the question. It removes the resource group: the Foundry account and project, Application Insights, the Function app with its network, storage, and Key Vault. `--purge` also removes the soft-deleted Foundry account, Key Vault, and Log Analytics workspace, so their names can be reused. It took 4 minutes 54 seconds in our fresh setup. The last line removes the token from your local azd environment. Then revoke the token on GitHub: **Settings › Developer settings › Fine-grained tokens** › the token › **Delete**. The Issues the runs created, and their labels, stay in the repository; [the reset](#reset-the-copy-for-another-run) closes the open ones.
 
 ## What's in this folder
 
@@ -607,6 +624,7 @@ azd env set PLAN_GITHUB_TOKEN ''
 ├── agent.yaml                  the Foundry agent: instructions, reasoning effort, file search, and the request each run sends
 ├── backlog.schema.json         the JSON schema the agent's answer must match
 ├── evidence/
+│   ├── 2026-11-11-fresh-setup.md   a setup from scratch that followed only this README, timed step by step
 │   └── 2026-11-11-gpt-6-luna.md    the runs that moved the agent to gpt-6-luna, exported for anyone to check
 ├── evaluators/                 seven code-based Foundry evaluators, each one grade() function
 │   ├── structure.py            gate: ids, counts, task dependencies, and decisions that don't settle open conflicts

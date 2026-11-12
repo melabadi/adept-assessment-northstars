@@ -6,7 +6,7 @@ Most release incidents start the same way: a new build replaces the one users ar
 
 - **[See it work](#see-it-work):** a real run on RequestHub, this repository's sample app. A commit of `main` became a tested candidate 4 minutes 10 seconds after its build started, and the promote job moved all traffic to it in one change. A rehearsed bad release failed the gate 79 seconds after it was created, without receiving a user request, and a rollback moved traffic back in 16 seconds.
 - **[Add it to your repository](#add-it-to-your-repository):** about 15 minutes of one-time setup in Azure and GitHub, once your API runs on Container Apps in multiple-revision mode and the release's smoke test uses your API.
-- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 25 minutes to set it up on RequestHub, then about 15 minutes for the steps of See it work.
+- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 20 minutes to set it up on RequestHub, then about 15 minutes for the steps of See it work: 17 and 14 minutes in a fresh setup we timed, without Azure Copilot's step.
 
 ## Why it matters
 
@@ -261,7 +261,14 @@ After each change to `release.py` or `trigger/`, run `python -m unittest -v` in 
 
 ### One-time setup
 
-About 15 minutes, once the files describe your app. On RequestHub, the `azd provision` that added the trigger function's resources to the running platform took 5 minutes 38 seconds, and deploying the jobs and the trigger took about a minute each. Creating the build task takes a few minutes.
+About 15 minutes, once the files describe your app. On RequestHub, the `azd provision` that added the trigger function's resources to the running platform took 5 minutes 38 seconds, and deploying the jobs and the trigger took about a minute each. Creating the build task takes a few minutes. A fresh setup on 12 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, deployed RequestHub too, which took most of the time ([the evidence](evidence/2026-11-12-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Deploy: `azd up` | 15 minutes 34 seconds, RequestHub included: its Container Apps environment took 6 minutes 34 seconds and its PostgreSQL server 6 minutes 40 seconds, side by side, and azd counted 10 minutes 33 seconds of provisioning and 4 minutes 47 seconds of deploying |
+| 2. Check the setup: `python preflight.py` | 1 minute 16 seconds: 18 checks passed, and **Build** warned |
+| 3. Let Azure build every commit of main: the token | a few minutes for a person on GitHub |
+| 3. Let Azure build every commit of main: `az acr task create` and the lines before it | 6 seconds; the preflight then took 1 minute 14 seconds and passed all 19 checks |
 
 #### 1. Deploy
 
@@ -271,12 +278,14 @@ From the folder you copied, give azd the values your `main.bicep` reads for your
 cd release
 az login
 azd auth login
-azd env new <environment name> --location <region>
+azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
 azd env set API_APP_NAME <your API's container app>   # and every other value your main.bicep reads
 azd up
 ```
 
-**What you should see:** `azd up` ends with `SUCCESS`. Before it deploys the services, azd runs the unit tests (the `predeploy` hook); afterwards, it connects Event Grid to the function (the `postdeploy` hook). azd doesn't print the hooks' output, but `azd hooks run predeploy` shows it. In the Azure portal, your app's resource group now has the five release jobs (`caj-release-*`, `caj-promote-*`, `caj-abort-*`, `caj-rollback-*`, and `caj-drill-*`), the trigger function (`func-release-*`), the Event Grid system topic on your registry (`evgt-registry-*`), and the workbook **RequestHub release records**.
+`--subscription` deploys to the subscription that `az` signed in to, where `preflight.py` and the README's `az` commands look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd env new` stores no subscription, and `azd up` asks you to pick one of yours.
+
+**What you should see:** `azd up` ends with `SUCCESS`. Before it deploys the services, azd runs the unit tests (the `predeploy` hook), which end with `OK`; afterwards, it connects Event Grid to the function (the `postdeploy` hook), which prints nothing unless it fails. In the Azure portal, your app's resource group now has the five release jobs (`caj-release-*`, `caj-promote-*`, `caj-abort-*`, `caj-rollback-*`, and `caj-drill-*`), the trigger function (`func-release-*`), the Event Grid system topic on your registry (`evgt-registry-*`), and the workbook **RequestHub release records**.
 
 From now on, ship your API only through the release: deploying it another way replaces the stable revision without a gate. To change the release itself, run `azd deploy release`; to change the trigger, `azd deploy trigger`.
 
@@ -359,7 +368,7 @@ az acr build --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --imag
 
 ### Use it the first time
 
-Merge a pull request to `main`. The registry builds the merge commit, and its push starts the release job. On RequestHub, merging pull request [#251](https://github.com/melabadi/adept-assessment-northstars/pull/251) at 03:05:30 UTC on 1 November 2026 started the build 2 seconds later, and the candidate passed the gate and waited for a person at 03:09:35, 4 minutes 5 seconds after the merge ([the evidence](evidence/2026-11-01-recorded-run.md#a-merge-with-the-commit-trigger-on)).
+Merge a pull request to `main`. The registry builds the merge commit, and its push starts the release job. On RequestHub, merging pull request [#251](https://github.com/melabadi/adept-assessment-northstars/pull/251) at 03:05:30 UTC on 1 November 2026 started the build 2 seconds later, and the candidate passed the gate and waited for a person at 03:09:35, 4 minutes 5 seconds after the merge ([the evidence](evidence/2026-11-01-recorded-run.md#a-merge-with-the-commit-trigger-on)). In a fresh setup on 12 November, a merge to a copy's `main` started the build 2.6 seconds later, and the candidate waited for a person 4 minutes 28 seconds after the merge ([the evidence](evidence/2026-11-12-fresh-setup.md#the-run)).
 
 While the commit trigger is off, start the build yourself for the newest commit of `main`. `--context` pins it to that commit, even if `main` moves on meanwhile; ACR clones it with the task's token and tags the image with it:
 
@@ -389,11 +398,11 @@ Then make it part of your workflow:
 
 ### What it costs
 
-Your app bills as it already does. The solution adds the previous revision, which keeps running for an instant rollback (one more replica of your API while it exists); the trigger's private endpoint, about $7 a month; and, for each release, about 2 minutes of building in the registry and a few minutes of Container Apps jobs, which cost cents. The function and Event Grid run only when a build is pushed. On RequestHub, the whole resource group, the app's platform included, costs about $120 a month: see [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository). The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+Your app bills as it already does. The solution adds the previous revision, which keeps running for an instant rollback (one more replica of your API while it exists); the trigger's private endpoint, about $7 a month; and, for each release, about 2 minutes of building in the registry and a few minutes of Container Apps jobs, which cost cents. The function and Event Grid run only when a build is pushed. Azure Copilot's answers cost nothing extra: its capabilities are included at no extra cost, except the Observability Agent ([Microsoft Learn](https://learn.microsoft.com/azure/copilot/overview#pricing-and-availability)). On RequestHub, the whole resource group, the app's platform included, costs about $120 a month: see [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository). The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
 
 ## Try it first in a copy of this repository
 
-Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your app, permission to create Microsoft Entra app registrations (RequestHub signs in with its own), and a region that allows PostgreSQL Flexible Server for your subscription.
+Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your app, permission to create Microsoft Entra app registrations (RequestHub signs in with its own), and a region that allows PostgreSQL Flexible Server for your subscription. In the copy, the other solutions' workflows also see step 1's pull request: in our fresh setup, it started *Repository checks* and *Develop · GitHub · feature bounds*, and its merge *Repository checks* again, five jobs of under 10 seconds each, and no model ran. If 05-secure-microsoft is set up in the same copy, its posture Function receives the pull request too, and previews it only if it changes that solution's `infra/`.
 
 ### Quick start
 
@@ -403,13 +412,15 @@ From the root of your copy of the repository, which the root README's [Try it in
 cd solutions/06-release-microsoft
 az login
 azd auth login
-azd env new ai-sdlc-release --location centralus
+azd env new ai-sdlc-release --subscription (az account show --query id -o tsv) --location centralus
 azd up
 ```
 
 Then create the build task for your copy, as in [One-time setup, step 3](#3-let-azure-build-every-commit-of-main), and run `python preflight.py`: every line should read `PASS`.
 
-Allow about 25 minutes. From a clean state, RequestHub's platform and app took 12 minutes 13 seconds. The `azd provision` that added the trigger function's resources took 5 minutes 38 seconds, and deploying the jobs and the trigger about a minute each. Creating the build task takes a few minutes.
+`--subscription` deploys to the subscription that `az` signed in to, as in [Deploy](#1-deploy). The scripts use only Python's standard library, so this solution needs no `pip install`.
+
+Allow about 20 minutes, plus the few minutes a person takes to create the token. In a fresh setup on 12 November 2026, `azd up` took 15 minutes 34 seconds from a clean state to the release jobs and the trigger connected, the lines of step 3 that create the build task 6 seconds once the token existed, and the preflight 1 minute 14 seconds: 17 minutes of commands ([the evidence](evidence/2026-11-12-fresh-setup.md#timeline)). Before the trigger function existed, RequestHub's platform and app took 12 minutes 13 seconds from a clean state, and the `azd provision` that added the trigger function's resources 5 minutes 38 seconds.
 
 While deployed, the copy's resource group costs about $120 a month, measured in our subscription: Log Analytics about $50 (the API's telemetry, health probes included), Container Apps about $35 (the stable and previous revisions both stay running), two private endpoints about $15 (the app's storage and the trigger's), PostgreSQL about $13, and the registry about $7. While the database is stopped, every readiness probe logs an error, and Log Analytics costs nearer $85 a month. The trigger function, Event Grid, and the release jobs cost cents: they run only when a build is pushed or a person starts a step.
 
@@ -418,13 +429,13 @@ While deployed, the copy's resource group costs about $120 a month, measured in 
 `azd up` ends with `SUCCESS`. It creates resource group `rg-ai-sdlc-release` with:
 
 - **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep): a Container Apps environment, private PostgreSQL with Microsoft Entra authentication only, Blob storage reached through a private endpoint, a container registry, Log Analytics and Application Insights, and a Microsoft Entra app registration with RequestHub's app roles. You get every role.
-- **The app**, deployed once by azd: the API, in multiple-revision mode, and the notification worker. This first revision reports build `local`.
+- **The app**, deployed once by azd: the API, in multiple-revision mode, and the notification worker. This first revision reports build `local` and has no label yet: the first release labels it `stable`.
 - **The release**: the five jobs (`release`, `promote`, `abort`, `rollback`, and `drill`), running this folder's image; the release trigger function, with its own virtual network and a storage account reached through a private endpoint; an Event Grid subscription on the registry that sends every push of `requesthub-api:<tag>`, except `:main`, to the function; and the workbook **RequestHub release records**. Event Grid accepts only a function that is already deployed, so azd deploys every service first, then connects Event Grid to the function in the project's `postdeploy` hook. Its `predeploy` hook runs the unit tests: a change that breaks a safety rule never reaches Azure.
 - **The release identity** the jobs run as, with Container Apps Contributor and Container Apps Jobs Reader on the resource group and AcrPull on the registry. It can't push images or assign roles.
 
 ### Check the starting state
 
-About 2 minutes, from `solutions/06-release-microsoft`, before each run of the steps below. You should see what [See it work](#see-it-work) shows as its starting state. Keep this terminal for the steps: their commands use `$rg` and `$job`, which the first two lines define.
+About 2 minutes, from `solutions/06-release-microsoft`, before each run of the steps below; the commands took 1 minute 21 seconds in a fresh setup. You should see what [See it work](#see-it-work) shows as its starting state. Keep this terminal for the steps: their commands use `$rg` and `$job`, which the first two lines define.
 
 ```powershell
 $rg = azd env get-value AZURE_RESOURCE_GROUP
@@ -432,6 +443,8 @@ $job = @{}; 'release', 'promote', 'abort', 'rollback', 'drill' | ForEach-Object 
 python preflight.py                  # every line PASS
 python release.py status --limit 4   # stable with 100% of traffic, possibly previous, no candidate, no release step running
 ```
+
+After a fresh `azd up`, the one revision serves 100% of traffic with no label and build `local`, and the preflight says `no stable label yet: the first release adds it`.
 
 - **Database** says `Stopped`: a tenant policy can stop PostgreSQL servers on a schedule, and then every revision fails readiness, so the gate would fail for the wrong reason. Start it, then run the preflight again after 3 to 5 minutes:
 
@@ -453,17 +466,17 @@ Where to look, in the Azure portal (`azd env get-value` gives each name):
 
 ### How long each step takes
 
-| Step | Takes | In See it work |
-| --- | --- | --- |
-| 1. Build a commit of main | about 2 minutes to the push | 1 minute 50 seconds |
-| 2. Watch Azure test the candidate | about 2½ minutes | 2 minutes 24 seconds |
-| 3. Read the record, then promote | about 1 minute for the promote job, plus your reading | 58 seconds |
-| 4. Rehearse a bad release | about 2½ minutes | 2 minutes 22 seconds |
-| 5. Ask Azure Copilot | about 2 minutes a question | two answers in about 4 minutes |
-| 6. Roll back | about 1 minute | 45 seconds |
-| 7. See who did what | about 1 minute, once the Activity log has the last step | |
+| Step | Takes | In See it work | In the fresh setup |
+| --- | --- | --- | --- |
+| 1. Build a commit of main | about 2 minutes to the push | 1 minute 50 seconds | 2 minutes 5 seconds; the merge started the build 2.6 seconds after it |
+| 2. Watch Azure test the candidate | about 2½ minutes | 2 minutes 24 seconds | 2 minutes 21 seconds; the gate passed 4 minutes 28 seconds after the merge |
+| 3. Read the record, then promote | about 1 minute for the promote job, plus your reading | 58 seconds | 48 seconds |
+| 4. Rehearse a bad release | about 2½ minutes | 2 minutes 22 seconds | 2 minutes 20 seconds |
+| 5. Ask Azure Copilot | about 2 minutes a question | two answers in about 4 minutes | not run ([why](evidence/2026-11-12-fresh-setup.md#step-5-wasnt-run)) |
+| 6. Roll back | about 1 minute | 45 seconds | 49 seconds |
+| 7. See who did what | about 1 minute, once the Activity log has the last step | | under a minute; the Activity log had the rollback within 2 minutes |
 
-The seven steps take about 15 minutes. In See it work, the build pushed its image in 1 minute 50 seconds and the four jobs ran for 6 minutes 29 seconds in all; between the steps, the operator read the records, asked Azure Copilot, and captured the screenshots, and the whole run took 50 minutes.
+The seven steps take about 15 minutes. In See it work, the build pushed its image in 1 minute 50 seconds and the four jobs ran for 6 minutes 29 seconds in all; between the steps, the operator read the records, asked Azure Copilot, and captured the screenshots, and the whole run took 50 minutes. A fresh setup on 12 November 2026 took 14 minutes for every step but Azure Copilot's, reading the records included, and its four jobs ran for 6 minutes 18 seconds ([the evidence](evidence/2026-11-12-fresh-setup.md#the-run)).
 
 ### 1. Build a commit of main
 
@@ -553,12 +566,16 @@ When you no longer need the solution, delete the build task's token on GitHub (*
 
   ```powershell
   $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-  azd down --purge
+  $sp = az ad sp show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
+  azd down --purge --force
   az ad app delete --id $app
   az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+  az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$sp"
   ```
 
-  `azd down` deletes the resource group, with the registry, the build task, the jobs, the trigger function and its network and storage, and the workbook. RequestHub's sign-in app registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it and `az rest` empties it from the recycle bin. Without that last step, a new `azd up` with the same environment name can't create the app registration again for 30 days.
+  `azd down` deletes the resource group, with the registry, the build task, the jobs, the trigger function and its network and storage, and the workbook, and `--purge` purges the Log Analytics workspace, so that its name can be used again at once. Without `--force`, `azd down` lists what it will delete and asks you to confirm; without a terminal to ask in, it stops there and deletes nothing. RequestHub's sign-in app registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it, with its service principal, which Entra moves to its recycle bin with the app, and the two `az rest` calls empty both from the recycle bin. Without the first, a new `azd up` with the same environment name can't create the app registration again for 30 days. Deleting the group also moves the service principals of its three managed identities to the recycle bin: the app's, the release identity, and the trigger function's. Entra refused to purge them in our fresh setup; it removes them after 30 days.
+
+  Allow about half an hour: `azd down --purge --force` took 27 minutes 51 seconds in our fresh setup, most of it for the Container Apps environment. Afterwards nothing of the copy's environment was left in Azure, and in Microsoft Entra ID only those principals in the recycle bin ([the evidence](evidence/2026-11-12-fresh-setup.md#the-clean-up-and-what-is-left)).
 
 ## What's in this folder
 
@@ -582,7 +599,8 @@ When you no longer need the solution, delete the build task's token on GitHub (*
 │   ├── .funcignore
 │   └── requirements.txt             azure-functions only
 ├── evidence/
-│   └── 2026-11-01-recorded-run.md   what Azure recorded during the run in See it work, exported for anyone to check
+│   ├── 2026-11-01-recorded-run.md   what Azure recorded during the run in See it work, exported for anyone to check
+│   └── 2026-11-12-fresh-setup.md    a setup from scratch that followed only this README, timed step by step
 ├── images/                          screenshots of the run in See it work, and of the Release combo (combo-*)
 └── infra/
     ├── main.bicep                   resource group, RequestHub's platform (app/infra), the release identity's roles
@@ -598,6 +616,7 @@ RequestHub lives in [`app/`](../../app/README.md). Its API module, [`app/infra/a
 
 ## Troubleshooting
 
+- **`azd up` shows nothing that its hooks print, not even the unit tests' result.** azd shows a hook that isn't `interactive` in a small pane that it clears once the hook succeeds. Since 12 November, this folder's [`azure.yaml`](azure.yaml) makes both hooks interactive. With an older copy, `azd hooks run predeploy` shows the tests' result, and `python preflight.py` shows whether Event Grid is connected to the function.
 - **The app times out, or every revision fails readiness and the gate fails before its smoke test.** The PostgreSQL server was stopped; a tenant policy can stop it on a schedule. The preflight's **Database** line shows it. Start it as in [Check the starting state](#check-the-starting-state) (3 to 5 minutes).
 - **The release job ends with "already serves users: nothing to release".** The pushed build is the one users have, for example a second build of the same commit. Nothing is wrong. To release a change, run the rollback job first, or run the release job yourself to release the newest build (`requesthub-api:main`).
 - **The release job ends with "Execution … already got a push of this image".** Event Grid delivers each event at least once, so now and then one push starts the release job twice; pushing the same image again, for example with `az acr import`, does too. The later execution finds the earlier one in the job's execution history and releases nothing: the earlier one owns that image. The message names it and how it ended. Open it in the release job's **Execution history** if it failed, and to release the build after a failure or an abort, run the release job yourself.

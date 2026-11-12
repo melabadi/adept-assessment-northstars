@@ -7,6 +7,8 @@
 #   postprovision  copy the committed load test into Azure Load Testing (sync_test.py setup)
 #   predeploy      run the reporter's offline tests, and candidate.py's, whose run descriptions the reporter reads:
 #                  a broken report never reaches Azure
+# The hooks are interactive so their output stays on screen: the README's "What you should see" quotes it. azd shows
+# a hook that isn't interactive in an 8-line pane that it clears once the hook succeeds.
 name: ai-sdlc-test-microsoft
 metadata:
   template: ai-sdlc-test-microsoft@1.0.0
@@ -41,20 +43,26 @@ hooks:
     windows:
       shell: pwsh
       run: python sync_test.py prepare
+      interactive: true
     posix:
       shell: sh
       run: python3 sync_test.py prepare
+      interactive: true
   postprovision:
     windows:
       shell: pwsh
       run: python sync_test.py setup
+      interactive: true
     posix:
       shell: sh
       run: python3 sync_test.py setup
+      interactive: true
   predeploy:
     windows:
       shell: pwsh
       run: python -m unittest -q test_reporter test_candidate
+      interactive: true
     posix:
       shell: sh
       run: python3 -m unittest -q test_reporter test_candidate
+      interactive: true

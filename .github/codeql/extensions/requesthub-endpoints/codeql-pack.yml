@@ -1,0 +1,8 @@
+# CodeQL finds this model pack by itself in .github/codeql/extensions, both in default setup and in advanced setup.
+name: requesthub/endpoint-models
+version: 1.0.0
+library: true
+extensionTargets:
+  codeql/csharp-all: '*'
+dataExtensions:
+  - models/**/*.yml

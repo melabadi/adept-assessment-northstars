@@ -2,7 +2,10 @@
 # It provisions infra/ (RequestHub's hosting platform from app/infra, the backlog alert and workbook, and Azure SRE
 # Agent) and deploys the shared app: the api and worker images are built in Azure Container Registry, and each
 # `azd deploy` applies app/infra/api.bicep or worker.bicep so image and configuration ship together.
-# The postprovision hook applies the SRE Agent configuration in sre-agent/ through the agent's own API.
+# The postprovision hook applies the SRE Agent configuration in sre-agent/ through the agent's own API. It is
+# interactive so its output stays on screen: every item it applied with `ok`, the GitHub connection's state, and what
+# failed if it fails. azd shows a hook that isn't interactive in an 8-line pane that it clears once the hook succeeds,
+# and without a terminal it shows nothing at all.
 name: ai-sdlc-operate-microsoft
 metadata:
   template: ai-sdlc-operate-microsoft@1.0.0
@@ -33,6 +36,8 @@ hooks:
     windows:
       shell: pwsh
       run: python configure_sre_agent.py
+      interactive: true
     posix:
       shell: sh
       run: python3 configure_sre_agent.py
+      interactive: true

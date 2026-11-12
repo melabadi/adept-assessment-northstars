@@ -56,7 +56,7 @@ Each solution works on its own: start with the phase you want to improve.
 
 1. **Check the tools and access** in [Before you start](#before-you-start).
 2. **Try it first, if you like,** in [a copy of this repository](#try-it-in-a-copy-of-this-repository), where it runs on RequestHub as in its README's *See it work*, before you adapt anything.
-3. **Follow its README's *Add it to your repository*:** what to copy, what to change for your code, and each one-time step, with what you should see when it worked. A Microsoft solution deploys into its own Azure resource group with `azd up`; see [what the Microsoft solutions cost](#what-the-microsoft-solutions-cost).
+3. **Follow its README's *Add it to your repository*:** what to copy, what to change for your code, and each one-time step, with what you should see when it worked. Copy [LICENSE](LICENSE) along with the solution's files ([License](#license)). A Microsoft solution deploys into its own Azure resource group with `azd up`; see [what the Microsoft solutions cost](#what-the-microsoft-solutions-cost).
 
 ### Before you start
 
@@ -79,7 +79,7 @@ Each solution README lists anything else it needs.
 
 ### Try it in a copy of this repository
 
-To try the solutions on RequestHub before you adapt them, make one copy of this repository for all of them, private or public, in your account or organization (about 2 minutes). In PowerShell 7, with `<owner>` your account or organization:
+To try the solutions on RequestHub before you adapt them, make one copy of this repository for all of them, private or public, in your account or organization (20 seconds when we made one on 11 November). In PowerShell 7, with `<owner>` your account or organization:
 
 ```powershell
 git clone https://github.com/melabadi/adept-assessment-northstars.git ai-sdlc
@@ -89,9 +89,18 @@ gh repo create <owner>/ai-sdlc --private --source . --push
 git remote -v
 ```
 
-`git remote -v` lists only `origin`, your copy, so the solutions' scripts and `gh` commands act on it. Don't add this repository back as a remote named `upstream`: `gh` prefers that name over `origin`, and would file your Issues here. To take later updates, pull without a remote: `git pull https://github.com/melabadi/adept-assessment-northstars.git main`. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
+`git remote -v` lists only `origin`, your copy, so the solutions' scripts and `gh` commands act on it. Don't add this repository back as a remote named `upstream`: `gh` prefers that name over `origin`, and would file your Issues here. For a public copy, use `--public`, after changing the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy).
 
-The push runs your copy's four push workflows once (CI, Repository checks, Copilot setup steps, and the Secure lab tooling checks): about 5 minutes of GitHub-hosted runners, 10 as billed in a private repository. Nothing else runs until you set a solution up.
+To take later updates, pull without a remote, then push them to your copy:
+
+```powershell
+git pull --no-rebase --no-edit https://github.com/melabadi/adept-assessment-northstars.git main
+git push
+```
+
+`--no-rebase` merges the updates with any commits your copy's `main` has of its own, such as the one 02-design-microsoft's step 1 merges: with git's default settings, a plain `git pull` stops there with `Need to specify how to reconcile divergent branches`. `--no-edit` keeps the merge's default message. In [the fresh setup of 04-test-microsoft](solutions/04-test-microsoft/evidence/2026-11-11-fresh-setup.md) on 11 November, the two commands merged main into such a copy in 5 and 2 seconds, and the push ran only Repository checks, for 10 seconds. The push matters to the solutions that read files from your copy's `main`, such as 02-design-microsoft's standards and 03-develop-microsoft's rule checker. A copy with the ruleset of the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy) refuses a push to `main`: there, run `git switch -c updates` before the pull, then `git push -u origin updates`, `gh pr create --base main --fill`, and `gh pr merge --merge --delete-branch`. Merge with a merge commit, not a squash, which would drop the shared history and make the next pull merge the same updates again.
+
+The push can run your copy's four push workflows once (CI, Repository checks, Copilot setup steps, and the Secure lab tooling checks), each only when the push changes files it watches: at most about 5 minutes of GitHub-hosted runners, 10 as billed in a private repository. A copy made from main on 11 November, whose newest commit changed only Markdown files, ran only Repository checks, for 15 seconds ([the fresh setup of 01-plan-microsoft](solutions/01-plan-microsoft/evidence/2026-11-11-fresh-setup.md)). Nothing else runs until you set a solution up.
 
 Then follow the solution's *Try it first in a copy of this repository*. The runs in the READMEs keep their links to this repository's Issues and pull requests.
 
@@ -133,3 +142,7 @@ tools/       repository tooling: sync_solutions.py (mirror check), check_links.p
 - **Some GitHub security features depend on your plan.** CodeQL code scanning (including running CodeQL in a workflow), Copilot Autofix, secret scanning, and push protection are free on public repositories. On a private repository they need GitHub Code Security or GitHub Secret Protection, which require a GitHub Team or Enterprise plan. Solutions that use them say what runs without them.
 - **Presenting the solutions:** [PRESENTING.md](PRESENTING.md) suggests formats and an order, the combos that put a phase's two solutions on one change, and one requirement followed from Plan to Test.
 - **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) for how solutions are structured and validated.
+
+## License
+
+The [MIT License with the Commons Clause](LICENSE). You may download, fork, use, and change the solutions and RequestHub, including at work, and share them free of charge. You may not sell them, or sell hosting, consulting, or support whose value comes entirely or substantially from them. Keep the LICENSE file with anything you copy: every copy must carry its notice. Because it forbids selling, it is a source-available license, not an open source license as the [Open Source Initiative defines one](https://opensource.org/osd).
