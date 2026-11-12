@@ -8,6 +8,9 @@
 #   postdeploy   once every service is deployed, connect Event Grid to the function (infra/release-on-push.bicep).
 #                Event Grid accepts only a function that exists, and a push must find the release job and the
 #                function's right to start it, so azd deploys services first, in parallel, and connects them last.
+# Both hooks are interactive so their output stays on screen: the unit tests' result, and why Event Grid isn't connected
+# when the postdeploy hook fails. azd shows a hook that isn't interactive in an 8-line pane that it clears once the hook
+# succeeds, and without a terminal it shows nothing at all.
 # After that first deployment, the API is released through the release jobs, which add candidate revisions without
 # traffic instead of replacing the running one.
 name: ai-sdlc-release-microsoft
@@ -53,12 +56,15 @@ hooks:
     windows:
       shell: pwsh
       run: python -m unittest -q
+      interactive: true
     posix:
       shell: sh
       run: python3 -m unittest -q
+      interactive: true
   postdeploy:
     windows:
       shell: pwsh
+      interactive: true
       run: |
         $missing = 'AZURE_SUBSCRIPTION_ID', 'AZURE_RESOURCE_GROUP', 'RELEASE_TRIGGER_NAME', 'RELEASE_TOPIC_NAME', 'RELEASE_REPOSITORY' |
           Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
@@ -82,6 +88,7 @@ hooks:
         exit $LASTEXITCODE
     posix:
       shell: sh
+      interactive: true
       run: |
         : "${AZURE_SUBSCRIPTION_ID:?run azd provision first}" "${AZURE_RESOURCE_GROUP:?run azd provision first}" \
           "${RELEASE_TRIGGER_NAME:?run azd provision first}" "${RELEASE_TOPIC_NAME:?run azd provision first}" \
