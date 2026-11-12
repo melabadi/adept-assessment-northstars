@@ -440,9 +440,11 @@ Allow about 15 minutes in all: the fresh setup took 13, step by step in [One-tim
 
 - a Foundry account and project `plan`, a `gpt-6-luna` deployment (version 2026-09-22, Global Standard, 50,000 tokens per minute), and the **Foundry User** role for you;
 - Application Insights `appi-plan` and Log Analytics `log-plan`, connected to the project for agent tracing, with read access for you;
-- the Function app (its name starts with `func-`) on the Flex Consumption plan `asp-plan`, integrated with the virtual network `vnet-plan`;
+- the Function app (its name starts with `func-`) on the Flex Consumption plan `asp-plan`, integrated with the virtual network `vnet-plan`, which has a network security group on each of its two subnets;
 - a storage account (`st…`) for the run records, the queue `plan-steps`, and the Function app's code, and a Key Vault (`kv-…`) for the GitHub token, both without public network access, reached through three private endpoints;
 - the Function app's managed identity, with the Foundry User role, data access to its storage, and read access to Key Vault's secrets.
+
+The network security groups on `vnet-plan`'s two subnets have Azure's default rules only, which allow the Function app's traffic to the private endpoints and to the internet, and are named `vnet-plan-<subnet>-nsg-<region>`: the name the tenant this was built in gives the group it attaches to a subnet without one. A deployment from before 12 November 2026 gets them at its next `azd provision`. It keeps the groups that already have these names, though it gives them the template's tags and removes any rules they have, creates the missing ones, and replaces any other group on the two subnets, leaving it unattached for you to delete. The tenant this was built in attaches its groups with no rules and the template's tags, so there nothing about them changes.
 
 Outside the resource group, in Microsoft Entra ID, Foundry creates the agent's agent identity blueprint, an app registration that you own, and its agent identity when the hook publishes the agent. `azd down` doesn't remove them: [Clean up](#clean-up) does.
 
