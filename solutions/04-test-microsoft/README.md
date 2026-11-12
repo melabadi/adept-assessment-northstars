@@ -366,7 +366,7 @@ While deployed, the copy's resource group costs about $2 to $3 a day (Container 
 
 `azd up` ends with `SUCCESS`. It creates resource group `rg-ai-sdlc-test` with:
 
-- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep) and **the app** (API with web UI, and the notification worker), built in the registry, so Docker is not needed. You get every RequestHub role.
+- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep) and **the app** (API with web UI, and the notification worker), built in the registry, so Docker is not needed. You get every RequestHub role. Each subnet of RequestHub's virtual network has a network security group with Azure's default rules; a deployment from before 12 November 2026 gets them at its next `azd provision` ([what that changes](../../app/README.md#deploy-it-to-azure)).
 - **Azure Load Testing** with two managed identities: `id-lt-requester-*` (RequestHub Requester) and `id-lt-approver-*` (RequestHub Approver). You get **Load Test Contributor**; the Load Testing resource reads the app's metrics for its dashboard.
 - **The reporting path**: an action group, and a Python Azure Function (Flex Consumption) in its own virtual network, with private endpoints to its storage and to the Key Vault that holds the GitHub token. Its identity may read test runs, the API's telemetry, and that one secret. azd runs the function's unit tests before it deploys the function.
 

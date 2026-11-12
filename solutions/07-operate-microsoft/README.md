@@ -356,7 +356,7 @@ While deployed, the copy's resource group costs about $375 a month: $292 for the
 
 `azd up` ends with `SUCCESS`. It creates resource group `rg-ai-sdlc-operate` with:
 
-- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep), and the app as two container apps: the API with its web UI, and the notification worker. You get every RequestHub role.
+- **RequestHub's platform** from [`app/infra/requesthub.bicep`](../../app/infra/requesthub.bicep), and the app as two container apps: the API with its web UI, and the notification worker. You get every RequestHub role. Each subnet of RequestHub's virtual network has a network security group with Azure's default rules; a deployment from before 12 November 2026 gets them at its next `azd provision` ([what that changes](../../app/README.md#deploy-it-to-azure)).
 - **The backlog alert**, *RequestHub notification backlog* (severity 2, oldest pending notification older than 60 seconds), and the workbook *RequestHub notification worker*.
 - **Azure SRE Agent** `sre-ai-sdlc-operate`: read-only roles on this resource group, Review mode, Azure Monitor as its incident platform, connectors to the app's Application Insights and Log Analytics, and its own Application Insights for its activity. You get the **SRE Agent Administrator** role.
 - **The agent's configuration**, applied by the `postprovision` hook: the runbook, three skills, the custom agent with its Stop hook, the guard hook, the tool policy, and the response plan. The default quickstart plan is removed, so the alert is not investigated twice.

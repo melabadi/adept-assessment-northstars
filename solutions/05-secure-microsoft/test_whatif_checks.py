@@ -2,14 +2,17 @@
 
 A pull request's Bicep is compiled by the posture-whatif job. These cases are templates that must be refused before
 compiling, because they could make the compiler read files or the environment, and names that must not break out of the
-pull request comment. The environment test runs on Linux only, where the job runs.
+pull request comment. FixToggle checks that the module parameter a fix flips changes only resource types the preview
+expects. The environment test runs on Linux only, where the job runs.
 
   python -m unittest test_whatif_checks.py      (from this folder; no Azure or GitHub access needed)
 """
 from __future__ import annotations
 
 import base64
+import fnmatch
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -105,6 +108,46 @@ class Accepted(unittest.TestCase):
 
     def test_comment_ends_at_carriage_return(self):
         self.assertEqual(whatif.without_comments("// a\rmodule"), "    \rmodule")
+
+
+class FixToggle(unittest.TestCase):
+    """The posture fix flips one parameter of RequestHub's module, storagePrivateEndpoint, and the preview fails on any
+    change to a type outside DEFAULT_EXPECT. So every resource that the toggle creates or changes, directly or through a
+    variable, must be of an expected type, or every fix fails its own preview. The private endpoint subnet's network
+    security group, for one, exists whatever the toggle."""
+
+    def toggled(self, text: str) -> dict[str, str]:
+        """Resources and modules whose declaration names the toggle or a variable that does, with their types."""
+        declarations = {}
+        # Top-level statements start at the beginning of a line; each block runs until the next one.
+        for block in re.split(r"(?m)^(?=\S)", whatif.without_comments(text)):
+            match = re.match(r"(resource|module|var)\s+(\w+)\s+(?:'([^'@]+)@[^']*'|'([^']*)')?", block)
+            if match:
+                kind, name, resource_type, module_path = match.groups()
+                declarations[name] = (kind, resource_type or f"module {module_path}", block)
+        names = {"storagePrivateEndpoint"}
+        while True:
+            more = {name for name, (kind, _, block) in declarations.items() if kind == "var" and name not in names
+                    and any(re.search(rf"\b{re.escape(n)}\b", block) for n in names)}
+            if not more:
+                break
+            names |= more
+        return {name: what for name, (kind, what, block) in declarations.items() if kind != "var"
+                and any(re.search(rf"\b{re.escape(n)}\b", block) for n in names)}
+
+    def test_the_toggle_changes_only_expected_types(self):
+        module = Path(__file__).resolve().parents[2] / "app" / "infra" / "requesthub.bicep"
+        found = self.toggled(module.read_text(encoding="utf-8"))
+        self.assertTrue({"vnet", "storage", "blobPrivateEndpoint"} <= set(found), found)
+        unexpected = {name: what for name, what in found.items()
+                      if not any(fnmatch.fnmatchcase(what.lower(), p.lower()) for p in whatif.DEFAULT_EXPECT)}
+        self.assertEqual(unexpected, {})
+
+    def test_a_group_that_follows_the_toggle_is_caught(self):
+        found = self.toggled("var names = storagePrivateEndpoint ? ['a', 'b'] : ['a']\n"
+                             "resource nsgs 'Microsoft.Network/networkSecurityGroups@2024-05-01' = [for n in names: {\n"
+                             "  name: n\n}]\n")
+        self.assertEqual(found, {"nsgs": "Microsoft.Network/networkSecurityGroups"})
 
 
 class FetchTemplates(unittest.TestCase):
