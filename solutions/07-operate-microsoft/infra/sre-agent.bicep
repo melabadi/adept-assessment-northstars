@@ -1,5 +1,6 @@
-// Azure SRE Agent for this solution. It watches this resource group only, receives Azure Monitor alerts from it, and
-// can read its resources and telemetry. This template grants only reader roles on the resource group. When Azure
+// Azure SRE Agent for this solution. It manages this resource group only, and can read its resources and telemetry.
+// Azure Monitor alerts reach it from the whole subscription; its response plan (sre-agent/agent.yaml) picks the ones it
+// investigates by title and severity. This template grants only reader roles on the resource group. When Azure
 // Monitor is the incident platform, the platform also gives the agent's user-assigned identity Monitoring Contributor
 // on the subscription, to acknowledge and close alerts; that role covers alerts, alert rules, action groups, and
 // diagnostic settings, not the app, so the tool policy denies every az monitor write. Other write actions need an SRE

@@ -1,10 +1,21 @@
-name: Secure · GitHub · CodeQL lab scan
+name: Secure · GitHub · CodeQL scan
 
+# CodeQL analyzes every push to main or to a lab branch, and every pull request into one of them that changes the app.
+# Code scanning compares a pull request's analysis with its base branch's and flags new alerts on the pull request; on
+# a pull request into main, Copilot Autofix suggests a fix. The lab's draft pull request into main must show the
+# injection, and Copilot's repair, a pull request into the lab branch, must not. A person can scan one lab or repair
+# branch from main, with an explicit expectation. A fork's pull request starts nothing.
+# CodeQL sees the API's request input through the model pack in .github/codeql/extensions.
 on:
+  pull_request:
+    branches: [main, 'lab/secure-**']
+    paths: ['app/**']
+  push:
+    branches: [main, 'lab/secure-**']
   workflow_dispatch:
     inputs:
       target_ref:
-        description: lab/secure-* branch, or copilot/* repair PR targeting that lab
+        description: lab/secure-* branch, or a repair branch with an open PR into one
         required: true
         type: string
       expect:
@@ -22,7 +33,10 @@ permissions:
 
 jobs:
   entitlement:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -32,15 +46,17 @@ jobs:
     outputs:
       sha: ${{ steps.check.outputs.sha }}
     steps:
+      # The checker always comes from the default branch, never from the branch under analysis.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Check entitlement before any CodeQL execution
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          TARGET_REF: ${{ inputs.target_ref }}
+          TARGET_REF: ${{ inputs.target_ref || github.head_ref || github.ref_name }}
         run: >-
           python .github/skills/finding-triage/finding_triage.py preflight
           --repo "$REPOSITORY" --ref "$TARGET_REF" --out out/entitlement.json
@@ -56,18 +72,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
+      actions: read
       contents: read
       security-events: write
+    env:
+      # A dispatch scans the branch head the preflight resolved; a pull request, its merge commit; a push, its commit.
+      SCANNED_SHA: ${{ github.event_name == 'workflow_dispatch' && needs.entitlement.outputs.sha || github.sha }}
+      # Analyze the whole program on a pull request too, not only the lines it changes (the Action's default), so
+      # "absent" on Copilot's repair means CodeQL finds the injection nowhere.
+      CODEQL_ACTION_DIFF_INFORMED_QUERIES: 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           path: trusted
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.entitlement.outputs.sha }}
+          ref: ${{ env.SCANNED_SHA }}
           path: target
           persist-credentials: false
+      # CodeQL reads the endpoint models from .github/codeql/extensions in the source root. A dispatch takes them from
+      # the default branch, like its checker; a pull request or a push, from the commit it analyzes, like its workflow.
+      - name: Use the default branch's CodeQL models
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          rm -rf target/.github/codeql
+          cp -R trusted/.github/codeql target/.github/codeql
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
@@ -79,22 +110,28 @@ jobs:
           queries: security-extended
       - name: Build only RequestHub source under analysis (no deployment)
         run: dotnet build target/app/RequestHub.slnx -c Release
+      # A pull request's or a push's analysis goes to code scanning, which flags new alerts on the pull request; on a
+      # pull request into main, Copilot Autofix suggests fixes. A dispatch uploads only when asked, after the check.
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           output: out/sarif
-          upload: never
+          upload: ${{ github.event_name == 'workflow_dispatch' && 'never' || 'always' }}
           upload-database: false
           checkout_path: target
           category: secure-github-csharp
       - name: Verify the expected finding and write evidence
+        # The lab's pull request must show the injection, and a repair (a pull request into a lab branch) must not.
+        # Other analyses only feed code scanning.
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          startsWith(github.head_ref, 'lab/secure-') || startsWith(github.base_ref, 'lab/secure-')
         env:
-          EXPECT: ${{ inputs.expect }}
-          SCANNED_SHA: ${{ needs.entitlement.outputs.sha }}
+          EXPECT: ${{ inputs.expect || (startsWith(github.base_ref, 'lab/secure-') && 'absent' || 'present') }}
         run: >-
           python trusted/.github/skills/finding-triage/finding_triage.py sarif
           --input out/sarif --expect "$EXPECT" --sha "$SCANNED_SHA" --out out/finding.json
       - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
-        if: inputs.publish_alerts
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_alerts
         with:
           sarif_file: out/sarif
           ref: refs/heads/${{ inputs.target_ref }}

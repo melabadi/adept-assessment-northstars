@@ -24,7 +24,8 @@ Inputs: lab base SHA, repair head SHA, supplied `SearchSecurityTests.cs`, Postgr
 4. Prefer dispatching `secure-github-verify.yml` from `main` for trustworthy evidence: it loads the checker and
    reference test from `main`, not from the untrusted PR. The job has no cloud secrets or deploy permissions.
 5. Link the JSON, JUnit, job URL, reviewed/scanned SHA, tests-only SHA and repair SHA. Have a person inspect the
-   diff and request a new Copilot review. If licensed, also run CodeQL with `expect=absent` on the same head.
+   diff and request a new Copilot review. CodeQL rescans the repair pull request by itself and must report the
+   injection absent; a person can also dispatch the scan from `main` with `expect=absent` on the same head.
 
 ## Expected output
 `PASS: regression failed before repair, passed after; full app suite passed`, with immutable SHAs and exit codes.
