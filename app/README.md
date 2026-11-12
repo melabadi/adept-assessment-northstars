@@ -101,10 +101,17 @@ The app has no deployment of its own. Each Microsoft solution that needs a runni
 
 | File | What it creates |
 | --- | --- |
-| [`infra/requesthub.bicep`](infra/requesthub.bicep) | Monitoring, private network, PostgreSQL (Microsoft Entra authentication only), Blob storage reached through a private endpoint, container registry, Container Apps environment, the Entra app registration with RequestHub app roles, and the identity GitHub Actions uses through OIDC. |
+| [`infra/requesthub.bicep`](infra/requesthub.bicep) | Monitoring, a private network with a network security group on each subnet, PostgreSQL (Microsoft Entra authentication only), Blob storage reached through a private endpoint, container registry, Container Apps environment, the Entra app registration with RequestHub app roles, and the identity GitHub Actions uses through OIDC. |
 | [`infra/api.bicep`](infra/api.bicep), [`infra/worker.bicep`](infra/worker.bicep) | The two container apps. `azd deploy` applies them with each new image, so code and configuration ship together as one revision. |
 
 Data stays off the public internet by default. PostgreSQL has no public endpoint, and Blob storage is reached through a private endpoint (a subnet, a `privatelink.blob` private DNS zone linked to the virtual network, and the endpoint itself) with its public endpoint closed. Set the module's `storagePrivateEndpoint` parameter to `false` to keep a public storage endpoint instead; attachments then fail wherever Azure Policy disables public network access on storage accounts. The [Secure solution](../solutions/05-secure-microsoft/) starts that way to give Azure Policy and Defender for Cloud a real finding to report.
+
+Each of the three subnets (the Container Apps environment's, PostgreSQL's, and the private endpoint's) has its own network security group, named `<virtual network>-<subnet>-nsg-<region>`, with no rules of its own. Azure's default rules allow traffic within the virtual network and from Azure Load Balancer, allow outbound traffic to the internet, and deny other inbound traffic. That is all RequestHub needs: the Container Apps environment is external, so its public ingress doesn't pass through its subnet ([Securing a virtual network in Azure Container Apps](https://learn.microsoft.com/azure/container-apps/firewall-integration)). The private endpoint subnet's group exists even while `storagePrivateEndpoint` is `false`, unattached: turning the private endpoint on then adds no group, which the Secure solution's what-if preview would count as an unexpected change.
+
+The module has declared these groups since 12 November 2026. A deployment from before then gets them at its next `azd provision`, and nothing else in its network changes:
+
+- **Groups that already have these names stay as they are.** The tenant this was built in attaches a group named this way to every subnet that has none. Before 12 November, each `azd provision` detached those groups until the tenant attached them again; now it keeps them.
+- **Groups that don't exist are created** and attached to their subnets. A group that something else attached under another name is replaced on its subnet and left unattached, for you to delete.
 
 In the cloud, Container Apps authentication signs users in with Microsoft Entra ID and the API enforces app roles (`RequestHub.Requester`, `Reviewer`, `Approver`, `Admin`). Whoever runs `azd provision` gets every role. To call the deployed API from a terminal, run this in the folder of the solution that deployed it (for example `solutions/06-release-microsoft`), where `azd` finds its environment:
 

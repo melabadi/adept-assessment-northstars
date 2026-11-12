@@ -87,29 +87,48 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 }
 
 // ---------- Network (private PostgreSQL, optional private Blob endpoint) ----------
+var vnetName = 'vnet-${resourceToken}'
+var subnetNames = ['snet-apps', 'snet-postgres', 'snet-private-endpoints']
+
+// One network security group per subnet, with no rules of its own: Azure's default rules allow traffic within the
+// virtual network and from Azure Load Balancer, allow outbound traffic to the internet, and deny other inbound traffic.
+// That is all RequestHub needs: the Container Apps environment is external, so its public ingress doesn't pass through
+// its subnet. Each is named <vnet>-<subnet>-nsg-<region>, the name the tenant this was built in gives the group it
+// attaches to a subnet without one, so a deployment there keeps that group rather than detaching it. The private
+// endpoint subnet's group exists even while storagePrivateEndpoint is false: turning the endpoint on then changes only
+// the virtual network, the storage account, and private endpoint and DNS resources.
+resource subnetNsgs 'Microsoft.Network/networkSecurityGroups@2024-05-01' = [for subnet in subnetNames: {
+  name: '${vnetName}-${subnet}-nsg-${toLower(replace(location, ' ', ''))}'
+  location: location
+  tags: tags
+  properties: { securityRules: [] }
+}]
+
 var appSubnets = [
   {
-    name: 'snet-apps'
+    name: subnetNames[0]
     properties: {
       addressPrefix: '10.40.0.0/23'
       delegations: [{ name: 'aca', properties: { serviceName: 'Microsoft.App/environments' } }]
+      networkSecurityGroup: { id: subnetNsgs[0].id }
     }
   }
   {
-    name: 'snet-postgres'
+    name: subnetNames[1]
     properties: {
       addressPrefix: '10.40.2.0/28'
       delegations: [{ name: 'pg', properties: { serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers' } }]
+      networkSecurityGroup: { id: subnetNsgs[1].id }
     }
   }
 ]
 var privateEndpointSubnet = {
-  name: 'snet-private-endpoints'
-  properties: { addressPrefix: '10.40.3.0/27' }
+  name: subnetNames[2]
+  properties: { addressPrefix: '10.40.3.0/27', networkSecurityGroup: { id: subnetNsgs[2].id } }
 }
 
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
-  name: 'vnet-${resourceToken}'
+  name: vnetName
   location: location
   tags: tags
   properties: {
