@@ -1,0 +1,23 @@
+# RequestHub maps its API handlers by method name: api.MapGet("/requests", ListRequests). CodeQL's C# extractor
+# can't resolve a method name passed as a Delegate and drops the whole Map call, so CodeQL sees none of these
+# handlers' inputs and can't follow user input into a SQL query. Each row marks the parameters a handler binds from
+# the request (route, query string, JSON body, form file) as remote input, by position from 0. Services such as
+# RequestWorkflow are left out, and so is HttpContext: CodeQL already models the request it carries.
+# solutions/05-secure-github/tests/test_security_tools.py checks these rows against ApiEndpoints.cs.
+extensions:
+  - addsTo:
+      pack: codeql/csharp-all
+      extensible: sourceModel
+    data:
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "ListRequests", "", "", "Parameter[5..11]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "CreateRequest", "", "", "Parameter[1]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "GetRequest", "", "", "Parameter[1]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "AddComment", "", "", "Parameter[1..2]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "Decide", "", "", "Parameter[1..2]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "Reroute", "", "", "Parameter[1..2]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "History", "", "", "Parameter[1]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "ListAttachments", "", "", "Parameter[1]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "UploadAttachment", "", "", "Parameter[1..2]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "DownloadAttachment", "", "", "Parameter[1..2]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "Recommend", "", "", "Parameter[1]", "remote", "manual"]
+      - ["RequestHub.Api.Endpoints", "ApiEndpoints", False, "ListRecommendations", "", "", "Parameter[1]", "remote", "manual"]
