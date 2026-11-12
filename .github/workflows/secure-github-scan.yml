@@ -76,6 +76,9 @@ jobs:
     env:
       # A dispatch scans the branch head the preflight resolved; a pull request, its merge commit; a push, its commit.
       SCANNED_SHA: ${{ github.event_name == 'workflow_dispatch' && needs.entitlement.outputs.sha || github.sha }}
+      # Analyze the whole program on a pull request too, not only the lines it changes (the Action's default), so
+      # "absent" on Copilot's repair means CodeQL finds the injection nowhere.
+      CODEQL_ACTION_DIFF_INFORMED_QUERIES: 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
