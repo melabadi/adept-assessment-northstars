@@ -197,6 +197,54 @@ class ReplayWorkflowTests(unittest.TestCase):
         self.assertNotRegex(workflow, r": write\b|\bsecrets\.|\bgit push\b|\bgit commit\b|\bgh pr comment\b")
 
 
+class ScanWorkflowTests(unittest.TestCase):
+    """The scan's rules, evaluated as GitHub evaluates the expressions in the workflow file."""
+
+    workflow = (ROOT / ".github/workflows/secure-github-scan.yml").read_text()
+
+    @staticmethod
+    def evaluate(expression, values):
+        for name, value in sorted(values.items(), key=lambda item: -len(item[0])):
+            expression = expression.replace(name, repr(value))
+        return eval(expression.replace("&&", " and ").replace("||", " or "), {"__builtins__": {}})
+
+    def test_only_this_repositorys_branches_start_a_scan(self):
+        block = re.search(r"^  entitlement:\n    if: >-\n((?:      .+\n)+)", self.workflow, re.MULTILINE).group(1)
+        expression = " ".join(block.split())
+        for event, ref, head_repo, expected in (
+            ("workflow_dispatch", "refs/heads/main", None, True),
+            ("workflow_dispatch", "refs/heads/lab/secure-1", None, False),
+            ("push", "refs/heads/lab/secure-1", None, True),
+            ("pull_request", "refs/pull/7/merge", "octo/requesthub", True),
+            ("pull_request", "refs/pull/7/merge", "mallory/requesthub", False),
+        ):
+            with self.subTest(event=event, ref=ref, head_repo=head_repo):
+                self.assertEqual(expected, self.evaluate(expression, {
+                    "github.event_name": event, "github.ref": ref, "github.repository": "octo/requesthub",
+                    "github.event.pull_request.head.repo.full_name": head_repo}))
+
+    def test_the_lab_pull_request_must_show_the_injection_and_the_repair_must_not(self):
+        expression = re.search(r"EXPECT: \$\{\{ (.+) \}\}", self.workflow).group(1)
+        for dispatched, head, expected in (
+            ("absent", "", "absent"),
+            ("present", "", "present"),
+            ("", "lab/secure-20261111-120000", "present"),
+            ("", "copilot/fix-search", "absent"),
+        ):
+            with self.subTest(dispatched=dispatched, head=head):
+                translated = expression.replace("startsWith(github.head_ref, 'copilot/')",
+                                                repr(head.startswith("copilot/")))
+                self.assertEqual(expected, self.evaluate(translated, {"inputs.expect": dispatched}))
+
+    def test_pull_requests_and_pushes_reach_code_scanning_with_the_checker_from_main(self):
+        upload = re.search(r" upload: \$\{\{ (.+) \}\}", self.workflow).group(1)
+        for event, expected in (("pull_request", "always"), ("push", "always"), ("workflow_dispatch", "never")):
+            with self.subTest(event=event):
+                self.assertEqual(expected, self.evaluate(upload, {"github.event_name": event}))
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.publish_alerts", self.workflow)
+        self.assertEqual(2, self.workflow.count("ref: ${{ github.event.repository.default_branch }}"))
+
+
 replay = load("replay_setup", "replay_setup.py")
 REPO = "octo/requesthub"
 
