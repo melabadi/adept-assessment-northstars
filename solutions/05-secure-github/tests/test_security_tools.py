@@ -63,17 +63,36 @@ class EntitlementTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 triage.preflight("demo/repo", "lab/secure-test")
 
-    def test_unrelated_or_unsafe_ref_is_rejected(self):
-        for ref in ("main", "--all", "lab/secure-x/../main", "release/latest", "lab/secure-"):
-            with self.subTest(ref=ref), self.assertRaises(ValueError):
+    def test_unsafe_ref_is_rejected_before_any_lookup(self):
+        for ref in ("--all", "lab/secure-x/../main", "/main", "lab/secure-x;rm"):
+            with self.subTest(ref=ref), patch.object(triage, "api") as api, self.assertRaises(ValueError):
                 triage.preflight("demo/repo", ref)
+            api.assert_not_called()
 
-    def test_copilot_branch_must_target_lab(self):
-        with patch.object(triage, "api", side_effect=[
-                {"private": False, "owner": {"type": "User", "login": "demo"}},
-                [{"base": {"ref": "main"}, "head": {"repo": {"full_name": "demo/repo"}}}]]):
-            with self.assertRaises(ValueError):
-                triage.preflight("demo/repo", "copilot/fix")
+    def test_default_and_lab_branches_are_scanned_without_a_pull_request(self):
+        repository = {"private": False, "default_branch": "main", "owner": {"type": "User", "login": "demo"}}
+        for ref in ("main", "lab/secure-20261112-120000"):
+            with self.subTest(ref=ref), patch.object(triage, "api", side_effect=[repository, {"sha": SHA}]):
+                self.assertEqual("PASS", triage.preflight("demo/repo", ref)["status"])
+
+    def test_other_branches_need_an_open_same_repository_pull_request_into_main_or_a_lab(self):
+        repository = {"private": False, "default_branch": "main", "owner": {"type": "User", "login": "demo"}}
+        same, fork = {"full_name": "demo/repo"}, {"full_name": "mallory/repo"}
+        for ref, pulls, allowed in (
+            ("copilot/fix", [{"base": {"ref": "lab/secure-1"}, "head": {"repo": same}}], True),
+            ("feature", [{"base": {"ref": "main"}, "head": {"repo": same}}], True),
+            ("feature", [{"base": {"ref": "main"}, "head": {"repo": fork}}], False),
+            ("feature", [{"base": {"ref": "release"}, "head": {"repo": same}}], False),
+            ("release/latest", [], False),
+            ("lab/secure-", [], False),
+        ):
+            with self.subTest(ref=ref, pulls=pulls), patch.object(
+                    triage, "api", side_effect=[repository, pulls, {"sha": SHA}]):
+                if allowed:
+                    self.assertEqual("PASS", triage.preflight("demo/repo", ref)["status"])
+                else:
+                    with self.assertRaises(ValueError):
+                        triage.preflight("demo/repo", ref)
 
 
 class SarifTests(unittest.TestCase):
@@ -204,6 +223,8 @@ class ScanWorkflowTests(unittest.TestCase):
 
     @staticmethod
     def evaluate(expression, values):
+        expression = re.sub(r"startsWith\(([\w.]+), '([^']*)'\)",
+                            lambda call: repr(str(values.get(call[1]) or "").startswith(call[2])), expression)
         for name, value in sorted(values.items(), key=lambda item: -len(item[0])):
             expression = expression.replace(name, repr(value))
         return eval(expression.replace("&&", " and ").replace("||", " or "), {"__builtins__": {}})
@@ -224,17 +245,24 @@ class ScanWorkflowTests(unittest.TestCase):
                     "github.event.pull_request.head.repo.full_name": head_repo}))
 
     def test_the_lab_pull_request_must_show_the_injection_and_the_repair_must_not(self):
-        expression = re.search(r"EXPECT: \$\{\{ (.+) \}\}", self.workflow).group(1)
-        for dispatched, head, expected in (
-            ("absent", "", "absent"),
-            ("present", "", "present"),
-            ("", "lab/secure-20261111-120000", "present"),
-            ("", "copilot/fix-search", "absent"),
+        verify = " ".join(re.search(r"Verify the expected finding[\s\S]*?\n        if: >-\n((?:          .+\n)+)",
+                                    self.workflow).group(1).split())
+        expect = re.search(r"EXPECT: \$\{\{ (.+) \}\}", self.workflow).group(1)
+        for event, head, base, dispatched, expected in (
+            ("pull_request", "lab/secure-20261112-120000", "main", "", "present"),
+            ("pull_request", "copilot/fix-search", "lab/secure-20261112-120000", "", "absent"),
+            ("pull_request", "lab/secure-replay-repair", "lab/secure-replay", "", "absent"),
+            ("pull_request", "melabadi-feature", "main", "", None),
+            ("push", "", "", "", None),
+            ("workflow_dispatch", "", "", "absent", "absent"),
+            ("workflow_dispatch", "", "", "present", "present"),
         ):
-            with self.subTest(dispatched=dispatched, head=head):
-                translated = expression.replace("startsWith(github.head_ref, 'copilot/')",
-                                                repr(head.startswith("copilot/")))
-                self.assertEqual(expected, self.evaluate(translated, {"inputs.expect": dispatched}))
+            with self.subTest(event=event, head=head, base=base):
+                values = {"github.event_name": event, "github.head_ref": head, "github.base_ref": base,
+                          "inputs.expect": dispatched}
+                self.assertEqual(expected is not None, self.evaluate(verify, values))
+                if expected:
+                    self.assertEqual(expected, self.evaluate(expect, values))
 
     def test_pull_requests_and_pushes_reach_code_scanning_with_the_checker_from_main(self):
         upload = re.search(r" upload: \$\{\{ (.+) \}\}", self.workflow).group(1)

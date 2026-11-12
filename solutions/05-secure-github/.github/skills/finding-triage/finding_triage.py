@@ -17,6 +17,7 @@ from urllib.parse import unquote
 
 RULE = "cs/sql-injection"
 SOURCE = "app/src/RequestHub.Core/Services/RequestWorkflow.cs"
+LAB = re.compile(r"lab/secure-[A-Za-z0-9._/-]+")
 
 
 def api(path: str) -> object:
@@ -27,8 +28,8 @@ def api(path: str) -> object:
 def preflight(repo: str, ref: str) -> dict:
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
         raise ValueError("Expected repository OWNER/REPO")
-    if not re.fullmatch(r"(lab/secure-|copilot/)[A-Za-z0-9._/-]+", ref) or ".." in ref:
-        raise ValueError("Only lab/secure-* or its copilot/* remediation branch may be scanned")
+    if not re.fullmatch(r"[A-Za-z0-9._][A-Za-z0-9._/-]*", ref) or ".." in ref:
+        raise ValueError("Expected a branch name")
     repository = api(f"repos/{repo}")
     settings = repository.get("security_and_analysis") or {}
     licensed = any(settings.get(key, {}).get("status") == "enabled"
@@ -50,11 +51,13 @@ def preflight(repo: str, ref: str) -> dict:
                 "Private CodeQL analysis requires an organization with GitHub Code Security enabled. "
                 "Make the repository public when ready, or move to a licensed organization. "
                 "No CodeQL analysis or upload was attempted."}
-    if ref.startswith("copilot/"):
+    default = repository.get("default_branch")
+    if ref != default and not LAB.fullmatch(ref):
         prs = api(f"repos/{repo}/pulls?state=open&head={repository['owner']['login']}:{ref}")
-        if not any(pr["base"]["ref"].startswith("lab/secure-") and
-                   pr["head"]["repo"]["full_name"] == repo for pr in prs):
-            raise ValueError("Copilot branch must have an open same-repository PR targeting lab/secure-*")
+        if not any(pr["head"]["repo"]["full_name"] == repo and
+                   (pr["base"]["ref"] == default or LAB.fullmatch(pr["base"]["ref"])) for pr in prs):
+            raise ValueError("Only the default branch, a lab/secure-* branch, or a branch with an open "
+                             "same-repository pull request into one of them may be scanned")
     commit = api(f"repos/{repo}/commits/{ref}")
     return {"status": "PASS", "repository": repo, "ref": ref, "scanned_sha": commit["sha"],
             "reason": "Public repository" if not repository["private"] else "Code Security enabled"}
@@ -109,7 +112,8 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     check = commands.add_parser("preflight", help="Check live repository entitlement before using CodeQL")
     check.add_argument("--repo", required=True, help="GitHub repository OWNER/REPO")
-    check.add_argument("--ref", required=True, help="lab/secure-* branch, or its copilot/* PR branch")
+    check.add_argument("--ref", required=True, help="Branch to scan: the default branch, a lab/secure-* branch, "
+                       "or a branch with an open same-repository pull request into one of them")
     scan = commands.add_parser("sarif", help="Summarize CodeQL SARIF; never substitute for a scanner run")
     scan.add_argument("--input", type=Path, required=True, help="SARIF file or directory from the scan run")
     scan.add_argument("--expect", choices=["present", "absent"], required=True, help="Required finding state")
