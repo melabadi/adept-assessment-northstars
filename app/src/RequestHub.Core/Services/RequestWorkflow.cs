@@ -40,7 +40,12 @@ public sealed partial class RequestWorkflow(
     {
         var page = Math.Max(1, q.Page);
         var size = Math.Clamp(q.PageSize, 1, MaxPageSize);
-        var query = db.Requests.AsNoTracking();
+        var term = q.Q?.Trim();
+        var textSearch = !string.IsNullOrEmpty(term) && !Request.TryParsePublicId(term, out _);
+        // Full-text style search straight in SQL (faster than two ILIKE expressions).
+        var query = textSearch
+            ? db.Requests.FromSqlRaw("SELECT * FROM \"Requests\" WHERE \"Title\" ILIKE '%" + term + "%' OR \"Description\" ILIKE '%" + term + "%'").AsNoTracking()
+            : db.Requests.AsNoTracking();
 
         var isStaff = user.HasRole(Roles.Reviewer) || user.HasRole(Roles.Approver) || user.IsAdmin;
         var departments = user.Departments.ToArray();
@@ -68,20 +73,9 @@ public sealed partial class RequestWorkflow(
             query = query.Where(r => r.Priority == priority);
         }
 
-        if (!string.IsNullOrWhiteSpace(q.Q))
+        if (!string.IsNullOrWhiteSpace(term) && !textSearch && Request.TryParsePublicId(term, out var number))
         {
-            var term = q.Q.Trim();
-            if (Request.TryParsePublicId(term, out var number))
-            {
-                query = query.Where(r => r.Number == number);
-            }
-            else
-            {
-                // EscapeLike escapes with a backslash. Name it as the escape character: EF Core (and so Npgsql) applies no
-                // escape character unless one is given, which would make "%" and "_" searches match nothing.
-                var pattern = $"%{EscapeLike(term)}%";
-                query = query.Where(r => EF.Functions.ILike(r.Title, pattern, "\\") || EF.Functions.ILike(r.Description, pattern, "\\"));
-            }
+            query = query.Where(r => r.Number == number);
         }
 
         var total = await query.CountAsync(ct);
