@@ -6,7 +6,7 @@ Most teams find out how their app behaves under load in production: a realistic 
 
 - **[See it work](#see-it-work):** a real run on RequestHub, this repository's sample app. A 1.5-second slowdown failed the gate, Azure opened an Issue that proves the cause, and the run after the fix closed it.
 - **[Add it to your repository](#add-it-to-your-repository):** about 20 minutes of one-time setup in Azure and GitHub, once the journey and its criteria describe your app.
-- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 30 minutes to set it up on RequestHub, then about 45 minutes for the steps of See it work.
+- **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 30 minutes to set it up on RequestHub, then about 45 minutes for the steps of See it work: 27 and 46 minutes in a fresh setup we timed.
 
 ## Why it matters
 
@@ -253,7 +253,14 @@ To find the requests your users make, Azure Load Testing's **Record and create s
 
 ### One-time setup
 
-About 20 minutes, once the files describe your app. On RequestHub, provisioning the function's resources took 6 minutes 39 seconds, deploying the function 25 seconds, and the provision that stores the GitHub token 5 minutes 45 seconds.
+About 20 minutes, once the files describe your app. On RequestHub, provisioning the function's resources took 6 minutes 39 seconds, deploying the function 25 seconds, and the provision that stores the GitHub token 5 minutes 45 seconds. A fresh setup on 11 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, deployed RequestHub too, which took most of the time ([the evidence](evidence/2026-11-11-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Deploy: `pip install -r requirements.txt` | 1 minute 25 seconds, in a new virtual environment |
+| 1. Deploy: `azd up` | 17 minutes 29 seconds, RequestHub included: its Container Apps environment took 5 minutes 47 seconds and its PostgreSQL server 7 minutes 44 seconds |
+| 3. Let Azure post to GitHub: the token | a few minutes for a person on GitHub |
+| 3. Let Azure post to GitHub: `azd provision` | 6 minutes 31 seconds |
 
 #### 1. Deploy
 
@@ -265,7 +272,7 @@ pip install -r requirements.txt
 az extension add --name load --upgrade
 az login
 azd auth login
-azd env new <environment name> --location <region>
+azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
 azd env set API_URL <your API's base URL>
 azd env set API_IDENTIFIER_URI <your API's application ID URI>
 azd up
@@ -273,7 +280,9 @@ azd up
 
 Set the other values your `main.bicep` and `render_config()` read the same way, for example your API's app registration client id and the names of its resources.
 
-**What you should see:** before provisioning, azd records the repository where the function opens its Issues, from your clone's `origin` remote: `GITHUB_REPOSITORY: <owner>/<repository> (from the origin remote)`. After provisioning, `python sync_test.py setup` prints `PASS` for the guardrails, then creates the test, the notification rule, and the weekday schedule, paused, as in [What azd up creates](#what-azd-up-creates). A guardrail that fails stops the hook before anything reaches Azure Load Testing. azd then runs the function's unit tests and deploys the function, and ends with `SUCCESS`.
+`--subscription` deploys to the subscription that `az` signed in to, where `sync_test.py`, `slowdown.py`, and the commands below look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd up` asks you to pick one of your subscriptions. Run azd in the shell where `pip install` ran, with the same virtual environment active if you use one: its hooks run that `python`.
+
+**What you should see:** before provisioning, azd records the repository where the function opens its Issues, from your clone's `origin` remote: `GITHUB_REPOSITORY: <owner>/<repository> (from the origin remote)`. After provisioning, `python sync_test.py setup` prints `PASS` for the guardrails, then creates the test, the notification rule, and the weekday schedule, paused, as in [What azd up creates](#what-azd-up-creates). A guardrail that fails stops the hook before anything reaches Azure Load Testing. azd then runs the function's unit tests, which end with `OK`, deploys the function, and ends with `SUCCESS`.
 
 #### 2. Let your API accept the test's identities
 
@@ -322,11 +331,11 @@ Then make it part of your workflow:
 
 ### What it costs
 
-Your app bills as it already does. While deployed, the solution adds about $0.75 a day for the reporting function's three private endpoints and their DNS zones, and about $0.25 per short test run: Azure Load Testing bills at least 10 virtual users per engine for 10 minutes per run, so a 2-minute run like RequestHub's bills 1.67 virtual user hours. The function runs on demand, a few seconds per run, within Flex Consumption's monthly free grant; Key Vault and the action group add a few cents a month. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+Your app bills as it already does. While deployed, the solution adds about $0.75 a day for the reporting function's three private endpoints and their DNS zones, and about $0.25 per short test run: Azure Load Testing bills at least 10 virtual users per engine for 10 minutes per run, so a 2-minute run like RequestHub's bills 1.67 virtual user hours. The function runs on demand, a few seconds per run, within Flex Consumption's monthly free grant; Key Vault and the action group add a few cents a month. Since 1 July 2026, the Observability Agent bills the work of each question in Azure Agent Credits, at $0.01 a credit; a chat question is its lowest-cost use ([its billing](https://learn.microsoft.com/azure/azure-monitor/aiops/observability-agent-billing)). The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
 
 ## Try it first in a copy of this repository
 
-Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your app, a region that also offers PostgreSQL Flexible Server, and permission to create Microsoft Entra app registrations: RequestHub signs in with its own. For a local run of the journey, you also need the [.NET 10 SDK](https://dotnet.microsoft.com/download) and PostgreSQL (see [`app/README.md`](../../app/README.md#run-it-locally)).
+Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your app, a region that also offers PostgreSQL Flexible Server, and permission to create Microsoft Entra app registrations: RequestHub signs in with its own. For a local run of the journey, you also need the [.NET 10 SDK](https://dotnet.microsoft.com/download) and PostgreSQL (see [`app/README.md`](../../app/README.md#run-it-locally)). In the copy, the other solutions' workflows also see this one's Issue: in our fresh setup, the Issue that step 6 opened started *Operate · GitHub · agentic incident triage*, which skipped every job, and the comment that closed it started *Design · GitHub · agentic design review*, which stopped after a 15-second check. No model ran.
 
 ### Quick start
 
@@ -338,7 +347,7 @@ pip install -r requirements.txt
 az extension add --name load --upgrade
 az login
 azd auth login
-azd env new ai-sdlc-test --location centralus
+azd env new ai-sdlc-test --subscription (az account show --query id -o tsv) --location centralus
 azd up
 ```
 
@@ -349,7 +358,7 @@ azd env set GITHUB_ISSUES_TOKEN (Read-Host -MaskInput 'GitHub token')
 azd provision
 ```
 
-Allow about 30 minutes in all. `azd up` takes about 20: from a clean state it took 12 minutes 40 seconds before the reporting function existed, and adding the function's resources to a running environment took another 6 minutes 39 seconds. The second `azd provision` took 5 minutes 45 seconds. To check the result, follow [Check the starting state](#check-the-starting-state).
+Allow about 30 minutes in all. In a fresh setup on 11 November 2026, `azd up` took 17 minutes 29 seconds and the second `azd provision` 6 minutes 31 seconds: 27 minutes 29 seconds from `pip install` to the end of that provision, with the token created meanwhile ([the evidence](evidence/2026-11-11-fresh-setup.md#timeline)). To check the result, follow [Check the starting state](#check-the-starting-state).
 
 While deployed, the copy's resource group costs about $2 to $3 a day (Container Apps, PostgreSQL Burstable, Container Registry Basic, Log Analytics, and the reporting function's private endpoints, as in [What it costs](#what-it-costs)), plus about $0.25 per test run.
 
@@ -372,7 +381,7 @@ Schedule 'weekday-evenings': created for weekdays at 22:00 UTC, and paused. ...
 
 ### Check the starting state
 
-About 5 minutes, from `solutions/04-test-microsoft`, before each run of the steps below. You should see what [See it work](#see-it-work) shows as its starting state.
+About 5 minutes, from `solutions/04-test-microsoft`, before each run of the steps below; the commands took 27 seconds in a fresh setup. You should see what [See it work](#see-it-work) shows as its starting state.
 
 ```powershell
 azd env select ai-sdlc-test
@@ -394,16 +403,16 @@ az load trigger schedule show --load-test-resource $lt -g rg-ai-sdlc-test --trig
 
 A run reaches its verdict 7 to 9 minutes after you start it: about 3 to start the engine, 2 of load, and 2 to 4 to compute the results. The function reports it 2 to 4 minutes later.
 
-| Step | Takes | In See it work |
-| --- | --- | --- |
-| 2. Baseline run | 7 to 9 minutes to the verdict | 8 minutes 39 seconds |
-| 4. Slowdown on | 1 to 3 minutes, while a new API revision rolls out | 1 minute 10 seconds |
-| 5. Run again | 7 to 9 minutes to the verdict | 7 minutes 18 seconds |
-| 6. Issue opens | 2 to 4 minutes after the verdict | 3 minutes 55 seconds |
-| 7. AI explains | about 5 minutes, about a minute per question | 5 minutes 27 seconds for three questions |
-| 8. Fix and confirm | about 12 minutes: the revision, the run, and the report | about 12 minutes |
+| Step | Takes | In See it work | In the fresh setup |
+| --- | --- | --- | --- |
+| 2. Baseline run | 7 to 9 minutes to the verdict | 8 minutes 39 seconds | 8 minutes 26 seconds |
+| 4. Slowdown on | 1 to 3 minutes, while a new API revision rolls out | 1 minute 10 seconds | 1 minute 12 seconds |
+| 5. Run again | 7 to 9 minutes to the verdict | 7 minutes 18 seconds | 8 minutes 42 seconds |
+| 6. Issue opens | 2 to 4 minutes after the verdict | 3 minutes 55 seconds | 2 minutes 17 seconds |
+| 7. AI explains | about 5 minutes, about a minute per question | 5 minutes 27 seconds for three questions | the AI insights within 3 minutes of the verdict, without a click; two questions, answered after 1.72 and 0.42 minutes |
+| 8. Fix and confirm | about 12 minutes: the revision, the run, and the report | about 12 minutes | 11 minutes 49 seconds |
 
-All eight steps take about 45 minutes: 41 minutes 41 seconds in See it work.
+All eight steps take about 45 minutes: 41 minutes 41 seconds in See it work, and 46 minutes 11 seconds in a fresh setup on 11 November 2026, both from the starting-state check to the closed Issue ([the evidence](evidence/2026-11-11-fresh-setup.md#the-run)).
 
 ### 1. Open the test in Azure
 
@@ -547,17 +556,21 @@ Each run deletes the requests it submitted, before and after the load, so the 24
 
 When you no longer need the solution, revoke its GitHub token (**Settings › Developer settings › Fine-grained tokens**), then remove what azd deployed, from the solution's folder.
 
-- **In your repository:** `azd down --purge` removes the solution's resource group, with the test's identities, Azure Load Testing and its runs, and the reporting function. Your app stays as it is: remove the identities' client ids from the client applications it accepts.
-- **In the copy:** `azd down` doesn't remove the Microsoft Entra app registration that RequestHub signs in with (Entra objects live outside resource groups), and a deleted app that is not purged stops the next `azd up` from creating it again. Delete it and purge it too:
+- **In your repository:** `azd down --purge --force` removes the solution's resource group, with the test's identities, Azure Load Testing and its runs, and the reporting function, and purges the function's Key Vault, so its name can be used again at once. Your app stays as it is: remove the identities' client ids from the client applications it accepts.
+- **In the copy:** `azd down` doesn't remove the Microsoft Entra app registration that RequestHub signs in with (Entra objects live outside resource groups), and a deleted app that is not purged stops the next `azd up` from creating it again. Delete it and purge it, with its service principal, which Entra moves to its recycle bin with the app:
 
   ```powershell
   $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-  azd down --purge
+  $sp = az ad sp show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
+  azd down --purge --force
   az ad app delete --id $app
   az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+  az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$sp"
   ```
 
-Allow about half an hour: `azd down --purge` took 31 minutes 45 seconds when we removed a second environment of this solution, before the reporting function existed.
+Without `--force`, `azd down` lists what it will delete and asks you to confirm; without a terminal to ask in, it stops there and deletes nothing. Then `azd env set GITHUB_ISSUES_TOKEN ''` removes the token from your local azd environment. Deleting the group also moves the service principals of its managed identities to Entra's recycle bin: in the copy, six of them, the test's two, RequestHub's two, and those of the Load Testing resource and the function. Entra refused to purge them in our fresh setup; it removes them after 30 days.
+
+Allow about half an hour: `azd down --purge --force` took 27 minutes 14 seconds in our fresh setup, most of it for the Container Apps environment, and 31 minutes 45 seconds when we removed a second environment of this solution, before the reporting function existed. Afterwards nothing of the copy's environment was left in Azure, and in Microsoft Entra ID only those principals in the recycle bin ([the evidence](evidence/2026-11-11-fresh-setup.md#the-clean-up-and-what-is-left)).
 
 ## What's in this folder
 
@@ -565,7 +578,8 @@ Allow about half an hour: `azd down --purge` took 31 minutes 45 seconds when we 
 04-test-microsoft/
 ├── README.md
 ├── evidence/
-│   └── 2026-10-31-recorded-run.md  what Azure recorded during the run in See it work, exported for anyone to check
+│   ├── 2026-10-31-recorded-run.md  what Azure recorded during the run in See it work, exported for anyone to check
+│   └── 2026-11-11-fresh-setup.md   a setup from scratch that followed only this README, timed step by step
 ├── images/                       screenshots of the run in See it work, and of the Test combo (combo-*)
 ├── loadtest/
 │   ├── locustfile.py             the journey: requester and approver virtual users, sign-in, cleanup
@@ -601,6 +615,7 @@ RequestHub lives in [`app/`](../../app/README.md). In the copy, this solution de
 
 ## Troubleshooting
 
+- **`azd up` shows none of what its hooks print, not even the guardrails' `PASS`.** azd shows a hook that isn't `interactive` in a small pane that it clears once the hook succeeds. Since 11 November, this folder's [`azure.yaml`](azure.yaml) makes every hook interactive. With an older copy, `python sync_test.py check` prints the guardrails' verdict without changing anything in Azure, and `python sync_test.py setup` prints the rest as it applies the test again.
 - **`AzureCLICredential: exit status 1` during `azd up` or `azd provision`.** azd could not get a token from the Azure CLI. Run `az account get-access-token`, then run the command again.
 - **`Not a valid reference update` for `appRoleAssignedTo` during `azd up`.** Microsoft Graph had not seen the new identities yet. Run `azd provision` again.
 - **`azd provision` fails with *Null change is not supported. Only compute related change is allowed, when the server is in stopped state*.** The PostgreSQL server is stopped. Start it (next item), then run `azd provision` again.
