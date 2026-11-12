@@ -1,0 +1,8 @@
+{
+  "status": "FAIL",
+  "reason": "Regression still fails after repair",
+  "base_sha": "89b287e8af008c7d4885cfc4265a3f748429ca7b",
+  "head_sha": "ea73d339b3be0a9d74c247dd634fe13d42ece231",
+  "schema_version": "1.0",
+  "timestamp_utc": "2026-11-12T18:40:00.947374+00:00"
+}
