@@ -63,17 +63,36 @@ class EntitlementTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 triage.preflight("demo/repo", "lab/secure-test")
 
-    def test_unrelated_or_unsafe_ref_is_rejected(self):
-        for ref in ("main", "--all", "lab/secure-x/../main", "release/latest", "lab/secure-"):
-            with self.subTest(ref=ref), self.assertRaises(ValueError):
+    def test_unsafe_ref_is_rejected_before_any_lookup(self):
+        for ref in ("--all", "lab/secure-x/../main", "/main", "lab/secure-x;rm"):
+            with self.subTest(ref=ref), patch.object(triage, "api") as api, self.assertRaises(ValueError):
                 triage.preflight("demo/repo", ref)
+            api.assert_not_called()
 
-    def test_copilot_branch_must_target_lab(self):
-        with patch.object(triage, "api", side_effect=[
-                {"private": False, "owner": {"type": "User", "login": "demo"}},
-                [{"base": {"ref": "main"}, "head": {"repo": {"full_name": "demo/repo"}}}]]):
-            with self.assertRaises(ValueError):
-                triage.preflight("demo/repo", "copilot/fix")
+    def test_default_and_lab_branches_are_scanned_without_a_pull_request(self):
+        repository = {"private": False, "default_branch": "main", "owner": {"type": "User", "login": "demo"}}
+        for ref in ("main", "lab/secure-20261112-120000"):
+            with self.subTest(ref=ref), patch.object(triage, "api", side_effect=[repository, {"sha": SHA}]):
+                self.assertEqual("PASS", triage.preflight("demo/repo", ref)["status"])
+
+    def test_other_branches_need_an_open_same_repository_pull_request_into_main_or_a_lab(self):
+        repository = {"private": False, "default_branch": "main", "owner": {"type": "User", "login": "demo"}}
+        same, fork = {"full_name": "demo/repo"}, {"full_name": "mallory/repo"}
+        for ref, pulls, allowed in (
+            ("copilot/fix", [{"base": {"ref": "lab/secure-1"}, "head": {"repo": same}}], True),
+            ("feature", [{"base": {"ref": "main"}, "head": {"repo": same}}], True),
+            ("feature", [{"base": {"ref": "main"}, "head": {"repo": fork}}], False),
+            ("feature", [{"base": {"ref": "release"}, "head": {"repo": same}}], False),
+            ("release/latest", [], False),
+            ("lab/secure-", [], False),
+        ):
+            with self.subTest(ref=ref, pulls=pulls), patch.object(
+                    triage, "api", side_effect=[repository, pulls, {"sha": SHA}]):
+                if allowed:
+                    self.assertEqual("PASS", triage.preflight("demo/repo", ref)["status"])
+                else:
+                    with self.assertRaises(ValueError):
+                        triage.preflight("demo/repo", ref)
 
 
 class SarifTests(unittest.TestCase):
@@ -195,6 +214,110 @@ class ReplayWorkflowTests(unittest.TestCase):
         permissions = re.search(r"^permissions:\n((?:  .*\n)+)", workflow, re.MULTILINE).group(1)
         self.assertEqual(["  contents: read", "  pull-requests: read"], permissions.strip("\n").splitlines())
         self.assertNotRegex(workflow, r": write\b|\bsecrets\.|\bgit push\b|\bgit commit\b|\bgh pr comment\b")
+
+
+class ScanWorkflowTests(unittest.TestCase):
+    """The scan's rules, evaluated as GitHub evaluates the expressions in the workflow file."""
+
+    workflow = (ROOT / ".github/workflows/secure-github-scan.yml").read_text()
+
+    @staticmethod
+    def evaluate(expression, values):
+        expression = re.sub(r"startsWith\(([\w.]+), '([^']*)'\)",
+                            lambda call: repr(str(values.get(call[1]) or "").startswith(call[2])), expression)
+        for name, value in sorted(values.items(), key=lambda item: -len(item[0])):
+            expression = expression.replace(name, repr(value))
+        return eval(expression.replace("&&", " and ").replace("||", " or "), {"__builtins__": {}})
+
+    def test_only_this_repositorys_branches_start_a_scan(self):
+        block = re.search(r"^  entitlement:\n    if: >-\n((?:      .+\n)+)", self.workflow, re.MULTILINE).group(1)
+        expression = " ".join(block.split())
+        for event, ref, head_repo, expected in (
+            ("workflow_dispatch", "refs/heads/main", None, True),
+            ("workflow_dispatch", "refs/heads/lab/secure-1", None, False),
+            ("push", "refs/heads/lab/secure-1", None, True),
+            ("pull_request", "refs/pull/7/merge", "octo/requesthub", True),
+            ("pull_request", "refs/pull/7/merge", "mallory/requesthub", False),
+        ):
+            with self.subTest(event=event, ref=ref, head_repo=head_repo):
+                self.assertEqual(expected, self.evaluate(expression, {
+                    "github.event_name": event, "github.ref": ref, "github.repository": "octo/requesthub",
+                    "github.event.pull_request.head.repo.full_name": head_repo}))
+
+    def test_the_lab_pull_request_must_show_the_injection_and_the_repair_must_not(self):
+        verify = " ".join(re.search(r"Verify the expected finding[\s\S]*?\n        if: >-\n((?:          .+\n)+)",
+                                    self.workflow).group(1).split())
+        expect = re.search(r"EXPECT: \$\{\{ (.+) \}\}", self.workflow).group(1)
+        for event, head, base, dispatched, expected in (
+            ("pull_request", "lab/secure-20261112-120000", "main", "", "present"),
+            ("pull_request", "copilot/fix-search", "lab/secure-20261112-120000", "", "absent"),
+            ("pull_request", "lab/secure-replay-repair", "lab/secure-replay", "", "absent"),
+            ("pull_request", "melabadi-feature", "main", "", None),
+            ("push", "", "", "", None),
+            ("workflow_dispatch", "", "", "absent", "absent"),
+            ("workflow_dispatch", "", "", "present", "present"),
+        ):
+            with self.subTest(event=event, head=head, base=base):
+                values = {"github.event_name": event, "github.head_ref": head, "github.base_ref": base,
+                          "inputs.expect": dispatched}
+                self.assertEqual(expected is not None, self.evaluate(verify, values))
+                if expected:
+                    self.assertEqual(expected, self.evaluate(expect, values))
+
+    def test_pull_requests_and_pushes_reach_code_scanning_with_the_checker_from_main(self):
+        upload = re.search(r" upload: \$\{\{ (.+) \}\}", self.workflow).group(1)
+        for event, expected in (("pull_request", "always"), ("push", "always"), ("workflow_dispatch", "never")):
+            with self.subTest(event=event):
+                self.assertEqual(expected, self.evaluate(upload, {"github.event_name": event}))
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.publish_alerts", self.workflow)
+        self.assertEqual(2, self.workflow.count("ref: ${{ github.event.repository.default_branch }}"))
+
+
+class EndpointModelTests(unittest.TestCase):
+    """CodeQL sees the API's request input only through the endpoint models, so they must match the handlers."""
+
+    endpoints = ROOT.parents[1] / "app/src/RequestHub.Api/Endpoints/ApiEndpoints.cs"
+    models = ROOT / ".github/codeql/extensions/requesthub-endpoints/models/ApiEndpoints.model.yml"
+    # Parameters bound from dependency injection, and HttpContext, whose request CodeQL already models.
+    not_request_input = {
+        "HttpContext", "CancellationToken", "RequestWorkflow", "IOptionsMonitor<FaultOptions>", "TimeProvider",
+        "IConfiguration", "IHostEnvironment", "ITriageProvider", "RequestHubDbContext", "IAttachmentStore",
+        "StorageSettings", "DemoSeeder", "ILoggerFactory", "NotificationProcessor",
+    }
+
+    @staticmethod
+    def parameter_types(source, handler):
+        start = re.search(r"\bstatic [^;{=]*?\b" + handler + r"\(", source).end()
+        end, depth = start, 1
+        while depth:
+            depth += {"(": 1, ")": -1}.get(source[end], 0)
+            end += 1
+        types, current, depth = [], "", 0
+        for char in source[start:end - 1] + ",":
+            if char == "," and depth == 0:
+                declaration = re.sub(r"\[[^\]]*\]", " ", current).split("=")[0].split()
+                types.append(declaration[-2].rstrip("?"))
+                current = ""
+                continue
+            depth += {"<": 1, ">": -1, "(": 1, ")": -1}.get(char, 0)
+            current += char
+        return types
+
+    def test_every_request_input_of_every_mapped_handler_is_modeled_as_remote(self):
+        source = self.endpoints.read_text(encoding="utf-8")
+        expected = {}
+        for handler in re.findall(r'\.Map(?:Get|Post|Put|Delete|Patch)\("[^"]*",\s*(?:ApiEndpoints\.)?(\w+)\)', source):
+            types = self.parameter_types(source, handler)
+            if inputs := [i for i, type_ in enumerate(types) if type_ not in self.not_request_input]:
+                expected[handler] = inputs
+        modeled = {}
+        for row in re.findall(r"^\s+- (\[.+\])$", self.models.read_text(encoding="utf-8"), re.MULTILINE):
+            namespace, type_, _, name, signature, ext, output, kind, _ = json.loads(row.replace("False", "false"))
+            self.assertEqual(("RequestHub.Api.Endpoints", "ApiEndpoints", "", "", "remote"),
+                             (namespace, type_, signature, ext, kind))
+            first, last = re.fullmatch(r"Parameter\[(\d+)(?:\.\.(\d+))?\]", output).groups()
+            modeled[name] = list(range(int(first), int(last or first) + 1))
+        self.assertEqual(expected, modeled)
 
 
 replay = load("replay_setup", "replay_setup.py")

@@ -11,10 +11,17 @@ body:
   - type: input
     id: finding
     attributes:
-      label: Real Copilot review comment or successful CodeQL run URL
-      description: AI review and CodeQL are different evidence sources; identify which ran.
+      label: Real Copilot review comment and CodeQL alert URLs
+      description: AI review and CodeQL are different evidence sources; link each one that ran.
     validations:
       required: true
+  - type: input
+    id: autofix
+    attributes:
+      label: Copilot Autofix suggestion URL, if one was offered
+      description: A suggestion to weigh, not a verified repair.
+    validations:
+      required: false
   - type: input
     id: sha
     attributes:
