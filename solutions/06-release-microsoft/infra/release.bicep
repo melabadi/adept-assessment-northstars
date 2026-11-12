@@ -53,23 +53,39 @@ resource registryEvents 'Microsoft.EventGrid/systemTopics@2022-06-15' = {
 // ---------- The trigger's network: a Flex Consumption app reaches its storage only through a private endpoint ----------
 // A Flex Consumption app needs a subnet of its own, which it can't share with the Container Apps environment, so the
 // trigger gets its own small virtual network rather than a change to the app's.
+var triggerNetworkName = 'vnet-release-${resourceToken}'
+var triggerSubnetNames = ['snet-function', 'snet-private-endpoints']
+
+// One network security group per subnet, with no rules of its own: Azure's default rules allow traffic within the
+// virtual network and from Azure Load Balancer, allow outbound traffic to the internet, and deny other inbound traffic.
+// That is all the trigger needs: its virtual network integration carries only its outbound traffic. Each is named
+// <vnet>-<subnet>-nsg-<region>, the name the tenant this was built in gives the group it attaches to a subnet without
+// one, so a deployment there keeps that group rather than detaching it.
+resource triggerSubnetNsgs 'Microsoft.Network/networkSecurityGroups@2024-05-01' = [for subnet in triggerSubnetNames: {
+  name: '${triggerNetworkName}-${subnet}-nsg-${toLower(replace(location, ' ', ''))}'
+  location: location
+  tags: tags
+  properties: { securityRules: [] }
+}]
+
 resource triggerNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = {
-  name: 'vnet-release-${resourceToken}'
+  name: triggerNetworkName
   location: location
   tags: tags
   properties: {
     addressSpace: { addressPrefixes: ['10.41.0.0/24'] }
     subnets: [
       {
-        name: 'snet-function'
+        name: triggerSubnetNames[0]
         properties: {
           addressPrefix: '10.41.0.0/27'
           delegations: [{ name: 'flex', properties: { serviceName: 'Microsoft.App/environments' } }]
+          networkSecurityGroup: { id: triggerSubnetNsgs[0].id }
         }
       }
       {
-        name: 'snet-private-endpoints'
-        properties: { addressPrefix: '10.41.0.32/28' }
+        name: triggerSubnetNames[1]
+        properties: { addressPrefix: '10.41.0.32/28', networkSecurityGroup: { id: triggerSubnetNsgs[1].id } }
       }
     ]
   }
