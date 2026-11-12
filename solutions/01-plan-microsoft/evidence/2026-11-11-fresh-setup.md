@@ -164,8 +164,8 @@ Checked at 18:15:
 What is left:
 
 - **Three deployment records** at subscription scope, as for every azd deployment: those of `azd up` and `azd provision`, and the empty one that `azd down` records. They cost nothing. Their `githubToken` parameter keeps only its type, `SecureString`, and no value.
-- **The GitHub token** `ai-sdlc-plan-fresh`, which can only read and write Issues in the copy. The owner chose to keep it until it expires, on 28 February 2027. Nothing uses it: the Key Vault that held it was purged, and the azd environment no longer has it.
-- **In the copy,** the six closed Issues and the seven labels the run used.
+- **The GitHub token** `ai-sdlc-plan-fresh`, until it was deleted on 12 November 2026, after the seven fresh setups, as the owner asked. Nothing used it after the clean-up: the Key Vault that held it was purged, and the azd environment no longer had it. Its page, read just before the deletion, showed that it could read and write Issues in all of the owner's repositories, not only in the copy: its **Repository access** was **All repositories**, where [step 2](../README.md#2-create-the-github-token) says **Only select repositories**.
+- **In the copy,** the six closed Issues and the seven labels the run used. The copy was deleted on 12 November 2026, after the seven fresh setups, as the owner asked.
 - **In Microsoft Entra ID's recycle bin,** the agent identity blueprint's principal, as in finding 6, until Entra removes it 30 days after its deletion, around 11 December 2026. Checked at 20:59:51, nothing else named after the Foundry account is in the directory or the recycle bin.
 
 ## What it cost

@@ -180,8 +180,8 @@ What is left:
 
 - **Four deployment records** at subscription scope, as for every azd deployment: those of `azd up` and the two `azd provision` runs, and the empty one that `azd down` records. They cost nothing. Their `postureGithubToken` and `postureWebhookSecret` parameters keep only their type, `SecureString`, and no value.
 - **In Entra's recycle bin,** until Entra removes them, 30 days after 17:17 and 17:20: the agent identity, the blueprint's app registration and principal, and the six managed identities' principals. Clean up doesn't purge them, as its text says.
-- **The GitHub token** `ai-sdlc-secure-fresh`, which can read and write the copy's code, Issues, pull requests, and commit statuses. The owner chose to keep it until it expires, on 28 February 2027. Nothing uses it: the Key Vault and the job that held it are gone, and so is the local azd environment.
-- **In the copy,** `main` at `c0ecb8c`, with the fix and its revert merged; the closed Issue #23 and the merged pull requests #24 and #25; and the `posture` label, which GitHub created when the Function filed the Issue with it.
+- **The GitHub token** `ai-sdlc-secure-fresh`, which could read and write the copy's code, Issues, pull requests, and commit statuses, until it was deleted on 12 November 2026, after the seven fresh setups, as the owner asked. Nothing used it after the clean-up: the Key Vault and the job that held it were gone, and so was the local azd environment.
+- **In the copy,** `main` at `c0ecb8c`, with the fix and its revert merged; the closed Issue #23 and the merged pull requests #24 and #25; and the `posture` label, which GitHub created when the Function filed the Issue with it. The copy was deleted on 12 November 2026, after the seven fresh setups, as the owner asked.
 
 ## What it cost
 

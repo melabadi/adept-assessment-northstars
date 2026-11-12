@@ -219,7 +219,7 @@ Checked at 19:46 and, for Microsoft Entra ID, at 20:02:
 What is left:
 
 - **Two deployment records** at subscription scope, as for every azd deployment: that of the first `azd up` that provisioned, and the empty one that `azd down` records. The second `azd up` found no changes and recorded none. They cost nothing, and the template has no secure parameter.
-- **In the copy,** `main` at the pulled d20e654 and then commit `7a94d4b` with the new keyword, which can stay, as the README says; pull request #7, merged; Issue #8 and pull request #9, closed; and the `design-advisor` label.
+- **In the copy,** `main` at the pulled d20e654 and then commit `7a94d4b` with the new keyword, which can stay, as the README says; pull request #7, merged; Issue #8 and pull request #9, closed; and the `design-advisor` label. The copy was deleted on 12 November 2026, after the seven fresh setups, as the owner asked.
 
 The owner then deleted the GitHub App `AI-SDLC design advisor fresh`, as the README says, which removed its installation on the copy: by 20:13, GitHub answered 404 for it.
 
