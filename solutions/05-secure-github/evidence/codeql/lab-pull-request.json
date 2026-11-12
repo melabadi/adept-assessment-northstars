@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "scanned_sha": "804007f4e7c77043493a6112be7de376171157ee",
+  "expect": "present",
+  "rule": "cs/sql-injection",
+  "tool": "CodeQL",
+  "versions": [
+    "2.27.4"
+  ],
+  "runs": 1,
+  "findings": [
+    {
+      "rule": "cs/sql-injection",
+      "path": "app/src/RequestHub.Core/Services/RequestWorkflow.cs",
+      "line": 47,
+      "message": "This query depends on [this external](1)."
+    }
+  ],
+  "reason": "cs/sql-injection present (1 finding(s))",
+  "schema_version": "1.0",
+  "timestamp_utc": "2026-11-12T18:20:05.982975+00:00"
+}

@@ -1,0 +1,15 @@
+{
+  "status": "PASS",
+  "scanned_sha": "126e7294179e405c0827679144a95f7edf609b5d",
+  "expect": "absent",
+  "rule": "cs/sql-injection",
+  "tool": "CodeQL",
+  "versions": [
+    "2.27.4"
+  ],
+  "runs": 1,
+  "findings": [],
+  "reason": "cs/sql-injection absent (0 finding(s))",
+  "schema_version": "1.0",
+  "timestamp_utc": "2026-11-12T19:02:18.083236+00:00"
+}

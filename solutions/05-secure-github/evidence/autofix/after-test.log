@@ -1,0 +1,57 @@
+Running tests from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-y52unpyg/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31mfailed[m RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(persona: "u-ben", scope: "queue", term: "%") [90m(220ms)[m
+  from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-y52unpyg/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31m  Assert.Equal() Failure: Values differ
+  Expected: 1
+  Actual:   19
+[m[90m    at RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(String persona, String scope, String term) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-y52unpyg/app/tests/RequestHub.Tests/SearchSecurityTests.cs:39[90m
+    --- End of stack trace from previous location ---
+[m[31mfailed[m RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(persona: "u-dan", scope: "all", term: "_") [90m(171ms)[m
+  from /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-y52unpyg/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64)
+[31m  Assert.Equal() Failure: Values differ
+  Expected: 0
+  Actual:   25
+[m[90m    at RequestHub.Tests.SearchSecurityTests.Search_treats_SQL_and_wildcards_as_literal_text(String persona, String scope, String term) in /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-y52unpyg/app/tests/RequestHub.Tests/SearchSecurityTests.cs:39[90m
+    --- End of stack trace from previous location ---
+[m[m/home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-y52unpyg/app/tests/RequestHub.Tests/bin/Release/net10.0/RequestHub.Tests.dll (net10.0|x64) [31mfailed with 2 error(s)[m [90m(4s 405ms)[m
+Exit code: 2
+  Standard output: info: Microsoft.Hosting.Lifetime[0]
+        Application started. Press Ctrl+C to shut down.
+  info: Microsoft.Hosting.Lifetime[0]
+        Hosting environment: Testing
+  info: Microsoft.Hosting.Lifetime[0]
+        Content root path: /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/secure-after-y52unpyg/app/src/RequestHub.Api
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 0.1466ms with message 'Database not initialized yet: starting'
+  fail: Microsoft.EntityFrameworkCore.Database.Command[20102]
+        Failed executing DbCommand (9ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+        SELECT "MigrationId", "ProductVersion"
+        FROM "__EFMigrationsHistory"
+        ORDER BY "MigrationId";
+  info: Microsoft.EntityFrameworkCore.Migrations[20402]
+        Applying migration '20261026124855_InitialCreate'.
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 0.0303ms with message 'Database not initialized yet: starting'
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 0.0032ms with message 'Database not initialized yet: starting'
+  fail: Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService[103]
+        Health check startup with status Unhealthy completed after 0.0043ms with message 'Database not initialized yet: starting'
+  info: RequestHub.Api.DatabaseInitializer[0]
+        Seeded demo data for industry general
+  info: RequestHub.Api.DatabaseInitializer[0]
+        Database ready after 1 attempt(s)
+  info: RequestHub.Core.Services.RequestWorkflow[0]
+        Request REQ-1025 created by u-ava for IT
+  info: Microsoft.Hosting.Lifetime[0]
+        Application is shutting down...
+
+  In process file artifacts produced:
+    - /home/runner/work/adept-assessment-northstars/adept-assessment-northstars/out/replay/after/search.junit.xml
+
+[31mTest run summary: Failed!
+[m  total: 10
+[31m  failed: 2
+[m  succeeded: 8
+  skipped: 0
+  duration: 4s 630ms
+Test run completed with non-success exit code: 2 (see: https://aka.ms/testingplatform/exitcodes)

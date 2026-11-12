@@ -1,10 +1,10 @@
 name: Secure · GitHub · CodeQL scan
 
 # CodeQL analyzes every push to main or to a lab branch, and every pull request into one of them that changes the app.
-# Code scanning compares a pull request's analysis with its base branch's and flags new alerts on the pull request; on
-# a pull request into main, Copilot Autofix suggests a fix. The lab's draft pull request into main must show the
-# injection, and Copilot's repair, a pull request into the lab branch, must not. A person can scan one lab or repair
-# branch from main, with an explicit expectation. A fork's pull request starts nothing.
+# Code scanning compares a pull request's analysis with its base branch's and flags new alerts on the pull request,
+# where Copilot Autofix suggests fixes. The lab's draft pull request into main must show the injection, and Copilot's
+# repair, a pull request into the lab branch, must not. A person can scan one lab or repair branch from main, with an
+# explicit expectation. A fork's pull request starts nothing.
 # CodeQL sees the API's request input through the model pack in .github/codeql/extensions.
 on:
   pull_request:
@@ -110,8 +110,8 @@ jobs:
           queries: security-extended
       - name: Build only RequestHub source under analysis (no deployment)
         run: dotnet build target/app/RequestHub.slnx -c Release
-      # A pull request's or a push's analysis goes to code scanning, which flags new alerts on the pull request; on a
-      # pull request into main, Copilot Autofix suggests fixes. A dispatch uploads only when asked, after the check.
+      # A pull request's or a push's analysis goes to code scanning, which flags new alerts on the pull request, where
+      # Copilot Autofix suggests fixes. A dispatch uploads only when asked, after the check.
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           output: out/sarif
@@ -121,12 +121,14 @@ jobs:
           category: secure-github-csharp
       - name: Verify the expected finding and write evidence
         # The lab's pull request must show the injection, and a repair (a pull request into a lab branch) must not.
-        # Other analyses only feed code scanning.
+        # Other analyses only feed code scanning. A stacked pull request, such as Copilot's repair on top of the lab's
+        # pull request, runs as if it targeted the stack's base (github.base_ref is main), so read its own base.
         if: >-
-          github.event_name == 'workflow_dispatch' ||
-          startsWith(github.head_ref, 'lab/secure-') || startsWith(github.base_ref, 'lab/secure-')
+          github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'lab/secure-') ||
+          startsWith(github.event.pull_request.base.ref, 'lab/secure-')
         env:
-          EXPECT: ${{ inputs.expect || (startsWith(github.base_ref, 'lab/secure-') && 'absent' || 'present') }}
+          EXPECT: >-
+            ${{ inputs.expect || (startsWith(github.event.pull_request.base.ref, 'lab/secure-') && 'absent' || 'present') }}
         run: >-
           python trusted/.github/skills/finding-triage/finding_triage.py sarif
           --input out/sarif --expect "$EXPECT" --sha "$SCANNED_SHA" --out out/finding.json

@@ -247,19 +247,22 @@ class ScanWorkflowTests(unittest.TestCase):
     def test_the_lab_pull_request_must_show_the_injection_and_the_repair_must_not(self):
         verify = " ".join(re.search(r"Verify the expected finding[\s\S]*?\n        if: >-\n((?:          .+\n)+)",
                                     self.workflow).group(1).split())
-        expect = re.search(r"EXPECT: \$\{\{ (.+) \}\}", self.workflow).group(1)
-        for event, head, base, dispatched, expected in (
-            ("pull_request", "lab/secure-20261112-120000", "main", "", "present"),
-            ("pull_request", "copilot/fix-search", "lab/secure-20261112-120000", "", "absent"),
-            ("pull_request", "lab/secure-replay-repair", "lab/secure-replay", "", "absent"),
-            ("pull_request", "melabadi-feature", "main", "", None),
-            ("push", "", "", "", None),
-            ("workflow_dispatch", "", "", "absent", "absent"),
-            ("workflow_dispatch", "", "", "present", "present"),
+        expect = re.search(r"EXPECT: >-\n\s+\$\{\{ (.+) \}\}", self.workflow).group(1)
+        # A stacked pull request reports the stack's base (main) as github.base_ref, and its own base in the event.
+        for event, head, base, stack_base, dispatched, expected in (
+            ("pull_request", "lab/secure-20261112-120000", "main", "main", "", "present"),
+            ("pull_request", "copilot/fix-search", "lab/secure-20261112-120000", "main", "", "absent"),
+            ("pull_request", "copilot/fix-search", "lab/secure-20261112-120000", "lab/secure-20261112-120000", "",
+             "absent"),
+            ("pull_request", "lab/secure-replay-repair", "lab/secure-replay", "lab/secure-replay", "", "absent"),
+            ("pull_request", "melabadi-feature", "main", "main", "", None),
+            ("push", "", "", "", "", None),
+            ("workflow_dispatch", "", "", "", "absent", "absent"),
+            ("workflow_dispatch", "", "", "", "present", "present"),
         ):
-            with self.subTest(event=event, head=head, base=base):
-                values = {"github.event_name": event, "github.head_ref": head, "github.base_ref": base,
-                          "inputs.expect": dispatched}
+            with self.subTest(event=event, head=head, base=base, stack_base=stack_base):
+                values = {"github.event_name": event, "github.head_ref": head, "github.base_ref": stack_base,
+                          "github.event.pull_request.base.ref": base, "inputs.expect": dispatched}
                 self.assertEqual(expected is not None, self.evaluate(verify, values))
                 if expected:
                     self.assertEqual(expected, self.evaluate(expect, values))

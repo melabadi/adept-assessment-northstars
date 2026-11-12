@@ -1,8 +1,8 @@
 {
   "status": "PASS",
-  "base_sha": "ac3a863225a59931eaadb9f1fc4d8941dd649071",
-  "head_sha": "cc9ff4fcf1f7845d211949a4d96d6644afc61a00",
-  "tests_only_sha": "00740bdeac0af53c3dfc7db1c02ce3059ed7d773",
+  "base_sha": "89b287e8af008c7d4885cfc4265a3f748429ca7b",
+  "head_sha": "126e7294179e405c0827679144a95f7edf609b5d",
+  "tests_only_sha": "242505394f7bfd3f79fa9ab32fa360b444ff2eda",
   "checks": {
     "before": {
       "exit_code": 2,
@@ -26,5 +26,5 @@
   },
   "reason": "regression failed before repair, passed after; full app suite passed",
   "schema_version": "1.0",
-  "timestamp_utc": "2026-11-01T02:45:28.645109+00:00"
+  "timestamp_utc": "2026-11-12T18:49:34.842899+00:00"
 }
