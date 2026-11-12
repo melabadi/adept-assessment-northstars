@@ -194,8 +194,8 @@ What is left:
 
 - **Three deployment records** at subscription scope, as for every azd deployment: those of `azd up` and `azd provision`, and the empty one that `azd down` records. They cost nothing. Their `githubIssuesToken` parameter keeps only its type, `SecureString`, and no value.
 - **The six managed identities' service principals,** in Entra's recycle bin until it removes them, 30 days after 23:47.
-- **The GitHub token** `ai-sdlc-test-fresh`, which can only read and write the copy's Issues. The owner chose to keep it until it expires, on 28 February 2027. Nothing uses it: the Key Vault that held it was purged, and the azd environment no longer has it.
-- **In the copy,** `main` at `62d2667`, the closed Issue #21, and the `load-test` label, which GitHub created when the function opened the Issue with it.
+- **The GitHub token** `ai-sdlc-test-fresh`, which could only read and write the copy's Issues, until it was deleted on 12 November 2026, after the seven fresh setups, as the owner asked. Nothing used it after the clean-up: the Key Vault that held it was purged, and the azd environment no longer had it.
+- **In the copy,** `main` at `62d2667`, the closed Issue #21, and the `load-test` label, which GitHub created when the function opened the Issue with it. The copy was deleted on 12 November 2026, after the seven fresh setups, as the owner asked.
 
 ## What it cost
 

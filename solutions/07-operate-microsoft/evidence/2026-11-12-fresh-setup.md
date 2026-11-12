@@ -326,8 +326,8 @@ What is left:
 
 - **Two deployment records** at subscription scope, as for every azd deployment: that of `azd up`, and the empty one that `azd down` records. `azd provision`, which found no changes, recorded none. They cost nothing, and the template has no secure parameter.
 - **The four managed identities' service principals,** in Entra's recycle bin until it removes them, 30 days after they were deleted.
-- **The GitHub token** `ai-sdlc-operate-fresh`, which can only read the copy's contents. The owner chose to keep it until it expires, on 28 February 2027. Nothing uses it: the agent that held it is deleted.
-- **In the copy,** the update's merge commit `7f6b5d0` in `main`'s history, the closed Issue #26, and the label `phase:operate`, which the Quick start created; `ai-sdlc` existed already.
+- **The GitHub token** `ai-sdlc-operate-fresh`, which could only read the copy's contents, until it was deleted on 12 November 2026, after the seven fresh setups, as the owner asked. Nothing used it after the clean-up: the agent that held it was deleted.
+- **In the copy,** the update's merge commit `7f6b5d0` in `main`'s history, the closed Issue #26, and the label `phase:operate`, which the Quick start created; `ai-sdlc` existed already. The copy was deleted on 12 November 2026, after the seven fresh setups, as the owner asked.
 - **In the other deployment's agent,** its thread on the first drill's alert, with the active flow it used.
 - **The local clone's azd environment,** which `azd down` left with the environment's name, its subscription, and the two services' names, images, and address; it holds no password or token.
 

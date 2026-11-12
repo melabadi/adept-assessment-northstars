@@ -228,9 +228,9 @@ What is left:
 
 - **Two deployment records** at subscription scope, as for every azd deployment: that of `azd up`, and the empty one that `azd down` records. They cost nothing, and the template has no secure parameter.
 - **The three managed identities' service principals,** in Entra's recycle bin until it removes them, 30 days after 05:20.
-- **The GitHub token** `ai-sdlc-release-fresh`, which can only read the copy's contents and commit statuses and manage its webhooks. The owner chose to keep it until it expires, on 28 February 2027. Nothing uses it: the build task that held it was deleted with the registry, and its webhook is gone.
-- **In the copy,** `main` at `edb1fbf` with the step's new note, `notes/06-release-fresh-setup.md`, and the merged pull request #22, whose branch was deleted.
-- **The local clone's azd environment,** which holds no secret: the solution stores none there.
+- **The GitHub token** `ai-sdlc-release-fresh`, which could only read the copy's contents and commit statuses and manage its webhooks, until it was deleted on 12 November 2026, after the seven fresh setups, as the owner asked. Nothing used it after the clean-up: the build task that held it was deleted with the registry, and its webhook was gone.
+- **In the copy,** `main` at `edb1fbf` with the step's new note, `notes/06-release-fresh-setup.md`, and the merged pull request #22, whose branch was deleted. The copy was deleted on 12 November 2026, after the seven fresh setups, as the owner asked.
+- **The local clone's azd environment,** which held no secret: the solution stores none there. The clone was deleted with the copy.
 
 ## What it cost
 

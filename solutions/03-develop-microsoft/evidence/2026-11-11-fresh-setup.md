@@ -266,8 +266,8 @@ What is left:
 
 - **Three deployment records** at subscription scope, as for every azd deployment: those of the two `azd up` runs that provisioned, and the empty one that `azd down` records. They cost nothing. Their `githubToken` and `githubWebhookSecret` parameters keep only their type, `SecureString`, and no value.
 - **The agent blueprint's principal,** in Entra's recycle bin until it removes it, 30 days after 21:38.
-- **The GitHub token** `ai-sdlc-develop-fresh`, which can only read the copy's code and read and write its pull requests. The owner chose to keep it until it expires, on 28 February 2027. Nothing uses it: the Key Vault that held it was purged, and neither the azd environment nor the copy's webhooks have it.
-- **In the copy,** `main` at `334a6df`, the closed pull requests #10 to #20, and the *Repository checks* run that never left the queue.
+- **The GitHub token** `ai-sdlc-develop-fresh`, which could only read the copy's code and read and write its pull requests, until it was deleted on 12 November 2026, after the seven fresh setups, as the owner asked. Nothing used it after the clean-up: the Key Vault that held it was purged, and neither the azd environment nor the copy's webhooks had it.
+- **In the copy,** `main` at `334a6df`, the closed pull requests #10 to #20, and the *Repository checks* run that never left the queue. The copy was deleted on 12 November 2026, after the seven fresh setups, as the owner asked.
 
 ## What it cost
 
