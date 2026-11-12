@@ -174,23 +174,39 @@ resource appInsightsConnection 'Microsoft.CognitiveServices/accounts/projects/co
 }
 
 // ---------- Network: the Function reaches Key Vault and its storage (blobs and queues) through private endpoints ----------
+var vnetName = 'vnet-${resourceToken}'
+var subnetNames = ['snet-function', 'snet-private-endpoints']
+
+// One network security group per subnet, with no rules of its own: Azure's default rules allow traffic within the
+// virtual network and from Azure Load Balancer, allow outbound traffic to the internet, and deny other inbound traffic.
+// That is all the Function needs: its virtual network integration carries only its outbound traffic. Each is named
+// <vnet>-<subnet>-nsg-<region>, the name the tenant this was built in gives the group it attaches to a subnet without
+// one, so a deployment there keeps that group rather than detaching it.
+resource subnetNsgs 'Microsoft.Network/networkSecurityGroups@2024-05-01' = [for subnet in subnetNames: {
+  name: '${vnetName}-${subnet}-nsg-${toLower(replace(location, ' ', ''))}'
+  location: location
+  tags: tags
+  properties: { securityRules: [] }
+}]
+
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
-  name: 'vnet-${resourceToken}'
+  name: vnetName
   location: location
   tags: tags
   properties: {
     addressSpace: { addressPrefixes: ['10.42.0.0/16'] }
     subnets: [
       {
-        name: 'snet-function'
+        name: subnetNames[0]
         properties: {
           addressPrefix: '10.42.0.0/26'
           delegations: [{ name: 'flex', properties: { serviceName: 'Microsoft.App/environments' } }]
+          networkSecurityGroup: { id: subnetNsgs[0].id }
         }
       }
       {
-        name: 'snet-private-endpoints'
-        properties: { addressPrefix: '10.42.1.0/27' }
+        name: subnetNames[1]
+        properties: { addressPrefix: '10.42.1.0/27', networkSecurityGroup: { id: subnetNsgs[1].id } }
       }
     ]
   }
