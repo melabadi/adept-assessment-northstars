@@ -4,11 +4,29 @@ Small, well-defined features wait in the backlog until a developer has time to w
 
 ![Copilot's pull request for the feature Issue: Copilot requests your review, and its summary describes the API, the staleness and concurrency rules, the audit entry, the UI, and the contract change](images/05-pr-description.png)
 
+- **Install it in your repository:** [copy 10 files, edit them for your code, and set them up once](#install-it-in-your-repository), with the commands in order in [Getting started](#getting-started). Copying took 6 seconds when this README was checked; the rest is two labels, a settings page, a pull request, and a ruleset.
+- **Files to edit to tweak it:** [the agent's instructions, the boundary checker's paths, the test runner, and the issue form](#files-to-edit-to-tweak-it).
 - **See it work:** [a real run on this repository](#see-it-work), step by step. A feature Issue became a pull request of 13 files and 18 new tests after 28 minutes of Copilot's unattended work. The reviewer's own test and a click-through then found two defects that every check had missed, and Copilot fixed both on the same branch. Every step has a screenshot and a link anyone can open.
-- **Add it to your repository:** [copy 9 files, adapt them to your code, and set them up once](#add-it-to-your-repository). Copying took 6 seconds when this README was checked; the rest is two labels, a settings page, a pull request, and a ruleset.
 - **Try it first in a copy of this repository:** [about a minute to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md) makes once for every solution. A run then needs about 30 minutes of Copilot and the checks working unattended.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [Copilot cloud agent](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github) | Builds the feature from its Issue, unattended, on its own branch, in a session on GitHub Actions, and opens the pull request |
+| A [custom agent](https://docs.github.com/en/copilot/concepts/customizations/custom-agents) and three [agent skills](https://docs.github.com/en/copilot/concepts/customizations/agent-skills) | Tell Copilot how to work: turn each acceptance criterion into a test, stay inside the feature's bounds, run the test suites the change touches, and keep the API contract additive |
+| [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-cli) | Runs the same agent on the reviewer's machine, to run their own test on Copilot's branch and fix the code |
+| GitHub Issues, with an [issue form](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms) | Hold the feature and its numbered acceptance criteria; the `phase:develop` label marks the pull request that closes the Issue as a feature |
+| [GitHub Actions](https://docs.github.com/en/actions) | Runs the bounds check and your CI on the pull request, and Copilot's session, which `copilot-setup-steps.yml` prepares |
+| [Rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) | Make the bounds check and your tests required before a merge |
+| Python 3.12, standard library only | The boundary checker, the test runner, and the contract check |
+| GitHub CLI and PowerShell 7 | The commands in this README |
+
+The files are written for RequestHub's stack: a .NET 10 API with EF Core and xUnit v3 integration tests on PostgreSQL, and a React and TypeScript web UI with Vitest and Playwright. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for yours.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 3 of 7: Develop.** Today a small feature waits until a developer has time, its tests come last if at all, and the reviewer checks by hand that the pipeline, the infrastructure, and the approval rules didn't change with it. With this solution the Issue is the contract: each numbered criterion becomes a test, a check proves that the change stayed inside its bounds, and the reviewer's time goes to what no check can judge.
 
@@ -19,16 +37,11 @@ Small, well-defined features wait in the backlog until a developer has time to w
 | Boundaries | Reviewers hope nobody touched the pipeline, the infrastructure, or the approval rules. | A check fails the pull request when it leaves the app's folder, touches approval authority, edits an existing migration, deletes or skips a test, changes code without a test, or breaks the API contract. |
 | Review | The reviewer reconstructs what changed and why. | The checks have already run. The reviewer adds an independent test, clicks through the feature, and sends findings back to Copilot on the same branch. |
 
-The value: a bounded feature goes from an Issue to a tested pull request without a developer's time, and the reviewer spends theirs where no check can help. The run in [See it work](#see-it-work), on 28 October 2026, measured:
-
-- **6 seconds** from assigning the Issue to Copilot's draft pull request, then **28 minutes** of unattended work: 13 files changed, all under `app/`, with 14 new API tests and 4 new web tests.
-- **3 minutes 15 seconds** for CI and **16 seconds** for the bounds check, once a person approved the runs. Both passed on every commit they ran on.
-- **Two defects that every check missed**, found by the reviewer: one by their own browser test, which Copilot CLI fixed in one line of code; one by clicking through, which Copilot fixed 2 minutes 34 seconds after an `@copilot` comment.
-- **51 minutes** from filing the Issue to green checks, 20 of them waiting for a person to approve the workflow runs.
+The value: a bounded feature goes from an Issue to a tested pull request without a developer's time, and the reviewer spends theirs where no check can help. [Results and value](#results-and-value) has what the recorded run measured.
 
 The Microsoft counterpart, [03-develop-microsoft](../03-develop-microsoft/), reviews pull requests from Azure. The [Develop combo](../../PRESENTING.md#develop-copilot-writes-azure-reviews-a-person-decides) uses both on one change: Copilot writes it, Azure reviews the same commit, and a person decides. [Follow one requirement from Plan to Test](../../PRESENTING.md#follow-one-requirement-from-plan-to-test) takes one stakeholder decision through this solution.
 
-## How it works
+### How it works
 
 ```mermaid
 flowchart LR
@@ -49,6 +62,219 @@ flowchart LR
 - **A person** writes the Issue, approves the workflow runs on Copilot's pull request, writes an independent test from the acceptance criteria, clicks through, sends findings back with `@copilot`, and decides. In RequestHub itself only an approver ever approves a request, and the feature can't change that.
 
 **Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot, and Copilot ignores `@copilot` comments from anyone else. The bounds check runs on every pull request, forks included, with a read-only token: it reads the commits as data and never runs them. CI runs a fork's code with a read-only token and no secrets, once someone with write access approves the run.
+
+## Install it in your repository
+
+[Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for your code. The commands are the ones this repository uses.
+
+### Prerequisites
+
+- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts use only Python's standard library.
+- **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your repository. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). To run your own test on Copilot's branch from your machine, as in [step 6](#6-the-reviewers-own-test-failed-and-the-code-was-fixed-not-the-test), install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli).
+- **A Copilot session on GitHub Actions.** Copilot runs your tests in its session, with the services that `copilot-setup-steps.yml` starts ([this repository's](../../.github/workflows/copilot-setup-steps.yml) starts PostgreSQL). Cloud sandboxes don't run setup steps, and cloud is the default wherever GitHub offers a choice of environment ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)). Assigning the Issue started a GitHub Actions-based session in the recorded run and in the 10 November run; if you're offered a choice of environment, pick GitHub Actions.
+- **Write access** to assign Issues to Copilot and approve its workflow runs, and admin access for the ruleset in [one-time step 6](#one-time-setup).
+- **A CI workflow that runs your tests** on pull requests. The bounds check judges where a change goes; your CI decides whether it works. RequestHub's is [`ci.yml`](../../.github/workflows/ci.yml).
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must list `workflow` among the token's scopes, Python must be 3.12 or later, and PowerShell 7.4 or later. Copilot CLI is needed only to run your own test on Copilot's branch ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   copilot --version
+   ```
+
+2. **Copy the files on a new branch.** The copy adds the licence that must travel with the files, as `.github/LICENSE-ai-sdlc`, and prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-develop-github
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-03-develop-github'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   New-Item -ItemType Directory -Force .github | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $src 'solutions/03-develop-github/.github/*') .github
+   Copy-Item -Force (Join-Path $src 'LICENSE') .github/LICENSE-ai-sdlc
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 10 new files, in 6 seconds when this README was checked; the other files in `.github/` stay. GitHub reads a repository's own licence only from its root, so yours doesn't change.
+
+3. **Edit the files for your code,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) lists. Then run the checker, with `--base` set to your default branch if that isn't `origin/main`:
+
+   ```powershell
+   python .github/skills/bounded-feature/scope_check.py
+   ```
+
+   On this branch, which isn't a feature, it fails each copied file as out of scope ([one-time step 1](#one-time-setup)).
+
+4. **Set it up once.** Give Copilot your test environment in `copilot-setup-steps.yml`, create the labels, and allow the Copilot cloud agent in your repository ([one-time steps 2 to 4](#one-time-setup)):
+
+   ```powershell
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:develop --color C5DEF5 --description "SDLC phase 3: Develop" --force
+   ```
+
+5. **Merge it into your default branch,** where the cloud agent finds custom agents and GitHub offers issue forms ([one-time step 5](#one-time-setup)). Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .github
+   git commit -m "Add 03-develop-github from ai-sdlc <commit>"
+   git push -u origin add-develop-github
+   gh pr create --fill
+   ```
+
+   Merge the pull request as you merge any change. Then require *Feature stays within its bounds* and your test jobs in a ruleset ([one-time step 6](#one-time-setup)).
+
+6. **Use it on your next feature.** File it with the *Develop: bounded feature for Copilot* form, then assign it to Copilot with the `develop-github` agent (replace `<issue>`, and `main` if your default branch has another name):
+
+   ```powershell
+   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
+   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = 'main'; custom_agent = 'develop-github' } } |
+     ConvertTo-Json | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '"Assigned to: " + ([.assignees[].login] | join(", "))'
+   ```
+
+   Then approve its workflow runs, review the change, and decide, as [Use it the first time](#use-it-the-first-time) describes.
+
+### One-time setup
+
+1. **Copy the files and make the changes in [Files to edit to tweak it](#files-to-edit-to-tweak-it),** on a branch, as in [Getting started](#getting-started). What you should see: the checker judges that branch, which changes only `.github/`, as out of bounds, because it isn't a feature. Run it with `--base` set to your default branch if that isn't `origin/main`:
+
+   ```powershell
+   python .github/skills/bounded-feature/scope_check.py
+   ```
+
+   It prints `FAIL out of scope (CI/CD or agent configuration)` for each copied file and exits with 1. On a feature's branch, it ends with `PASS change stays within feature bounds`.
+2. **Give Copilot your test environment.** Before Copilot starts, GitHub runs the job named `copilot-setup-steps` in `.github/workflows/copilot-setup-steps.yml`. Install your toolchain there and start your database as a service, as [this repository's](../../.github/workflows/copilot-setup-steps.yml) does for .NET, Node.js, Playwright, Python, and PostgreSQL. What you should see: once the file is on your default branch, `gh workflow run copilot-setup-steps.yml` starts it (it needs a `workflow_dispatch` trigger, as this repository's has), and `gh run list --workflow copilot-setup-steps.yml --limit 1` then shows it `completed` with `success`.
+3. **Create the labels** that the issue form applies:
+
+   ```powershell
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:develop --color C5DEF5 --description "SDLC phase 3: Develop" --force
+   ```
+
+   What you should see: `gh label list --search phase:develop` prints `phase:develop  SDLC phase 3: Develop  #C5DEF5` on its first line.
+4. **Allow the Copilot cloud agent** in the repository, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**, and this query prints `copilot-swe-agent`:
+
+   ```powershell
+   gh api graphql -F owner='{owner}' -F name='{repo}' --jq '.data.repository.suggestedActors.nodes[].login' -f query='
+     query($owner: String!, $name: String!) {
+       repository(owner: $owner, name: $name) { suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 10) { nodes { login } } }
+     }'
+   ```
+5. **Merge it into your default branch.** The cloud agent offers only the custom agents on the default branch, and the issue form appears only from there. What you should see:
+
+   ```powershell
+   gh api 'repos/{owner}/{repo}/contents/.github/agents/develop-github.agent.md' --jq .path
+   ```
+
+   prints `.github/agents/develop-github.agent.md`, and **New issue** offers *Develop: bounded feature for Copilot*.
+6. **Make the checks a gate.** In a branch ruleset on your default branch, require the status check *Feature stays within its bounds* and your test jobs, so a red check blocks the merge. A required check must report on every pull request, and one skipped by a `paths` filter stays pending: that is why the bounds workflow has none, and passes every other pull request in seconds (6 to 8 in this repository). What you should see: `gh api 'repos/{owner}/{repo}/rules/branches/<default branch>' --jq '.[].type'` lists `required_status_checks`.
+
+### Use it the first time
+
+On your own feature, the steps are those of [See it work](#see-it-work):
+
+1. **Write the feature as an Issue** with the *Develop: bounded feature for Copilot* form: one problem, a scope that adds rather than changes, numbered acceptance criteria that can each become a test (name the status and error codes), and what is out of scope. See [step 1](#1-the-feature-was-written-as-an-issue-with-testable-criteria).
+2. **File it.** The form applies the `phase:develop` label, which tells the bounds check that the pull request closing this Issue is a feature. See [step 2](#2-the-owner-filed-the-issue).
+3. **Assign it to Copilot** with the **develop-github** agent and your default branch as the base branch. From a terminal instead (replace `<issue>` and `main`; it prints `Assigned to:`, then Copilot and your login):
+
+   ```powershell
+   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
+   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = 'main'; custom_agent = 'develop-github' } } |
+     ConvertTo-Json | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '"Assigned to: " + ([.assignees[].login] | join(", "))'
+   ```
+
+   What you should see: within seconds Copilot opens a draft pull request, and when its session ends, it asks you for a review, as in [step 3](#3-copilot-opened-a-draft-pull-request-and-built-the-feature).
+4. **Approve its workflow runs:** select **Approve workflows to run** in the pull request's merge box, or **Approve and run** on a waiting run. From a terminal, start every waiting run of the latest commit and follow the checks:
+
+   ```powershell
+   $head = gh pr view <pr> --json headRefOid -q .headRefOid
+   gh run list --commit $head --status action_required --json databaseId -q '.[].databaseId' | ForEach-Object { gh run rerun $_ }
+   gh pr checks <pr> --watch
+   ```
+
+   Approve again after each push from Copilot. See [step 4](#4-a-person-approved-the-workflow-runs-and-the-checks-passed).
+5. **Read the change against the criteria:** the tests' names, the bounds check's job summary (every changed file and the verdict), and Copilot's summary, for decisions the Issue didn't settle. See [step 5](#5-the-reviewer-read-the-change-against-the-criteria).
+6. **Test it yourself.** Write your own test from the acceptance criteria, not from Copilot's code. When Copilot's session has ended (one agent at a time works on a branch), check out the branch, add your test, and have Copilot CLI run it and fix the code if it fails. Send other findings back with an `@copilot` comment on the pull request: a new session starts within seconds and pushes to the same branch. See [step 6](#6-the-reviewers-own-test-failed-and-the-code-was-fixed-not-the-test).
+7. **Click through, then decide.** Mark the pull request ready for review, then approve it or request changes as a GitHub review:
+
+   ```powershell
+   gh pr ready <pr>
+   gh pr review <pr> --approve --body "<what you checked: the criteria, the checks, your own test>"
+   ```
+
+   Use `--request-changes` instead of `--approve` to send it back. Once you approve, merge it as you merge any change. See [step 7](#7-clicking-through-found-one-more-defect-and-a-person-decided).
+
+Then make it part of your workflow:
+
+- **Hand Copilot bounded features:** small, additive changes with numbered criteria that can each become a test. The bounds check fails a change that leaves your app's folder, edits an existing migration, touches approval authority, deletes or skips a test, changes code without a test, or breaks the API contract, so keep that work with people.
+- **Keep the checks required.** *Feature stays within its bounds* and your test jobs stay in the ruleset ([one-time step 6](#one-time-setup)). The bounds check passes every pull request that isn't a feature in seconds, so it blocks nothing else.
+- **Change the rules through reviewed pull requests.** The bounds check runs the checker from the base branch, so a change to `scope_check.py` applies once it merges. GitHub runs a pull request's own copy of the workflow file, so review every change to it.
+
+**The metric to track when you adopt it:** lead time from a feature Issue to a pull request that passes its checks, from the Issue's creation to the first green run of CI and the bounds check (both timestamps are on GitHub), with the review rounds after it tracked alongside: the commits pushed after Copilot asked for review. The recorded run measured 51 minutes 17 seconds, 19 minutes 41 seconds of them waiting for a person, then three review rounds: Copilot CLI's fix and two `@copilot` fixes. Compare both with similar features built before you adopted it. A target such as "most bounded features green within an hour of the Issue" is your team's goal, never a result to report.
+
+### What it costs
+
+Setting it up uses no AI credits. Each feature built this way draws on your Copilot plan's AI credits, for the cloud agent's sessions and for Copilot CLI, and on GitHub Actions. In the recorded run, Copilot's three cloud agent sessions reported 14.77, 2.30, and 1.30 AI credits, 18.37 in all, and the Copilot CLI session reported 28.04. The run used 50.6 minutes of standard GitHub-hosted runners: 34.4 for Copilot's three sessions, 14.0 for CI, 0.8 for the bounds check, and 1.5 for this repository's other solutions' checks. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 71 minutes for the recorded run, because each job is rounded up to a whole minute. The length of your test suite changes the CI minutes ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
+
+## Files to edit to tweak it
+
+The copy adds the agent, three skills, the bounds workflow, and the issue form to your `.github/` folder, with the licence, `.github/LICENSE-ai-sdlc`. The solution also relies on two files of your own: your CI workflow, which runs your tests on pull requests, as RequestHub's [`ci.yml`](../../.github/workflows/ci.yml) does, and `copilot-setup-steps.yml`, the cloud agent's environment. The feature and the reviewer's test stay behind, because they describe RequestHub's feature: use [`feature-issue.md`](feature-issue.md) and [`confirm-routing.spec.ts`](regression/confirm-routing.spec.ts) as examples for yours. If you already copied 04-test-github, `regression-validation` and `contract-impact` are the same files.
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File, under `.github/` | As shipped, for RequestHub | Change it to |
+| --- | --- | --- |
+| [`agents/develop-github.agent.md`](.github/agents/develop-github.agent.md) | *How to work*: where RequestHub keeps its business rules (`RequestWorkflow`), endpoints (`ApiEndpoints`), UI, and English and French strings; EF Core migrations; the command that regenerates `app/contracts/openapi.json`; and the commands for the scope check and the regression suites. *Rules*: only approvers decide, and every endpoint checks role and department access | Your layout, your migration tool, your commands, and the rules Copilot must never break in your code. Keep the steps that map each criterion to a test and end with a summary, and the rule never to weaken a test. |
+| [`skills/bounded-feature/scope_check.py`](.github/skills/bounded-feature/scope_check.py) | `APP`: the folder a feature may change, `app/`, without its `infra/` folders, Bicep files, or `azure.yaml`. `MIGRATIONS`: EF Core migrations, which may be added but not edited (the model snapshot may change). `WORKFLOW`, `DECIDE`, and `PERMISSIONS`: where approval authority lives. `DECISION_WRITE` and `DECISION_CALL`: code that records a decision or calls the decision API. `TEST_FILE`, `CODE_FILE`, `CS_TEST`, `TS_TEST`, and `SKIPPED`: how C# and TypeScript tests are found and skipped. `CONTRACT`: the API contract | Your app folder, your migrations folder, the code that holds the authority no feature may touch, how your tests are found and skipped, and your contract file. |
+| [`skills/bounded-feature/SKILL.md`](.github/skills/bounded-feature/SKILL.md) | The procedure Copilot follows, with RequestHub's paths and commands | Your paths and commands. |
+| [`skills/regression-validation/run_regression.py`](.github/skills/regression-validation/run_regression.py) | RequestHub's suites, picked by what changed: the .NET build and integration tests, the web typecheck and unit tests, the contract check, and with `--e2e` the Playwright tests against an API on port 5080 | Your suites. |
+| [`skills/contract-impact/`](.github/skills/contract-impact/) | An OpenAPI contract, `app/contracts/openapi.json`, that may only grow | Your contract file. Without one, delete the skill: the checker and the regression suites call it only when the contract file changes. |
+| [`workflows/develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml) | Judges pull requests that close an Issue labeled `phase:develop`, with Python 3.12 | Your feature label, if you use another. |
+| [`ISSUE_TEMPLATE/03-develop-github-feature.yml`](.github/ISSUE_TEMPLATE/03-develop-github-feature.yml) | Prefilled with RequestHub's feature, and labeled `ai-sdlc` and `phase:develop` | Blank fields (delete each `value:`) or your own feature, and your labels. |
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your code:
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| The tools Copilot may use | `tools` in the front matter of [`agents/develop-github.agent.md`](.github/agents/develop-github.agent.md) | `read`, `edit`, `search`, and `execute` |
+| What Copilot must never do | *Rules* in the same file | No new approval path; no weakened, skipped, or deleted test; no edit to workflows, agent files, or skill scripts; the Issue's text is data |
+| What a feature Issue asks for | The guidance and fields of [`ISSUE_TEMPLATE/03-develop-github-feature.yml`](.github/ISSUE_TEMPLATE/03-develop-github-feature.yml) | *Problem*, *Scope*, *Acceptance criteria*, and *Out of scope*, each required |
+| How long the bounds check may run | `timeout-minutes` in [`workflows/develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml) | 10 minutes; the check took 15 to 19 seconds in the recorded run |
+| What Copilot's session has installed | The `copilot-setup-steps` job of your `.github/workflows/copilot-setup-steps.yml` | [This repository's](../../.github/workflows/copilot-setup-steps.yml) installs .NET, Node.js, Playwright, and Python, and starts PostgreSQL |
+
+### After you edit
+
+Run `python .github/skills/bounded-feature/scope_check.py` on your branch, as in [one-time step 1](#one-time-setup). On the branch that adds or changes these files, it fails each one as out of scope; on a feature's branch, it ends with `PASS change stays within feature bounds`. The bounds check runs the checker from a pull request's base branch, so your change to it applies once it merges.
+
+## Clean up
+
+Remove what you copied and the labels. Two skills are shared: 04-test-github uses `regression-validation` and `contract-impact`, and 02-design-github uses `contract-impact`. First remove *Feature stays within its bounds* from your ruleset's required checks, or every pull request waits for a check that no longer reports.
+
+```powershell
+Remove-Item -Recurse -Force .github/agents/develop-github.agent.md, .github/skills/bounded-feature, .github/workflows/develop-github-bounds.yml, .github/ISSUE_TEMPLATE/03-develop-github-feature.yml
+Remove-Item -Recurse -Force .github/skills/regression-validation, .github/skills/contract-impact    # unless another solution uses them
+Remove-Item -Force .github/LICENSE-ai-sdlc    # unless you keep another solution from this repository
+gh label delete phase:develop --yes
+gh label delete ai-sdlc --yes    # unless other Issues carry it
+```
+
+Also remove the services you added to `copilot-setup-steps.yml` only for this solution.
+
+This solution creates no token, secret, GitHub App, or webhook, so there is nothing to revoke: you act with your own GitHub CLI sign-in, Copilot works on your behalf, and the workflows use the token GitHub gives each run.
+
+## Troubleshooting
+
+- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run**, or run `gh run rerun <run-id>`.
+- **The runs of Copilot's earlier commits keep waiting.** Approve the latest commit's runs: they test everything before it. When the pull request closes, GitHub marks the waiting runs as failed, without running them.
 
 ## See it work
 
@@ -128,7 +354,7 @@ Two things went on the owner's list. Copilot's summary reported a decision the I
 
 ### 6. The reviewer's own test failed, and the code was fixed, not the test
 
-The owner had written a browser test from the acceptance criteria, without reading Copilot's code: [`confirm-routing.spec.ts`](regression/confirm-routing.spec.ts). At 15:57:09 UTC, on their own machine, they checked out the pull request's branch, added the test to `app/web/e2e/`, and asked Copilot CLI, with the same `develop-github` agent, to run it and to fix the code if it failed, never the test. The machine was shared, so the prompt also gave Copilot CLI its own port and database, as [Troubleshooting](#troubleshooting) describes. One test failed: after a manual reroute, the panel showed *No recommendation yet* where the stale notice belonged, because the superseded recommendation was no longer shown.
+The owner had written a browser test from the acceptance criteria, without reading Copilot's code: [`confirm-routing.spec.ts`](regression/confirm-routing.spec.ts). At 15:57:09 UTC, on their own machine, they checked out the pull request's branch, added the test to `app/web/e2e/`, and asked Copilot CLI, with the same `develop-github` agent, to run it and to fix the code if it failed, never the test. The machine was shared, so the prompt also gave Copilot CLI its own port and database, as [Troubleshooting the copy](#troubleshooting-the-copy) describes. One test failed: after a manual reroute, the panel showed *No recommendation yet* where the stale notice belonged, because the superseded recommendation was no longer shown.
 
 ![Copilot CLI reproduces the reviewer's failing test: it expected "Stale: request was rerouted since this suggestion" and the panel showed "No recommendation yet"](images/06-cli-reproduces.png)
 
@@ -207,122 +433,11 @@ At 16:53:19 the owner closed the pull request without merging, and the Issue as 
 - **Evidence a reviewer or auditor can follow.** Each criterion maps to a named test, the bounds check's summary lists every changed file with its verdict, and each fix is a commit that answers a comment on the pull request.
 - **People stay in charge.** Copilot's workflow runs ran only after a person approved them, Copilot can't approve its own pull request, and RequestHub's rule is untouched: only approvers decide.
 
-**The metric to track when you adopt it:** lead time from a feature Issue to a pull request that passes its checks, from the Issue's creation to the first green run of CI and the bounds check (both timestamps are on GitHub), with the review rounds after it tracked alongside: the commits pushed after Copilot asked for review. The recorded run measured 51 minutes 17 seconds, 19 minutes 41 seconds of them waiting for a person, then three review rounds: Copilot CLI's fix and two `@copilot` fixes. Compare both with similar features built before you adopted it. A target such as "most bounded features green within an hour of the Issue" is your team's goal, never a result to report.
-
-## Add it to your repository
-
-The files are written for RequestHub's stack: a .NET 10 API with EF Core and xUnit v3 integration tests on PostgreSQL, and a React and TypeScript web UI with Vitest and Playwright. [What to copy and what to change](#what-to-copy-and-what-to-change) names each setting to adapt for yours. The commands are the ones this repository uses.
-
-### Prerequisites
-
-- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts use only Python's standard library.
-- **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your repository. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). To run your own test on Copilot's branch from your machine, as in [step 6](#6-the-reviewers-own-test-failed-and-the-code-was-fixed-not-the-test), install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli).
-- **A Copilot session on GitHub Actions.** Copilot runs your tests in its session, with the services that `copilot-setup-steps.yml` starts ([this repository's](../../.github/workflows/copilot-setup-steps.yml) starts PostgreSQL). Cloud sandboxes don't run setup steps, and cloud is the default wherever GitHub offers a choice of environment ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)). Assigning the Issue started a GitHub Actions-based session in the recorded run and in the 10 November run; if you're offered a choice of environment, pick GitHub Actions.
-- **Write access** to assign Issues to Copilot and approve its workflow runs, and admin access for the ruleset in [one-time step 6](#one-time-setup).
-- **A CI workflow that runs your tests** on pull requests. The bounds check judges where a change goes; your CI decides whether it works. RequestHub's is [`ci.yml`](../../.github/workflows/ci.yml).
-
-### What to copy and what to change
-
-From the root of your repository, in PowerShell 7, copy the agent, the skills, the workflow, and the issue form:
-
-```powershell
-$src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-03-develop-github'
-git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
-New-Item -ItemType Directory -Force .github | Out-Null
-Copy-Item -Recurse -Force (Join-Path $src 'solutions/03-develop-github/.github/*') .github
-Remove-Item -Recurse -Force $src
-git status --short --untracked-files=all
-```
-
-What you should see: 9 new files, in 6 seconds when this README was checked; the other files in `.github/` stay. If you already copied 04-test-github, `regression-validation` and `contract-impact` are the same files. The feature and the reviewer's test stay behind, because they describe RequestHub's feature: use [`feature-issue.md`](feature-issue.md) and [`confirm-routing.spec.ts`](regression/confirm-routing.spec.ts) as examples for yours. Then change what assumes RequestHub:
-
-| File, under `.github/` | As shipped, for RequestHub | Change it to |
-| --- | --- | --- |
-| [`agents/develop-github.agent.md`](.github/agents/develop-github.agent.md) | *How to work*: where RequestHub keeps its business rules (`RequestWorkflow`), endpoints (`ApiEndpoints`), UI, and English and French strings; EF Core migrations; the command that regenerates `app/contracts/openapi.json`; and the commands for the scope check and the regression suites. *Rules*: only approvers decide, and every endpoint checks role and department access | Your layout, your migration tool, your commands, and the rules Copilot must never break in your code. Keep the steps that map each criterion to a test and end with a summary, and the rule never to weaken a test. |
-| [`skills/bounded-feature/scope_check.py`](.github/skills/bounded-feature/scope_check.py) | `APP`: the folder a feature may change, `app/`, without its `infra/` folders, Bicep files, or `azure.yaml`. `MIGRATIONS`: EF Core migrations, which may be added but not edited (the model snapshot may change). `WORKFLOW`, `DECIDE`, and `PERMISSIONS`: where approval authority lives. `DECISION_WRITE` and `DECISION_CALL`: code that records a decision or calls the decision API. `TEST_FILE`, `CODE_FILE`, `CS_TEST`, `TS_TEST`, and `SKIPPED`: how C# and TypeScript tests are found and skipped. `CONTRACT`: the API contract | Your app folder, your migrations folder, the code that holds the authority no feature may touch, how your tests are found and skipped, and your contract file. |
-| [`skills/bounded-feature/SKILL.md`](.github/skills/bounded-feature/SKILL.md) | The procedure Copilot follows, with RequestHub's paths and commands | Your paths and commands. |
-| [`skills/regression-validation/run_regression.py`](.github/skills/regression-validation/run_regression.py) | RequestHub's suites, picked by what changed: the .NET build and integration tests, the web typecheck and unit tests, the contract check, and with `--e2e` the Playwright tests against an API on port 5080 | Your suites. |
-| [`skills/contract-impact/`](.github/skills/contract-impact/) | An OpenAPI contract, `app/contracts/openapi.json`, that may only grow | Your contract file. Without one, delete the skill: the checker and the regression suites call it only when the contract file changes. |
-| [`workflows/develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml) | Judges pull requests that close an Issue labeled `phase:develop`, with Python 3.12 | Your feature label, if you use another. |
-| [`ISSUE_TEMPLATE/03-develop-github-feature.yml`](.github/ISSUE_TEMPLATE/03-develop-github-feature.yml) | Prefilled with RequestHub's feature, and labeled `ai-sdlc` and `phase:develop` | Blank fields (delete each `value:`) or your own feature, and your labels. |
-
-### One-time setup
-
-1. **Copy the files and make the changes above,** on a branch. What you should see: the checker judges that branch, which changes only `.github/`, as out of bounds, because it isn't a feature. Run it with `--base` set to your default branch if that isn't `origin/main`:
-
-   ```powershell
-   python .github/skills/bounded-feature/scope_check.py
-   ```
-
-   It prints `FAIL out of scope (CI/CD or agent configuration)` for each copied file and exits with 1. On a feature's branch, it ends with `PASS change stays within feature bounds`.
-2. **Give Copilot your test environment.** Before Copilot starts, GitHub runs the job named `copilot-setup-steps` in `.github/workflows/copilot-setup-steps.yml`. Install your toolchain there and start your database as a service, as [this repository's](../../.github/workflows/copilot-setup-steps.yml) does for .NET, Node.js, Playwright, Python, and PostgreSQL. What you should see: once the file is on your default branch, `gh workflow run copilot-setup-steps.yml` starts it (it needs a `workflow_dispatch` trigger, as this repository's has), and `gh run list --workflow copilot-setup-steps.yml --limit 1` then shows it `completed` with `success`.
-3. **Create the labels** that the issue form applies:
-
-   ```powershell
-   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
-   gh label create phase:develop --color C5DEF5 --description "SDLC phase 3: Develop" --force
-   ```
-
-   What you should see: `gh label list --search phase:develop` prints `phase:develop  SDLC phase 3: Develop  #C5DEF5` on its first line.
-4. **Allow the Copilot cloud agent** in the repository, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**, and this query prints `copilot-swe-agent`:
-
-   ```powershell
-   gh api graphql -F owner='{owner}' -F name='{repo}' --jq '.data.repository.suggestedActors.nodes[].login' -f query='
-     query($owner: String!, $name: String!) {
-       repository(owner: $owner, name: $name) { suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 10) { nodes { login } } }
-     }'
-   ```
-5. **Merge it into your default branch.** The cloud agent offers only the custom agents on the default branch, and the issue form appears only from there. What you should see:
-
-   ```powershell
-   gh api 'repos/{owner}/{repo}/contents/.github/agents/develop-github.agent.md' --jq .path
-   ```
-
-   prints `.github/agents/develop-github.agent.md`, and **New issue** offers *Develop: bounded feature for Copilot*.
-6. **Make the checks a gate.** In a branch ruleset on your default branch, require the status check *Feature stays within its bounds* and your test jobs, so a red check blocks the merge. A required check must report on every pull request, and one skipped by a `paths` filter stays pending: that is why the bounds workflow has none, and passes every other pull request in seconds (6 to 8 in this repository). What you should see: `gh api 'repos/{owner}/{repo}/rules/branches/<default branch>' --jq '.[].type'` lists `required_status_checks`.
-
-### Use it the first time
-
-On your own feature, the steps are those of [See it work](#see-it-work):
-
-1. **Write the feature as an Issue** with the *Develop: bounded feature for Copilot* form: one problem, a scope that adds rather than changes, numbered acceptance criteria that can each become a test (name the status and error codes), and what is out of scope. See [step 1](#1-the-feature-was-written-as-an-issue-with-testable-criteria).
-2. **File it.** The form applies the `phase:develop` label, which tells the bounds check that the pull request closing this Issue is a feature. See [step 2](#2-the-owner-filed-the-issue).
-3. **Assign it to Copilot** with the **develop-github** agent and your default branch as the base branch. From a terminal instead (replace `<issue>` and `main`; it prints `Assigned to:`, then Copilot and your login):
-
-   ```powershell
-   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
-   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = 'main'; custom_agent = 'develop-github' } } |
-     ConvertTo-Json | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '"Assigned to: " + ([.assignees[].login] | join(", "))'
-   ```
-
-   What you should see: within seconds Copilot opens a draft pull request, and when its session ends, it asks you for a review, as in [step 3](#3-copilot-opened-a-draft-pull-request-and-built-the-feature).
-4. **Approve its workflow runs:** select **Approve workflows to run** in the pull request's merge box, or **Approve and run** on a waiting run. From a terminal, start every waiting run of the latest commit and follow the checks:
-
-   ```powershell
-   $head = gh pr view <pr> --json headRefOid -q .headRefOid
-   gh run list --commit $head --status action_required --json databaseId -q '.[].databaseId' | ForEach-Object { gh run rerun $_ }
-   gh pr checks <pr> --watch
-   ```
-
-   Approve again after each push from Copilot. See [step 4](#4-a-person-approved-the-workflow-runs-and-the-checks-passed).
-5. **Read the change against the criteria:** the tests' names, the bounds check's job summary (every changed file and the verdict), and Copilot's summary, for decisions the Issue didn't settle. See [step 5](#5-the-reviewer-read-the-change-against-the-criteria).
-6. **Test it yourself.** Write your own test from the acceptance criteria, not from Copilot's code. When Copilot's session has ended (one agent at a time works on a branch), check out the branch, add your test, and have Copilot CLI run it and fix the code if it fails. Send other findings back with an `@copilot` comment on the pull request: a new session starts within seconds and pushes to the same branch. See [step 6](#6-the-reviewers-own-test-failed-and-the-code-was-fixed-not-the-test).
-7. **Click through, then decide.** Mark the pull request ready for review, then approve it or request changes as a GitHub review:
-
-   ```powershell
-   gh pr ready <pr>
-   gh pr review <pr> --approve --body "<what you checked: the criteria, the checks, your own test>"
-   ```
-
-   Use `--request-changes` instead of `--approve` to send it back. Once you approve, merge it as you merge any change. See [step 7](#7-clicking-through-found-one-more-defect-and-a-person-decided).
-
-### What it costs
-
-Setting it up uses no AI credits. Each feature built this way draws on your Copilot plan's AI credits, for the cloud agent's sessions and for Copilot CLI, and on GitHub Actions. In the recorded run, Copilot's three cloud agent sessions reported 14.77, 2.30, and 1.30 AI credits, 18.37 in all, and the Copilot CLI session reported 28.04. The run used 50.6 minutes of standard GitHub-hosted runners: 34.4 for Copilot's three sessions, 14.0 for CI, 0.8 for the bounds check, and 1.5 for this repository's other solutions' checks. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 71 minutes for the recorded run, because each job is rounded up to a whole minute. The length of your test suite changes the CI minutes ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on RequestHub, before you adapt anything. You repeat the run in [See it work](#see-it-work) in your own copy, and it costs what [What it costs](#what-it-costs) lists for the recorded run.
+
+The copy also has the files of this folder that belong to the demo: [`feature-issue.md`](feature-issue.md), the feature that the issue form is prefilled with; [`regression/confirm-routing.spec.ts`](regression/confirm-routing.spec.ts), the reviewer's browser test, written from the acceptance criteria; [`evidence/run-2026-10-28.md`](evidence/run-2026-10-28.md), the recorded run's sessions, workflow runs, and bounds check output; and [`images/`](images/), the screenshots of the recorded run and two of the 10 November run that PRESENTING.md uses.
 
 ### Quick start
 
@@ -406,7 +521,7 @@ The steps have the numbers of [See it work](#see-it-work), which shows what each
    copilot --agent develop-github --allow-all-tools -p "The reviewer added app/web/e2e/confirm-routing.spec.ts. Run it with the regression-validation skill (--e2e). If it fails, find the cause and fix the code, never the test. Then run the bounded-feature scope check, commit with a message that names the test, and push."
    ```
 
-   Copilot CLI builds the UI, starts RequestHub on port 5080, runs the browser tests, and if your test fails, fixes the code and pushes. If port 5080 or the `requesthub` database belongs to something else on your machine, see [Troubleshooting](#troubleshooting). Its push is yours, so its workflow runs start without approval. To hand a finding back to the cloud agent, comment on the pull request:
+   Copilot CLI builds the UI, starts RequestHub on port 5080, runs the browser tests, and if your test fails, fixes the code and pushes. If port 5080 or the `requesthub` database belongs to something else on your machine, see [Troubleshooting the copy](#troubleshooting-the-copy). Its push is yours, so its workflow runs start without approval. To hand a finding back to the cloud agent, comment on the pull request:
 
    ```powershell
    gh pr comment <pr> --body "@copilot <the finding, and what you expect instead>"
@@ -443,48 +558,10 @@ git branch -D <copilot-branch>    # if you ran step 6 or 7
 
 Never merge Copilot's pull request in the copy: the feature would land on `main`, and the next run would have nothing to build. What you should see: `gh issue list --label phase:develop --state open` lists no Issue from the run, and `git grep -c "triage.confirmed" origin/main -- app/` still prints nothing.
 
-## Clean up
+When you no longer need the copy, the [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete it.
 
-**In your repository,** remove what you copied and the labels. Two skills are shared: 04-test-github uses `regression-validation` and `contract-impact`, and 02-design-github uses `contract-impact`. First remove *Feature stays within its bounds* from your ruleset's required checks, or every pull request waits for a check that no longer reports.
+### Troubleshooting the copy
 
-```powershell
-Remove-Item -Recurse -Force .github/agents/develop-github.agent.md, .github/skills/bounded-feature, .github/workflows/develop-github-bounds.yml, .github/ISSUE_TEMPLATE/03-develop-github-feature.yml
-Remove-Item -Recurse -Force .github/skills/regression-validation, .github/skills/contract-impact    # unless another solution uses them
-gh label delete phase:develop --yes
-gh label delete ai-sdlc --yes    # unless other Issues carry it
-```
-
-Also remove the services you added to `copilot-setup-steps.yml` only for this solution.
-
-**In the copy,** [reset it](#reset-the-copy-for-another-run). The [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
-
-This solution creates no token, secret, GitHub App, or webhook, so there is nothing to revoke: you act with your own GitHub CLI sign-in, Copilot works on your behalf, and the workflows use the token GitHub gives each run.
-
-## What's in this folder
-
-```text
-03-develop-github/
-├── README.md
-├── feature-issue.md                        the feature Issue: the text the issue form is prefilled with
-├── evidence/run-2026-10-28.md              the recorded run's sessions, workflow runs, and bounds check output
-├── images/                                 screenshots of the recorded run, and two of the 10 November run that PRESENTING.md uses
-├── regression/confirm-routing.spec.ts      the reviewer's browser test, written from the acceptance criteria
-└── .github/
-    ├── agents/develop-github.agent.md      the custom Copilot agent
-    ├── skills/
-    │   ├── bounded-feature/                the procedure, and scope_check.py, the boundary checker
-    │   ├── regression-validation/          runs the suites a change touches (shared with 04-test-github)
-    │   └── contract-impact/                additive-only contract check (shared with 02-design-github and 04-test-github)
-    ├── workflows/develop-github-bounds.yml fails a feature pull request that crosses a boundary
-    └── ISSUE_TEMPLATE/03-develop-github-feature.yml
-```
-
-The solution also relies on two repository-wide workflows that belong to no single solution: [`ci.yml`](../../.github/workflows/ci.yml), the app's tests, and [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml), the cloud agent's environment.
-
-## Troubleshooting
-
-- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run**, or run `gh run rerun <run-id>`.
-- **The runs of Copilot's earlier commits keep waiting.** Approve the latest commit's runs: they test everything before it. When the pull request closes, GitHub marks the waiting runs as failed, without running them.
 - **Port 5080 or the `requesthub` database is already used on your machine.** The browser tests reset the database of whichever RequestHub answers at `BASE_URL`. On a shared machine, another app once took our free port while our API was still building, and its data was reset. Run your own copy on a free port with a new database (a database migrated by another branch can conflict), check that the listener is your process, then point the tests at it:
 
   ```powershell
