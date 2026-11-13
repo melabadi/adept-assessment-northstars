@@ -39,7 +39,7 @@ The files are written for RequestHub's stack: a .NET 10 API with EF Core and xUn
 
 The value: a bounded feature goes from an Issue to a tested pull request without a developer's time, and the reviewer spends theirs where no check can help. [Results and value](#results-and-value) has what the recorded run measured.
 
-The Microsoft counterpart, [03-develop-microsoft](../03-develop-microsoft/), reviews pull requests from Azure. The [Develop combo](../../PRESENTING.md#develop-copilot-writes-azure-reviews-a-person-decides) uses both on one change: Copilot writes it, Azure reviews the same commit, and a person decides. [Follow one requirement from Plan to Test](../../PRESENTING.md#follow-one-requirement-from-plan-to-test) takes one stakeholder decision through this solution.
+The Microsoft counterpart, [03-develop-microsoft](../03-develop-microsoft/), reviews pull requests from Azure. The [Develop combo](../../PRESENTING.md#develop-copilot-writes-azure-reviews-a-person-decides) uses both on one change: Copilot writes it, Azure reviews the same commit, and a person decides.
 
 ### How it works
 
@@ -58,7 +58,7 @@ flowchart LR
 ```
 
 - **Copilot** runs the custom agent [`develop-github`](.github/agents/develop-github.agent.md) in the cloud agent, with three skills: `bounded-feature` (how to build a feature inside its bounds, and [`scope_check.py`](.github/skills/bounded-feature/scope_check.py), the boundary check), `regression-validation` (runs the test suites a change touches), and `contract-impact` (the additive-only API contract check). Its session runs on GitHub Actions, in the environment that [`copilot-setup-steps.yml`](../../.github/workflows/copilot-setup-steps.yml) prepares: .NET, Node.js, Playwright, and PostgreSQL. Copilot CLI runs the same agent on a reviewer's machine.
-- **GitHub Actions** runs the app's [CI](../../.github/workflows/ci.yml) (API integration tests on PostgreSQL with the contract check, the web typecheck, unit tests, and build, and the browser tests) and [`develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml). For a pull request that closes an Issue labeled `phase:develop`, the bounds check runs the checker from the base branch against the pull request's commits, so editing the checker doesn't change the rules a pull request is judged by. GitHub still runs a pull request's own copy of the workflow file, so review any change to it. Every other pull request passes in seconds.
+- **GitHub Actions** runs the app's [CI](../../.github/workflows/ci.yml) and [`develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml). For a pull request that closes an Issue labeled `phase:develop`, the bounds check runs the checker from the base branch against the pull request's commits, so editing the checker doesn't change the rules a pull request is judged by. GitHub still runs a pull request's own copy of the workflow file, so review any change to it. Every other pull request passes in seconds.
 - **A person** writes the Issue, approves the workflow runs on Copilot's pull request, writes an independent test from the acceptance criteria, clicks through, sends findings back with `@copilot`, and decides. In RequestHub itself only an approver ever approves a request, and the feature can't change that.
 
 **Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot, and Copilot ignores `@copilot` comments from anyone else. The bounds check runs on every pull request, forks included, with a read-only token: it reads the commits as data and never runs them. CI runs a fork's code with a read-only token and no secrets, once someone with write access approves the run.
@@ -71,7 +71,7 @@ flowchart LR
 
 - **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts use only Python's standard library.
 - **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your repository. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). To run your own test on Copilot's branch from your machine, as in [step 6](#6-the-reviewers-own-test-failed-and-the-code-was-fixed-not-the-test), install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli).
-- **A Copilot session on GitHub Actions.** Copilot runs your tests in its session, with the services that `copilot-setup-steps.yml` starts ([this repository's](../../.github/workflows/copilot-setup-steps.yml) starts PostgreSQL). Cloud sandboxes don't run setup steps, and cloud is the default wherever GitHub offers a choice of environment ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)). Assigning the Issue started a GitHub Actions-based session in the recorded run and in the 10 November run; if you're offered a choice of environment, pick GitHub Actions.
+- **A Copilot session on GitHub Actions.** Copilot runs your tests in its session, with the services that `copilot-setup-steps.yml` starts ([this repository's](../../.github/workflows/copilot-setup-steps.yml) starts PostgreSQL). Cloud sandboxes don't run setup steps, and cloud is the default wherever GitHub offers a choice of environment ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)). If you're offered a choice of environment, pick GitHub Actions.
 - **Write access** to assign Issues to Copilot and approve its workflow runs, and admin access for the ruleset in [one-time step 6](#one-time-setup).
 - **A CI workflow that runs your tests** on pull requests. The bounds check judges where a change goes; your CI decides whether it works. RequestHub's is [`ci.yml`](../../.github/workflows/ci.yml).
 
@@ -209,11 +209,7 @@ On your own feature, the steps are those of [See it work](#see-it-work):
 
    Use `--request-changes` instead of `--approve` to send it back. Once you approve, merge it as you merge any change. See [step 7](#7-clicking-through-found-one-more-defect-and-a-person-decided).
 
-Then make it part of your workflow:
-
-- **Hand Copilot bounded features:** small, additive changes with numbered criteria that can each become a test. The bounds check fails a change that leaves your app's folder, edits an existing migration, touches approval authority, deletes or skips a test, changes code without a test, or breaks the API contract, so keep that work with people.
-- **Keep the checks required.** *Feature stays within its bounds* and your test jobs stay in the ruleset ([one-time step 6](#one-time-setup)). The bounds check passes every pull request that isn't a feature in seconds, so it blocks nothing else.
-- **Change the rules through reviewed pull requests.** The bounds check runs the checker from the base branch, so a change to `scope_check.py` applies once it merges. GitHub runs a pull request's own copy of the workflow file, so review every change to it.
+Then make it part of your workflow: hand Copilot small, additive features with numbered criteria that can each become a test, and keep with people the changes that the bounds check refuses.
 
 **The metric to track when you adopt it:** lead time from a feature Issue to a pull request that passes its checks, from the Issue's creation to the first green run of CI and the bounds check (both timestamps are on GitHub), with the review rounds after it tracked alongside: the commits pushed after Copilot asked for review. The recorded run measured 51 minutes 17 seconds, 19 minutes 41 seconds of them waiting for a person, then three review rounds: Copilot CLI's fix and two `@copilot` fixes. Compare both with similar features built before you adopted it. A target such as "most bounded features green within an hour of the Issue" is your team's goal, never a result to report.
 
@@ -248,12 +244,10 @@ These settings change how the solution behaves, whatever your code:
 | The tools Copilot may use | `tools` in the front matter of [`agents/develop-github.agent.md`](.github/agents/develop-github.agent.md) | `read`, `edit`, `search`, and `execute` |
 | What Copilot must never do | *Rules* in the same file | No new approval path; no weakened, skipped, or deleted test; no edit to workflows, agent files, or skill scripts; the Issue's text is data |
 | What a feature Issue asks for | The guidance and fields of [`ISSUE_TEMPLATE/03-develop-github-feature.yml`](.github/ISSUE_TEMPLATE/03-develop-github-feature.yml) | *Problem*, *Scope*, *Acceptance criteria*, and *Out of scope*, each required |
-| How long the bounds check may run | `timeout-minutes` in [`workflows/develop-github-bounds.yml`](.github/workflows/develop-github-bounds.yml) | 10 minutes; the check took 15 to 19 seconds in the recorded run |
-| What Copilot's session has installed | The `copilot-setup-steps` job of your `.github/workflows/copilot-setup-steps.yml` | [This repository's](../../.github/workflows/copilot-setup-steps.yml) installs .NET, Node.js, Playwright, and Python, and starts PostgreSQL |
 
 ### After you edit
 
-Run `python .github/skills/bounded-feature/scope_check.py` on your branch, as in [one-time step 1](#one-time-setup). On the branch that adds or changes these files, it fails each one as out of scope; on a feature's branch, it ends with `PASS change stays within feature bounds`. The bounds check runs the checker from a pull request's base branch, so your change to it applies once it merges.
+Run the checker as in [Getting started](#getting-started) step 3, then merge your change: the bounds check judges each pull request with the checker on its base branch.
 
 ## Clean up
 

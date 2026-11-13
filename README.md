@@ -2,10 +2,10 @@
 
 Fourteen working solutions add AI to each phase of the software development lifecycle (SDLC). Every phase has two, both applied to the same app, [RequestHub](app/README.md):
 
-- **GitHub**: GitHub Copilot (custom agents, skills, the cloud agent, code review, and [agentic workflows](#the-agentic-workflows)) with GitHub Enterprise (Actions, Issues, environments, rulesets, code security).
-- **Microsoft**: AI that runs in Azure. Microsoft Foundry agents and evaluations, Azure Copilot, and Azure services (AI Search, Load Testing, Defender for Cloud, Azure Policy, Container Apps, Azure SRE Agent), orchestrated in Azure. GitHub only holds the code, pull requests, and Issues.
+- **GitHub**: GitHub Copilot, with GitHub Enterprise.
+- **Microsoft**: AI that runs in Azure, with Microsoft Foundry, Azure Copilot, and Azure services. GitHub only holds the code, pull requests, and Issues.
 
-In every solution, AI does the tedious part and a person keeps the decision. Each solution's README says what it uses, what it does and how it works, how to install it in your repository, and which files to edit to tweak it. It also shows a real run, step by step, with its screenshots, timings, and links you can check, and how to try it first in a copy of this repository.
+In every solution, AI does the tedious part and a person keeps the decision. Each solution's README says what it uses, what it does and how it works, how to install it in your repository, and which files to edit to tweak it, then shows a real run.
 
 ## Technologies used
 
@@ -42,8 +42,6 @@ In every solution, AI does the tedious part and a person keeps the decision. Eac
 | [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/) and [Bicep](https://learn.microsoft.com/azure/azure-resource-manager/bicep/overview) | Deploy each solution into its own resource group with `azd up` | All seven |
 | GitHub: a fine-grained token, a GitHub App, or a webhook | The one connection each solution makes to your repository | All seven |
 
-Every solution's scripts are Python 3.12, and every command in the READMEs is written for PowerShell 7.
-
 ## What the solutions do and how they work
 
 ### The fourteen solutions
@@ -65,23 +63,14 @@ Everything a solution needs lives in its folder. The only shared piece is the ap
 ```text
 solutions/04-test-microsoft/
 ├── README.md          what it uses and does, how to install it and which files to edit, a real run, and how to try it first
-├── .github/           GitHub solutions: Copilot custom agent, skills, workflows, and issue templates. Microsoft solutions: only thin workflow triggers and issue templates
+├── .github/           GitHub solutions: Copilot custom agent, skills, workflows, and issue templates. Microsoft solutions: at most an issue form
 ├── azure.yaml         (Microsoft solutions) azd project for the solution's own resource group
 ├── infra/             (Microsoft solutions) Bicep for that resource group
 ├── requirements.txt   Python packages for the solution's scripts
 └── ...                scripts, prompts, inputs, and evaluation cases
 ```
 
-GitHub only reads agents, skills, workflows, and issue templates from the repository's root `.github/` folder. The root therefore holds a synchronized copy of every solution's `.github/` files. Edit the solution's copy, then run `python tools/sync_solutions.py`. A check fails the pull request if the copies drift.
-
-The repository holds the fourteen solutions and the app they share:
-
-```text
-app/         RequestHub: API, worker, web UI, tests, API contract, and the Bicep modules that host it
-solutions/   the fourteen solutions, one folder each
-tools/       repository tooling: sync_solutions.py (mirror check), check_links.py (links and anchors), screenshot.mjs and redact.py (masked screenshots)
-.github/     shared CI, Copilot setup steps and instructions, plus the mirrored solution files
-```
+GitHub only reads agents, skills, workflows, and issue templates from the repository's root `.github/` folder. The root therefore holds a synchronized copy of every solution's `.github/` files.
 
 ### The agentic workflows
 
@@ -90,13 +79,13 @@ Four of the GitHub solutions add a [GitHub Agentic Workflow](https://github.com/
 | Solution and workflow | Starts when | Copilot reads | It can write | Measured |
 | --- | --- | --- | --- | --- |
 | [02-design-github](solutions/02-design-github/)<br/>*Design · GitHub · agentic design review* | Someone with write access comments `/design-review` on an Issue that your team filed, or on a pull request that your team or Copilot opened from a branch of the repository | The approved standards, the brief, and the API contract from the default branch; a pull request's diff and the contract tool's verdict; Issues and pull requests through read-only GitHub tools that show only your team's content | One comment, and the labels `adr-needed` and `standards-conflict` | About 5 minutes from the command to the review, and 19 to 24 AI credits for Copilot, in [three reviews](solutions/02-design-github/README.md#the-agentic-design-review-recorded-on-11-november-2026) |
-| [04-test-github](solutions/04-test-github/)<br/>*Test · GitHub · agentic CI failure investigation* | CI fails on a fix's pull request that your team or Copilot opened from a branch of the repository | Facts that a script from the default branch collects: each failing test's message and line, whether the pull request adds the test, and whether it fails on main too; the logs and the diff; no GitHub tools | One comment, and one of the labels `ci:defect-reproduced`, `ci:regression`, or `ci:infrastructure` | About 5 minutes from CI's failure to the comment (4 min 50 s and 5 min 44 s; 10 to 11 minutes for two that waited behind another run), and 13.3 to 15.2 AI credits for Copilot, in [four runs](solutions/04-test-github/README.md#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026) |
-| [06-release-github](solutions/06-release-github/)<br/>*Release · GitHub · agentic release summary* | A release candidate that a person started succeeds | The candidate's evidence and the release's pull requests, with a title only where your team or Copilot wrote it, collected by a script from the default branch; no GitHub tools | One summary, appended to the draft release | 4 min 52 s, starting 3 s after the candidate, and 15.28 AI credits for Copilot, in [the recorded run](solutions/06-release-github/README.md#3-copilot-appended-a-summary-for-the-approver); 6 min 32 s and 13.42 AI credits in its first run on gh-aw v1.2.2 |
-| [07-operate-github](solutions/07-operate-github/)<br/>*Operate · GitHub · agentic incident triage* | An Issue that your team filed gets the `incident` label | The incident and the code, through read-only GitHub tools and shell commands | One comment, labels from an allow-list, and one follow-up Issue | 4 min 52 s from filing to the triage comment, and 23.84 AI credits for Copilot, in [the recorded run](solutions/07-operate-github/README.md#2-the-agentic-workflow-triaged-it); 5 min 24 s and 23.22 AI credits in its first run on gh-aw v1.2.2 |
+| [04-test-github](solutions/04-test-github/)<br/>*Test · GitHub · agentic CI failure investigation* | CI fails on a fix's pull request that your team or Copilot opened from a branch of the repository | Facts that a script from the default branch collects: each failing test's message and line, whether the pull request adds the test, and whether it fails on main too; the logs and the diff; no GitHub tools | One comment, and one of the labels `ci:defect-reproduced`, `ci:regression`, or `ci:infrastructure` | About 5 minutes from CI's failure to the comment, or 10 to 11 when it waited behind another run, and 13.3 to 15.2 AI credits for Copilot, in [four runs](solutions/04-test-github/README.md#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026) |
+| [06-release-github](solutions/06-release-github/)<br/>*Release · GitHub · agentic release summary* | A release candidate that a person started succeeds | The candidate's evidence and the release's pull requests, with a title only where your team or Copilot wrote it, collected by a script from the default branch; no GitHub tools | One summary, appended to the draft release | 4 min 52 s, starting 3 s after the candidate, and 15.28 AI credits for Copilot, in [the recorded run](solutions/06-release-github/README.md#3-copilot-appended-a-summary-for-the-approver) |
+| [07-operate-github](solutions/07-operate-github/)<br/>*Operate · GitHub · agentic incident triage* | An Issue that your team filed gets the `incident` label | The incident and the code, through read-only GitHub tools and shell commands | One comment, labels from an allow-list, and one follow-up Issue | 4 min 52 s from filing to the triage comment, and 23.84 AI credits for Copilot, in [the recorded run](solutions/07-operate-github/README.md#2-the-agentic-workflow-triaged-it) |
 
 *Your team* means the repository's owner, members, and collaborators: each workflow checks who wrote the text before Copilot reads it. The four also share gh-aw's protections. Only people with write access start a run. Copilot works with a read-only token, behind a firewall that allows only gh-aw's default hosts. Threat detection checks what Copilot asks to write, and a run it flags writes nothing. Each run stops at an AI-credit cap set from measured usage, and threat detection used about 1 AI credit or less a run.
 
-**What they need.** The `gh aw` extension of GitHub CLI at the version the solutions pin, v1.2.2 (`gh extension install github/gh-aw --pin v1.2.2`), to compile a workflow after you change it: each solution's checks fail a pull request whose compiled workflow isn't what v1.2.2 compiles from its source. And a `COPILOT_GITHUB_TOKEN` repository secret, which the four share: a fine-grained personal access token with **Copilot Requests: Read**, whose owner's Copilot plan pays for the runs. In an organization with centralized Copilot billing, `copilot-requests: write` in a workflow's permissions can replace the token.
+**What they need.** The `gh aw` extension of GitHub CLI at the version the solutions pin, v1.2.2 (`gh extension install github/gh-aw --pin v1.2.2`), to compile a workflow after you change it: each solution's checks fail a pull request whose compiled workflow isn't what v1.2.2 compiles from its source. And a `COPILOT_GITHUB_TOKEN` repository secret, which the four share: a fine-grained personal access token with **Copilot Requests: Read**, whose owner's Copilot plan pays for the runs. In an organization with centralized Copilot billing, `copilot-requests: write` in a workflow's permissions can replace the token. Each of the four READMEs shows how to create the token, and how to use the rest of its solution without it.
 
 ## Install a solution in your repository
 
@@ -128,15 +117,13 @@ Every solution needs:
 - Python 3.12 or later for the solution scripts (`pip install -r requirements.txt` in the solution folder, when it has one).
 - [PowerShell 7.4 or later](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) (`pwsh`). The READMEs' commands are written for it. Windows PowerShell 5.1 handles quotes and file encodings differently, and some commands fail there.
 
-Where the Copilot cloud agent runs RequestHub's tests (03-develop-github, 04-test-github, 05-secure-github, and 07-operate-github), its session must run on GitHub Actions, where [`copilot-setup-steps.yml`](.github/workflows/copilot-setup-steps.yml) starts PostgreSQL. Cloud sandboxes don't run setup steps, and cloud is the default wherever GitHub offers a choice of environment: pick GitHub Actions ([GitHub's comparison](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)).
-
 Microsoft solutions also need:
 
 - An Azure subscription where you can create resource groups, Microsoft Entra app registrations, and role assignments (for example Owner on the subscription).
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (`az login`) and [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) (`azd auth login`).
 - Admin rights on the repository. Each Microsoft solution's setup connects it to GitHub once, limited to that repository: a fine-grained token, a GitHub App, or a webhook.
 
-Each solution README lists anything else it needs.
+[Choose where to start](#choose-where-to-start) lists what else each solution needs.
 
 ### Choose where to start
 
@@ -171,7 +158,7 @@ Each row links to the solution's install steps. *Setup* is what its README measu
 Each solution works on its own, and several can share one repository. They share these pieces:
 
 - **Labels.** The GitHub solutions, and 07-operate-microsoft, create `ai-sdlc` with the same command, and each phase adds its own `phase:<phase>` label. `gh label create --force` updates a label that already exists.
-- **One token for the agentic workflows.** 02-design-github, 04-test-github, 06-release-github, and 07-operate-github share the `COPILOT_GITHUB_TOKEN` secret. Their READMEs show how to create it, and how to carry on with the rest of the solution without it.
+- **One token for the agentic workflows,** `COPILOT_GITHUB_TOKEN`: see [what they need](#the-agentic-workflows).
 - **Skills.** `contract-impact` comes with 02-design-github, 03-develop-github, and 04-test-github, and `regression-validation` with 03-develop-github and 04-test-github. The copies are identical, so copying a second solution writes the same files again.
 - **Copilot's environment.** 03-develop-github, 04-test-github, 05-secure-github, and 07-operate-github run your tests in Copilot's session, which one `copilot-setup-steps.yml` prepares for all of them.
 
@@ -191,7 +178,7 @@ git -C $src diff --stat $copied main -- $solution
 Remove-Item -Recurse -Force $src
 ```
 
-Each commit on `main` is one pull request, titled after what it changed, with its number. The clone took 7 to 12 seconds when this README was checked. Bring what you want into your edited copy by hand, or copy the solution again on a new branch and compare it with yours.
+Each commit on `main` is one pull request, titled after what it changed, with its number. Bring what you want into your edited copy by hand, or copy the solution again on a new branch and compare it with yours.
 
 ## Files you edit to tweak a solution
 
@@ -238,7 +225,6 @@ Everything else bills for what you use: Foundry models and evaluations, Azure Fu
 - **Azure costs stay contained.** Each Microsoft solution deploys into its own resource group, and its README's clean-up steps remove everything it created: `azd down --purge` for the resource group, plus any Microsoft Entra app registration, which lives outside it. To revoke a solution's GitHub access, delete its token or GitHub App on GitHub; its README says which.
 - **Outsiders start nothing that costs you.** On a public repository, Issues, comments, and fork pull requests from people outside it start no model, no Azure resource, and nothing that uses your tokens. Each solution checks who asked where it runs. Before you make a repository with these solutions public, change the settings listed in [CONTRIBUTING.md](CONTRIBUTING.md#settings-for-a-public-copy).
 - **Some GitHub security features depend on your plan.** CodeQL code scanning (including running CodeQL in a workflow), Copilot Autofix, secret scanning, and push protection are free on public repositories. On a private repository they need GitHub Code Security or GitHub Secret Protection, which require a GitHub Team or Enterprise plan. Solutions that use them say what runs without them.
-- **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) for how solutions are structured and validated.
 
 ## License
 
@@ -255,7 +241,7 @@ Each solution's README shows a real run, step by step, in *See it work*, what it
 
 ### Try it in a copy of this repository
 
-To try the solutions on RequestHub before you adapt them, make one copy of this repository for all of them, private or public, in your account or organization (20 seconds when we made one on 11 November). In PowerShell 7, with `<owner>` your account or organization:
+To try the solutions on RequestHub before you adapt them, make one copy of this repository for all of them, private or public, in your account or organization. In PowerShell 7, with `<owner>` your account or organization:
 
 ```powershell
 git clone https://github.com/melabadi/adept-assessment-northstars.git ai-sdlc
@@ -274,9 +260,9 @@ git pull --no-rebase --no-edit https://github.com/melabadi/adept-assessment-nort
 git push
 ```
 
-`--no-rebase` merges the updates with any commits your copy's `main` has of its own, such as the one 02-design-microsoft's step 1 merges: with git's default settings, a plain `git pull` stops there with `Need to specify how to reconcile divergent branches`. `--no-edit` keeps the merge's default message. In [the fresh setup of 04-test-microsoft](solutions/04-test-microsoft/evidence/2026-11-11-fresh-setup.md) on 11 November, the two commands merged main into such a copy in 5 and 2 seconds, and the push ran only Repository checks, for 10 seconds. The push matters to the solutions that read files from your copy's `main`, such as 02-design-microsoft's standards and 03-develop-microsoft's rule checker. A copy with the ruleset of the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy) refuses a push to `main`: there, run `git switch -c updates` before the pull, then `git push -u origin updates`, `gh pr create --base main --fill`, and `gh pr merge --merge --delete-branch`. Merge with a merge commit, not a squash, which would drop the shared history and make the next pull merge the same updates again.
+`--no-rebase` merges the updates with any commits your copy's `main` has of its own, such as the one 02-design-microsoft's step 1 merges: with git's default settings, a plain `git pull` stops there with `Need to specify how to reconcile divergent branches`. `--no-edit` keeps the merge's default message. The push matters to the solutions that read files from your copy's `main`, such as 02-design-microsoft's standards and 03-develop-microsoft's rule checker. A copy with the ruleset of the [settings for a public copy](CONTRIBUTING.md#settings-for-a-public-copy) refuses a push to `main`: there, run `git switch -c updates` before the pull, then `git push -u origin updates`, `gh pr create --base main --fill`, and `gh pr merge --merge --delete-branch`. Merge with a merge commit, not a squash, which would drop the shared history and make the next pull merge the same updates again.
 
-The push can run your copy's four push workflows once (CI, Repository checks, Copilot setup steps, and the Secure lab tooling checks), each only when the push changes files it watches: at most about 5 minutes of GitHub-hosted runners, 10 as billed in a private repository. A copy made from main on 11 November, whose newest commit changed only Markdown files, ran only Repository checks, for 15 seconds ([the fresh setup of 01-plan-microsoft](solutions/01-plan-microsoft/evidence/2026-11-11-fresh-setup.md)). Nothing else runs until you set a solution up.
+The push can run your copy's four push workflows once (CI, Repository checks, Copilot setup steps, and the Secure lab tooling checks), each only when the push changes files it watches: at most about 5 minutes of GitHub-hosted runners, 10 as billed in a private repository. Nothing else runs until you set a solution up.
 
 Then follow the solution's *Try it first in a copy of this repository*. The runs in the READMEs keep their links to this repository's Issues and pull requests.
 
