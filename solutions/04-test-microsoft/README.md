@@ -4,11 +4,32 @@ Most teams find out how their app behaves under load in production: a realistic 
 
 ![The slowdown run in Azure Load Testing: Failed, test criteria not met. The experimental AI summary blames server-side bottlenecks, with spikes in HTTP request duration and average response time for the App container, and says the database was not the bottleneck; the statistics show 576 requests, a 1.51 second 90th percentile response time, and 0 percent errors](images/05-failed-run.png)
 
+- **[Install it in your repository](#install-it-in-your-repository):** about 20 minutes of one-time setup in Azure and GitHub, once the journey and its criteria describe your app. [Getting started](#getting-started) lists the commands in order.
+- **[Files to edit to tweak it](#files-to-edit-to-tweak-it):** the user journey, its pass/fail criteria, the guardrails, and the report's query.
 - **[See it work](#see-it-work):** a real run on RequestHub, this repository's sample app. A 1.5-second slowdown failed the gate, Azure opened an Issue that proves the cause, and the run after the fix closed it.
-- **[Add it to your repository](#add-it-to-your-repository):** about 20 minutes of one-time setup in Azure and GitHub, once the journey and its criteria describe your app.
 - **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 30 minutes to set it up on RequestHub, then about 45 minutes for the steps of See it work: 27 and 46 minutes in a fresh setup we timed.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [Azure Load Testing](https://learn.microsoft.com/azure/app-testing/load-testing/overview-what-is-azure-load-testing) | Runs the journey on managed engines, on demand or on a weekday schedule, judges each run against its pass/fail criteria, and shows the client's and the server's metrics side by side with an experimental AI summary |
+| [Locust](https://docs.locust.io/en/stable/) | The journey: a Python script in the repository, which people review in pull requests |
+| [Managed identities](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/overview) | Sign the virtual users in to your API with its app roles, and the function in to Azure, with no password or key to keep |
+| An [Azure Monitor action group](https://learn.microsoft.com/azure/azure-monitor/alerts/action-groups) | Hands every finished run from Azure Load Testing's notification rule to the function |
+| [Azure Functions](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan), on the Flex Consumption plan, in Python | Reads each finished run, writes its report from your API's telemetry, and opens, comments on, or closes the GitHub Issue |
+| [Azure Key Vault](https://learn.microsoft.com/azure/key-vault/general/overview), [private endpoints](https://learn.microsoft.com/azure/private-link/private-endpoint-overview), and an [Azure Storage queue](https://learn.microsoft.com/azure/storage/queues/storage-queues-introduction) | Keep the GitHub token and the function's queue of report steps off the internet |
+| [Application Insights](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview), on a Log Analytics workspace | Holds your API's telemetry, which the report queries with KQL |
+| [Azure Copilot Observability Agent](https://learn.microsoft.com/azure/azure-monitor/aiops/observability-agent-overview) | Answers questions about your API's telemetry in plain language, and runs the KQL itself |
+| [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/) and [Bicep](https://learn.microsoft.com/azure/azure-resource-manager/bicep/overview) | Deploy everything into one resource group with `azd up`, whose hooks check the test against its guardrails and copy it into Azure Load Testing |
+| GitHub: Issues, the `load-test` label, and a [fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) | The function opens an Issue when a run fails and closes it when a later run passes, with a token for one repository's Issues. No workflow, Copilot agent, or skill is involved |
+| Python 3.12 and PowerShell 7 | The scripts, and the commands in this README |
+
+The files are written for RequestHub: a .NET 10 API on Azure Container Apps, with Microsoft Entra ID sign-in and app roles, PostgreSQL, and Application Insights. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for yours.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 4 of 7: Test.** The GitHub counterpart is [04-test-github](../04-test-github/), where Copilot proves a functional fix with a regression test. This solution proves service-level behavior under load, with the AI and the orchestration in Azure. GitHub holds the code, the pull requests that change the test, and the Issues. To load-test the commit that its counterpart proved, on one change, use both as in the [Test solution combo](../../PRESENTING.md#test-copilot-proves-the-repair-azure-load-tests-the-same-commit).
 
@@ -22,14 +43,9 @@ Most teams find out how their app behaves under load in production: a realistic 
 | Diagnosis | Load-tool numbers and app logs live in different places. | The run's dashboard shows client and server metrics side by side with an AI summary, the Observability Agent answers questions about the telemetry, and the report counts the requests that carried the injected delay. |
 | Changing the test | A script on someone's laptop. | The journey and its criteria are files in the repository, reviewed in pull requests and applied with `azd provision`. |
 
-**The value:** a slow endpoint is caught by a gate, explained with evidence, and tracked in an Issue that closes itself once a run proves the fix, without anyone watching a chart or holding a credential. In [See it work](#see-it-work):
+**The value:** a slow endpoint is caught by a gate, explained with evidence, and tracked in an Issue that closes itself once a run proves the fix, without anyone watching a chart or holding a credential. [Results and value](#results-and-value) has what the recorded run measured.
 
-- A 1.5-second slowdown on the request list failed the gate on the first run after it shipped: the two list requests missed their 1,000 ms limit at 1,580 and 1,570 ms, and every other criterion passed.
-- Azure opened a GitHub Issue that proves the cause 11 minutes 42 seconds after the slowdown went live, and 15 seconds after Azure Load Testing's notification.
-- The run after the fix passed, and the Issue closed itself 10 minutes 44 seconds after that run started.
-- Asked a precise question, the Observability Agent gave numbers that matched our own queries exactly.
-
-## How it works
+### How it works
 
 ```mermaid
 flowchart LR
@@ -59,6 +75,277 @@ flowchart LR
 - **People** decide what a failure means, check what the AI says against the evidence, and decide whether a release ships.
 
 **Outside contributions.** Nothing here listens to GitHub. Azure Load Testing's action group calls the function, which acts only on its own Issue: open, labeled `load-test` (a label only people with triage access can apply), titled with the test's id, and opened by the owner, a member, or a collaborator. It reads its hidden run markers only in that Issue's body and in comments from those people, so an outsider's comment can't make a run look already reported. The one other place it posts is the Issue that a candidate run's description names: only people who may start load tests write that description, and the function comments only on an open Issue, never a pull request, that the owner, a member, or a collaborator opened. On a public repository, nobody outside it can start a test run or get a run reported, nobody outside it can stop a report, and the function never comments on or closes an Issue they open. `test_reporter.py` covers these checks.
+
+## Install it in your repository
+
+These are the steps that set the solution up on RequestHub. We have run them only on RequestHub: for your app, the commands stay the same, and [Files to edit to tweak it](#files-to-edit-to-tweak-it) names the changes. [Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see. Point your first runs at a test environment of your app, not at production.
+
+### Prerequisites
+
+- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI.
+- The Azure CLI's `load` extension, in preview (tested with 2.1.0), which step 1 of the setup installs.
+- Your app's API, deployed in Azure, with:
+  - Microsoft Entra ID sign-in with app roles: the journey signs in as managed identities that hold those roles. If your API signs in another way, change the sign-in in the locustfile.
+  - Application Insights on a Log Analytics workspace, which the report queries.
+  - A way for the test to delete what it creates, so each run leaves your data as it found it.
+- An Azure subscription where you can create resource groups and role assignments, for example as Owner, in a region that offers Azure Load Testing, Azure Functions Flex Consumption, and the Observability Agent (we used `centralus`).
+- A Microsoft Entra role that may assign your API's app roles to the test's identities, for example Cloud Application Administrator or Application Administrator: Bicep makes those assignments through Microsoft Graph.
+- Access to Azure Copilot in your tenant, for the Observability Agent.
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must say you're logged in to github.com, Python must be 3.12 or later, and PowerShell 7.4 or later; the Azure CLI and the Azure Developer CLI must print their versions ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   "az: " + (az version | ConvertFrom-Json).'azure-cli'; azd version
+   ```
+
+2. **Copy the folder on a new branch,** here as `perf/`, without `slowdown.py`, `candidate.py`, `test_candidate.py`, `evidence/`, and `images/`, which belong to RequestHub and to the run in [See it work](#see-it-work). The copy adds the licence that must travel with the files and a `.gitignore` for what the scripts and tests write, takes `test_candidate` out of `azure.yaml`'s `predeploy` hook, points the report's *Telemetry not available* verdict at the copy's README, and prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-performance-lab
+   $dest = 'perf'
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-04-test-microsoft'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   $from = Join-Path $src 'solutions/04-test-microsoft'
+   Remove-Item -Recurse -Force (Join-Path $from 'slowdown.py'), (Join-Path $from 'candidate.py'), (Join-Path $from 'test_candidate.py'), (Join-Path $from 'evidence'), (Join-Path $from 'images')
+   New-Item -ItemType Directory -Force $dest | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $from '*') $dest
+   Copy-Item -Force (Join-Path $src 'LICENSE') $dest
+   Set-Content (Join-Path $dest '.gitignore') '__pycache__/', '.venv/', 'out/'
+   $azure = Join-Path $dest 'azure.yaml'
+   (Get-Content $azure -Raw).Replace(' test_reporter test_candidate', ' test_reporter') | Set-Content $azure -NoNewline
+   $report = Join-Path $dest 'function/reporter/report.py'
+   (Get-Content $report -Raw).Replace('solutions/04-test-microsoft/README.md', "$dest/README.md") | Set-Content $report -NoNewline
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 26 new files under `perf/`, in 6 to 7 seconds when this README was checked. In `perf/azure.yaml`, the `predeploy` hook now runs `python -m unittest -q test_reporter`, and the report's *Telemetry not available* verdict names `perf/README.md`. GitHub reads a repository's own licence only from its root, so yours doesn't change. The folder can sit anywhere in your repository: only `azure.yaml`'s `api` and `worker` services and `infra/main.bicep`'s `module app` reach outside it, to RequestHub's `app/` two levels up, and step 3 removes them.
+
+3. **Edit the files for your code,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) lists. Then, from the folder, install the scripts' packages, check the journey against the guardrails, and run the function's offline tests, which azd also runs before every deploy:
+
+   ```powershell
+   cd perf
+   pip install -r requirements.txt
+   python sync_test.py check
+   python -m unittest -q test_reporter
+   ```
+
+   The check prints `PASS`, and the tests end with `OK`. The `.gitignore` keeps the `__pycache__` folders that they write out of git.
+
+4. **Set it up once,** from the folder. Sign in, set the values that `sync_test.py` reads for your API, and the others that your `main.bicep` and `render_config()` read, then deploy ([step 1](#1-deploy)):
+
+   ```powershell
+   az extension add --name load --upgrade
+   az login
+   azd auth login
+   azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+   azd env set API_URL <your API's base URL>
+   azd env set API_IDENTIFIER_URI <your API's application ID URI>
+   azd up
+   ```
+
+   Let your API accept the test's identities: add the two client ids that this prints to the client applications your API accepts tokens from, and let the requester identity delete what it creates ([step 2](#2-let-your-api-accept-the-tests-identities)):
+
+   ```powershell
+   azd env get-value LOAD_TEST_CLIENT_IDS
+   ```
+
+   Then create a fine-grained GitHub token for your repository only, with **Issues: Read and write**, on GitHub, and give it to Azure ([step 3](#3-let-azure-post-to-github)):
+
+   ```powershell
+   azd env set GITHUB_ISSUES_TOKEN (Read-Host -MaskInput 'GitHub token')
+   azd provision
+   ```
+
+5. **Merge it into your default branch,** where people review every later change to the journey and its criteria. Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .
+   git commit -m "Add 04-test-microsoft from ai-sdlc <commit>"
+   git push -u origin add-performance-lab
+   gh pr create --fill
+   ```
+
+   azd keeps its environment, which holds the token, out of git. Merge the pull request as you merge any change.
+
+6. **Use it: run the test against your API,** from the folder, then read the verdict and the report as [Use it the first time](#use-it-the-first-time) describes:
+
+   ```powershell
+   $lt = azd env get-value LOAD_TEST_NAME
+   $rg = azd env get-value AZURE_RESOURCE_GROUP
+   az load test-run create --load-test-resource $lt -g $rg --test-id <your test id> `
+     --test-run-id "first-$(Get-Date -Format yyyyMMdd-HHmmss)" --display-name "First run" --no-wait
+   ```
+
+### One-time setup
+
+About 20 minutes, once the files describe your app. On RequestHub, provisioning the function's resources took 6 minutes 39 seconds, deploying the function 25 seconds, and the provision that stores the GitHub token 5 minutes 45 seconds. A fresh setup on 11 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, deployed RequestHub too, which took most of the time ([the evidence](evidence/2026-11-11-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Deploy: `pip install -r requirements.txt` | 1 minute 25 seconds, in a new virtual environment |
+| 1. Deploy: `azd up` | 17 minutes 29 seconds, RequestHub included: its Container Apps environment took 5 minutes 47 seconds and its PostgreSQL server 7 minutes 44 seconds |
+| 3. Let Azure post to GitHub: the token | a few minutes for a person on GitHub |
+| 3. Let Azure post to GitHub: `azd provision` | 6 minutes 31 seconds |
+
+#### 1. Deploy
+
+From the root of your repository, set the values that `sync_test.py` reads for your API, then deploy:
+
+```powershell
+cd perf
+pip install -r requirements.txt
+az extension add --name load --upgrade
+az login
+azd auth login
+azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+azd env set API_URL <your API's base URL>
+azd env set API_IDENTIFIER_URI <your API's application ID URI>
+azd up
+```
+
+Set the other values your `main.bicep` and `render_config()` read the same way, for example your API's app registration client id and the names of its resources.
+
+`--subscription` deploys to the subscription that `az` signed in to, where `sync_test.py` and the commands below look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd up` asks you to pick one of your subscriptions. Run azd in the shell where `pip install` ran, with the same virtual environment active if you use one: its hooks run that `python`.
+
+**What you should see:** before provisioning, azd records the repository where the function opens its Issues, from your clone's `origin` remote: `GITHUB_REPOSITORY: <owner>/<repository> (from the origin remote)`. After provisioning, `python sync_test.py setup` prints `PASS` for the guardrails, then creates the test, the notification rule, and the weekday schedule, paused, as in [What azd up creates](#what-azd-up-creates). A guardrail that fails stops the hook before anything reaches Azure Load Testing. azd then runs the function's unit tests, which end with `OK`, deploys the function, and ends with `SUCCESS`.
+
+#### 2. Let your API accept the test's identities
+
+`azd up` created two managed identities and gave them your API's app roles. Check the assignments, and get the identities' client ids:
+
+```powershell
+$sp = az ad sp show --id <your API's app registration client id> --query id -o tsv
+az rest --method get --url "https://graph.microsoft.com/v1.0/servicePrincipals/$sp/appRoleAssignedTo" --query "value[?principalType=='ServicePrincipal'].principalDisplayName" -o tsv
+azd env get-value LOAD_TEST_CLIENT_IDS
+```
+
+**What you should see:** the two identities, `id-lt-approver-*` and `id-lt-requester-*`, then their client ids, separated by a comma. Add both client ids to the client applications your API accepts tokens from, as RequestHub does in its Container Apps authentication ([`app/infra/api.bicep`](../../app/infra/api.bicep), `allowedApplications`), and let the requester identity delete what it creates.
+
+#### 3. Let Azure post to GitHub
+
+The function posts with a token that a person creates, for your repository only:
+
+1. On GitHub, open **Settings › Developer settings › Personal access tokens › Fine-grained tokens › Generate new token**. Set the expiration (for example 90 days), the resource owner that owns the repository, **Repository access: Only select repositories** with that repository, and **Repository permissions › Issues: Read and write**. GitHub adds Metadata: Read-only on its own. Nothing else.
+2. In the folder you copied:
+
+   ```powershell
+   azd env set GITHUB_ISSUES_TOKEN (Read-Host -MaskInput 'GitHub token')
+   azd provision
+   ```
+
+**What you should see:** `azd provision` ends with `SUCCESS`. It writes the token into the solution's Key Vault as the secret `github-token`, through Azure Resource Manager. The vault has no public network access, no app setting or deployment output carries the token, and only the function's identity can read it, through the vault's private endpoint. Issues it opens show you as the author, and their text says that Azure wrote them. Use a person's token, as here, not a GitHub App's: the function trusts only Issues and comments from the owner, members, and collaborators, and GitHub reports a bot as none of them. Until a token is set, the function still builds every report, and its log says *No GitHub token configured*. To replace the token, run the same two commands; the next report reads the new secret.
+
+### Use it the first time
+
+Run the test once against your API:
+
+```powershell
+$lt = azd env get-value LOAD_TEST_NAME
+$rg = azd env get-value AZURE_RESOURCE_GROUP
+az load test-run create --load-test-resource $lt -g $rg --test-id <your test id> `
+  --test-run-id "first-$(Get-Date -Format yyyyMMdd-HHmmss)" --display-name "First run" --no-wait
+```
+
+**What you should see:** in the Azure portal, open your resource group › the Load Testing resource › **Tests** › your test › the run. The engine starts, the client-side metrics fill in, then the verdict appears. On RequestHub, a 2-minute run reached its verdict 7 to 9 minutes after it started, and the function reported it 2 to 4 minutes after that. A passing run with no Issue open posts nothing: open the function app › **Overview** › `report_run` › **Invocations** to read its report. A failing run opens an Issue titled `[load-test <your test id>]`, with the `load-test` label.
+
+Then make it part of your workflow:
+
+- **Run it every weekday.** Enable the schedule that the setup created, so the journey runs every weekday evening and the function reports every result: `az load trigger schedule enable --load-test-resource $lt -g $rg --trigger-id weekday-evenings`. Only enable it while the environment stays up: Azure Load Testing disables a schedule after three consecutive failed runs. Pause it again with `az load trigger schedule pause`.
+- **Change the journey in a pull request.** Try a change on your machine before it costs a cloud run: `python sync_test.py check`, then `locust -f loadtest/locustfile.py --headless -u 4 -r 2 -t 1m -H <a local instance of your API>`. The locustfile's local sign-in (`RH_AUTH=persona`) is RequestHub's development sign-in, so give it your API's. When the change merges, run `azd provision` (about 6 minutes) or only `python sync_test.py setup` (about a minute) to apply it. A change that breaks a guardrail stops there and never reaches Azure.
+- **Keep the evidence of a run you want to show.** Export the run records, the function's log, and the queries behind your numbers with only the fields you need, as [`evidence/`](evidence/) does here, and check the export for host names, GUIDs, and e-mail addresses before you commit it. Application Insights keeps the telemetry only as long as your workspace's retention.
+
+**The metric to track when you adopt it:** performance regressions caught before release, and the time from a regression going live to the Issue that names it (11 minutes 42 seconds in See it work). Compare both with how such regressions surfaced before. A target is a goal you set, never a result.
+
+### What it costs
+
+Your app bills as it already does. While deployed, the solution adds about $0.75 a day for the reporting function's three private endpoints and their DNS zones, and about $0.25 per short test run: Azure Load Testing bills at least 10 virtual users per engine for 10 minutes per run, so a 2-minute run like RequestHub's bills 1.67 virtual user hours. The function runs on demand, a few seconds per run, within Flex Consumption's monthly free grant; Key Vault and the action group add a few cents a month. Since 1 July 2026, the Observability Agent bills the work of each question in Azure Agent Credits, at $0.01 a credit; a chat question is its lowest-cost use ([its billing](https://learn.microsoft.com/azure/azure-monitor/aiops/observability-agent-billing)). The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+
+## Files to edit to tweak it
+
+The copy brings the whole folder except `slowdown.py`, `candidate.py`, `test_candidate.py`, `evidence/`, and `images/`, which belong to RequestHub and to the run in [See it work](#see-it-work).
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File | What it does here | What to change for your app |
+| --- | --- | --- |
+| [`loadtest/locustfile.py`](loadtest/locustfile.py) | RequestHub's journey: requester and approver virtual users, their sign-in, and the cleanup | The requests your users make, each with a `name=`, which the criteria refer to. Keep the managed-identity sign-in (`managed_identity_token`). Replace the cleanup, which calls RequestHub's `POST /api/admin/load-test/cleanup`, with your own way to delete what the test created. |
+| [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml) | The test's id, workload, settings, and pass/fail criteria | Rename the file and its `testId`. Set the criteria from what your users need (a service level objective), not from what the first run measured. |
+| [`sync_test.py`](sync_test.py) | Checks the scenario against guardrails, then copies it into Azure Load Testing with the deployment's values | `TEMPLATE`, the YAML's name. The guardrails: `REQUIRED_P95`, the requests every run must judge (RequestHub's `team-queue`, `submit`, and `decide`), and `LIMITS`. In `render_config()`, the settings the journey reads, and `appComponents`, the resources whose metrics the dashboard shows next to the client's (RequestHub's container app, Application Insights, and PostgreSQL). |
+| [`infra/main.bicep`](infra/main.bicep) and [`main.parameters.json`](infra/main.parameters.json) | Deploys RequestHub's platform, the test's identities, Azure Load Testing, and the reporting function | Remove RequestHub's platform (`module app`) and the outputs it fed. Pass your API's app registration client id to `loadTesting` (`apiClientId`), your test's id to `reporting` (`testId`, now `requesthub-journey`), and the Log Analytics workspace behind your API's Application Insights (`logAnalyticsName`), read from the azd environment as `githubRepository` is. |
+| [`infra/loadtesting.bicep`](infra/loadtesting.bicep) | Azure Load Testing, and the identities' app roles on RequestHub's API | The app role values the identities get (`RequestHub.Requester` and `RequestHub.Approver`). |
+| [`infra/reporting.bicep`](infra/reporting.bicep) | The function, its network, storage, Key Vault, roles, and action group | It reads two resources that RequestHub's platform created in the same resource group: the workspace, and the blob private DNS zone. Create the zone here, as it creates the queue and vault zones. If your workspace is in another resource group, scope its `existing` reference and its Log Analytics Reader assignment there. |
+| [`azure.yaml`](azure.yaml) | The azd project | Remove the `api` and `worker` services, which deploy RequestHub. [Getting started](#getting-started) already took `test_candidate` out of the `predeploy` hook. |
+| [`function/reporter/report.kql`](function/reporter/report.kql) | The API's requests during a run, from `AppRequests` | The route filter (`Name has '/api/'`) and the injected-delay property (`requesthub.fault.queue_delay_ms`): count what your app records for the change you want to prove, for example a feature flag or a deployment marker. `AppVersion` names a Container Apps revision; on other hosts, the report leaves its revision line out. |
+| [`function/reporter/report.py`](function/reporter/report.py), [`issues.py`](function/reporter/issues.py), and [`test_reporter.py`](test_reporter.py) | The report's verdicts, the Issue's title, and their tests | The verdicts' wording, which names RequestHub's slowdown, and the Issue's title (`RequestHub journey missed its performance criteria`). Update their tests to match. |
+
+To find the requests your users make, Azure Load Testing's **Record and create scripts** records a journey in your browser and uses AI to suggest correlations and parameters for a JMeter test ([quickstart](https://learn.microsoft.com/azure/app-testing/load-testing/quickstart-create-run-load-tests-from-recording)). This solution's guardrails take Locust, so write the requests you recorded into the locustfile.
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your app. Apply a change as [After you edit](#after-you-edit) says:
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| How much load a run applies | `LOCUST_USERS`, `LOCUST_SPAWN_RATE`, `LOCUST_RUN_TIME`, and `PACING_SECONDS` in [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml), within the guardrails' `LIMITS` in `sync_test.py` | 10 virtual users, added 2 per second, for 120 seconds; each starts at most one journey every 6 seconds |
+| How many engines generate it | `engineInstances` in the same file | 1 |
+| When a run stops early | `autoStop` in the same file | When the error percentage exceeds 50 in a 60-second window |
+| When the weekday schedule runs | The days and the hour that `setup()` in [`sync_test.py`](sync_test.py) gives a new schedule; it never changes one that exists | Monday to Friday at 22:00 UTC, created paused |
+| How long the function waits for a run's verdict and its telemetry | `verdict_checks`, `verdict_delay`, `telemetry_checks`, and `telemetry_delay` in `Settings`, in [`function/reporter/flow.py`](function/reporter/flow.py), and the `StepTests` in [`test_reporter.py`](test_reporter.py) that expect them | A check every 60 seconds, up to 10 times for the verdict and 8 for the telemetry |
+| How many times the function takes a failed step from its queue | `maxDequeueCount` in [`function/host.json`](function/host.json) | 5 |
+
+### What the copy adds
+
+```text
+perf/
+├── loadtest/                     the journey, and its workload settings and pass/fail criteria (no environment values)
+├── function/                     the reporting function (Python 3.12, Flex Consumption)
+├── test_reporter.py              the function's offline unit tests; azd runs them before every deploy
+├── sync_test.py                  azd hooks: check the scenario, then copy the test, notification rule, and schedule into Azure
+├── azd_env.py                    reads settings from this solution's azd environment
+├── requirements.txt              Python packages (Locust pinned to the engines' version)
+├── azure.yaml                    azd project: infra, the shared app's api and worker, and the reporter function
+├── infra/                        Bicep: resource group, RequestHub platform (app/infra), load testing, reporting
+├── README.md                     this README
+├── LICENSE                       the licence that travels with the files
+└── .gitignore                    what the scripts and tests write, added by the copy
+```
+
+### After you edit
+
+From the folder, run the guardrails and the offline tests as in [Getting started](#getting-started) step 3. Then apply the change where it runs:
+
+- `loadtest/` or `sync_test.py`: merge it, then run `python sync_test.py setup`, or `azd provision`, which runs it.
+- `function/`: run `azd deploy`, which runs `test_reporter.py` first.
+- `infra/`: run `azd provision`.
+
+## Clean up
+
+When you no longer need the solution, revoke its GitHub token (**Settings › Developer settings › Fine-grained tokens**), then remove what azd deployed, from the solution's folder: `azd down --purge --force` removes the solution's resource group, with the test's identities, Azure Load Testing and its runs, and the reporting function, and purges the function's Key Vault, so its name can be used again at once. Your app stays as it is: remove the identities' client ids from the client applications it accepts.
+
+Without `--force`, `azd down` lists what it will delete and asks you to confirm; without a terminal to ask in, it stops there and deletes nothing. Then `azd env set GITHUB_ISSUES_TOKEN ''` removes the token from your local azd environment. Deleting the group also moves the service principals of its managed identities to Entra's recycle bin. Entra refused to purge them in our fresh setup; it removes them after 30 days.
+
+## Troubleshooting
+
+- **`AzureCLICredential: exit status 1` during `azd up` or `azd provision`.** azd could not get a token from the Azure CLI. Run `az account get-access-token`, then run the command again.
+- **`Not a valid reference update` for `appRoleAssignedTo` during `azd up`.** Microsoft Graph had not seen the new identities yet. Run `azd provision` again.
+- **Every request fails with 401 in a run.** The API does not accept the identities yet. In the copy, run `azd deploy api`, which applies `LOAD_TEST_CLIENT_IDS` to the API's authentication settings. In your repository, see [Let your API accept the test's identities](#2-let-your-api-accept-the-tests-identities).
+- **A run stays in `PROVISIONING` far longer than the usual 3 minutes.** Azure Load Testing is waiting for engine capacity in the region; one of our runs waited 25 minutes and then ran normally. Wait, or stop the run and start it again.
+- **No Issue appears after a failed run.** In the function app, open `test_run_ended` › **Invocations**. No invocation at all: the notification rule is missing, so run `python sync_test.py setup`, then check **Settings › Notifications** on the Load Testing resource; or the action group calls with a function key the function no longer accepts (a 401 the function never logs), for example after someone renewed the key in the portal, so run `azd provision`, which writes a new key to both. *Refused a notification* in its log: the call didn't come from this test's notification rule (403 or 404), or the run ended more than an hour before the call (410); replays never post. Then open `report_run` › **Invocations**: *No GitHub token configured* means no token is set; a failure with GitHub 401 means the token expired or was revoked, so create a new one. A failed step is retried up to five times.
+- **The report says *Telemetry not available*.** Application Insights hadn't received the run's requests after about 8 minutes. A few minutes later, and within an hour of the run's end, send the run to the function again with `python sync_test.py report <test-run-id>`; the function comments on the Issue with the new report.
+- **The Issue stays open after a passing run.** Read the function's comment on the Issue. *Passed with the slowdown on*: the fault was still active, so run `python slowdown.py off` and run the test again. *Telemetry not available*: send the run again, as above. No comment at all: the run started before the Issue was opened, for example when two runs overlapped, so it says nothing about a fix.
+- **`az load notification-rule` or `az load trigger` is not found.** Update the extension: `az extension add --name load --upgrade`.
+- **The weekday schedule shows as disabled.** Three scheduled runs in a row failed, usually because the database was stopped. Start the database, then enable the schedule again.
+- **The run's dashboard shows only a spinner.** The portal draws the dashboard after the page loads, which took up to a minute in our runs. Wait, or select **Refresh** on the run.
 
 ## See it work
 
@@ -215,127 +502,11 @@ Evidence: [the closing comment](https://github.com/melabadi/adept-assessment-nor
 - **Risk removed.** A 1.5-second slowdown on one endpoint failed the gate on the first run after it shipped, before users would have met it. No password or token exists for the test to leak. The function's identity can only read test runs, the API's telemetry, and one Key Vault secret; its GitHub token reaches one repository's Issues, and only Key Vault holds it.
 - **Evidence a reviewer or an auditor can follow.** The criteria are code, reviewed in pull requests. The Issue holds both reports and names the runs, and the runs stay in Azure Load Testing with their criteria and metrics.
 
-**The metric to track when you adopt it:** performance regressions caught before release, and the time from a regression going live to the Issue that names it (11 minutes 42 seconds in See it work). Compare both with how such regressions surfaced before. A target is a goal you set, never a result.
-
-## Add it to your repository
-
-These are the steps that set the solution up on RequestHub, with what to change for your app. We have run them only on RequestHub: for your app, the commands stay the same, and the changes are the ones named below. Point your first runs at a test environment of your app, not at production.
-
-### Prerequisites
-
-- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI.
-- The Azure CLI's `load` extension, in preview (tested with 2.1.0), which step 1 of the setup installs.
-- Your app's API, deployed in Azure, with:
-  - Microsoft Entra ID sign-in with app roles: the journey signs in as managed identities that hold those roles. If your API signs in another way, change the sign-in in the locustfile.
-  - Application Insights on a Log Analytics workspace, which the report queries.
-  - A way for the test to delete what it creates, so each run leaves your data as it found it.
-- An Azure subscription where you can create resource groups and role assignments, for example as Owner, in a region that offers Azure Load Testing, Azure Functions Flex Consumption, and the Observability Agent (we used `centralus`).
-- A Microsoft Entra role that may assign your API's app roles to the test's identities, for example Cloud Application Administrator or Application Administrator: Bicep makes those assignments through Microsoft Graph.
-- Access to Azure Copilot in your tenant, for the Observability Agent.
-
-### What to copy and what to change
-
-Copy this folder into your repository, for example as `perf/`, without `slowdown.py`, `candidate.py`, `test_candidate.py`, `evidence/`, and `images/`, which belong to RequestHub and to the run in [See it work](#see-it-work). Then change these files:
-
-| File | What it does here | What to change for your app |
-| --- | --- | --- |
-| [`loadtest/locustfile.py`](loadtest/locustfile.py) | RequestHub's journey: requester and approver virtual users, their sign-in, and the cleanup | The requests your users make, each with a `name=`, which the criteria refer to. Keep the managed-identity sign-in (`managed_identity_token`). Replace the cleanup, which calls RequestHub's `POST /api/admin/load-test/cleanup`, with your own way to delete what the test created. |
-| [`loadtest/requesthub-journey.yaml`](loadtest/requesthub-journey.yaml) | The test's id, workload, settings, and pass/fail criteria | Rename the file and its `testId`. Set the criteria from what your users need (a service level objective), not from what the first run measured. |
-| [`sync_test.py`](sync_test.py) | Checks the scenario against guardrails, then copies it into Azure Load Testing with the deployment's values | `TEMPLATE`, the YAML's name. The guardrails: `REQUIRED_P95`, the requests every run must judge (RequestHub's `team-queue`, `submit`, and `decide`), and `LIMITS`. In `render_config()`, the settings the journey reads, and `appComponents`, the resources whose metrics the dashboard shows next to the client's (RequestHub's container app, Application Insights, and PostgreSQL). |
-| [`infra/main.bicep`](infra/main.bicep) and [`main.parameters.json`](infra/main.parameters.json) | Deploys RequestHub's platform, the test's identities, Azure Load Testing, and the reporting function | Remove RequestHub's platform (`module app`) and the outputs it fed. Pass your API's app registration client id to `loadTesting` (`apiClientId`), your test's id to `reporting` (`testId`, now `requesthub-journey`), and the Log Analytics workspace behind your API's Application Insights (`logAnalyticsName`), read from the azd environment as `githubRepository` is. |
-| [`infra/loadtesting.bicep`](infra/loadtesting.bicep) | Azure Load Testing, and the identities' app roles on RequestHub's API | The app role values the identities get (`RequestHub.Requester` and `RequestHub.Approver`). |
-| [`infra/reporting.bicep`](infra/reporting.bicep) | The function, its network, storage, Key Vault, roles, and action group | It reads two resources that RequestHub's platform created in the same resource group: the workspace, and the blob private DNS zone. Create the zone here, as it creates the queue and vault zones. If your workspace is in another resource group, scope its `existing` reference and its Log Analytics Reader assignment there. |
-| [`azure.yaml`](azure.yaml) | The azd project | Remove the `api` and `worker` services, which deploy RequestHub, and `test_candidate` from the `predeploy` hook. |
-| [`function/reporter/report.kql`](function/reporter/report.kql) | The API's requests during a run, from `AppRequests` | The route filter (`Name has '/api/'`) and the injected-delay property (`requesthub.fault.queue_delay_ms`): count what your app records for the change you want to prove, for example a feature flag or a deployment marker. `AppVersion` names a Container Apps revision; on other hosts, the report leaves its revision line out. |
-| [`function/reporter/report.py`](function/reporter/report.py), [`issues.py`](function/reporter/issues.py), and [`test_reporter.py`](test_reporter.py) | The report's verdicts, the Issue's title, and their tests | The verdicts' wording, which names RequestHub's slowdown, and the Issue's title (`RequestHub journey missed its performance criteria`). Update their tests to match. |
-
-To find the requests your users make, Azure Load Testing's **Record and create scripts** records a journey in your browser and uses AI to suggest correlations and parameters for a JMeter test ([quickstart](https://learn.microsoft.com/azure/app-testing/load-testing/quickstart-create-run-load-tests-from-recording)). This solution's guardrails take Locust, so write the requests you recorded into the locustfile. Before you open the pull request, `python sync_test.py check` runs the guardrails on your machine.
-
-### One-time setup
-
-About 20 minutes, once the files describe your app. On RequestHub, provisioning the function's resources took 6 minutes 39 seconds, deploying the function 25 seconds, and the provision that stores the GitHub token 5 minutes 45 seconds. A fresh setup on 11 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, deployed RequestHub too, which took most of the time ([the evidence](evidence/2026-11-11-fresh-setup.md)):
-
-| Step | Took |
-| --- | --- |
-| 1. Deploy: `pip install -r requirements.txt` | 1 minute 25 seconds, in a new virtual environment |
-| 1. Deploy: `azd up` | 17 minutes 29 seconds, RequestHub included: its Container Apps environment took 5 minutes 47 seconds and its PostgreSQL server 7 minutes 44 seconds |
-| 3. Let Azure post to GitHub: the token | a few minutes for a person on GitHub |
-| 3. Let Azure post to GitHub: `azd provision` | 6 minutes 31 seconds |
-
-#### 1. Deploy
-
-From the root of your repository, set the values that `sync_test.py` reads for your API, then deploy:
-
-```powershell
-cd perf
-pip install -r requirements.txt
-az extension add --name load --upgrade
-az login
-azd auth login
-azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
-azd env set API_URL <your API's base URL>
-azd env set API_IDENTIFIER_URI <your API's application ID URI>
-azd up
-```
-
-Set the other values your `main.bicep` and `render_config()` read the same way, for example your API's app registration client id and the names of its resources.
-
-`--subscription` deploys to the subscription that `az` signed in to, where `sync_test.py`, `slowdown.py`, and the commands below look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd up` asks you to pick one of your subscriptions. Run azd in the shell where `pip install` ran, with the same virtual environment active if you use one: its hooks run that `python`.
-
-**What you should see:** before provisioning, azd records the repository where the function opens its Issues, from your clone's `origin` remote: `GITHUB_REPOSITORY: <owner>/<repository> (from the origin remote)`. After provisioning, `python sync_test.py setup` prints `PASS` for the guardrails, then creates the test, the notification rule, and the weekday schedule, paused, as in [What azd up creates](#what-azd-up-creates). A guardrail that fails stops the hook before anything reaches Azure Load Testing. azd then runs the function's unit tests, which end with `OK`, deploys the function, and ends with `SUCCESS`.
-
-#### 2. Let your API accept the test's identities
-
-`azd up` created two managed identities and gave them your API's app roles. Check the assignments, and get the identities' client ids:
-
-```powershell
-$sp = az ad sp show --id <your API's app registration client id> --query id -o tsv
-az rest --method get --url "https://graph.microsoft.com/v1.0/servicePrincipals/$sp/appRoleAssignedTo" --query "value[?principalType=='ServicePrincipal'].principalDisplayName" -o tsv
-azd env get-value LOAD_TEST_CLIENT_IDS
-```
-
-**What you should see:** the two identities, `id-lt-approver-*` and `id-lt-requester-*`, then their client ids, separated by a comma. Add both client ids to the client applications your API accepts tokens from, as RequestHub does in its Container Apps authentication ([`app/infra/api.bicep`](../../app/infra/api.bicep), `allowedApplications`), and let the requester identity delete what it creates.
-
-#### 3. Let Azure post to GitHub
-
-The function posts with a token that a person creates, for your repository only:
-
-1. On GitHub, open **Settings › Developer settings › Personal access tokens › Fine-grained tokens › Generate new token**. Set the expiration (for example 90 days), the resource owner that owns the repository, **Repository access: Only select repositories** with that repository, and **Repository permissions › Issues: Read and write**. GitHub adds Metadata: Read-only on its own. Nothing else.
-2. In the folder you copied:
-
-   ```powershell
-   azd env set GITHUB_ISSUES_TOKEN (Read-Host -MaskInput 'GitHub token')
-   azd provision
-   ```
-
-**What you should see:** `azd provision` ends with `SUCCESS`. It writes the token into the solution's Key Vault as the secret `github-token`, through Azure Resource Manager. The vault has no public network access, no app setting or deployment output carries the token, and only the function's identity can read it, through the vault's private endpoint. Issues it opens show you as the author, and their text says that Azure wrote them. Use a person's token, as here, not a GitHub App's: the function trusts only Issues and comments from the owner, members, and collaborators, and GitHub reports a bot as none of them. Until a token is set, the function still builds every report, and its log says *No GitHub token configured*. To replace the token, run the same two commands; the next report reads the new secret.
-
-### Use it the first time
-
-Run the test once against your API:
-
-```powershell
-$lt = azd env get-value LOAD_TEST_NAME
-$rg = azd env get-value AZURE_RESOURCE_GROUP
-az load test-run create --load-test-resource $lt -g $rg --test-id <your test id> `
-  --test-run-id "first-$(Get-Date -Format yyyyMMdd-HHmmss)" --display-name "First run" --no-wait
-```
-
-**What you should see:** in the Azure portal, open your resource group › the Load Testing resource › **Tests** › your test › the run. The engine starts, the client-side metrics fill in, then the verdict appears. On RequestHub, a 2-minute run reached its verdict 7 to 9 minutes after it started, and the function reported it 2 to 4 minutes after that. A passing run with no Issue open posts nothing: open the function app › **Overview** › `report_run` › **Invocations** to read its report. A failing run opens an Issue titled `[load-test <your test id>]`, with the `load-test` label.
-
-Then make it part of your workflow:
-
-- **Run it every weekday.** Enable the schedule that the setup created, so the journey runs every weekday evening and the function reports every result: `az load trigger schedule enable --load-test-resource $lt -g $rg --trigger-id weekday-evenings`. Only enable it while the environment stays up: Azure Load Testing disables a schedule after three consecutive failed runs. Pause it again with `az load trigger schedule pause`.
-- **Change the journey in a pull request.** Try a change on your machine before it costs a cloud run: `python sync_test.py check`, then `locust -f loadtest/locustfile.py --headless -u 4 -r 2 -t 1m -H <a local instance of your API>`. The locustfile's local sign-in (`RH_AUTH=persona`) is RequestHub's development sign-in, so give it your API's. When the change merges, run `azd provision` (about 6 minutes) or only `python sync_test.py setup` (about a minute) to apply it. A change that breaks a guardrail stops there and never reaches Azure.
-- **Keep the evidence of a run you want to show.** Export the run records, the function's log, and the queries behind your numbers with only the fields you need, as [`evidence/`](evidence/) does here, and check the export for host names, GUIDs, and e-mail addresses before you commit it. Application Insights keeps the telemetry only as long as your workspace's retention.
-
-### What it costs
-
-Your app bills as it already does. While deployed, the solution adds about $0.75 a day for the reporting function's three private endpoints and their DNS zones, and about $0.25 per short test run: Azure Load Testing bills at least 10 virtual users per engine for 10 minutes per run, so a 2-minute run like RequestHub's bills 1.67 virtual user hours. The function runs on demand, a few seconds per run, within Flex Consumption's monthly free grant; Key Vault and the action group add a few cents a month. Since 1 July 2026, the Observability Agent bills the work of each question in Azure Agent Credits, at $0.01 a credit; a chat question is its lowest-cost use ([its billing](https://learn.microsoft.com/azure/azure-monitor/aiops/observability-agent-billing)). The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your app, a region that also offers PostgreSQL Flexible Server, and permission to create Microsoft Entra app registrations: RequestHub signs in with its own. For a local run of the journey, you also need the [.NET 10 SDK](https://dotnet.microsoft.com/download) and PostgreSQL (see [`app/README.md`](../../app/README.md#run-it-locally)). In the copy, the other solutions' workflows also see this one's Issue: in our fresh setup, the Issue that step 6 opened started *Operate · GitHub · agentic incident triage*, which skipped every job, and the comment that closed it started *Design · GitHub · agentic design review*, which stopped after a 15-second check. No model ran.
+
+The copy also has the files of this folder that belong to the demo: [`slowdown.py`](slowdown.py), which injects or removes an expiring slowdown on RequestHub's API; [`candidate.py`](candidate.py), which deploys one commit as an API revision named after it, load-tests it, and restores the API, with its offline unit tests, [`test_candidate.py`](test_candidate.py), which azd runs before every deploy too; [`evidence/`](evidence/), what Azure recorded during the run in See it work, exported for anyone to check, and a setup from scratch that followed only this README, timed step by step; and [`images/`](images/), the screenshots of the run in See it work and of the Test combo. RequestHub lives in [`app/`](../../app/README.md). In the copy, this solution deploys its own RequestHub with two extra settings: the API accepts the load-test identities, and lets the requester identity delete the requests it submitted (`POST /api/admin/load-test/cleanup`).
 
 ### Quick start
 
@@ -552,81 +723,22 @@ gh issue list --label load-test --state open
 
 Each run deletes the requests it submitted, before and after the load, so the 24 seeded requests are all that remains. Test runs stay in Azure Load Testing as history; the next run doesn't need them removed.
 
-## Clean up
+When you no longer need the copy, revoke its GitHub token as [Clean up](#clean-up) says, then remove what azd deployed, from `solutions/04-test-microsoft`. `azd down` doesn't remove the Microsoft Entra app registration that RequestHub signs in with (Entra objects live outside resource groups), and a deleted app that is not purged stops the next `azd up` from creating it again. Delete it and purge it, with its service principal, which Entra moves to its recycle bin with the app:
 
-When you no longer need the solution, revoke its GitHub token (**Settings › Developer settings › Fine-grained tokens**), then remove what azd deployed, from the solution's folder.
-
-- **In your repository:** `azd down --purge --force` removes the solution's resource group, with the test's identities, Azure Load Testing and its runs, and the reporting function, and purges the function's Key Vault, so its name can be used again at once. Your app stays as it is: remove the identities' client ids from the client applications it accepts.
-- **In the copy:** `azd down` doesn't remove the Microsoft Entra app registration that RequestHub signs in with (Entra objects live outside resource groups), and a deleted app that is not purged stops the next `azd up` from creating it again. Delete it and purge it, with its service principal, which Entra moves to its recycle bin with the app:
-
-  ```powershell
-  $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-  $sp = az ad sp show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-  azd down --purge --force
-  az ad app delete --id $app
-  az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
-  az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$sp"
-  ```
-
-Without `--force`, `azd down` lists what it will delete and asks you to confirm; without a terminal to ask in, it stops there and deletes nothing. Then `azd env set GITHUB_ISSUES_TOKEN ''` removes the token from your local azd environment. Deleting the group also moves the service principals of its managed identities to Entra's recycle bin: in the copy, six of them, the test's two, RequestHub's two, and those of the Load Testing resource and the function. Entra refused to purge them in our fresh setup; it removes them after 30 days.
-
-Allow about half an hour: `azd down --purge --force` took 27 minutes 14 seconds in our fresh setup, most of it for the Container Apps environment, and 31 minutes 45 seconds when we removed a second environment of this solution, before the reporting function existed. Afterwards nothing of the copy's environment was left in Azure, and in Microsoft Entra ID only those principals in the recycle bin ([the evidence](evidence/2026-11-11-fresh-setup.md#the-clean-up-and-what-is-left)).
-
-## What's in this folder
-
-```text
-04-test-microsoft/
-├── README.md
-├── evidence/
-│   ├── 2026-10-31-recorded-run.md  what Azure recorded during the run in See it work, exported for anyone to check
-│   └── 2026-11-11-fresh-setup.md   a setup from scratch that followed only this README, timed step by step
-├── images/                       screenshots of the run in See it work, and of the Test combo (combo-*)
-├── loadtest/
-│   ├── locustfile.py             the journey: requester and approver virtual users, sign-in, cleanup
-│   └── requesthub-journey.yaml   workload settings and pass/fail criteria (no environment values)
-├── function/                     the reporting function (Python 3.12, Flex Consumption)
-│   ├── function_app.py           two thin functions: the action group's HTTP route and the queue of report steps
-│   ├── reporter/
-│   │   ├── flow.py               accept a notification, wait for the verdict and the telemetry, post the report
-│   │   ├── report.py             the report, its six verdicts, and the build the run tested
-│   │   ├── report.kql            the API's requests during the run, per operation, counting the injected delay and naming the revisions that served them
-│   │   ├── issues.py             which Issue to open, comment on, or close
-│   │   └── services.py           Azure Load Testing, Log Analytics, the queue, Key Vault, and GitHub
-│   ├── host.json
-│   └── requirements.txt
-├── test_reporter.py              the function's offline unit tests; azd runs them before every deploy
-├── sync_test.py                  azd hooks: check the scenario, then copy the test, notification rule, and schedule into Azure
-├── slowdown.py                   RequestHub only: inject or remove an expiring slowdown on its API
-├── candidate.py                  RequestHub only: deploy one commit as an API revision named after it, load-test it, and restore the API
-├── test_candidate.py             candidate.py's offline unit tests; azd runs them before every deploy too
-├── azd_env.py                    reads settings from this solution's azd environment
-├── requirements.txt              Python packages (Locust pinned to the engines' version)
-├── azure.yaml                    azd project: infra, the shared app's api and worker, and the reporter function
-└── infra/
-    ├── main.bicep                resource group, RequestHub platform (app/infra), load testing, reporting
-    ├── loadtest-identities.bicep the requester and approver identities
-    ├── loadtesting.bicep         Azure Load Testing, its roles, the identities' RequestHub app roles
-    ├── reporting.bicep           the function app, its network, storage, Key Vault, roles, and action group
-    ├── bicepconfig.json          Microsoft Graph extension, for the app role assignments
-    └── main.parameters.json
+```powershell
+$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
+$sp = az ad sp show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
+azd down --purge --force
+az ad app delete --id $app
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$sp"
 ```
 
-RequestHub lives in [`app/`](../../app/README.md). In the copy, this solution deploys its own RequestHub with two extra settings: the API accepts the load-test identities, and lets the requester identity delete the requests it submitted (`POST /api/admin/load-test/cleanup`).
+The group's deletion also moves six service principals to Entra's recycle bin: the test's two, RequestHub's two, and those of the Load Testing resource and the function. Allow about half an hour: `azd down --purge --force` took 27 minutes 14 seconds in our fresh setup, most of it for the Container Apps environment. Afterwards nothing of the copy's environment was left in Azure, and in Microsoft Entra ID only those principals in the recycle bin ([the evidence](evidence/2026-11-11-fresh-setup.md#the-clean-up-and-what-is-left)). The [root README](../../README.md#try-it-in-a-copy-of-this-repository) then says how to delete the copy itself.
 
-## Troubleshooting
+### Troubleshooting the copy
 
-- **`azd up` shows none of what its hooks print, not even the guardrails' `PASS`.** azd shows a hook that isn't `interactive` in a small pane that it clears once the hook succeeds. Since 11 November, this folder's [`azure.yaml`](azure.yaml) makes every hook interactive. With an older copy, `python sync_test.py check` prints the guardrails' verdict without changing anything in Azure, and `python sync_test.py setup` prints the rest as it applies the test again.
-- **`AzureCLICredential: exit status 1` during `azd up` or `azd provision`.** azd could not get a token from the Azure CLI. Run `az account get-access-token`, then run the command again.
-- **`Not a valid reference update` for `appRoleAssignedTo` during `azd up`.** Microsoft Graph had not seen the new identities yet. Run `azd provision` again.
 - **`azd provision` fails with *Null change is not supported. Only compute related change is allowed, when the server is in stopped state*.** The PostgreSQL server is stopped. Start it (next item), then run `azd provision` again.
 - **The API times out or fails its readiness probe, and runs fail with errors.** The PostgreSQL server is stopped; a tenant policy can stop it on a schedule. Start it with `az postgres flexible-server start -g rg-ai-sdlc-test -n $pg` (3 to 5 minutes; `$pg` as in [Check the starting state](#check-the-starting-state)).
-- **Every request fails with 401 in a run.** The API does not accept the identities yet. In the copy, run `azd deploy api`, which applies `LOAD_TEST_CLIENT_IDS` to the API's authentication settings. In your repository, see [Let your API accept the test's identities](#2-let-your-api-accept-the-tests-identities).
 - **`Cleanup refused (HTTP 403)` in the engine log** (the run's **View logs**). The API is missing `Demo__LoadTestRequesterIds`. Run `azd deploy api`.
-- **A run stays in `PROVISIONING` far longer than the usual 3 minutes.** Azure Load Testing is waiting for engine capacity in the region; one of our runs waited 25 minutes and then ran normally. Wait, or stop the run and start it again.
-- **No Issue appears after a failed run.** In the function app, open `test_run_ended` › **Invocations**. No invocation at all: the notification rule is missing, so run `python sync_test.py setup`, then check **Settings › Notifications** on the Load Testing resource; or the action group calls with a function key the function no longer accepts (a 401 the function never logs), for example after someone renewed the key in the portal, so run `azd provision`, which writes a new key to both. *Refused a notification* in its log: the call didn't come from this test's notification rule (403 or 404), or the run ended more than an hour before the call (410); replays never post. Then open `report_run` › **Invocations**: *No GitHub token configured* means no token is set; a failure with GitHub 401 means the token expired or was revoked, so create a new one. A failed step is retried up to five times.
-- **The report says *Telemetry not available*.** Application Insights hadn't received the run's requests after about 8 minutes. A few minutes later, and within an hour of the run's end, send the run to the function again with `python sync_test.py report <test-run-id>`; the function comments on the Issue with the new report.
-- **The Issue stays open after a passing run.** Read the function's comment on the Issue. *Passed with the slowdown on*: the fault was still active, so run `python slowdown.py off` and run the test again. *Telemetry not available*: send the run again, as above. No comment at all: the run started before the Issue was opened, for example when two runs overlapped, so it says nothing about a fix.
-- **`az load notification-rule` or `az load trigger` is not found.** Update the extension: `az extension add --name load --upgrade`.
-- **The weekday schedule shows as disabled.** Three scheduled runs in a row failed, usually because the database was stopped. Start the database, then enable the schedule again.
-- **The run's dashboard shows only a spinner.** The portal draws the dashboard after the page loads, which took up to a minute in our runs. Wait, or select **Refresh** on the run.
 - **A button in RequestHub's web UI fails with HTTP 403 and no body.** The API was deployed before pull request #134, which lets the app's own origin post through Container Apps authentication. Run `azd deploy api` from an up-to-date `main`. The load test uses bearer tokens and is not affected.

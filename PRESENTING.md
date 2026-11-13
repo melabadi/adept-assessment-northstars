@@ -4,14 +4,14 @@ Present every solution from its README. Each one shows a real run in *See it wor
 
 ## Present a solution
 
-Open its README and walk down the page:
+Open its README and present its sections in this order:
 
 1. **The summary**: the problem, what AI changes, and the screenshot of the result (1 minute).
-2. **Why it matters**: how teams work today, what changes, and the headline results (2 minutes).
+2. **What it does**: how teams work today, what changes, and the value (2 minutes).
 3. **How it works**: the diagram; say who does what, and who decides (2 minutes).
 4. **See it work**: one step at a time. Show its screenshot, open the linked Issue or pull request when someone asks for proof, and say what the step shows (5 to 8 minutes).
-5. **Results and value**: what the run left behind, what was measured, and the metric to track in a pilot (2 minutes).
-6. **Add it to your repository**: what a team copies and changes, and how short the one-time setup is (1 minute).
+5. **Results and value**: what the run left behind, and what was measured (2 minutes).
+6. **Install it in your repository** and **Files to edit to tweak it**: the commands of *Getting started*, what a team changes for its code, how short the one-time setup is, and the metric to track in a pilot (1 minute).
 
 That is about 15 minutes a solution. Whatever you show, tell the same story: one app, RequestHub, goes through every phase, and in each phase AI does the tedious part while a person keeps the decision.
 
@@ -697,7 +697,7 @@ flowchart LR
 
 ## After you present: hand it over
 
-Customers add a solution to their own repository from its README's *Add it to your repository*, after the root README's [Before you start](README.md#before-you-start). To try it first, the root README's [Try it in a copy of this repository](README.md#try-it-in-a-copy-of-this-repository) makes a copy for every solution. Leave them those links and [what the Microsoft solutions cost](README.md#what-the-microsoft-solutions-cost).
+Customers add a solution to their own repository from its README's *Install it in your repository*, whose *Getting started* lists the commands in order, after the root README's [Getting started](README.md#getting-started). To try it first, the root README's [Try it in a copy of this repository](README.md#try-it-in-a-copy-of-this-repository) makes a copy for every solution. Leave them those links and [what the Microsoft solutions cost](README.md#what-the-microsoft-solutions-cost).
 
 ## Run it live
 

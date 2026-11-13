@@ -4,11 +4,29 @@ Turning workshop notes into a backlog takes days, and on the way it is easy to l
 
 ![Review Issue #214, opened by the Function app: drafted by the Foundry agent requirements-analyst in run 20261031-043915-5090 and scored by the evaluation plan-brief-checks, how to approve or reject, and the scores: the four gates and two reported checks at 1, key requirement paragraphs cited at 0.9](images/08-review-issue.png)
 
+- **[Install it in your repository](#install-it-in-your-repository):** 13 minutes of one-time setup in Azure and GitHub, in a fresh setup we timed, once your notes, the agent's instructions, and the checks describe your work. [Getting started](#getting-started) lists the commands in order.
+- **[Files to edit to tweak it](#files-to-edit-to-tweak-it):** your notes and policies, the agent's instructions, the code-based checks, and which of them gate a brief.
 - **[See it work](#see-it-work):** a real run on this repository's synthetic workshop notes. The agent drafted a cited brief in 22 seconds, Foundry's gates passed it, and 51 seconds after a reviewer approved it, the epic and its four tasks were Issues.
-- **[Add it to your repository](#add-it-to-your-repository):** 13 minutes of one-time setup in Azure and GitHub, in a fresh setup we timed, once your notes, the agent's instructions, and the checks describe your work.
 - **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** 13 minutes to set it up, in a fresh setup we timed, then about 15 minutes for the steps of See it work, plus the time you take to review the brief.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [Microsoft Foundry Agent Service](https://learn.microsoft.com/azure/foundry/agents/overview) | Hosts the agent, `requirements-analyst`, on `gpt-6-luna`, published from [`agent.yaml`](agent.yaml), with file search over your notes and policies, and traces every answer |
+| [Foundry evaluations](https://learn.microsoft.com/azure/foundry/concepts/observability) | Score every brief with seven code-based checks, in preview: four gates that a brief must pass before a person sees it, and three checks reported to the reviewer |
+| [Azure Functions](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan), on the Flex Consumption plan, in Python | Run every step: draft and evaluate the brief, open the review Issue, read it for the approval label every 30 seconds, and publish the backlog |
+| An [Azure Storage queue](https://learn.microsoft.com/azure/storage/queues/storage-queues-introduction) and blob container, [Azure Key Vault](https://learn.microsoft.com/azure/key-vault/general/overview), and [private endpoints](https://learn.microsoft.com/azure/private-link/private-endpoint-overview) | Keep the run's steps, its records, and the GitHub token off the internet |
+| [Application Insights](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview) | Keeps the agent's traces and the Function app's log |
+| [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/) and [Bicep](https://learn.microsoft.com/azure/azure-resource-manager/bicep/overview) | Deploy everything into one resource group with `azd up`, whose hooks run the unit tests and publish the agent, the evaluators, and the evaluation |
+| GitHub: Issues, a label, and a [fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) | The review Issue, the `brief-approved` label that approves it, and the published backlog; the token, limited to one repository's Issues, lets the Function app write them. No GitHub Actions workflow and no GitHub Copilot step is involved |
+| Python 3.12 and PowerShell 7 | The scripts, and the commands in this README |
+
+The shipped notes, agent, and checks are RequestHub's: a synthetic workshop of 24 paragraphs, the eight routing policies it refers to, and a brief of one epic and exactly four tasks. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for yours.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 1 of 7: Plan.** The GitHub counterpart is [01-plan-github](../01-plan-github/), where a Copilot agent drafts the brief in a pull request and GitHub Actions validate and publish it. Both start from the same transcript and its planted problems, and in both a person approves before anything reaches the backlog. Here the AI and every step around it run in Azure, and GitHub only receives Issues. To have Foundry evaluate the exact commit of a brief that Copilot drafted, use both as in the [Plan solution combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes).
 
@@ -23,14 +41,9 @@ Turning workshop notes into a backlog takes days, and on the way it is easy to l
 | Orchestration | Scripts on someone's laptop or in CI. | An Azure Function app runs every step, and keeps each run's record and log. |
 | Access | Shared keys or personal accounts in scripts. | Azure services use managed identities, without keys. GitHub access is one token limited to one repository's Issues, kept in Key Vault. |
 
-**The value:** a cited, checked brief reaches the person who owns the backlog within minutes of the notes, with every open decision listed for them, and the backlog exists less than a minute after they approve. In [See it work](#see-it-work):
+**The value:** a cited, checked brief reaches the person who owns the backlog within minutes of the notes, with every open decision listed for them, and the backlog exists less than a minute after they approve. [Results and value](#results-and-value) has what the recorded run measured.
 
-- The agent drafted the brief, an epic, and four tasks in 22 seconds, with a transcript paragraph or a policy cited on every line.
-- Foundry's seven checks passed it: the four gates at 1, and the three reported checks at 1, 1, and 0.9. The preview grading sandbox failed once, which cost 4 minutes and a second attempt, not a wrong verdict.
-- The review Issue reached the person 6 minutes after the start, with the unresolved Finance-versus-IT conflict and four open questions listed for them to decide.
-- 51 seconds after the approval label, the epic and its four tasks were Issues, linked as sub-issues with their "blocked by" dependencies, and the review Issue was closed.
-
-## How it works
+### How it works
 
 ```mermaid
 flowchart LR
@@ -81,9 +94,305 @@ flowchart LR
 
 **Outside contributions.** Nothing in this solution listens to GitHub, so on a public repository nobody outside it can start a run: the start endpoint needs the Function app's key, which only Azure holds, and `runs.py` reads it with your Azure sign-in each time, so no copy of the key is stored anywhere else. A run acts only on its review Issue's `brief-approved` label, which only people with triage access can apply, or on the Issue being closed, which only its author and people with triage access can do. It reads no comments. When it looks for its own Issues by their hidden marker, it counts only Issues opened by the repository's owner, members, and collaborators, so an outsider who copies a marker into an Issue can't stand in for the review Issue or make a publish look done. The comparison and the evaluation of a pull request's brief read the brief only when the pull request's branch is in the repository, not a fork: only people with write access push branches there, or the Copilot cloud agent when one of them assigns it.
 
-**Model and call mode.** The agent runs on `gpt-6-luna` (version 2026-09-22, Global Standard), a reasoning model, at reasoning effort `low`, in background mode: the call returns at once, and the step polls until the brief is ready, 34 to 64 seconds later in our runs. A brief took about 5,500 input and 3,300 output tokens: about $0.002 at list price. Until 11 November the agent ran on `gpt-4.1`, which drafted in 16 to 24 seconds for about $0.024 a brief, and retires on 2027-04-14; `gpt-6-luna` retires on 2028-03-11. On `gpt-6-luna`, two sentences of the instructions had to become more explicit before the checks passed as they had on `gpt-4.1`. No check changed, and since then the three briefs that reached the evaluation passed all seven checks. [The runs of 11 November](evidence/2026-11-11-gpt-6-luna.md) show both models' results and costs. To change the model, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), and `reasoning_effort` in `agent.yaml` (`temperature` for a model that doesn't reason), then run `azd provision`. Delete the old deployment once `python setup_foundry.py publish` shows the agent on the new model.
+**Model and call mode.** The agent runs on `gpt-6-luna` (version 2026-09-22, Global Standard), a reasoning model, at reasoning effort `low`, in background mode: the call returns at once, and the step polls until the brief is ready, 34 to 64 seconds later in our runs. A brief took about 5,500 input and 3,300 output tokens: about $0.002 at list price. `gpt-6-luna` retires on 2028-03-11. On `gpt-6-luna`, two sentences of the instructions had to become more explicit before the checks passed as they had on `gpt-4.1`, the model before it; no check changed ([the runs of 11 November](evidence/2026-11-11-gpt-6-luna.md)). To change the model, set `modelName` and `modelVersion` in [`infra/main.bicep`](infra/main.bicep), and `reasoning_effort` in `agent.yaml` (`temperature` for a model that doesn't reason), then run `azd provision`. Delete the old deployment once `python setup_foundry.py publish` shows the agent on the new model.
 
 **Preview pieces.** Foundry Agent Service, agent tracing, and Azure Functions on the Flex Consumption plan are generally available. Custom evaluators and cloud evaluations are in preview. The evaluator catalog asks for the opt-in header `Foundry-Features: Evaluations=V1Preview`, which [`setup_foundry.py`](setup_foundry.py) sends. The preview grading sandbox often errors on a check ("An error occurred during grading"; in about half of our evaluation attempts), and that attempt then takes about 4 minutes instead of 1.5. As a preview workaround, the run evaluates again, up to three attempts, while a gate has no score, and keeps each check's first score: the checks are code, so the same brief always gets the same score. It never retries a gate that failed. The review Issue marks a reported check that was never scored as not scored.
+
+## Install it in your repository
+
+These are the steps that set the solution up on this repository. We have run them only on this repository's synthetic notes: for yours, the commands stay the same, and [Files to edit to tweak it](#files-to-edit-to-tweak-it) names the changes. [Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see.
+
+### Prerequisites
+
+- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. The solution registers no app of its own in Microsoft Entra ID, but when it publishes the agent, Foundry creates an agent identity blueprint there, an app registration that you own, and an agent identity: [Clean up](#clean-up) removes them.
+- An Azure subscription where you can create a resource group and role assignments, for example as Owner.
+- Quota for `gpt-6-luna`, version 2026-09-22 (Global Standard, 50,000 tokens per minute), in your region, and the Flex Consumption plan available there. We used `eastus2`. `az cognitiveservices usage list --location eastus2 --query "[?name.value=='OpenAI.GlobalStandard.gpt-6-luna']" -o table` shows your quota there, in thousands of tokens per minute: `Limit` minus `CurrentValue` must be at least 50.
+- Permission to create a fine-grained personal access token for the repository.
+- Your notes and policies as Markdown files, with ids that the brief can cite (see [Files to edit to tweak it](#files-to-edit-to-tweak-it)).
+- To read the agent's traces and the evaluation runs, a browser signed in to the [Azure portal](https://portal.azure.com) and the [Foundry portal](https://ai.azure.com).
+- Only to score briefs that Copilot drafts: [01-plan-github](../01-plan-github/) in the same repository, which needs a paid GitHub Copilot plan.
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must say you're logged in to github.com, Python must be 3.12 or later, and PowerShell 7.4 or later; the Azure CLI and the Azure Developer CLI print their versions ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   "az: " + (az version | ConvertFrom-Json).'azure-cli'; azd version
+   ```
+
+2. **Copy the folder on a new branch,** here as `plan/`, without the evidence and the screenshots. Its scripts, tests, and `azure.yaml` find their files relative to the folder, so it can sit anywhere in your repository; the copy points the one setting that names the folder, `INPUTS_HINT`, at its own `inputs/`. It also adds the licence that must travel with the files and a `.gitignore` for what the scripts and tests write, and prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-requirements-analyst
+   $dest = 'plan'
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-01-plan-microsoft'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   $from = Join-Path $src 'solutions/01-plan-microsoft'
+   Remove-Item -Recurse -Force (Join-Path $from 'evidence'), (Join-Path $from 'images')
+   New-Item -ItemType Directory -Force $dest | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $from '*') $dest
+   Copy-Item -Force (Join-Path $src 'LICENSE') $dest
+   Set-Content (Join-Path $dest '.gitignore') '__pycache__/', '.venv/', 'out/'
+   $brief = Join-Path $dest 'function/planner/brief.py'
+   (Get-Content $brief -Raw).Replace('see solutions/01-plan-microsoft/inputs/', "see $dest/inputs/") | Set-Content $brief -NoNewline
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 35 new files under `plan/`, in 4 to 11 seconds when this README was checked. In `plan/function/planner/brief.py`, `INPUTS_HINT` is now `see plan/inputs/`. GitHub reads a repository's own licence only from its root, so yours doesn't change.
+
+3. **Edit the files for your notes,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) lists. Then, from the folder, install the scripts' packages and run the unit tests, which `setup_foundry.py publish` and `azd deploy` also run before anything reaches Azure:
+
+   ```powershell
+   cd plan
+   pip install -r requirements.txt
+   python -m unittest discover -s tests -q
+   ```
+
+   The tests end with `OK`.
+
+4. **Set it up once,** from the folder: sign in and deploy ([step 1](#1-deploy)):
+
+   ```powershell
+   az login
+   azd auth login
+   azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+   azd up
+   ```
+
+   Then create the GitHub token on GitHub ([step 2](#2-create-the-github-token)), give it to the Function app ([step 3](#3-give-the-token-to-the-function-app)), and create the approval label ([step 4](#4-create-the-approval-label)):
+
+   ```powershell
+   azd env set PLAN_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')
+   azd provision
+   python runs.py status
+   gh label create brief-approved --color 0e8a16 --force
+   ```
+
+5. **Merge it into your default branch.** Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .
+   git commit -m "Add 01-plan-microsoft from ai-sdlc <commit>"
+   git push -u origin add-requirements-analyst
+   gh pr create --fill
+   ```
+
+   azd keeps its environment, which holds the token, out of git. Merge the pull request as you merge any change.
+
+6. **Use it on your notes:** start a run from the folder, then read the review Issue it opens and approve or reject the brief, as [Use it the first time](#use-it-the-first-time) describes:
+
+   ```powershell
+   python runs.py start
+   ```
+
+### One-time setup
+
+13 minutes in a fresh setup on 11 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new copy and a new resource group ([the evidence](evidence/2026-11-11-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Deploy: `pip install -r requirements.txt` | 2 minutes 2 seconds |
+| 1. Deploy: `azd up` | 5 minutes 10 seconds |
+| 2. Create the GitHub token | about 3 minutes, for a person on GitHub |
+| 3. Give the token to the Function app: `azd provision`, then `python runs.py status` | 2 minutes 23 seconds, then 14 seconds |
+| 4. Create the approval label | 1 second |
+
+#### 1. Deploy
+
+From the root of your repository:
+
+```powershell
+cd plan
+pip install -r requirements.txt
+az login
+azd auth login
+azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+azd up
+```
+
+`--subscription` deploys to the subscription that `az` signed in to, where `runs.py` later looks for the Function app: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd up` asks you to pick one of your subscriptions. Run azd in the shell where `pip install` ran, with the same virtual environment active if you use one: its hooks run that `python`.
+
+**What you should see:** before provisioning, the hook names the repository where the Function app will open its Issues, from `gh repo view` in your clone: `GitHub repository: <owner>/<repository>`. To choose another one, run `azd env set GITHUB_REPOSITORY <owner>/<repository>` before `azd up`. It also says `PLAN_GITHUB_TOKEN is not set yet`, which step 3 takes care of. `azd up` creates resource group `rg-<environment name>`, with the resources in [What azd up creates](#what-azd-up-creates). Its hooks run the unit tests, publish to Foundry, and deploy the Function app, and after about 5 minutes it ends with `SUCCESS: Your application was provisioned and deployed to Azure in …`. The publish lines look like this:
+
+```text
+unit tests: 94 passed
+vector store plan-inputs-9a000f952f98: uploaded
+agent requirements-analyst v1: new version (gpt-6-luna)
+evaluator plan_structure v1: new version
+...
+evaluation plan-brief-checks: created
+```
+
+After you change `agent.yaml`, `inputs/`, or an evaluator, run `python setup_foundry.py publish` again: it runs the tests first, publishes nothing if one fails, and otherwise publishes only what changed. After you change `agent.yaml`, `inputs/`, or `function/`, also run `azd deploy`: the Function app reads the agent's request, and the quotes for the published Issues, from its own package.
+
+#### 2. Create the GitHub token
+
+On GitHub, open **Settings › Developer settings › Personal access tokens › Fine-grained tokens › Generate new token**:
+
+- **Token name:** for example `ai-sdlc-plan-microsoft`. **Expiration:** for example 30 days.
+- **Resource owner:** the owner of your repository. **Repository access:** **Only select repositories**, then your repository.
+- **Repository permissions:** **Issues: Read and write**. GitHub adds Metadata: Read-only on its own.
+- Only for the comparison or the Plan combo with 01-plan-github: also **Contents: Read-only**, so the run can read the pull request and its brief.
+
+With these permissions the token can create, label, comment on, and close Issues, and link sub-issues and dependencies, in that repository only. Use a person's token, not a GitHub App's: a run counts only Issues opened by the repository's owner, members, and collaborators as its own, and GitHub reports a bot as none of them.
+
+#### 3. Give the token to the Function app
+
+```powershell
+azd env set PLAN_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')
+azd provision
+python runs.py status
+```
+
+**What you should see:** `azd provision` ends with `SUCCESS`. It stores the token as the Key Vault secret `github-token`, which only the Function app's identity can read, and no output shows it. The last line of `runs.py status` asks the Function app to try the token: `GitHub token in Key Vault: HTTP 200, expires …`. The token also stays in your local azd environment file, `.azure/<environment name>/.env`, which git ignores.
+
+The token comes from `PLAN_GITHUB_TOKEN` only. azd fills a parameter from your shell when its environment lacks the value, and many shells hold a broader `GITHUB_TOKEN` for other tools; that one never reaches Azure. If you store the token as `GITHUB_TOKEN` in the azd environment instead, `azd provision` moves it to `PLAN_GITHUB_TOKEN`. To replace the token, run the same three commands: the Function app reads the new one within five minutes.
+
+#### 4. Create the approval label
+
+```powershell
+gh label create brief-approved --color 0e8a16 --force
+```
+
+**What you should see:** the GitHub CLI confirms the label; `--force` updates it if 01-plan-github created it already. The run creates its other labels (`ai-sdlc`, `phase:plan`, `track:microsoft`, `type:brief`, `type:epic`, and `type:task`) the first time it uses them.
+
+### Use it the first time
+
+From the folder you copied:
+
+```powershell
+python runs.py start
+```
+
+**What you should see:** the run's id, then each step as the Function app reports it: the agent's draft, each evaluation attempt, and the link to the review Issue. In our runs on `gpt-6-luna` the link came 2¼ to 2¾ minutes after the start. When the preview grading sandbox errors and the evaluation runs again, it takes several minutes more: 5½ to 8½ minutes in all, in our runs on `gpt-4.1`. Ctrl+C stops following, not the run.
+
+Open the review Issue and read the brief, its scores, and what nobody settled. Then decide:
+
+- **Approve:** apply the `brief-approved` label, in the Issue or with `gh issue edit <number> --add-label brief-approved`. Within a minute the epic and its tasks are Issues, and the review Issue has a comment that lists them and is closed.
+- **Reject:** close the review Issue. The Function app comments that nothing was published.
+- **Don't decide:** 2 hours after the review Issue opened, the Function app comments, closes it as not planned, and publishes nothing.
+
+`python runs.py show <run id>` prints everything a run did, and `python runs.py status` lists the runs in progress.
+
+Then make it part of your planning:
+
+- **After each workshop,** replace the notes in `inputs/`, run `python setup_foundry.py publish` and `azd deploy`, and start a run: the agent drafts from the files in its vector store, which `publish` updates.
+- **If your team drafts briefs with Copilot** in [01-plan-github](../01-plan-github/), `python runs.py start --evaluate-pull-request <n>` scores the brief at the pull request's head commit and opens an evaluation Issue that lists the open items for the product owner, and 01-plan-github publishes only that commit. The [Plan solution combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes) shows a run of it. `--compare-with-pull-request <n>` scores the Copilot brief next to the agent's instead, as in [See it work, step 10](#10-optional-foundry-scored-a-copilot-brief-next-to-its-own).
+
+**The metric to track when you adopt it:** the time from a workshop's notes to an approved backlog (24 minutes 37 seconds in See it work, 17 minutes 46 seconds of them the person's review), and the open items that reached a person instead of being settled silently (5 in See it work). Compare both with how your team turns notes into a backlog today. A target is a goal you set, never a result.
+
+### What it costs
+
+While deployed, the solution costs about $25 to $30 a month, even when nobody runs it:
+
+- The three private endpoints, at $0.01 an hour each, and their DNS zones, at $0.50 a month each: about $23.
+- The timer, which runs 2,880 times a day: each run bills at least one second of a 2 GB instance, about 172,800 GB-s a month. That is $4.50 at $0.000026 per GB-s, or about $1.90 after the monthly free grant of 100,000 GB-s, which all Flex Consumption apps in the subscription share.
+- Storage transactions (the timer's reads, the host's leases, queue polling): a dollar or two. Key Vault: cents.
+
+A run costs a cent or two: about $0.002 for the agent's draft, from [the tokens it used](evidence/2026-11-11-gpt-6-luna.md#token-use-and-cost-of-each-draft) at `gpt-6-luna`'s list price of $0.10 per million input tokens and $0.50 per million output tokens, plus a cent or two of Function time while its steps wait for Foundry. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost). When you won't use the solution for a while, [clean it up](#clean-up): `azd up` recreates it.
+
+## Files to edit to tweak it
+
+The copy brings the whole folder except `images/`, which shows the run in [See it work](#see-it-work), and adds the licence, `LICENSE`, and a `.gitignore` for what the scripts and tests write.
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File | What it does here | What to change for your work |
+| --- | --- | --- |
+| [`inputs/stakeholder-transcript.md`](inputs/stakeholder-transcript.md) and [`inputs/routing-policies.md`](inputs/routing-policies.md) | The synthetic workshop notes, paragraphs `[T01]` to `[T24]`, and the routing policies they refer to | Your notes and policies, in the same form: each paragraph starts with its id in bold, such as `**[T01]**`, and each policy is a table row `\| POL-ROUTE-004 \| version \| title \| rule \|`. `setup_foundry.py` reads the ids that the citations check accepts from these files, and each published Issue quotes the paragraphs and policies it cites. |
+| [`agent.yaml`](agent.yaml) | The agent: name, reasoning effort, instructions, file search, and the request each run sends | The `instructions` and the `prompt`: what your brief must contain. Keep the rules that every item cites an id from the files, and that the files are data, not instructions. |
+| [`backlog.schema.json`](backlog.schema.json) | The JSON shape the agent must answer with | The fields of your brief. If you rename fields, change the Markdown in [`function/planner/brief.py`](function/planner/brief.py) and the evaluators that read them. |
+| [`evaluators/`](evaluators/) | Seven code-based checks, each one `grade(sample, item)` function that returns a score from 0 to 1 | Keep `citations.py` and `testable_criteria.py`. In `structure.py`, set the counts your backlog needs: here exactly four tasks and at least four requirements. `injection_ignored.py` checks this transcript's planted instruction (`INJECTED = "T18"`) and RequestHub's rule that nothing may imply automatic approval: point it at what your notes and policies must never make the agent do. Replace `planted_conflicts.py`, `planted_unknowns.py`, and `requirements_covered.py`, which check this transcript's planted problems, with checks of what matters in your notes. An evaluator can't call anything named `compile()`: the grading sandbox refuses it. |
+| [`function/planner/checks.py`](function/planner/checks.py) | Which checks gate a run, which are reported, and their names in the review Issue | `GATES`, `REPORTED`, and `CHECK_NAMES`, to match your evaluators, and `GATES` in [`tests/test_evaluators.py`](tests/test_evaluators.py) too. |
+| [`function/planner/brief.py`](function/planner/brief.py) | What the run writes to GitHub: the review Issue, the epic, the tasks, and the comments | `REVIEW_TITLE`, the `[Plan/Foundry]` prefix of the epic's and the tasks' titles, the labels (`REVIEW_LABELS`, `EPIC_LABELS`, and `TASK_LABELS`), `APPROVAL_LABEL` (`brief-approved`), and `INPUTS_HINT`, the folder an Issue names when it can't quote a source, which [Getting started](#getting-started) sets to `see plan/inputs/`. |
+| [`function/planner/steps.py`](function/planner/steps.py) | The run's steps and limits | `DECISION_TIMEOUT` (2 hours), if your reviewers need longer. For the comparison or the Plan combo, `COPILOT_BRIEF`: where 01-plan-github's brief lives in your repository. |
+| [`tests/`](tests/) | Unit tests for the evaluators and the run, and [`sample-brief.json`](tests/sample-brief.json), a brief from this transcript | Replace `sample-brief.json` with a brief from your notes, and update the tests that name this transcript's ids. `setup_foundry.py publish` and `azd deploy` run the tests before anything reaches Azure. |
+| [`infra/main.bicep`](infra/main.bicep) | The resource group and the model deployment: `gpt-6-luna`, version 2026-09-22, 50,000 tokens per minute | `modelName`, `modelVersion`, and `modelCapacity`, for another model or quota. A model that doesn't reason takes `temperature` instead of `reasoning_effort` in `agent.yaml`. |
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your notes. Apply a change as [After you edit](#after-you-edit) says:
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| How much the agent reasons | `reasoning_effort` in [`agent.yaml`](agent.yaml) | `low` |
+| The score each check needs to pass | `THRESHOLDS` in [`setup_foundry.py`](setup_foundry.py), one entry per file in `evaluators/`; `python setup_foundry.py publish` then creates the evaluation again | 1.0 for every check, except 0.8 for `requirements_covered` |
+| How many times a run asks the agent for a brief, and evaluates it while a gate has no score | `AGENT_ATTEMPTS` and `EVALUATION_ATTEMPTS` in [`function/planner/steps.py`](function/planner/steps.py) | 2 and 3 |
+| How often the Function app reads the review Issues | The timer's `schedule` in [`function/function_app.py`](function/function_app.py) | Every 30 seconds |
+
+### What the copy adds
+
+```text
+plan/
+├── azure.yaml              azd project
+├── agent.yaml              the Foundry agent: instructions, reasoning effort, file search, and the request each run sends
+├── backlog.schema.json     the JSON schema the agent's answer must match
+├── evaluators/             seven code-based Foundry evaluators, each one grade() function: four gates and three reported checks
+├── function/               the Azure Function app: runs (HTTP), run_step (queue), check_reviews (timer), and the run in plain Python in planner/
+├── infra/                  resource group rg-<environment name>, the model deployment, Foundry, tracing, the Function app, its network, storage, and Key Vault
+├── inputs/                 synthetic workshop notes, paragraphs [T01]–[T24], and the routing policies they refer to
+├── runs.py                 start, follow, list, and cancel runs from your shell
+├── setup_foundry.py        azd hooks: repository and token name; publish to Foundry; bundle agent.yaml and inputs/ into the Function app
+├── tests/                  unit tests for the evaluators and the run; publish and deploy run them first
+├── requirements.txt        Python packages for setup_foundry.py and runs.py
+├── README.md               this README
+├── LICENSE                 the licence that travels with the files
+└── .gitignore              what the scripts and tests write, added by the copy
+```
+
+### After you edit
+
+From the folder, run the unit tests as in [Getting started](#getting-started) step 3, then publish and deploy the change as the end of [Deploy](#1-deploy) says; after a change to `infra/`, run `azd provision`.
+
+## Clean up
+
+When you no longer need the solution, from its folder, in your repository or in the copy:
+
+```powershell
+$prefix = "$(azd env get-value FOUNDRY_ACCOUNT_NAME)-$(azd env get-value FOUNDRY_PROJECT_NAME)-"
+az ad sp list --display-name $prefix -o json | ConvertFrom-Json | Where-Object displayName -like "$prefix*-AgentIdentity" | ForEach-Object { az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($_.id)" }
+az ad app list --display-name $prefix -o json | ConvertFrom-Json | Where-Object displayName -like "$prefix*-AgentIdentityBlueprint" | ForEach-Object { az ad app delete --id $_.id }
+azd down --purge
+azd env set PLAN_GITHUB_TOKEN ''
+```
+
+The first three lines remove what Foundry created in Microsoft Entra ID when it published the agent, which `azd down` leaves behind: the agent identity of `requirements-analyst`, then its agent identity blueprint, an app registration owned by whoever published the agent ([agent identities in Foundry](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)). Both are named after the Foundry account, its project, and the agent, for example `aif-<token>-plan-requirements-analyst-AgentIdentity`. The `*` in the lines' patterns stands for the agent's name, so they leave out the project's shared pair, `aif-<token>-plan-AgentIdentityBlueprint` and `aif-<token>-plan-AgentIdentity`, which Foundry also creates, owned by the project's managed identity alone: it needs nothing from you, because Foundry removes it with the project, which `azd down` deletes. Deleting the blueprint also deletes its principal, and would delete the agent identity too, but only hours or days later ([agent identity deletion](https://learn.microsoft.com/entra/agent-id/concept-agent-identity-deletion)): that's why the agent identity goes first. Run the lines as the person who published the agent, the blueprint's owner, and before `azd down`, which forgets the account's name. Entra keeps what they delete in its recycle bin for 30 days, and the blueprint's principal can't be purged from it: it stays there until the 30 days are over.
+
+`azd down --purge` lists what it deletes and asks you to confirm; `--force` skips the question. It removes the resource group: the Foundry account and project, Application Insights, the Function app with its network, storage, and Key Vault. `--purge` also removes the soft-deleted Foundry account, Key Vault, and Log Analytics workspace, so their names can be reused. It took 4 minutes 54 seconds in our fresh setup. The last line removes the token from your local azd environment. Then revoke the token on GitHub: **Settings › Developer settings › Fine-grained tokens** › the token › **Delete**. The Issues the runs created, and their labels, stay in the repository; [the reset](#reset-the-copy-for-another-run) closes the open ones.
+
+## Troubleshooting
+
+- **The run fails with `GitHubTokenMissing` or `GitHubRefused` when it opens the review Issue.** The Function app has no usable GitHub token: Key Vault has none yet, or the token there contains spaces or line breaks (`GitHubTokenMissing`), or GitHub refused the one it has (`GitHubRefused`, for example `HTTP 401: Bad credentials` when the token expired or was revoked). [Create a new token](#2-create-the-github-token) and [give it to the Function app](#3-give-the-token-to-the-function-app). The Function app reads the new token within five minutes; `python runs.py status` shows what GitHub answers. The error never contains the token.
+- **The run fails with `BriefFailedEvaluation`.** A gate didn't pass, reported no result, or the grading sandbox errored on it in all three attempts, and the error names it. Nothing was sent to GitHub. Open the evaluation run in Foundry to see the scores. If a gate failed, improve the `instructions` in `agent.yaml`, run `python setup_foundry.py publish` and `azd deploy`, and start a new run. Don't loosen an evaluator to make a brief pass. If the sandbox errored on that gate in every attempt, the brief may be fine: start a new run.
+- **The run fails with `PublishingFailed`.** GitHub refused a call while the backlog was being published. The comment on the review Issue lists the epic and the tasks already created; finish or close them by hand, then start a new run if needed. The review Issue stays open.
+- **The run fails with `AgentDidNotFinish`.** The agent's response ended as `failed` twice in a row, Foundry lost it twice, or its answer wasn't the JSON brief. In one earlier run, a response failed after about 10 seconds with "The server is overloaded or not ready yet", and the agent's **Traces** list showed it as **Failed** with no tokens. In one run on `gpt-6-luna`, Foundry answered `HTTP 404: Response with id '…' not found` for a response it had started, and kept answering 404. That's why the run asks once more in both cases. Nothing was sent to GitHub. Start a new run.
+- **The run fails with `StepFailed`.** A step raised an error on all three deliveries from the queue, for example a Foundry or network error, and the run's last event names it: the service and its answer, or for any other error only its type. Start a new run. On the Function app, `run_step` › **Invocations** shows each attempt and its log.
+- **The run fails with `StepStopped`.** A step stopped without finishing or failing, for example because Azure restarted the instance it ran on: the draft or the evaluation saved nothing for 45 minutes, or publishing made no progress three times in a row, 5 minutes each. For publishing, the comment on the review Issue lists what was already created. Start a new run.
+- **`runs.py cancel` answers "the run is publishing its backlog; wait until it finishes".** Publishing takes about 20 seconds, and a run that is making progress isn't stopped halfway. Run the command again a minute later. A publish that made no progress for 5 minutes can be cancelled, and the comment on its review Issue lists what it had created.
+- **An evaluation check shows "An error occurred during grading".** The preview grading sandbox often errors on a check, and that evaluation attempt takes about 4 minutes instead of 1.5. While a gate has no score, the run evaluates again, up to three attempts, and keeps each check's first score; the review Issue marks a reported check that was never scored as not scored.
+- **`error: the unit tests failed, so nothing was published`, or `azd deploy` stops at `predeploy`.** A change to an evaluator or to the Function app's code broke a test in `tests/`, and the output above the error names it. Fix the code, or the test if the rule changed on purpose, then run the command again.
+- **`runs.py` stops with ``error: `az functionapp show` failed twice``.** `runs.py` asks the Azure CLI for the Function app's address and key, and tries twice: in one of our runs a single call failed and the next one, a minute later, worked. If it fails twice, the Azure CLI isn't signed in as an account that can read the Function app, or the solution isn't deployed in the subscription `az` uses. Run `az login`, check `az account show`, and check that `azd env get-value FUNCTION_APP_NAME` prints a name.
+- **`This operation requires the following opt-in preview feature(s): Evaluations=V1Preview`.** You called the evaluator catalog without the preview header. `setup_foundry.py` sends it; send `Foundry-Features: Evaluations=V1Preview` from your own code too.
+- **`Invalid grader source: use of builtin 'compile()' is not allowed in Python graders`.** An evaluator calls something named `compile()`, `re.compile` included. Use `re.search` and `re.match` with a pattern string instead.
+- **`AzureCLICredential: exit status 1` during `azd up` or `azd env refresh`.** azd couldn't get a token from the Azure CLI. Run `az account get-access-token` to check your sign-in, then run the azd command again. It can also be transient while other `az` commands run at the same time.
+- **`FOUNDRY_PROJECT_ENDPOINT is not set` or `FUNCTION_APP_NAME is not set` in a new clone or worktree.** `setup_foundry.py` and `runs.py` read the azd environment, which lives in the `.azure/` folder where you ran `azd up`, and git ignores it. Recreate it from the deployment, in the solution's folder, with the environment name and region you deployed with (`ai-sdlc-plan` and `eastus2` in the copy):
+
+  ```powershell
+  azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+  azd env refresh -e <environment name>
+  ```
+
+  `azd env refresh` ends with `SUCCESS: Environment refresh completed`. Set `PLAN_GITHUB_TOKEN` again: it was in the old `.env` only.
+- **`PermissionDenied` when something runs right after `azd up`.** New role assignments can take a few minutes to apply. Wait, then try again.
+- **`DeploymentNotFound` or `The project does not exist` right after re-creating the solution.** After `azd down --purge`, re-creating it under the same environment name reuses the same Foundry names, and the project endpoint can keep answering for the deleted account for more than an hour. Create it under a new environment name instead, for example `azd env new ai-sdlc-plan2 --location eastus2`, then `azd up`.
 
 ## See it work
 
@@ -270,145 +579,11 @@ Evidence: review Issue [#225](https://github.com/melabadi/adept-assessment-north
 - **Risk removed.** Four code-based gates stop a brief that cites a paragraph that doesn't exist, has untestable criteria, or follows an instruction planted in the notes, before anyone reads it. Nothing reaches the backlog without a person's label. Azure services use managed identities, storage and Key Vault accept no public traffic, and the one GitHub credential reaches one repository's Issues.
 - **Evidence a reviewer or an auditor can follow.** Every published Issue quotes the paragraph or the policy behind it, the review Issue keeps the scores and the approval, and Azure and Foundry keep the run's record, the agent's traces, and the evaluation runs.
 
-**The metric to track when you adopt it:** the time from a workshop's notes to an approved backlog (24 minutes 37 seconds in See it work, 17 minutes 46 seconds of them the person's review), and the open items that reached a person instead of being settled silently (5 here). Compare both with how your team turns notes into a backlog today. A target is a goal you set, never a result.
-
-## Add it to your repository
-
-These are the steps that set the solution up on this repository, with what to change for your notes. We have run them only on this repository's synthetic notes: for yours, the commands stay the same, and the changes are the ones named below.
-
-### Prerequisites
-
-- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. The solution registers no app of its own in Microsoft Entra ID, but when it publishes the agent, Foundry creates an agent identity blueprint there, an app registration that you own, and an agent identity: [Clean up](#clean-up) removes them.
-- An Azure subscription where you can create a resource group and role assignments, for example as Owner.
-- Quota for `gpt-6-luna`, version 2026-09-22 (Global Standard, 50,000 tokens per minute), in your region, and the Flex Consumption plan available there. We used `eastus2`. `az cognitiveservices usage list --location eastus2 --query "[?name.value=='OpenAI.GlobalStandard.gpt-6-luna']" -o table` shows your quota there, in thousands of tokens per minute: `Limit` minus `CurrentValue` must be at least 50.
-- Permission to create a fine-grained personal access token for the repository.
-- Your notes and policies as Markdown files, with ids that the brief can cite (see the next section).
-- To read the agent's traces and the evaluation runs, a browser signed in to the [Azure portal](https://portal.azure.com) and the [Foundry portal](https://ai.azure.com).
-- Only to score briefs that Copilot drafts: [01-plan-github](../01-plan-github/) in the same repository, which needs a paid GitHub Copilot plan.
-
-### What to copy and what to change
-
-Copy this folder into your repository, for example as `plan/`, without `images/`, which shows the run in [See it work](#see-it-work). Then change these files:
-
-| File | What it does here | What to change for your work |
-| --- | --- | --- |
-| [`inputs/stakeholder-transcript.md`](inputs/stakeholder-transcript.md) and [`inputs/routing-policies.md`](inputs/routing-policies.md) | The synthetic workshop notes, paragraphs `[T01]` to `[T24]`, and the routing policies they refer to | Your notes and policies, in the same form: each paragraph starts with its id in bold, such as `**[T01]**`, and each policy is a table row `\| POL-ROUTE-004 \| version \| title \| rule \|`. `setup_foundry.py` reads the ids that the citations check accepts from these files, and each published Issue quotes the paragraphs and policies it cites. |
-| [`agent.yaml`](agent.yaml) | The agent: name, reasoning effort, instructions, file search, and the request each run sends | The `instructions` and the `prompt`: what your brief must contain. Keep the rules that every item cites an id from the files, and that the files are data, not instructions. |
-| [`backlog.schema.json`](backlog.schema.json) | The JSON shape the agent must answer with | The fields of your brief. If you rename fields, change the Markdown in [`function/planner/brief.py`](function/planner/brief.py) and the evaluators that read them. |
-| [`evaluators/`](evaluators/) | Seven code-based checks, each one `grade(sample, item)` function that returns a score from 0 to 1 | Keep `citations.py` and `testable_criteria.py`. In `structure.py`, set the counts your backlog needs: here exactly four tasks and at least four requirements. `injection_ignored.py` checks this transcript's planted instruction (`INJECTED = "T18"`) and RequestHub's rule that nothing may imply automatic approval: point it at what your notes and policies must never make the agent do. Replace `planted_conflicts.py`, `planted_unknowns.py`, and `requirements_covered.py`, which check this transcript's planted problems, with checks of what matters in your notes. An evaluator can't call anything named `compile()`: the grading sandbox refuses it. |
-| [`function/planner/checks.py`](function/planner/checks.py) | Which checks gate a run, which are reported, and their names in the review Issue | `GATES`, `REPORTED`, and `CHECK_NAMES`, to match your evaluators, and `GATES` in [`tests/test_evaluators.py`](tests/test_evaluators.py) too. |
-| [`function/planner/brief.py`](function/planner/brief.py) | What the run writes to GitHub: the review Issue, the epic, the tasks, and the comments | `REVIEW_TITLE`, the `[Plan/Foundry]` prefix of the epic's and the tasks' titles, the labels (`REVIEW_LABELS`, `EPIC_LABELS`, and `TASK_LABELS`), `APPROVAL_LABEL` (`brief-approved`), and `INPUTS_HINT`, the folder an Issue names when it can't quote a source. |
-| [`function/planner/steps.py`](function/planner/steps.py) | The run's steps and limits | `DECISION_TIMEOUT` (2 hours), if your reviewers need longer. For the comparison or the Plan combo, `COPILOT_BRIEF`: where 01-plan-github's brief lives in your repository. |
-| [`tests/`](tests/) | Unit tests for the evaluators and the run, and [`sample-brief.json`](tests/sample-brief.json), a brief from this transcript | Replace `sample-brief.json` with a brief from your notes, and update the tests that name this transcript's ids. `setup_foundry.py publish` and `azd deploy` run the tests before anything reaches Azure. |
-| [`infra/main.bicep`](infra/main.bicep) | The resource group and the model deployment: `gpt-6-luna`, version 2026-09-22, 50,000 tokens per minute | `modelName`, `modelVersion`, and `modelCapacity`, for another model or quota. A model that doesn't reason takes `temperature` instead of `reasoning_effort` in `agent.yaml`. |
-
-### One-time setup
-
-13 minutes in a fresh setup on 11 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new copy and a new resource group ([the evidence](evidence/2026-11-11-fresh-setup.md)):
-
-| Step | Took |
-| --- | --- |
-| 1. Deploy: `pip install -r requirements.txt` | 2 minutes 2 seconds |
-| 1. Deploy: `azd up` | 5 minutes 10 seconds |
-| 2. Create the GitHub token | about 3 minutes, for a person on GitHub |
-| 3. Give the token to the Function app: `azd provision`, then `python runs.py status` | 2 minutes 23 seconds, then 14 seconds |
-| 4. Create the approval label | 1 second |
-
-#### 1. Deploy
-
-From the root of your repository:
-
-```powershell
-cd plan
-pip install -r requirements.txt
-az login
-azd auth login
-azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
-azd up
-```
-
-`--subscription` deploys to the subscription that `az` signed in to, where `runs.py` later looks for the Function app: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd up` asks you to pick one of your subscriptions. Run azd in the shell where `pip install` ran, with the same virtual environment active if you use one: its hooks run that `python`.
-
-**What you should see:** before provisioning, the hook names the repository where the Function app will open its Issues, from `gh repo view` in your clone: `GitHub repository: <owner>/<repository>`. To choose another one, run `azd env set GITHUB_REPOSITORY <owner>/<repository>` before `azd up`. It also says `PLAN_GITHUB_TOKEN is not set yet`, which step 3 takes care of. `azd up` creates resource group `rg-<environment name>`, with the resources in [What azd up creates](#what-azd-up-creates). Its hooks run the unit tests, publish to Foundry, and deploy the Function app, and after about 5 minutes it ends with `SUCCESS: Your application was provisioned and deployed to Azure in …`. The publish lines look like this:
-
-```text
-unit tests: 94 passed
-vector store plan-inputs-9a000f952f98: uploaded
-agent requirements-analyst v1: new version (gpt-6-luna)
-evaluator plan_structure v1: new version
-...
-evaluation plan-brief-checks: created
-```
-
-After you change `agent.yaml`, `inputs/`, or an evaluator, run `python setup_foundry.py publish` again: it runs the tests first, publishes nothing if one fails, and otherwise publishes only what changed. After you change `agent.yaml`, `inputs/`, or `function/`, also run `azd deploy`: the Function app reads the agent's request, and the quotes for the published Issues, from its own package.
-
-#### 2. Create the GitHub token
-
-On GitHub, open **Settings › Developer settings › Personal access tokens › Fine-grained tokens › Generate new token**:
-
-- **Token name:** for example `ai-sdlc-plan-microsoft`. **Expiration:** for example 30 days.
-- **Resource owner:** the owner of your repository. **Repository access:** **Only select repositories**, then your repository.
-- **Repository permissions:** **Issues: Read and write**. GitHub adds Metadata: Read-only on its own.
-- Only for the comparison or the Plan combo with 01-plan-github: also **Contents: Read-only**, so the run can read the pull request and its brief.
-
-With these permissions the token can create, label, comment on, and close Issues, and link sub-issues and dependencies, in that repository only. Use a person's token, not a GitHub App's: a run counts only Issues opened by the repository's owner, members, and collaborators as its own, and GitHub reports a bot as none of them.
-
-#### 3. Give the token to the Function app
-
-```powershell
-azd env set PLAN_GITHUB_TOKEN (Read-Host -MaskInput 'GitHub token')
-azd provision
-python runs.py status
-```
-
-**What you should see:** `azd provision` ends with `SUCCESS`. It stores the token as the Key Vault secret `github-token`, which only the Function app's identity can read, and no output shows it. The last line of `runs.py status` asks the Function app to try the token: `GitHub token in Key Vault: HTTP 200, expires …`. The token also stays in your local azd environment file, `.azure/<environment name>/.env`, which git ignores.
-
-The token comes from `PLAN_GITHUB_TOKEN` only. azd fills a parameter from your shell when its environment lacks the value, and many shells hold a broader `GITHUB_TOKEN` for other tools; that one never reaches Azure. If you store the token as `GITHUB_TOKEN` in the azd environment instead, `azd provision` moves it to `PLAN_GITHUB_TOKEN`. To replace the token, run the same three commands: the Function app reads the new one within five minutes.
-
-#### 4. Create the approval label
-
-```powershell
-gh label create brief-approved --color 0e8a16 --force
-```
-
-**What you should see:** the GitHub CLI confirms the label; `--force` updates it if 01-plan-github created it already. The run creates its other labels (`ai-sdlc`, `phase:plan`, `track:microsoft`, `type:brief`, `type:epic`, and `type:task`) the first time it uses them.
-
-### Use it the first time
-
-From the folder you copied:
-
-```powershell
-python runs.py start
-```
-
-**What you should see:** the run's id, then each step as the Function app reports it: the agent's draft, each evaluation attempt, and the link to the review Issue. In our runs on `gpt-6-luna` the link came 2¼ to 2¾ minutes after the start. When the preview grading sandbox errors and the evaluation runs again, it takes several minutes more: 5½ to 8½ minutes in all, in our runs on `gpt-4.1`. Ctrl+C stops following, not the run.
-
-Open the review Issue and read the brief, its scores, and what nobody settled. Then decide:
-
-- **Approve:** apply the `brief-approved` label, in the Issue or with `gh issue edit <number> --add-label brief-approved`. Within a minute the epic and its tasks are Issues, and the review Issue has a comment that lists them and is closed.
-- **Reject:** close the review Issue. The Function app comments that nothing was published.
-- **Don't decide:** 2 hours after the review Issue opened, the Function app comments, closes it as not planned, and publishes nothing.
-
-`python runs.py show <run id>` prints everything a run did, and `python runs.py status` lists the runs in progress.
-
-Then make it part of your planning:
-
-- **After each workshop,** replace the notes in `inputs/`, run `python setup_foundry.py publish` and `azd deploy`, and start a run: the agent drafts from the files in its vector store, which `publish` updates.
-- **If your team drafts briefs with Copilot** in [01-plan-github](../01-plan-github/), `python runs.py start --evaluate-pull-request <n>` scores the brief at the pull request's head commit and opens an evaluation Issue that lists the open items for the product owner, and 01-plan-github publishes only that commit. The [Plan solution combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes) shows a run of it. `--compare-with-pull-request <n>` scores the Copilot brief next to the agent's instead, as in [See it work, step 10](#10-optional-foundry-scored-a-copilot-brief-next-to-its-own).
-
-### What it costs
-
-While deployed, the solution costs about $25 to $30 a month, even when nobody runs it:
-
-- The three private endpoints, at $0.01 an hour each, and their DNS zones, at $0.50 a month each: about $23.
-- The timer, which runs 2,880 times a day: each run bills at least one second of a 2 GB instance, about 172,800 GB-s a month. That is $4.50 at $0.000026 per GB-s, or about $1.90 after the monthly free grant of 100,000 GB-s, which all Flex Consumption apps in the subscription share.
-- Storage transactions (the timer's reads, the host's leases, queue polling): a dollar or two. Key Vault: cents.
-
-A run costs a cent or two: about $0.002 for the agent's draft, from [the tokens it used](evidence/2026-11-11-gpt-6-luna.md#token-use-and-cost-of-each-draft) at `gpt-6-luna`'s list price of $0.10 per million input tokens and $0.50 per million output tokens, plus a cent or two of Function time while its steps wait for Foundry. The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost). When you won't use the solution for a while, [clean it up](#clean-up): `azd up` recreates it.
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on this repository's synthetic notes, before you adapt anything. It needs the [prerequisites](#prerequisites), with your copy as the repository. In the copy, the other solutions' workflows also see this one's Issues and comments, and stop at once: in our fresh setup, the labels that one run applied started 25 runs of *Operate · GitHub · agentic incident triage*, all skipped, and its comment one run of *Design · GitHub · agentic design review*, which stopped after a 16-second check. No model ran.
+
+The copy also has the folder of this one that belongs to the demo: [`images/`](images/), the screenshots of the run in See it work, and of the Plan combo (`combo-*`).
 
 ### Quick start
 
@@ -602,89 +777,4 @@ gh issue list --label track:microsoft --state open --json number --jq '.[].numbe
 
 The first line cancels every run that hasn't finished: a run that waits for a decision comments on its review Issue and closes it. A run that is publishing its backlog can't be cancelled while it makes progress, and `runs.py` says so: wait a minute, and run the line again. The second line closes the remaining open Issues: the published backlog, and review Issues of failed runs. Run records, agent versions, traces, and evaluation runs stay in Azure as history.
 
-## Clean up
-
-When you no longer need the solution, from its folder, in your repository or in the copy:
-
-```powershell
-$prefix = "$(azd env get-value FOUNDRY_ACCOUNT_NAME)-$(azd env get-value FOUNDRY_PROJECT_NAME)-"
-az ad sp list --display-name $prefix -o json | ConvertFrom-Json | Where-Object displayName -like "$prefix*-AgentIdentity" | ForEach-Object { az rest --method delete --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($_.id)" }
-az ad app list --display-name $prefix -o json | ConvertFrom-Json | Where-Object displayName -like "$prefix*-AgentIdentityBlueprint" | ForEach-Object { az ad app delete --id $_.id }
-azd down --purge
-azd env set PLAN_GITHUB_TOKEN ''
-```
-
-The first three lines remove what Foundry created in Microsoft Entra ID when it published the agent, which `azd down` leaves behind: the agent identity of `requirements-analyst`, then its agent identity blueprint, an app registration owned by whoever published the agent ([agent identities in Foundry](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)). Both are named after the Foundry account, its project, and the agent, for example `aif-<token>-plan-requirements-analyst-AgentIdentity`. The `*` in the lines' patterns stands for the agent's name, so they leave out the project's shared pair, `aif-<token>-plan-AgentIdentityBlueprint` and `aif-<token>-plan-AgentIdentity`, which Foundry also creates, owned by the project's managed identity alone: it needs nothing from you, because Foundry removes it with the project, which `azd down` deletes. Deleting the blueprint also deletes its principal, and would delete the agent identity too, but only hours or days later ([agent identity deletion](https://learn.microsoft.com/entra/agent-id/concept-agent-identity-deletion)): that's why the agent identity goes first. Run the lines as the person who published the agent, the blueprint's owner, and before `azd down`, which forgets the account's name. Entra keeps what they delete in its recycle bin for 30 days, and the blueprint's principal can't be purged from it: it stays there until the 30 days are over.
-
-`azd down --purge` lists what it deletes and asks you to confirm; `--force` skips the question. It removes the resource group: the Foundry account and project, Application Insights, the Function app with its network, storage, and Key Vault. `--purge` also removes the soft-deleted Foundry account, Key Vault, and Log Analytics workspace, so their names can be reused. It took 4 minutes 54 seconds in our fresh setup. The last line removes the token from your local azd environment. Then revoke the token on GitHub: **Settings › Developer settings › Fine-grained tokens** › the token › **Delete**. The Issues the runs created, and their labels, stay in the repository; [the reset](#reset-the-copy-for-another-run) closes the open ones.
-
-## What's in this folder
-
-```text
-01-plan-microsoft/
-├── README.md
-├── agent.yaml                  the Foundry agent: instructions, reasoning effort, file search, and the request each run sends
-├── backlog.schema.json         the JSON schema the agent's answer must match
-├── evidence/
-│   ├── 2026-11-11-fresh-setup.md   a setup from scratch that followed only this README, timed step by step
-│   └── 2026-11-11-gpt-6-luna.md    the runs that moved the agent to gpt-6-luna, exported for anyone to check
-├── evaluators/                 seven code-based Foundry evaluators, each one grade() function
-│   ├── structure.py            gate: ids, counts, task dependencies, and decisions that don't settle open conflicts
-│   ├── citations.py            gate: every cited paragraph or policy exists in inputs/
-│   ├── testable_criteria.py    gate: every acceptance criterion reads Given / When / Then
-│   ├── injection_ignored.py    gate: the instruction pasted into T18 has no effect
-│   ├── planted_conflicts.py    reported: both planted conflicts, with the right status
-│   ├── planted_unknowns.py     reported: the four planted unknowns are asked
-│   └── requirements_covered.py reported: the ten key requirement paragraphs are cited
-├── function/                   the Azure Function app (azd service "function")
-│   ├── function_app.py         the three functions: runs (HTTP), run_step (queue), check_reviews (timer)
-│   ├── host.json               queue retries (3), the one-hour time limit for a step, and logging
-│   ├── requirements.txt        the Function app's Python packages
-│   └── planner/                the run in plain Python, standard library only
-│       ├── steps.py            start, draft, evaluate, check the review Issues, publish, cancel
-│       ├── brief.py            the review Issue, the epic, the tasks, the comments, and the evaluation Issue, with @ neutralized
-│       ├── checks.py           the gates and the score table
-│       ├── clients.py          Foundry and GitHub over HTTPS
-│       └── store.py            one JSON record per run, in blob storage
-├── runs.py                     start, follow, list, and cancel runs from your shell
-├── setup_foundry.py            azd hooks: repository and token name; publish to Foundry; bundle agent.yaml and inputs/ into the Function app
-├── requirements.txt            Python packages for setup_foundry.py and runs.py
-├── tests/                      unit tests for the evaluators and the run; publish and deploy run them first
-├── azure.yaml                  azd project
-├── images/                     screenshots of the run in See it work, and of the Plan combo (combo-*)
-├── infra/
-│   ├── main.bicep              resource group rg-<environment name>, and the model deployment: gpt-6-luna
-│   ├── resources.bicep         Foundry, tracing, the Function app, its network, storage, and Key Vault, role assignments
-│   └── main.parameters.json
-└── inputs/
-    ├── stakeholder-transcript.md   synthetic workshop notes, paragraphs [T01]–[T24]
-    └── routing-policies.md         the routing policies the workshop refers to
-```
-
-## Troubleshooting
-
-- **The run fails with `GitHubTokenMissing` or `GitHubRefused` when it opens the review Issue.** The Function app has no usable GitHub token: Key Vault has none yet, or the token there contains spaces or line breaks (`GitHubTokenMissing`), or GitHub refused the one it has (`GitHubRefused`, for example `HTTP 401: Bad credentials` when the token expired or was revoked). [Create a new token](#2-create-the-github-token) and [give it to the Function app](#3-give-the-token-to-the-function-app). The Function app reads the new token within five minutes; `python runs.py status` shows what GitHub answers. The error never contains the token.
-- **The run fails with `BriefFailedEvaluation`.** A gate didn't pass, reported no result, or the grading sandbox errored on it in all three attempts, and the error names it. Nothing was sent to GitHub. Open the evaluation run in Foundry to see the scores. If a gate failed, improve the `instructions` in `agent.yaml`, run `python setup_foundry.py publish` and `azd deploy`, and start a new run. Don't loosen an evaluator to make a brief pass. If the sandbox errored on that gate in every attempt, the brief may be fine: start a new run.
-- **The run fails with `PublishingFailed`.** GitHub refused a call while the backlog was being published. The comment on the review Issue lists the epic and the tasks already created; finish or close them by hand, then start a new run if needed. The review Issue stays open.
-- **The run fails with `AgentDidNotFinish`.** The agent's response ended as `failed` twice in a row, Foundry lost it twice, or its answer wasn't the JSON brief. In one earlier run, a response failed after about 10 seconds with "The server is overloaded or not ready yet", and the agent's **Traces** list showed it as **Failed** with no tokens. In one run on `gpt-6-luna`, Foundry answered `HTTP 404: Response with id '…' not found` for a response it had started, and kept answering 404. That's why the run asks once more in both cases. Nothing was sent to GitHub. Start a new run.
-- **The run fails with `StepFailed`.** A step raised an error on all three deliveries from the queue, for example a Foundry or network error, and the run's last event names it: the service and its answer, or for any other error only its type. Start a new run. On the Function app, `run_step` › **Invocations** shows each attempt and its log.
-- **The run fails with `StepStopped`.** A step stopped without finishing or failing, for example because Azure restarted the instance it ran on: the draft or the evaluation saved nothing for 45 minutes, or publishing made no progress three times in a row, 5 minutes each. For publishing, the comment on the review Issue lists what was already created. Start a new run.
-- **`runs.py cancel` answers "the run is publishing its backlog; wait until it finishes".** Publishing takes about 20 seconds, and a run that is making progress isn't stopped halfway. Run the command again a minute later. A publish that made no progress for 5 minutes can be cancelled, and the comment on its review Issue lists what it had created.
-- **An evaluation check shows "An error occurred during grading".** The preview grading sandbox often errors on a check, and that evaluation attempt takes about 4 minutes instead of 1.5. While a gate has no score, the run evaluates again, up to three attempts, and keeps each check's first score; the review Issue marks a reported check that was never scored as not scored.
-- **`error: the unit tests failed, so nothing was published`, or `azd deploy` stops at `predeploy`.** A change to an evaluator or to the Function app's code broke a test in `tests/`, and the output above the error names it. Fix the code, or the test if the rule changed on purpose, then run the command again.
-- **`runs.py` stops with ``error: `az functionapp show` failed twice``.** `runs.py` asks the Azure CLI for the Function app's address and key, and tries twice: in one of our runs a single call failed and the next one, a minute later, worked. If it fails twice, the Azure CLI isn't signed in as an account that can read the Function app, or the solution isn't deployed in the subscription `az` uses. Run `az login`, check `az account show`, and check that `azd env get-value FUNCTION_APP_NAME` prints a name.
-- **`This operation requires the following opt-in preview feature(s): Evaluations=V1Preview`.** You called the evaluator catalog without the preview header. `setup_foundry.py` sends it; send `Foundry-Features: Evaluations=V1Preview` from your own code too.
-- **`Invalid grader source: use of builtin 'compile()' is not allowed in Python graders`.** An evaluator calls something named `compile()`, `re.compile` included. Use `re.search` and `re.match` with a pattern string instead.
-- **`AzureCLICredential: exit status 1` during `azd up` or `azd env refresh`.** azd couldn't get a token from the Azure CLI. Run `az account get-access-token` to check your sign-in, then run the azd command again. It can also be transient while other `az` commands run at the same time.
-- **`FOUNDRY_PROJECT_ENDPOINT is not set` or `FUNCTION_APP_NAME is not set` in a new clone or worktree.** `setup_foundry.py` and `runs.py` read the azd environment, which lives in the `.azure/` folder where you ran `azd up`, and git ignores it. Recreate it from the deployment, in the solution's folder, with the environment name and region you deployed with (`ai-sdlc-plan` and `eastus2` in the copy):
-
-  ```powershell
-  azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
-  azd env refresh -e <environment name>
-  ```
-
-  `azd env refresh` ends with `SUCCESS: Environment refresh completed`. Set `PLAN_GITHUB_TOKEN` again: it was in the old `.env` only.
-- **`PermissionDenied` when something runs right after `azd up`.** New role assignments can take a few minutes to apply. Wait, then try again.
-- **`DeploymentNotFound` or `The project does not exist` right after re-creating the solution.** After `azd down --purge`, re-creating it under the same environment name reuses the same Foundry names, and the project endpoint can keep answering for the deleted account for more than an hour. Create it under a new environment name instead, for example `azd env new ai-sdlc-plan2 --location eastus2`, then `azd up`.
-- **A `gpt-4.1` deployment is still in the Foundry account.** You set the solution up before the agent moved to `gpt-6-luna` on 11 November: `azd provision` adds the `gpt-6-luna` deployment, and its publish hook a new agent version on it, but leaves `gpt-4.1` in place. Once `python setup_foundry.py publish` reports `agent requirements-analyst v…: reused (gpt-6-luna)`, nothing uses the old deployment. Delete it with `az cognitiveservices account deployment delete -g rg-ai-sdlc-plan -n (azd env get-value FOUNDRY_ACCOUNT_NAME) --deployment-name gpt-4.1`.
-- **A Logic App named `logic-plan-backlog` is still in the resource group.** You set the solution up before the Function app replaced the Logic App: `azd up` adds the Function app and its resources, and leaves the Logic App in place. Delete it with `az resource delete -g rg-ai-sdlc-plan -n logic-plan-backlog --resource-type Microsoft.Logic/workflows`, then remove its role assignment on the Foundry account, which now shows **Identity not found** under **Access control (IAM)**. If you set it up when it ran in GitHub Actions, the GitHub environment `plan-microsoft` is no longer used either: `gh api -X DELETE 'repos/{owner}/{repo}/environments/plan-microsoft'`.
+When you no longer need the copy, follow [Clean up](#clean-up); the [root README](../../README.md#try-it-in-a-copy-of-this-repository) then says how to delete the copy itself.

@@ -4,11 +4,30 @@ Design decisions often live in meeting notes and people's memories: reviewers ca
 
 ![Copilot's ADR compares the two options against the same constraints, citing each standard by id and version, for the small-team and the enterprise profile](images/05-adr-options.png)
 
+- **Install it in your repository:** [copy 14 files, edit them for your standards and code, and set them up once](#install-it-in-your-repository), with the commands in order in [Getting started](#getting-started). Copying took 7 to 8 seconds when this README was checked; the rest is writing down your standards, four labels, compiling the agentic design review, a token for it, and a pull request.
+- **Files to edit to tweak it:** [your standards, the agent's instructions, the ADR template, and the agentic design review](#files-to-edit-to-tweak-it).
 - **See it work:** [a real run on this repository](#see-it-work), step by step. Copilot CLI and the Copilot cloud agent each proposed an ADR for the same design question; the checks, Copilot code review, a reviewer's requests, and the decision followed, with a screenshot and a link anyone can open for every step.
-- **Add it to your repository:** [copy 13 files, adapt them to your standards and code, and set them up once](#add-it-to-your-repository). Copying took 7 seconds when this README was checked; the rest is writing down your standards, four labels, compiling the agentic design review, a token for it, and a pull request.
 - **Try it first in a copy of this repository:** [four labels and a token to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution. A run then needs about 7 minutes of Copilot CLI, or 12 minutes of the Copilot cloud agent, working unattended.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-cli) and the [Copilot cloud agent](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github) | Write the ADR, unattended: Copilot CLI in your terminal, or the cloud agent from an Issue assigned to it, in a session on GitHub Actions that opens a draft pull request |
+| A [custom agent](https://docs.github.com/en/copilot/concepts/customizations/custom-agents) and two [agent skills](https://docs.github.com/en/copilot/concepts/customizations/agent-skills) | Tell Copilot how to work: read the brief, the standards, and the real code, write the ADR from a template, run the ADR checker until it passes, and classify each change to the API contract as additive or breaking |
+| [Copilot code review](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-code-review) | Reviews each ADR with path-specific instructions: unstated assumptions, standards the ADR missed, the API impact, claims about the code, and the threat model |
+| [GitHub Agentic Workflows](https://github.github.com/gh-aw/) (gh-aw v1.2.2) | Compiles the agentic design review: a read-only Copilot agent that answers `/design-review` with one comment, and adds the labels `adr-needed` and `standards-conflict` when they apply |
+| [GitHub Actions](https://docs.github.com/en/actions) | Runs the ADR checks and the API contract check on design pull requests, the agentic design review, and the cloud agent's session |
+| GitHub Issues, with an [issue form](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms) | Hold a design question for the cloud agent, or for `/design-review` |
+| [Rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) | Optionally make the two checks required before a merge |
+| Python 3.12, standard library only | The ADR checker and the contract tool |
+| GitHub CLI and PowerShell 7 | The commands in this README |
+
+The files are written for RequestHub: its brief and standards in this folder, its code, and its OpenAPI contract in `app/contracts/openapi.json`. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for yours, with `docs/architecture/` as an example home for your ADRs, standards, and briefs.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 2 of 7: Design.** Today an architect writes the decision from scratch, often after the code, from what they remember of the system and of the standards, and an approval in a chat thread doesn't say who decided. With this solution, Copilot drafts the decision from the real code and the standards in minutes. Deterministic checks reject what can't be true: a standard, version, or file that doesn't exist, a breaking API change, or an agent's sign-off. The architect spends their time on what only people can decide.
 
@@ -21,19 +40,11 @@ Design decisions often live in meeting notes and people's memories: reviewers ca
 | API changes | Breaking changes surface in integration testing. | Every design pull request gets an additive-or-breaking report for the API contract. A breaking change fails the check. |
 | Sign-off | "Approved" in a chat thread, and nobody knows who decided. | Copilot can only propose. A check fails any accepted ADR that doesn't name the people who decided. |
 
-The value: a reviewable design, grounded in your standards and your code, in minutes; conflicts surfaced instead of settled silently; and a record of who decided. The run in [See it work](#see-it-work), on 28 October 2026, measured:
-
-- **6 minutes 43 seconds** of Copilot CLI's work from the reviewed brief to a 221-line ADR that passed the checker. The Copilot cloud agent, given the same question as an Issue, asked for review 12 minutes after it was assigned.
-- **14 seconds** for the checks on the pull request: the ADR checks, and an API contract report of no breaking and no additive change.
-- **The same findings in both ADRs,** from reading the code: an existing extension point to reuse, a 45-second default timeout against an 8-second target, and a prompt that sends more data than the brief allows. Both left the conflict between two standards to a person, as a blocking open question.
-- **About 4 minutes** for each Copilot code review (4 minutes 7 seconds and 4 minutes 27 seconds). Both named the decisions that belong to people.
-- **Minutes for a revision:** 1 minute 14 seconds with Copilot CLI, and 3 minutes 36 seconds from a `@copilot` request to Copilot's commit.
-- **10 seconds** for the ADR check to fail an acceptance that named an agent as the decider; with a person named, it passed. A removed response field failed the contract check in 10 seconds too.
-- **About 5 minutes** for `/design-review` to answer, in three live runs on 11 November 2026: a design question, an ADR pull request, and a breaking contract change. Each agent used 19 to 24 AI credits.
+The value: a reviewable design, grounded in your standards and your code, in minutes; conflicts surfaced instead of settled silently; and a record of who decided. [Results and value](#results-and-value) has what the recorded run measured.
 
 The Microsoft counterpart, [02-design-microsoft](../02-design-microsoft/), answers design questions with a Foundry agent grounded in the standards. The [Design combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr) uses both on one question and one pull request: the Foundry advisor cites the standards, and this solution's agent completes its draft into one ADR that these checks verify.
 
-## How it works
+### How it works
 
 ```mermaid
 flowchart LR
@@ -66,6 +77,277 @@ flowchart LR
 - **What checks its output.** Threat detection reads the comment before it is posted, and a run it flags applies nothing. The contract verdict comes from `contract_diff.py` on the default branch, run before the pull request's branch is checked out, so neither the model nor the pull request decides it. Each run's agent is capped at 60 AI credits, and its threat detection at 10.
 
 **Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. A Copilot code review that someone else requests on their own pull request uses their Copilot plan, not yours. A fork's pull request that changes an ADR gets the ADR checks, with a read-only token and no secrets, once someone with write access approves the run; the checker comes from the base branch. Every comment starts a short run of the agentic workflow, but its agent runs only for a `/design-review` from someone with write access: never on an outsider's Issue or a fork's pull request.
+
+## Install it in your repository
+
+[Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for your standards and code. The commands are the ones this repository uses.
+
+### Prerequisites
+
+- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts use only Python's standard library.
+- **A paid GitHub Copilot plan.** Copilot code review reviews each ADR. To ask Copilot from your terminal, install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli). To hand a question to Copilot from an Issue, allow the Copilot cloud agent in your repository: for a repository you own, in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). The agent reads files and runs Python and git; it doesn't build or test your code.
+- **Your approved architecture standards, written down:** one Markdown file per standard, with an id, a version, and a scope ([`standards/`](standards/) has twelve examples), and a reviewed brief for each design question, like [`inputs/reviewed-brief.md`](inputs/reviewed-brief.md).
+- **An OpenAPI contract in JSON,** for the API impact report. Without one, delete the `contract-impact` skill and the workflow's *API contract compatibility* job.
+- **For the agentic design review:** [GitHub Agentic Workflows](https://github.github.com/gh-aw/) (gh-aw v1.2.2, a GitHub CLI extension) to compile it, and a fine-grained personal access token with **Copilot Requests: Read** for its engine, stored as the `COPILOT_GITHUB_TOKEN` secret. Its runs draw on that token owner's Copilot plan. In an organization with centralized Copilot billing, the workflow's own token can replace the secret: add `copilot-requests: write` to its `permissions` and recompile ([gh-aw's authentication guide](https://github.github.com/gh-aw/reference/auth/)).
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must list `workflow` among the token's scopes, Python must be 3.12 or later, and PowerShell 7.4 or later. Copilot CLI is needed only to ask Copilot from your terminal. `gh aw version` must print v1.2.2, which step 4 installs if it doesn't ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   copilot --version
+   gh aw version
+   ```
+
+2. **Copy the files on a new branch.** The copy adds the Copilot CLI task as `docs/architecture/adr-task.md`, and the licence that must travel with the files as `.github/LICENSE-ai-sdlc`. It prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-design-github
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-02-design-github'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   New-Item -ItemType Directory -Force .github, docs/architecture | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $src 'solutions/02-design-github/.github/*') .github
+   Copy-Item -Force (Join-Path $src 'solutions/02-design-github/adr-task.md') docs/architecture
+   Copy-Item -Force (Join-Path $src 'LICENSE') .github/LICENSE-ai-sdlc
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 14 new files, in 7 to 8 seconds when this README was checked; the other files in `.github/` stay. GitHub reads a repository's own licence only from its root, so yours doesn't change.
+
+3. **Edit the files for your code, and write down your standards,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) describes. Then check that the contract tool finds your contract, and that the ADR template cites only standards your folder has ([one-time steps 1 and 2](#one-time-setup)):
+
+   ```powershell
+   python .github/skills/contract-impact/contract_diff.py --base-ref origin/main
+   New-Item -ItemType Directory -Force docs/architecture/adr | Out-Null
+   Copy-Item .github/skills/architecture-decision/adr-template.md docs/architecture/adr/scratch.md
+   python .github/skills/architecture-decision/check_adr.py docs/architecture/adr/scratch.md
+   Remove-Item docs/architecture/adr/scratch.md
+   ```
+
+   The report ends with `No contract changes.`, and the checker prints `FAIL` with only `still contains template text` lines: 15 for the shipped template. If your default branch isn't `main`, name it in `--base-ref`.
+
+4. **Set it up once.** Create the labels, compile the agentic design review with the pinned gh-aw version (if another gh-aw version is installed, run `gh extension remove gh-aw` first), and store the engine's token once you have created it on GitHub ([one-time steps 3 to 5](#one-time-setup)):
+
+   ```powershell
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:design --color C5DEF5 --description "SDLC phase 2: Design" --force
+   gh label create adr-needed --color FBCA04 --description "Design review: this change needs an ADR" --force
+   gh label create standards-conflict --color D93F0B --description "Design review: the applicable standards conflict" --force
+   gh extension install github/gh-aw --pin v1.2.2
+   gh aw compile design-github-agentic-review --strict --validate
+   gh secret set COPILOT_GITHUB_TOKEN
+   ```
+
+   Then allow Copilot in your repository, as in the [prerequisites](#prerequisites) ([one-time step 6](#one-time-setup)).
+
+5. **Merge it into your default branch,** where the Copilot cloud agent finds custom agents, GitHub offers issue forms, and comment-triggered workflows run ([one-time step 7](#one-time-setup)). Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .github docs/architecture
+   git commit -m "Add 02-design-github from ai-sdlc <commit>"
+   git push -u origin add-design-github
+   gh pr create --fill
+   ```
+
+   Merge the pull request as you merge any change. To make the checks a gate, require *ADR checks* and *API contract compatibility* in a ruleset ([one-time step 8](#one-time-setup)).
+
+6. **Use it on your next design question.** Write its brief and point `docs/architecture/adr-task.md` at it. Then, on your default branch, hand it to Copilot CLI and open the pull request:
+
+   ```powershell
+   git switch -c design/<topic>
+   copilot --agent design-github --allow-all-tools -p (Get-Content docs/architecture/adr-task.md -Raw)
+   git add docs/architecture/adr
+   git commit -m "Design: <decision>"
+   git push -u origin design/<topic>
+   gh pr create --fill
+   ```
+
+   Or hand it to the cloud agent from an Issue, and comment `/design-review` on the Issue or the pull request for a design review, as [Use it the first time](#use-it-the-first-time) describes.
+
+### One-time setup
+
+1. **Copy the files and make the changes in [Files to edit to tweak it](#files-to-edit-to-tweak-it),** on a branch, as in [Getting started](#getting-started). What you should see: `python .github/skills/contract-impact/contract_diff.py --base-ref origin/main` prints a report that ends with `No contract changes.`, so the tool found your contract.
+2. **Write down your standards,** as in [Files to edit to tweak it](#files-to-edit-to-tweak-it). What you should see: checked as a scratch ADR, the template fails only on its own placeholders:
+
+   ```powershell
+   New-Item -ItemType Directory -Force docs/architecture/adr | Out-Null
+   Copy-Item .github/skills/architecture-decision/adr-template.md docs/architecture/adr/scratch.md
+   python .github/skills/architecture-decision/check_adr.py docs/architecture/adr/scratch.md
+   Remove-Item docs/architecture/adr/scratch.md
+   ```
+
+   It prints `FAIL` and one `still contains template text` line per placeholder: 15 for the shipped template. Any `cites unknown standard` line names a standard that the template cites and your folder doesn't have, and a `cites ... but the approved version is ...` line a version that differs: fix the template's checklist. The checker skips files named `*template.md`, hence the scratch copy.
+3. **Create the labels** that the issue form and the agentic design review apply:
+
+   ```powershell
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:design --color C5DEF5 --description "SDLC phase 2: Design" --force
+   gh label create adr-needed --color FBCA04 --description "Design review: this change needs an ADR" --force
+   gh label create standards-conflict --color D93F0B --description "Design review: the applicable standards conflict" --force
+   ```
+
+   What you should see: `gh label list --search phase:design` prints `phase:design  SDLC phase 2: Design  #C5DEF5` on its first line, and `gh label list --search adr-needed` prints `adr-needed  Design review: this change needs an ADR  #FBCA04` on its first line once GitHub has indexed it, which took under a minute when this README was checked. The review only applies labels that exist.
+4. **Compile the agentic design review** with the pinned gh-aw version, after the changes in [Files to edit to tweak it](#files-to-edit-to-tweak-it) (if another gh-aw version is installed, run `gh extension remove gh-aw` first):
+
+   ```powershell
+   gh extension install github/gh-aw --pin v1.2.2
+   gh aw compile design-github-agentic-review --strict --validate
+   ```
+
+   What you should see: `✓ Compiled 1 workflow: 1 succeeded, 0 warnings`, and `git status` lists `.github/workflows/design-github-agentic-review.lock.yml` as changed. Commit the `.md` and the `.lock.yml` file together; compile again after every change to the `.md` file.
+5. **Store the engine's token.** Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) owned by the person whose Copilot plan pays for the reviews, with **Account permissions** > **Copilot Requests** > **Read** and nothing else, then store it:
+
+   ```powershell
+   gh secret set COPILOT_GITHUB_TOKEN
+   ```
+
+   It asks for the token. What you should see: `gh secret list` lists `COPILOT_GITHUB_TOKEN`. gh-aw refuses an OAuth token (one that starts with `gho_`), such as the one GitHub CLI signs in with.
+6. **Allow Copilot** in the repository, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**, and on any pull request, **Reviewers** lists **Copilot**.
+7. **Merge it into your default branch.** The Copilot cloud agent loads custom agents from the default branch, GitHub offers issue forms from it and runs comment-triggered workflows from it, and the checks workflow takes the checker, the contract tool, and the standards from each pull request's base branch. What you should see:
+
+   ```powershell
+   gh api 'repos/{owner}/{repo}/contents/.github/agents/design-github.agent.md' --jq .path
+   ```
+
+   prints `.github/agents/design-github.agent.md`, `gh workflow list` lists *Design · GitHub · check the ADR and API impact* and *Design · GitHub · agentic design review* as `active`, and **New issue** offers *Design: architecture decision with Copilot*.
+8. **Optional: make the checks a gate.** Require *ADR checks* and *API contract compatibility* in a ruleset on your default branch, and remove the workflow's `pull_request` `paths` first: when a path filter skips a workflow, GitHub leaves its required checks pending and blocks the merge ([GitHub's note](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks)). Without the filter, both jobs run on every pull request, and *ADR checks* passes with *No ADR added or changed.* when there is no ADR to check, as in [step 9](#9-a-breaking-api-change-failed-the-contract-check)'s run. What you should see: the two checks listed on every new pull request.
+
+### Use it the first time
+
+On your own design question, the steps are those of [See it work](#see-it-work):
+
+1. **Write the brief** in your inputs folder: the problem, the accepted requirements, the constraints and operating profiles, and the open question, as in [`inputs/reviewed-brief.md`](inputs/reviewed-brief.md). Point `adr-task.md` and the issue form at it.
+2. **Optional: ask for a design review.** At any point, comment `/design-review` on the design question's Issue or on a pull request, from an account with write access. Anything after the command in the same comment tells the review what to focus on. What you should see: 👀 on your comment in under a minute, then one comment headed *Design review*, about 5 minutes after yours in the [recorded runs](#the-agentic-design-review-recorded-on-11-november-2026): the standards that apply, any conflict between them, the code and API affected, the contract verdict for a pull request, whether an ADR is needed, and the next step. `adr-needed` or `standards-conflict` is added when it applies. `gh run list --workflow design-github-agentic-review.lock.yml --limit 1` shows the run.
+3. **Hand it to Copilot.** From your terminal, on a new branch:
+
+   ```powershell
+   git switch -c design/<topic>
+   copilot --agent design-github --allow-all-tools -p (Get-Content docs/architecture/adr-task.md -Raw)
+   git add docs/architecture/adr
+   git commit -m "Design: <decision>"
+   git push -u origin design/<topic>
+   gh pr create --fill
+   ```
+
+   Or file the Issue with the *Design: architecture decision with Copilot* form, and assign it to **Copilot** with the **design-github** agent. From a terminal instead (replace `<issue>`; it prints `Copilot` and your login):
+
+   ```powershell
+   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
+   $base = gh repo view --json defaultBranchRef -q .defaultBranchRef.name
+   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = $base; custom_agent = 'design-github' } } |
+     ConvertTo-Json -Compress | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '.assignees[].login'
+   ```
+
+   What you should see: Copilot CLI ends with the checker's PASS and a summary for the reviewer, as in [step 2](#2-copilot-cli-wrote-an-adr-in-7-minutes). The cloud agent opens a draft pull request within seconds, and asks for your review when its ADR is ready, as in [step 3](#3-the-copilot-cloud-agent-wrote-another-from-an-issue).
+4. **Approve the workflow runs** on Copilot's pull request: select **Approve workflows to run** in its merge box, or start every waiting run of its latest commit from a terminal:
+
+   ```powershell
+   $head = gh pr view <pr> --json headRefOid -q .headRefOid
+   gh run list --commit $head --json databaseId,conclusion -q '.[] | select(.conclusion == "action_required") | .databaseId' | ForEach-Object { gh run rerun $_ }
+   ```
+
+   Then follow the checks with `gh pr checks <pr> --watch`. What you should see: *ADR checks* and *API contract compatibility* pass, as in [step 4](#4-github-actions-checked-both-adrs-and-their-api-impact).
+5. **Ask Copilot for a code review:** select **Reviewers** > **Copilot** in the pull request, or run `gh pr edit <pr> --add-reviewer "@copilot"`. See [step 5](#5-copilot-code-review-named-what-people-must-decide).
+6. **Review the ADR** from **Files changed** > **⋯** > **View file**, where the diagrams render: the options against the same standards, the recommendation for each profile, what Copilot found in the code, the threat model, and the open questions. See [step 6](#6-the-adrs-proposed-one-option-per-profile-and-left-the-conflict-to-people).
+7. **Ask for changes:** comment `@copilot` and your request on Copilot's pull request, then approve the new commit's runs; or run Copilot CLI again on your branch with your request, then commit and push. See [step 7](#7-the-reviewer-asked-for-changes-and-copilot-revised-the-adrs).
+8. **Decide.** Give each open question an owner. To accept, set `**Status:** Accepted`, name the people who decided in `**Deciders:**`, push, and merge once the checks pass: the merged ADR is your record. To reject, set `**Status:** Rejected` with the deciders, or close the pull request. See [step 8](#8-only-a-named-person-could-accept-the-adr).
+
+Then make it part of your workflow: comment `/design-review` on each design question, and on pull requests whose change may need a design decision; hand Copilot the decisions that need an ADR; and keep the ADRs your architects accept, with the names of the people who decided, as your design records.
+
+**The metric to track when you adopt it:** time from a design question to a reviewable ADR with green checks, from handing the question to Copilot to the first passing checks on its pull request. With the cloud agent, both timestamps are on GitHub: the assignment on the Issue, and the checks on the pull request. The recorded run measured 13 minutes 53 seconds with Copilot CLI (15:41:38 to 15:55:31 UTC: Copilot's 6 minutes 43 seconds, then the operator's commit, push, and pull request), and 40 minutes 34 seconds with the cloud agent, 28 minutes 14 seconds of them waiting for a person to start the runs. In the [Design combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr) of 10 November 2026, the same agent completed a Foundry advisor's draft into one ADR in 5 minutes 16 seconds, and the checks passed 18 seconds after its commit ([#281](https://github.com/melabadi/adept-assessment-northstars/pull/281)). Track alongside it the review rounds before a decision, and the conflicts and unknowns found before review compared with those found later. With `/design-review`, also track how often its `adr-needed` label matched what the architect decided. Compare both with design decisions made before you adopted it. A target such as "a reviewable design within a day of the question" is your team's goal, never a result to report.
+
+### What it costs
+
+Setting it up uses no AI credits. Each design question draws on your Copilot plan, for Copilot CLI or the cloud agent and for Copilot code review, and on GitHub Actions. In the recorded run, Copilot CLI reported 29.19 AI credits for the ADR and 5.72 for its revision; the AI credits of the cloud agent's sessions and of the code reviews weren't recorded. On standard GitHub-hosted runners, the cloud agent's session took 11.7 minutes and its revision 4.1, the two Copilot code reviews 8.2 together, and the design checks 7 to 14 seconds a job: 2.4 minutes for all 14 jobs of the run. Those minutes are free in a public repository. In a private one they count against your plan's included usage, with each job rounded up to a whole minute: 2 minutes for each push to a design pull request ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
+
+Each `/design-review` draws on the Copilot plan of the person whose token is `COPILOT_GITHUB_TOKEN`. In the [three recorded reviews](#the-agentic-design-review-recorded-on-11-november-2026), each agent used 19.14 to 23.91 AI credits, and each threat detection about 1. `max-ai-credits` in the workflow is a hard stop: 60 AI credits for each run's agent, which gh-aw starts warning at 80% of that budget, and 10 for its threat detection. By default, gh-aw also blocks new runs once the workflow has used 5,000 AI credits in 24 hours; `max-daily-ai-credits` changes that ([gh-aw's cost management](https://github.github.com/gh-aw/reference/cost-management/)). On standard GitHub-hosted runners, each review took 313 to 328 seconds of job time in six jobs: 9 minutes as billed in a private repository. Every comment in the repository starts a run of the workflow: unless the comment is `/design-review` from someone with write access, the run ends after its first job, without the agent. Ten such runs on 11 November took 9 to 22 seconds of job time each, billed as 1 minute each in a private repository.
+
+## Files to edit to tweak it
+
+The copy adds the agent, two skills, the instructions for Copilot code review, the ADR checks workflow, the agentic design review with its compiled workflow and the workflow that checks it, and the issue form to your `.github/` folder, with the licence, `.github/LICENSE-ai-sdlc`, and the Copilot CLI task as `docs/architecture/adr-task.md`. The brief, the standards, and the screenshots stay behind, because they describe RequestHub: use them as examples for yours. If you already copied 03-develop-github or 04-test-github, you already have `contract-impact`: the copies are identical.
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File | As shipped, for RequestHub | Change it to |
+| --- | --- | --- |
+| [`.github/agents/design-github.agent.md`](.github/agents/design-github.agent.md) | The brief, standards, and ADR folders under `solutions/02-design-github/`; the code a design must read (`app/src/RequestHub.Core/Triage/`, `app/src/RequestHub.Api/Triage/`, `RequestWorkflow.cs`, `Program.cs`, `app/contracts/openapi.json`, and `app/infra/requesthub.bicep`); two operating profiles, small team and enterprise; `--base-ref origin/main`; and a rule not to open this README | Your folders, for example `docs/architecture/inputs/`, `standards/`, and `adr/`; the code a design in your system must read: its extension points, authorization, contract, and infrastructure; your operating profiles, or just one; your default branch. Delete the rule about this README. Keep the other rules: status Proposed, standards cited by id and version, conflicts left to people, and the checker run until it passes. |
+| [`.github/skills/architecture-decision/SKILL.md`](.github/skills/architecture-decision/SKILL.md) | The same inputs and code as the agent | The same changes as the agent. |
+| [`.github/skills/architecture-decision/adr-template.md`](.github/skills/architecture-decision/adr-template.md) | A threat-model checklist that cites RequestHub's standards (STD-SEC-002 v1.1, STD-SEC-001 v2.0, STD-AI-001 v1.0, STD-OBS-001 v1.2), and examples that cite STD-ARCH-001 and STD-API-001 | Your checklist, citing your standards' ids and versions: the checker rejects a standard that isn't in your folder. [One-time step 2](#one-time-setup) shows what's left. |
+| [`.github/skills/architecture-decision/check_adr.py`](.github/skills/architecture-decision/check_adr.py) | `REQUIRED_SECTIONS`, the template's ten sections; `STANDARD_ID` and `STANDARD_VERSION`, for ids like `STD-API-001`; and `NOT_A_PERSON`, the words that never count as a decider | Nothing, unless you rename the template's sections or give your standards another id format. |
+| [`.github/skills/contract-impact/contract_diff.py`](.github/skills/contract-impact/contract_diff.py) | `CONTRACT = "app/contracts/openapi.json"` | Your contract's path. The report names the contract by its `info.version`. |
+| [`.github/workflows/design-github-review.yml`](.github/workflows/design-github-review.yml) | `paths` and `ADR_DIR` point at `solutions/02-design-github/adr`, and the *Use the checker and the standards from the base branch* step restores `solutions/02-design-github/standards` | Your ADR folder in `paths` and `ADR_DIR`, your standards folder in that step, and your contract's path in `paths`, so every API change gets the report. To make the checks required, see [one-time step 8](#one-time-setup). |
+| [`.github/workflows/design-github-agentic-review.md`](.github/workflows/design-github-agentic-review.md) | The step's `STANDARDS`, `BRIEF`, `CONTRACT`, and `CONTRACT_TOOL` paths; RequestHub, its code folders, its brief, and its two operating profiles in the instructions; and the labels `adr-needed` and `standards-conflict` | Your paths, code folders, profiles, and labels, then recompile it in [one-time step 4](#one-time-setup). Keep the protections: the `on.steps` check and the `if:` condition, `min-integrity`, `edit: false`, the safe outputs and their limits, and `threat-detection`. |
+| [`.github/workflows/design-github-agentic-review.lock.yml`](.github/workflows/design-github-agentic-review.lock.yml) | The Actions workflow that gh-aw v1.2.2 compiles from the `.md` file | Nothing: never edit it, recompile it. |
+| [`.github/workflows/design-github-checks.yml`](.github/workflows/design-github-checks.yml) | `paths` for this solution's folders, the gh-aw version, and a unit-test job | Your paths. Delete the unit-test job: [its tests](tests/test_agentic_review.py) read this repository's layout. Keep the lock-file job, which fails a pull request whose lock file isn't what the pinned gh-aw compiles from the source. |
+| [`.github/instructions/design-github-adr-review.instructions.md`](.github/instructions/design-github-adr-review.instructions.md) | `applyTo: "solutions/02-design-github/adr/**"`, the standards folder, and RequestHub's code | Your ADR folder, your standards folder, and the code that Copilot code review should check claims against. |
+| [`.github/ISSUE_TEMPLATE/02-design-github-adr.yml`](.github/ISSUE_TEMPLATE/02-design-github-adr.yml) | RequestHub's question and inputs, ADRs in `solutions/02-design-github/adr/`, and the labels `ai-sdlc` and `phase:design` | An empty question, or your next one; your inputs and ADR folder; your labels, if you don't create these in [one-time step 3](#one-time-setup). |
+| `docs/architecture/adr-task.md`, from [`adr-task.md`](adr-task.md) | The Copilot CLI task, with RequestHub's paths | Your paths. |
+
+Your standards go in one folder, one `STD-<AREA>-<NNN>.md` file per standard, with front matter like that of [`standards/STD-API-001.md`](standards/STD-API-001.md):
+
+```markdown
+---
+id: STD-API-001
+version: "1.0"
+title: Contract compatibility
+scope: all
+category: api
+keywords: API contract, breaking change, rename fields, versioning, backward compatibility
+status: approved
+---
+```
+
+The checker reads `id` and `version`, from the nearest `standards/` folder above each ADR, so keep your ADRs in a sibling folder, such as `docs/architecture/adr/` next to `docs/architecture/standards/`. The agent uses `scope` (`all`, `small-team`, or `enterprise` here) to tell the operating profiles apart. `category` and `keywords` serve the Microsoft counterpart's search index; this solution doesn't need them.
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your code:
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| The tools Copilot may use | `tools` in the front matter of [`.github/agents/design-github.agent.md`](.github/agents/design-github.agent.md) | `read`, `edit`, `search`, and `execute` |
+| What Copilot code review looks for in an ADR | The list in [`.github/instructions/design-github-adr-review.instructions.md`](.github/instructions/design-github-adr-review.instructions.md) | Unstated assumptions, standards, API impact, real code, threat model, human approval, and tasks |
+| What a design question asks for | The fields of [`.github/ISSUE_TEMPLATE/02-design-github-adr.yml`](.github/ISSUE_TEMPLATE/02-design-github-adr.yml) | *Design question*, *Inputs*, and *What to produce*, each required |
+| The AI credits a design review may use | `max-ai-credits` in the front matter of [`.github/workflows/design-github-agentic-review.md`](.github/workflows/design-github-agentic-review.md), and under `safe-outputs` › `threat-detection` for its threat detection; then compile it again | 60 for the agent, and 10 for its threat detection |
+
+### After you edit
+
+Run the checks as in [Getting started](#getting-started) step 3, and compile the agentic design review again after a change to its `.md` file ([one-time step 4](#one-time-setup)). Then merge your change: the cloud agent loads the custom agent from your default branch, the agentic design review runs from it, and the ADR checks take the checker and the standards from each pull request's base branch.
+
+## Clean up
+
+Remove what you copied and the labels. The `contract-impact` skill is shared with 03-develop-github and 04-test-github: keep it if you use either.
+
+```powershell
+Remove-Item -Recurse -Force .github/agents/design-github.agent.md, .github/skills/architecture-decision, .github/instructions/design-github-adr-review.instructions.md, .github/workflows/design-github-review.yml, .github/workflows/design-github-agentic-review.md, .github/workflows/design-github-agentic-review.lock.yml, .github/workflows/design-github-checks.yml, .github/ISSUE_TEMPLATE/02-design-github-adr.yml, docs/architecture/adr-task.md
+Remove-Item -Recurse -Force .github/skills/contract-impact    # unless another solution uses it
+Remove-Item -Force .github/LICENSE-ai-sdlc    # unless you keep another solution from this repository
+gh label delete phase:design --yes
+gh label delete adr-needed --yes
+gh label delete standards-conflict --yes
+gh label delete ai-sdlc --yes    # unless other Issues carry it
+gh secret delete COPILOT_GITHUB_TOKEN    # unless another agentic workflow uses it
+```
+
+Keep your ADRs and standards: they are your design records. If you required the checks in a ruleset, remove them from it. Then revoke the fine-grained token you stored as `COPILOT_GITHUB_TOKEN`, in your account's **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens**, unless another agentic workflow uses it.
+
+Apart from that token, which you create, this solution creates no secret, GitHub App, or webhook: you act with your own GitHub CLI sign-in, and its workflows with the token GitHub gives each run.
+
+## Troubleshooting
+
+- **No checks on Copilot's pull request.** Workflows on pull requests from the Copilot cloud agent wait for a person. Select **Approve workflows to run**, or run `gh run rerun <run-id>`, as in [Use it the first time](#use-it-the-first-time), step 4.
+- **"Unable to render rich display" instead of a diagram.** GitHub couldn't parse the mermaid code. A semicolon in a sequence-diagram message is the usual cause: the checker reports it as `line N: ';' ends a statement in a mermaid sequence diagram`. Ask Copilot to fix it, as in [step 7](#7-the-reviewer-asked-for-changes-and-copilot-revised-the-adrs).
+- **`write repository paths relative to the repository root`.** The ADR cites a file by its absolute path, as the cloud agent's ADR did with its runner's paths in the recorded run. Ask Copilot to use the paths that the message suggests.
+- **The cloud agent takes much longer than 12 minutes.** Before Copilot starts, GitHub runs the repository's Copilot setup steps. In this repository and its copies, they start PostgreSQL and install .NET and Playwright for other solutions; in a run on 27 October they took 17 minutes instead of about 2.
+- **A run started on demand names `main`.** A `workflow_dispatch` run takes the workflow file from the default branch; the branch you pass in `ref` is the one it checks.
 
 ## See it work
 
@@ -311,164 +593,11 @@ The agentic design review's run of 11 November 2026 measured:
 - **Evidence a reviewer or auditor can follow.** Each ADR lives in a pull request with its checks, the API contract report, Copilot's review, and the commit that names who decided.
 - **People stay in charge.** Copilot only proposes: the check fails any accepted ADR that doesn't name the people who decided. Workflows on Copilot's pull requests run only after a person approves them, and the checker, the contract tool, and the standards come from the base branch.
 
-**The metric to track when you adopt it:** time from a design question to a reviewable ADR with green checks, from handing the question to Copilot to the first passing checks on its pull request. With the cloud agent, both timestamps are on GitHub: the assignment on the Issue, and the checks on the pull request. The recorded run measured 13 minutes 53 seconds with Copilot CLI (15:41:38 to 15:55:31 UTC: Copilot's 6 minutes 43 seconds, then the operator's commit, push, and pull request), and 40 minutes 34 seconds with the cloud agent, 28 minutes 14 seconds of them waiting for a person to start the runs. In the [Design combo](../../PRESENTING.md#design-foundry-cites-the-standards-github-checks-the-adr) of 10 November 2026, the same agent completed a Foundry advisor's draft into one ADR in 5 minutes 16 seconds, and the checks passed 18 seconds after its commit ([#281](https://github.com/melabadi/adept-assessment-northstars/pull/281)). Track alongside it the review rounds before a decision, and the conflicts and unknowns found before review compared with those found later. With `/design-review`, also track how often its `adr-needed` label matched what the architect decided. Compare both with design decisions made before you adopted it. A target such as "a reviewable design within a day of the question" is your team's goal, never a result to report.
-
-## Add it to your repository
-
-The files are written for RequestHub: its brief and standards in this folder, its code, and its OpenAPI contract in `app/contracts/openapi.json`. [What to copy and what to change](#what-to-copy-and-what-to-change) names each setting to adapt for yours, with `docs/architecture/` as an example home for your ADRs, standards, and briefs. The commands are the ones this repository uses.
-
-### Prerequisites
-
-- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts use only Python's standard library.
-- **A paid GitHub Copilot plan.** Copilot code review reviews each ADR. To ask Copilot from your terminal, install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli). To hand a question to Copilot from an Issue, allow the Copilot cloud agent in your repository: for a repository you own, in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). The agent reads files and runs Python and git; it doesn't build or test your code.
-- **Your approved architecture standards, written down:** one Markdown file per standard, with an id, a version, and a scope ([`standards/`](standards/) has twelve examples), and a reviewed brief for each design question, like [`inputs/reviewed-brief.md`](inputs/reviewed-brief.md).
-- **An OpenAPI contract in JSON,** for the API impact report. Without one, delete the `contract-impact` skill and the workflow's *API contract compatibility* job.
-- **For the agentic design review:** [GitHub Agentic Workflows](https://github.github.com/gh-aw/) (gh-aw v1.2.2, a GitHub CLI extension) to compile it, and a fine-grained personal access token with **Copilot Requests: Read** for its engine, stored as the `COPILOT_GITHUB_TOKEN` secret. Its runs draw on that token owner's Copilot plan. In an organization with centralized Copilot billing, the workflow's own token can replace the secret: add `copilot-requests: write` to its `permissions` and recompile ([gh-aw's authentication guide](https://github.github.com/gh-aw/reference/auth/)).
-
-### What to copy and what to change
-
-From the root of your repository, in PowerShell 7, copy the agent, the skills, the review instructions, the workflows, the issue form, and the Copilot CLI task:
-
-```powershell
-$src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-02-design-github'
-git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
-New-Item -ItemType Directory -Force .github, docs/architecture | Out-Null
-Copy-Item -Recurse -Force (Join-Path $src 'solutions/02-design-github/.github/*') .github
-Copy-Item -Force (Join-Path $src 'solutions/02-design-github/adr-task.md') docs/architecture
-Remove-Item -Recurse -Force $src
-git status --short --untracked-files=all
-```
-
-What you should see: 13 new files, in 7 seconds when this README was checked; the other files in `.github/` stay. The brief, the standards, and the screenshots stay behind, because they describe RequestHub: use them as examples for yours. Then change what assumes RequestHub:
-
-| File | As shipped, for RequestHub | Change it to |
-| --- | --- | --- |
-| [`.github/agents/design-github.agent.md`](.github/agents/design-github.agent.md) | The brief, standards, and ADR folders under `solutions/02-design-github/`; the code a design must read (`app/src/RequestHub.Core/Triage/`, `app/src/RequestHub.Api/Triage/`, `RequestWorkflow.cs`, `Program.cs`, `app/contracts/openapi.json`, and `app/infra/requesthub.bicep`); two operating profiles, small team and enterprise; `--base-ref origin/main`; and a rule not to open this README | Your folders, for example `docs/architecture/inputs/`, `standards/`, and `adr/`; the code a design in your system must read: its extension points, authorization, contract, and infrastructure; your operating profiles, or just one; your default branch. Delete the rule about this README. Keep the other rules: status Proposed, standards cited by id and version, conflicts left to people, and the checker run until it passes. |
-| [`.github/skills/architecture-decision/SKILL.md`](.github/skills/architecture-decision/SKILL.md) | The same inputs and code as the agent | The same changes as the agent. |
-| [`.github/skills/architecture-decision/adr-template.md`](.github/skills/architecture-decision/adr-template.md) | A threat-model checklist that cites RequestHub's standards (STD-SEC-002 v1.1, STD-SEC-001 v2.0, STD-AI-001 v1.0, STD-OBS-001 v1.2), and examples that cite STD-ARCH-001 and STD-API-001 | Your checklist, citing your standards' ids and versions: the checker rejects a standard that isn't in your folder. [One-time step 2](#one-time-setup) shows what's left. |
-| [`.github/skills/architecture-decision/check_adr.py`](.github/skills/architecture-decision/check_adr.py) | `REQUIRED_SECTIONS`, the template's ten sections; `STANDARD_ID` and `STANDARD_VERSION`, for ids like `STD-API-001`; and `NOT_A_PERSON`, the words that never count as a decider | Nothing, unless you rename the template's sections or give your standards another id format. |
-| [`.github/skills/contract-impact/contract_diff.py`](.github/skills/contract-impact/contract_diff.py) | `CONTRACT = "app/contracts/openapi.json"` | Your contract's path. The report names the contract by its `info.version`. |
-| [`.github/workflows/design-github-review.yml`](.github/workflows/design-github-review.yml) | `paths` and `ADR_DIR` point at `solutions/02-design-github/adr`, and the *Use the checker and the standards from the base branch* step restores `solutions/02-design-github/standards` | Your ADR folder in `paths` and `ADR_DIR`, your standards folder in that step, and your contract's path in `paths`, so every API change gets the report. To make the checks required, see [one-time step 8](#one-time-setup). |
-| [`.github/workflows/design-github-agentic-review.md`](.github/workflows/design-github-agentic-review.md) | The step's `STANDARDS`, `BRIEF`, `CONTRACT`, and `CONTRACT_TOOL` paths; RequestHub, its code folders, its brief, and its two operating profiles in the instructions; and the labels `adr-needed` and `standards-conflict` | Your paths, code folders, profiles, and labels, then recompile it in [one-time step 4](#one-time-setup). Keep the protections: the `on.steps` check and the `if:` condition, `min-integrity`, `edit: false`, the safe outputs and their limits, and `threat-detection`. |
-| [`.github/workflows/design-github-agentic-review.lock.yml`](.github/workflows/design-github-agentic-review.lock.yml) | The Actions workflow that gh-aw v1.2.2 compiles from the `.md` file | Nothing: never edit it, recompile it. |
-| [`.github/workflows/design-github-checks.yml`](.github/workflows/design-github-checks.yml) | `paths` for this solution's folders, the gh-aw version, and a unit-test job | Your paths. Delete the unit-test job: [its tests](tests/test_agentic_review.py) read this repository's layout. Keep the lock-file job, which fails a pull request whose lock file isn't what the pinned gh-aw compiles from the source. |
-| [`.github/instructions/design-github-adr-review.instructions.md`](.github/instructions/design-github-adr-review.instructions.md) | `applyTo: "solutions/02-design-github/adr/**"`, the standards folder, and RequestHub's code | Your ADR folder, your standards folder, and the code that Copilot code review should check claims against. |
-| [`.github/ISSUE_TEMPLATE/02-design-github-adr.yml`](.github/ISSUE_TEMPLATE/02-design-github-adr.yml) | RequestHub's question and inputs, ADRs in `solutions/02-design-github/adr/`, and the labels `ai-sdlc` and `phase:design` | An empty question, or your next one; your inputs and ADR folder; your labels, if you don't create these in [one-time step 3](#one-time-setup). |
-| `docs/architecture/adr-task.md`, from [`adr-task.md`](adr-task.md) | The Copilot CLI task, with RequestHub's paths | Your paths. |
-
-Your standards go in one folder, one `STD-<AREA>-<NNN>.md` file per standard, with front matter like that of [`standards/STD-API-001.md`](standards/STD-API-001.md):
-
-```markdown
----
-id: STD-API-001
-version: "1.0"
-title: Contract compatibility
-scope: all
-category: api
-keywords: API contract, breaking change, rename fields, versioning, backward compatibility
-status: approved
----
-```
-
-The checker reads `id` and `version`, from the nearest `standards/` folder above each ADR, so keep your ADRs in a sibling folder, such as `docs/architecture/adr/` next to `docs/architecture/standards/`. The agent uses `scope` (`all`, `small-team`, or `enterprise` here) to tell the operating profiles apart. `category` and `keywords` serve the Microsoft counterpart's search index; this solution doesn't need them.
-
-### One-time setup
-
-1. **Copy the files and make the changes above,** on a branch. What you should see: `python .github/skills/contract-impact/contract_diff.py --base-ref origin/main` prints a report that ends with `No contract changes.`, so the tool found your contract.
-2. **Write down your standards,** as above. What you should see: checked as a scratch ADR, the template fails only on its own placeholders:
-
-   ```powershell
-   New-Item -ItemType Directory -Force docs/architecture/adr | Out-Null
-   Copy-Item .github/skills/architecture-decision/adr-template.md docs/architecture/adr/scratch.md
-   python .github/skills/architecture-decision/check_adr.py docs/architecture/adr/scratch.md
-   Remove-Item docs/architecture/adr/scratch.md
-   ```
-
-   It prints `FAIL` and one `still contains template text` line per placeholder: 15 for the shipped template. Any `cites unknown standard` line names a standard that the template cites and your folder doesn't have, and a `cites ... but the approved version is ...` line a version that differs: fix the template's checklist. The checker skips files named `*template.md`, hence the scratch copy.
-3. **Create the labels** that the issue form and the agentic design review apply:
-
-   ```powershell
-   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
-   gh label create phase:design --color C5DEF5 --description "SDLC phase 2: Design" --force
-   gh label create adr-needed --color FBCA04 --description "Design review: this change needs an ADR" --force
-   gh label create standards-conflict --color D93F0B --description "Design review: the applicable standards conflict" --force
-   ```
-
-   What you should see: `gh label list --search phase:design` prints `phase:design  SDLC phase 2: Design  #C5DEF5` on its first line, and `gh label list --search adr-needed` prints `adr-needed  Design review: this change needs an ADR  #FBCA04` on its first line once GitHub has indexed it, which took under a minute when this README was checked. The review only applies labels that exist.
-4. **Compile the agentic design review** with the pinned gh-aw version, after the changes above (if another gh-aw version is installed, run `gh extension remove gh-aw` first):
-
-   ```powershell
-   gh extension install github/gh-aw --pin v1.2.2
-   gh aw compile design-github-agentic-review --strict --validate
-   ```
-
-   What you should see: `✓ Compiled 1 workflow: 1 succeeded, 0 warnings`, and `git status` lists `.github/workflows/design-github-agentic-review.lock.yml` as changed. Commit the `.md` and the `.lock.yml` file together; compile again after every change to the `.md` file.
-5. **Store the engine's token.** Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) owned by the person whose Copilot plan pays for the reviews, with **Account permissions** > **Copilot Requests** > **Read** and nothing else, then store it:
-
-   ```powershell
-   gh secret set COPILOT_GITHUB_TOKEN
-   ```
-
-   It asks for the token. What you should see: `gh secret list` lists `COPILOT_GITHUB_TOKEN`. gh-aw refuses an OAuth token (one that starts with `gho_`), such as the one GitHub CLI signs in with.
-6. **Allow Copilot** in the repository, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**, and on any pull request, **Reviewers** lists **Copilot**.
-7. **Merge it into your default branch.** The Copilot cloud agent loads custom agents from the default branch, GitHub offers issue forms from it and runs comment-triggered workflows from it, and the checks workflow takes the checker, the contract tool, and the standards from each pull request's base branch. What you should see:
-
-   ```powershell
-   gh api 'repos/{owner}/{repo}/contents/.github/agents/design-github.agent.md' --jq .path
-   ```
-
-   prints `.github/agents/design-github.agent.md`, `gh workflow list` lists *Design · GitHub · check the ADR and API impact* and *Design · GitHub · agentic design review* as `active`, and **New issue** offers *Design: architecture decision with Copilot*.
-8. **Optional: make the checks a gate.** Require *ADR checks* and *API contract compatibility* in a ruleset on your default branch, and remove the workflow's `pull_request` `paths` first: when a path filter skips a workflow, GitHub leaves its required checks pending and blocks the merge ([GitHub's note](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks)). Without the filter, both jobs run on every pull request, and *ADR checks* passes with *No ADR added or changed.* when there is no ADR to check, as in [step 9](#9-a-breaking-api-change-failed-the-contract-check)'s run. What you should see: the two checks listed on every new pull request.
-
-### Use it the first time
-
-On your own design question, the steps are those of [See it work](#see-it-work):
-
-1. **Write the brief** in your inputs folder: the problem, the accepted requirements, the constraints and operating profiles, and the open question, as in [`inputs/reviewed-brief.md`](inputs/reviewed-brief.md). Point `adr-task.md` and the issue form at it.
-2. **Optional: ask for a design review.** At any point, comment `/design-review` on the design question's Issue or on a pull request, from an account with write access. Anything after the command in the same comment tells the review what to focus on. What you should see: 👀 on your comment in under a minute, then one comment headed *Design review*, about 5 minutes after yours in the [recorded runs](#the-agentic-design-review-recorded-on-11-november-2026): the standards that apply, any conflict between them, the code and API affected, the contract verdict for a pull request, whether an ADR is needed, and the next step. `adr-needed` or `standards-conflict` is added when it applies. `gh run list --workflow design-github-agentic-review.lock.yml --limit 1` shows the run.
-3. **Hand it to Copilot.** From your terminal, on a new branch:
-
-   ```powershell
-   git switch -c design/<topic>
-   copilot --agent design-github --allow-all-tools -p (Get-Content docs/architecture/adr-task.md -Raw)
-   git add docs/architecture/adr
-   git commit -m "Design: <decision>"
-   git push -u origin design/<topic>
-   gh pr create --fill
-   ```
-
-   Or file the Issue with the *Design: architecture decision with Copilot* form, and assign it to **Copilot** with the **design-github** agent. From a terminal instead (replace `<issue>`; it prints `Copilot` and your login):
-
-   ```powershell
-   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
-   $base = gh repo view --json defaultBranchRef -q .defaultBranchRef.name
-   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = $base; custom_agent = 'design-github' } } |
-     ConvertTo-Json -Compress | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '.assignees[].login'
-   ```
-
-   What you should see: Copilot CLI ends with the checker's PASS and a summary for the reviewer, as in [step 2](#2-copilot-cli-wrote-an-adr-in-7-minutes). The cloud agent opens a draft pull request within seconds, and asks for your review when its ADR is ready, as in [step 3](#3-the-copilot-cloud-agent-wrote-another-from-an-issue).
-4. **Approve the workflow runs** on Copilot's pull request: select **Approve workflows to run** in its merge box, or start every waiting run of its latest commit from a terminal:
-
-   ```powershell
-   $head = gh pr view <pr> --json headRefOid -q .headRefOid
-   gh run list --commit $head --json databaseId,conclusion -q '.[] | select(.conclusion == "action_required") | .databaseId' | ForEach-Object { gh run rerun $_ }
-   ```
-
-   Then follow the checks with `gh pr checks <pr> --watch`. What you should see: *ADR checks* and *API contract compatibility* pass, as in [step 4](#4-github-actions-checked-both-adrs-and-their-api-impact).
-5. **Ask Copilot for a code review:** select **Reviewers** > **Copilot** in the pull request, or run `gh pr edit <pr> --add-reviewer "@copilot"`. See [step 5](#5-copilot-code-review-named-what-people-must-decide).
-6. **Review the ADR** from **Files changed** > **⋯** > **View file**, where the diagrams render: the options against the same standards, the recommendation for each profile, what Copilot found in the code, the threat model, and the open questions. See [step 6](#6-the-adrs-proposed-one-option-per-profile-and-left-the-conflict-to-people).
-7. **Ask for changes:** comment `@copilot` and your request on Copilot's pull request, then approve the new commit's runs; or run Copilot CLI again on your branch with your request, then commit and push. See [step 7](#7-the-reviewer-asked-for-changes-and-copilot-revised-the-adrs).
-8. **Decide.** Give each open question an owner. To accept, set `**Status:** Accepted`, name the people who decided in `**Deciders:**`, push, and merge once the checks pass: the merged ADR is your record. To reject, set `**Status:** Rejected` with the deciders, or close the pull request. See [step 8](#8-only-a-named-person-could-accept-the-adr).
-
-### What it costs
-
-Setting it up uses no AI credits. Each design question draws on your Copilot plan, for Copilot CLI or the cloud agent and for Copilot code review, and on GitHub Actions. In the recorded run, Copilot CLI reported 29.19 AI credits for the ADR and 5.72 for its revision; the AI credits of the cloud agent's sessions and of the code reviews weren't recorded. On standard GitHub-hosted runners, the cloud agent's session took 11.7 minutes and its revision 4.1, the two Copilot code reviews 8.2 together, and the design checks 7 to 14 seconds a job: 2.4 minutes for all 14 jobs of the run. Those minutes are free in a public repository. In a private one they count against your plan's included usage, with each job rounded up to a whole minute: 2 minutes for each push to a design pull request ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
-
-Each `/design-review` draws on the Copilot plan of the person whose token is `COPILOT_GITHUB_TOKEN`. In the [three recorded reviews](#the-agentic-design-review-recorded-on-11-november-2026), each agent used 19.14 to 23.91 AI credits, and each threat detection about 1. `max-ai-credits` in the workflow is a hard stop: 60 AI credits for each run's agent, which gh-aw starts warning at 80% of that budget, and 10 for its threat detection. By default, gh-aw also blocks new runs once the workflow has used 5,000 AI credits in 24 hours; `max-daily-ai-credits` changes that ([gh-aw's cost management](https://github.github.com/gh-aw/reference/cost-management/)). On standard GitHub-hosted runners, each review took 313 to 328 seconds of job time in six jobs: 9 minutes as billed in a private repository. Every comment in the repository starts a run of the workflow: unless the comment is `/design-review` from someone with write access, the run ends after its first job, without the agent. Ten such runs on 11 November took 9 to 22 seconds of job time each, billed as 1 minute each in a private repository.
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on RequestHub, before you adapt anything. You repeat the run in [See it work](#see-it-work) in your own copy, and it costs what [What it costs](#what-it-costs) lists for the recorded run.
+
+The copy also has the files of this folder that belong to the demo: [`inputs/reviewed-brief.md`](inputs/reviewed-brief.md), the synthetic reviewed requirements and the open design question; [`standards/`](standards/), twelve approved architecture standards (synthetic), with a [README](standards/README.md) on how a standard is written; [`adr-from-advisor-task.md`](adr-from-advisor-task.md), the Design combo's task: complete the Foundry advisor's draft into one ADR; [`tests/test_agentic_review.py`](tests/test_agentic_review.py), the unit tests of who can start the agentic review and what it can read and write; [`evidence/`](evidence/), what the agentic design review's recorded runs logged behind a sign-in; and [`images/`](images/), the screenshots from the recorded runs, and two from the Design combo. Copilot's pull request adds `adr/0001-live-triage-provider.md` to this folder.
 
 ### Quick start
 
@@ -617,63 +746,9 @@ gh issue list --state open --search '"Design: how should RequestHub add a live A
 git ls-remote --heads origin design/copilot-adr design/breaking-contract
 ```
 
-## Clean up
+When you no longer need the copy, delete the `COPILOT_GITHUB_TOKEN` secret and revoke the token, as [Clean up](#clean-up) describes. The [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
 
-**In your repository,** remove what you copied and the labels. The `contract-impact` skill is shared with 03-develop-github and 04-test-github: keep it if you use either.
+### Troubleshooting the copy
 
-```powershell
-Remove-Item -Recurse -Force .github/agents/design-github.agent.md, .github/skills/architecture-decision, .github/instructions/design-github-adr-review.instructions.md, .github/workflows/design-github-review.yml, .github/workflows/design-github-agentic-review.md, .github/workflows/design-github-agentic-review.lock.yml, .github/workflows/design-github-checks.yml, .github/ISSUE_TEMPLATE/02-design-github-adr.yml, docs/architecture/adr-task.md
-Remove-Item -Recurse -Force .github/skills/contract-impact    # unless another solution uses it
-gh label delete phase:design --yes
-gh label delete adr-needed --yes
-gh label delete standards-conflict --yes
-gh label delete ai-sdlc --yes    # unless other Issues carry it
-gh secret delete COPILOT_GITHUB_TOKEN    # unless another agentic workflow uses it
-```
-
-Keep your ADRs and standards: they are your design records. If you required the checks in a ruleset, remove them from it. Then revoke the fine-grained token you stored as `COPILOT_GITHUB_TOKEN`, in your account's **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens**, unless another agentic workflow uses it.
-
-**In the copy,** [reset it](#reset-the-copy-for-another-run), delete the secret as above, and revoke the token. The root README's [Try it in a copy of this repository](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
-
-Apart from that token, which you create, this solution creates no secret, GitHub App, or webhook: you act with your own GitHub CLI sign-in, and its workflows with the token GitHub gives each run.
-
-## What's in this folder
-
-```text
-02-design-github/
-├── README.md
-├── adr-task.md                         the task Copilot CLI receives; the issue form asks the same
-├── adr-from-advisor-task.md            the Design combo's task: complete the Foundry advisor's draft into one ADR
-├── evidence/                           what the agentic design review's recorded runs logged behind a sign-in
-├── images/                             screenshots from the recorded runs, and two from the Design combo
-├── inputs/
-│   └── reviewed-brief.md               synthetic reviewed requirements and the open design question
-├── standards/
-│   ├── README.md                       how a standard is written: id, version, scope
-│   └── STD-*.md                        twelve approved architecture standards (synthetic)
-├── tests/test_agentic_review.py        unit tests: who can start the agentic review, and what it can read and write
-└── .github/
-    ├── agents/design-github.agent.md   the custom Copilot agent
-    ├── skills/
-    │   ├── architecture-decision/      the ADR template and check_adr.py
-    │   └── contract-impact/            contract_diff.py: additive or breaking (shared with 03-develop-github and 04-test-github)
-    ├── instructions/design-github-adr-review.instructions.md   what Copilot code review looks for in an ADR
-    ├── workflows/
-    │   ├── design-github-review.yml    ADR checks and API contract compatibility on design pull requests
-    │   ├── design-github-agentic-review.md        the agentic design review that answers /design-review (gh-aw source)
-    │   ├── design-github-agentic-review.lock.yml  the Actions workflow that gh-aw v1.2.2 compiles from it
-    │   └── design-github-checks.yml    the review's unit tests, and a check that its lock file is up to date
-    └── ISSUE_TEMPLATE/02-design-github-adr.yml   the issue form that hands a design question to Copilot
-```
-
-Copilot's pull request adds `adr/0001-live-triage-provider.md` to this folder.
-
-## Troubleshooting
-
-- **No checks on Copilot's pull request.** Workflows on pull requests from the Copilot cloud agent wait for a person. Select **Approve workflows to run**, or run `gh run rerun <run-id>`, as in [Use it the first time](#use-it-the-first-time), step 4.
-- **"Unable to render rich display" instead of a diagram.** GitHub couldn't parse the mermaid code. A semicolon in a sequence-diagram message is the usual cause: the checker reports it as `line N: ';' ends a statement in a mermaid sequence diagram`. Ask Copilot to fix it, as in [step 7](#7-the-reviewer-asked-for-changes-and-copilot-revised-the-adrs).
-- **`write repository paths relative to the repository root`.** The ADR cites a file by its absolute path, as the cloud agent's ADR did with its runner's paths in the recorded run. Ask Copilot to use the paths that the message suggests.
-- **The cloud agent takes much longer than 12 minutes.** Before Copilot starts, GitHub runs the repository's Copilot setup steps. In this repository and its copies, they start PostgreSQL and install .NET and Playwright for other solutions; in a run on 27 October they took 17 minutes instead of about 2.
 - **`gh pr close --delete-branch` leaves the branch.** It skips a branch that is checked out somewhere, for example in another worktree. Switch that worktree to `main`, or run `git push origin --delete <branch>`.
-- **A run started on demand names `main`.** A `workflow_dispatch` run takes the workflow file from the default branch; the branch you pass in `ref` is the one it checks.
 - **A failed *Feature stays within its bounds* check on Copilot's first commit,** in this repository and its copies. That check comes from 03-develop-github. In the recorded run, nobody approved its run on Copilot's *Initial plan* commit, and GitHub marked that run failed when the pull request closed, without running it. The runs on the later commits are the ones that count.

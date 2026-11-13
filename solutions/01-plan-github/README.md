@@ -4,11 +4,28 @@ Turning workshop notes into a backlog is slow, and it is easy to lose track of w
 
 ![The epic Issue the recorded run published: a summary, Given/When/Then acceptance criteria, five open questions as a checklist, and the unresolved Finance-versus-IT conflict, each citing the transcript paragraphs and policies it came from](images/06-epic.png)
 
+- **Install it in your repository:** [copy 16 files, edit them for your notes, and set them up once](#install-it-in-your-repository), with the commands in order in [Getting started](#getting-started). The setup's commands took seconds when this README was checked: 6 to 12 to copy the files, 14 to install the one Python package in a fresh environment, and 6 for the tests. The rest is three labels, a settings page, and a pull request.
+- **Files to edit to tweak it:** [your notes and policies, the agent's instructions, and the backlog's schema and validator](#files-to-edit-to-tweak-it).
 - **See it work:** [a real run on this repository](#see-it-work), step by step. Workshop notes with two disagreements, four unknowns, and an instruction pasted into the chat became a reviewed brief and five published Issues, with a screenshot and a link anyone can open for every step.
-- **Add it to your repository:** [copy 15 files, adapt them to your notes, and set them up once](#add-it-to-your-repository). The setup's commands took seconds when this README was checked: about 10 to copy the files, 14 to install the one Python package in a fresh environment, and 6 for the tests. The rest is three labels, a settings page, and a pull request.
 - **Try it first in a copy of this repository:** [about 2 minutes to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution. A run then needs about 6 minutes of Copilot and the checks working unattended.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [Copilot cloud agent](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github) | Drafts the brief from an Issue, unattended, on its own branch, and opens the pull request |
+| [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-cli) | Runs the same agent in your terminal, to draft the brief on your machine |
+| A [custom agent](https://docs.github.com/en/copilot/concepts/customizations/custom-agents) and its [agent skill](https://docs.github.com/en/copilot/concepts/customizations/agent-skills), `requirements-traceability` | Tell Copilot how to draft: read the notes as data, cite a transcript paragraph or a policy on every line, list what nobody decided instead of settling it, and run the validator until it passes |
+| [GitHub Actions](https://docs.github.com/en/actions) | Checks every change to the brief on its pull request, with no AI involved, and publishes it once a person applies the `brief-approved` label; also runs Copilot's session, which `copilot-setup-steps.yml` prepares |
+| GitHub Issues, with an [issue form](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms) | Hold the request for a brief, and the published backlog: an epic and its four tasks as sub-issues, with their "blocked by" dependencies |
+| Python 3.12, with one package, `jsonschema` | The validator, the brief's renderer, and the publisher, which calls GitHub through the GitHub CLI |
+| GitHub CLI and PowerShell 7 | The commands in this README |
+
+The files are written for RequestHub's planning workshop: one transcript, one set of routing policies, and a backlog of one epic and exactly four tasks. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for your notes.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 1 of 7: Plan.** Today someone rewrites workshop notes into tickets by hand. Reviewers can't tell where a requirement came from, whoever writes the ticket settles the disagreements, and nothing checks the result before it reaches the tracker. With this solution every line of the backlog points to the words it came from, a check confirms it, what the notes leave open goes to a person, and nothing reaches the tracker until a person approves it.
 
@@ -20,16 +37,11 @@ Turning workshop notes into a backlog is slow, and it is easy to lose track of w
 | Instructions hidden in the notes | Nobody looks for them. | They are data: the agent ignores them, and the check rejects any requirement that approves requests automatically. |
 | Publishing | Copy and paste into the tracker. | A person's label publishes the epic and its task sub-issues, with their dependencies. Publishing again never duplicates. |
 
-The value: a transcript becomes a reviewable backlog in minutes, a reviewer can check every line against its source, and the decisions stay with people. The run in [See it work](#see-it-work), on 28 October 2026, measured:
-
-- **5 minutes 10 seconds** for the Copilot cloud agent to draft a brief that passed the check. Its draft pull request opened 8 seconds after the Issue was assigned to it. Copilot CLI drafted another brief at the same time, in 4 minutes 3 seconds by its own count.
-- **Every planted problem caught**, scored afterwards against an answer key that Copilot never saw: 10 of 10 key paragraphs cited, both disagreements given the right status, all four unknowns raised as open questions, and the instruction pasted into the notes ignored.
-- **9 seconds** for the check, and **1 minute 15 seconds** from the person's label to five published Issues. Publishing again took 49 seconds and changed nothing.
-- **36 minutes** from filing the Issue to the published backlog: 22 of them waiting for a person to approve the workflow runs on Copilot's pull request, and about 8 reading and scoring the brief.
+The value: a transcript becomes a reviewable backlog in minutes, a reviewer can check every line against its source, and the decisions stay with people. [Results and value](#results-and-value) has what the recorded run measured.
 
 The Microsoft counterpart, [01-plan-microsoft](../01-plan-microsoft/), drafts and evaluates a brief from the same transcript with a Microsoft Foundry agent in Azure. The [Plan combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes) uses both on one change: Foundry evaluates the exact commit of Copilot's brief, and this solution publishes only that commit.
 
-## How it works
+### How it works
 
 ```mermaid
 flowchart LR
@@ -46,6 +58,300 @@ flowchart LR
 - **A person** approves the workflow runs on Copilot's pull requests, reviews the brief, owns the unresolved decisions, and applies the `brief-approved` label.
 
 **Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. A fork's pull request that changes `brief/` gets the validation, with a read-only token and no secrets, once someone with write access approves the run. Publishing needs the `brief-approved` label, which only people with triage access can apply, and a fork's pull request never gets a token that can write, so nothing is published from it. The publisher recognizes the Issues it published before only when GitHub Actions' bot (the workflow) or the owner, a member, or a collaborator (a local run) opened them, so an Issue that someone else opens with the same hidden marker is never updated, reopened, closed, or linked as the epic or a task. In the [Plan solution combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes), it also reads Microsoft Foundry's evaluation Issue, and counts one only when the owner, a member, or a collaborator opened it: an outsider's copy can neither block nor vouch for a publish.
+
+## Install it in your repository
+
+[Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for your notes. The commands are the ones this repository uses.
+
+### Prerequisites
+
+- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts need one package, `jsonschema`.
+- **A paid GitHub Copilot plan.** To draft from your terminal, install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli). To draft from an Issue, allow the Copilot cloud agent in your repository: for a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)).
+- **Notes Copilot can cite:** a transcript in Markdown in which each paragraph starts with a bold id, from `**[T01]**` up to `**[T99]**`, and policies with ids such as `POL-ROUTE-001`. The check compares every citation with them, and each published Issue quotes the paragraphs it cites.
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must list `workflow` among the token's scopes, Python must be 3.12 or later, and PowerShell 7.4 or later. Copilot CLI is needed only to draft from your terminal ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   copilot --version
+   ```
+
+2. **Copy the files on a new branch.** The copy adds the licence that must travel with the files, as `.github/LICENSE-ai-sdlc`, and prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-plan-github
+   $plan = 'planning'
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-01-plan-github'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   $from = Join-Path $src 'solutions/01-plan-github'
+   Remove-Item -Recurse -Force (Join-Path $from '.github/skills/brief-compare')
+   New-Item -ItemType Directory -Force .github, $plan | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $from '.github/*') .github
+   Copy-Item -Recurse -Force (Join-Path $from 'inputs'), (Join-Path $from 'tests'), (Join-Path $from 'refine-task.md'), (Join-Path $from 'requirements.txt') $plan
+   Copy-Item -Force (Join-Path $src 'LICENSE') .github/LICENSE-ai-sdlc
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 16 new files, in 6 to 12 seconds when this README was checked; the other files in `.github/` stay. GitHub reads a repository's own licence only from its root, so yours doesn't change. Then point the copied files at `planning/` instead of this repository's solution folder:
+
+   ```powershell
+   $copied = Get-ChildItem -Recurse -File .github/agents/plan-github.agent.md, .github/skills/requirements-traceability, .github/skills/backlog-publish, .github/workflows/plan-github-*.yml, .github/ISSUE_TEMPLATE/01-plan-github-refine.yml, $plan
+   foreach ($file in $copied) {
+     $text = Get-Content -Raw -LiteralPath $file.FullName
+     $new = $text.Replace('solutions/01-plan-github/', "$plan/").Replace('SOLUTION / ".github"', 'SOLUTION.parent / ".github"')
+     if ($new -ne $text) { Set-Content -LiteralPath $file.FullName -Value $new -NoNewline }
+   }
+   $copied | Select-String -SimpleMatch 'solutions/01-plan-github'
+   ```
+
+   What you should see: nothing, because the last command lists any copied file that still names the old folder. It took under a second and changed 11 files: the paths in the agent, the issue form, the task, the workflows, and the skills' examples, and where the tests look for `.github/`, which is next to `planning/` rather than inside it. Keep the folder at the root of your repository, or adapt that last change.
+
+3. **Edit the files for your notes,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) lists, and check them ([one-time step 1](#one-time-setup)). Before you replace the inputs, install the package and check the validator on the brief from [See it work](#see-it-work), which cites them. `PYTHONDONTWRITEBYTECODE` keeps Python from writing `__pycache__` folders into `.github/` and `planning/`, which you commit in step 5:
+
+   ```powershell
+   $env:PYTHONDONTWRITEBYTECODE = '1'
+   pip install -r planning/requirements.txt
+   New-Item -ItemType Directory -Force planning/brief | Out-Null
+   Invoke-WebRequest https://raw.githubusercontent.com/melabadi/adept-assessment-northstars/1a16e3fadd180ad9abdd056b49f64b82470258bf/solutions/01-plan-github/brief/backlog.json -OutFile planning/brief/backlog.json
+   python .github/skills/requirements-traceability/validate_backlog.py --backlog planning/brief/backlog.json
+   Remove-Item -Recurse -Force planning/brief
+   ```
+
+   It prints the brief's path, then `VALID - 4 tasks, 5 open questions, 1/2 conflicts unresolved`. Once you have made your changes, run the publisher's unit tests, which end with `OK`:
+
+   ```powershell
+   python -m unittest discover -s planning/tests
+   ```
+
+4. **Set it up once.** If you draft from Issues, give the Copilot cloud agent the package in `copilot-setup-steps.yml` and allow it in your repository. Create the labels ([one-time steps 2 to 4](#one-time-setup)):
+
+   ```powershell
+   gh label create brief-approved --color 0e8a16 --description "Plan: a person approved the brief; publish the backlog as Issues" --force
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:plan --color C5DEF5 --description "SDLC phase 1: Plan" --force
+   ```
+
+5. **Merge it into your default branch,** where the cloud agent finds custom agents and GitHub offers issue forms ([one-time step 5](#one-time-setup)). Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .github planning
+   git commit -m "Add 01-plan-github from ai-sdlc <commit>"
+   git push -u origin add-plan-github
+   gh pr create --fill
+   ```
+
+   Merge the pull request as you merge any change.
+
+6. **Use it on your notes,** from your default branch once the pull request is merged. Ask Copilot for the brief from your terminal, or from an Issue with the *Plan: refine requirements with Copilot* form. From your terminal:
+
+   ```powershell
+   git switch -c plan/copilot-brief
+   copilot --agent plan-github --allow-all-tools -p (Get-Content planning/refine-task.md -Raw)
+   git add planning/brief
+   git commit -m "Plan: Copilot requirements brief"
+   git push -u origin plan/copilot-brief
+   gh pr create --fill
+   ```
+
+   Then review the brief on its pull request, and publish it with the `brief-approved` label, as [Use it the first time](#use-it-the-first-time) describes.
+
+### One-time setup
+
+1. **Copy the files and make the changes in [Files to edit to tweak it](#files-to-edit-to-tweak-it),** on a branch, as in [Getting started](#getting-started). Then install the package and run the publisher's unit tests:
+
+   ```powershell
+   pip install -r planning/requirements.txt
+   python -m unittest discover -s planning/tests
+   ```
+
+   What you should see: `pip` ends with `Successfully installed ... jsonschema-4.26.0 ...`, or `Requirement already satisfied`; it took 14 seconds in a fresh environment when this README was checked. The tests, which run offline against a fake `gh`, end with `OK`: 19 tests in about 6 seconds. Before you replace the inputs, you can also check the validator on the brief from [See it work](#see-it-work), which cites them:
+
+   ```powershell
+   New-Item -ItemType Directory -Force planning/brief | Out-Null
+   Invoke-WebRequest https://raw.githubusercontent.com/melabadi/adept-assessment-northstars/1a16e3fadd180ad9abdd056b49f64b82470258bf/solutions/01-plan-github/brief/backlog.json -OutFile planning/brief/backlog.json
+   python .github/skills/requirements-traceability/validate_backlog.py --backlog planning/brief/backlog.json
+   Remove-Item -Recurse -Force planning/brief
+   ```
+
+   It prints the brief's path, then `VALID - 4 tasks, 5 open questions, 1/2 conflicts unresolved`.
+2. **Give the Copilot cloud agent the package,** if you draft from Issues: the validator that Copilot runs needs `jsonschema`. Before Copilot starts, GitHub runs the job named `copilot-setup-steps` in `.github/workflows/copilot-setup-steps.yml`. Install Python and the package there, as [this repository's](../../.github/workflows/copilot-setup-steps.yml) does for every solution, or, if you have no such file, create it:
+
+   ```yaml
+   name: Copilot setup steps
+   on:
+     workflow_dispatch:
+   jobs:
+     copilot-setup-steps:
+       runs-on: ubuntu-latest
+       permissions:
+         contents: read
+       steps:
+         - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+         - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+           with:
+             python-version: '3.12'
+         - run: pip install -r planning/requirements.txt
+   ```
+
+   What you should see: once the file is on your default branch (step 5), `gh workflow run copilot-setup-steps.yml` starts it, and `gh run list --workflow copilot-setup-steps.yml --limit 1` then shows it `completed` with `success`.
+3. **Create the labels.** `brief-approved` is the one that publishes, and the issue form applies `ai-sdlc` and `phase:plan`. An issue form adds only labels that already exist.
+
+   ```powershell
+   gh label create brief-approved --color 0e8a16 --description "Plan: a person approved the brief; publish the backlog as Issues" --force
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:plan --color C5DEF5 --description "SDLC phase 1: Plan" --force
+   ```
+
+   What you should see: `gh label list --search brief-approved` prints `brief-approved  Plan: a person approved the brief; publish the backlog as Issues  #0e8a16` on its first line. The publisher creates the labels it puts on the Issues, `type:epic`, `type:task`, and `track:github`, the first time it publishes.
+4. **Allow the Copilot cloud agent** in the repository, if you draft from Issues, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**.
+5. **Merge it into your default branch.** The cloud agent loads custom agents from the default branch, and GitHub offers issue forms from it. What you should see:
+
+   ```powershell
+   gh api 'repos/{owner}/{repo}/contents/.github/agents/plan-github.agent.md' --jq .path
+   ```
+
+   prints `.github/agents/plan-github.agent.md`, and **New issue** offers *Plan: refine requirements with Copilot*.
+
+### Use it the first time
+
+On your own notes, the steps are those of [See it work](#see-it-work), from step 2 on, without step 5's score: its answer key fits only RequestHub's transcript.
+
+1. **Ask Copilot for the brief,** from your terminal or from an Issue.
+   - **From your terminal,** with Copilot CLI. `--allow-all-tools` lets it run commands without asking, so run it in a working copy you trust:
+
+     ```powershell
+     git switch -c plan/copilot-brief
+     copilot --agent plan-github --allow-all-tools -p (Get-Content planning/refine-task.md -Raw)
+     git add planning/brief
+     git commit -m "Plan: Copilot requirements brief"
+     git push -u origin plan/copilot-brief
+     gh pr create --fill
+     ```
+
+     What you should see: Copilot ends with a summary of the open questions and the unresolved conflicts, as in [step 2](#2-copilot-drafted-the-brief-and-its-checks-waited-for-a-person), and `gh pr create` prints the pull request's address.
+   - **From an Issue:** file it with the *Plan: refine requirements with Copilot* form, then assign it to **Copilot**, with the **plan-github** agent and your default branch as the base. From a terminal instead, one call files and assigns it; replace the title, and `main` if your default branch has another name:
+
+     ```powershell
+     $body = @{
+       title = '<your request>'
+       body = (Get-Content planning/refine-task.md -Raw)
+       labels = @('ai-sdlc', 'phase:plan')
+       assignees = @('copilot-swe-agent[bot]')
+       agent_assignment = @{ target_repo = (gh repo view --json nameWithOwner -q .nameWithOwner); base_branch = 'main'; custom_agent = 'plan-github' }
+     } | ConvertTo-Json
+     $body | gh api --method POST 'repos/{owner}/{repo}/issues' --input - --jq .html_url
+     ```
+
+     What you should see: the Issue's address. Within seconds Copilot opens a draft pull request, and when its session ends, the pull request holds `planning/brief/backlog.json` and `brief.md`.
+2. **Approve the workflow runs on Copilot's pull request:** select **Approve workflows to run** in its merge box, or start every waiting run of its latest commit from a terminal:
+
+   ```powershell
+   $head = gh pr view <pr> --json headRefOid -q .headRefOid
+   gh run list --commit $head --json databaseId,conclusion -q '.[] | select(.conclusion == "action_required") | .databaseId' | ForEach-Object { gh run rerun $_ }
+   ```
+
+   A pull request that you open yourself runs its checks at once.
+3. **Read the check:** `gh pr checks <pr>`. What you should see: *Validate the brief* passes, *Publish to GitHub Issues* is skipped, and the run's summary reads `VALID - ...`, as in [step 3](#3-the-check-passed-in-9-seconds).
+4. **Review the brief.** In the pull request's **Files changed**, open the `⋯` menu of `brief.md` and choose **View file** to read it rendered. Check the sources of what matters to you. The unresolved conflicts and the open questions reach the epic as they are, for their owners to decide.
+5. **Publish it:** apply `brief-approved` in the pull request's **Labels** box, or run `gh pr edit <pr> --add-label brief-approved`. On Copilot's pull request, approve that run too, as in item 2. What you should see: within about a minute, a *Backlog published after review* comment on the pull request, with `created` for the epic and for each task.
+6. **When the brief changes,** apply the label again: remove it with `gh pr edit <pr> --remove-label brief-approved`, then add it back. The Issues are updated, never duplicated, and a "blocked by" link that the brief no longer lists is removed.
+
+Merge the pull request if you want the brief in your repository's history; the published Issues don't need it.
+
+Then make it part of your workflow: after each workshop, merge its notes into `planning/inputs/` on your default branch before you ask Copilot for a brief, because the check and the publisher read the notes from the brief's base branch. Give each feature its own scenario name, where [Edit to fit your code](#edit-to-fit-your-code) lists it: the publisher finds the Issues it published by that name, so a brief under an earlier feature's name rewrites that feature's Issues.
+
+**The metric to track when you adopt it:** lead time from a request to a reviewed, published backlog: from the Issue that asks Copilot for the brief, or the brief's pull request, to the *Backlog published after review* comment on the pull request. Both timestamps are on GitHub. The recorded run measured 36 minutes 24 seconds from the Issue, 22 minutes 3 seconds of them waiting for a person to approve the workflow runs. Track alongside it how many open questions and unresolved conflicts each brief hands to a person, and how many published tasks change their acceptance criteria before the work starts. Compare both with backlogs refined before you adopted it. A target such as "a reviewed backlog on the day of the workshop" is your team's goal, never a result to report.
+
+### What it costs
+
+Setting it up uses no AI credits. Each brief draws on your Copilot plan's AI credits, and the cloud agent and the workflow run on GitHub Actions. In the recorded run, the Copilot cloud agent's session reported 1.6 AI credits and the Copilot CLI session 16.57. The run used 6.8 minutes of standard GitHub-hosted runners: 5.0 for Copilot's session, 1.3 for this solution's workflow, and 0.5 for the checks of this repository's other solutions, which your repository doesn't have. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 17 minutes for the recorded run, because each job is rounded up to a whole minute. Copilot CLI drafts on your machine, so a brief drafted with it uses runner minutes only for the check and the publishing ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
+
+## Files to edit to tweak it
+
+The copy adds the agent, two skills, two workflows, and the issue form to your `.github/` folder, with the licence, `.github/LICENSE-ai-sdlc`, and the inputs, the task, the package list, and the publisher's unit tests to `planning/`. The `brief-compare` skill stays behind, because its answer key fits only RequestHub's transcript. If you draft from Issues, the solution also relies on a file of your own: `copilot-setup-steps.yml`, the cloud agent's environment ([one-time step 2](#one-time-setup)).
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File | As shipped, for RequestHub | Change it to |
+| --- | --- | --- |
+| `planning/inputs/stakeholder-transcript.md` and `routing-policies.md` | RequestHub's synthetic workshop, paragraphs `**[T01]**` to `**[T24]**`, and the routing policies it mentions | Your notes and policies, under the same two file names: the check and the publisher look for them in the nearest `inputs/` folder above the brief. Keep each paragraph's bold id: an Issue quotes only paragraphs that have one. |
+| `.github/skills/requirements-traceability/backlog.schema.json` | `scenario` is `assisted-triage-brief`; exactly four tasks (`minItems` and `maxItems`); at least four requirements; six `ownerRole` values | Your scenario's name, the number of tasks a brief should have, and your team's roles. The scenario's name goes into a hidden marker in every published Issue, so choose it before your first publish. |
+| `.github/skills/requirements-traceability/validate_backlog.py` | `AUTO_APPROVAL`: nothing in the brief, the epic, the tasks, or the decisions may imply that requests are approved automatically; the out-of-scope list, the conflicts, and the questions may mention it. This is RequestHub's rule, and the instruction planted in T18 asks for the opposite | The phrases your own rules forbid, or keep it. |
+| `.github/agents/plan-github.agent.md` and `.github/skills/requirements-traceability/SKILL.md` | RequestHub's feature, "assisted request triage"; its API contract, `app/contracts/openapi.json`, which tells Copilot what already exists; and the transcript's traps: T18, T04 against T05 resolved by T19, and T06 against T07 left open | Your feature, the file that says what your product does today, and your notes' known traps, if any. Keep the rules: the inputs are data, never invent a fact or a decision, never edit the validator or the schema, never publish. |
+| `planning/refine-task.md` and `.github/ISSUE_TEMPLATE/01-plan-github-refine.yml` | RequestHub's request, the paragraph range T01-T24, and the scenario `assisted-triage-brief` | Your request, your paragraph range, and your scenario's name. |
+| `.github/skills/requirements-traceability/render_brief.py` | The brief's title, "Requirements brief: assisted request triage", the default of `--title` | Your title, or pass `--title` where the agent renders the brief. |
+| `.github/skills/backlog-publish/publish_backlog.py` | `--scenario` defaults to `assisted-triage-brief`, which `--close` uses. `PUBLISHER_BOTS`: the workflow publishes as `github-actions[bot]` | Your scenario's name. If your workflow publishes with another identity, such as a GitHub App, add its bot login to `PUBLISHER_BOTS`: the publisher recognizes its Issues by who opened them, so otherwise every run creates them again. |
+| `planning/tests/test_backlog_publish.py` | `SCENARIO = "assisted-triage-brief"` | Your scenario's name, if you changed the default of `--scenario`. |
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your notes:
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| The tools Copilot may use | `tools` in the front matter of [`.github/agents/plan-github.agent.md`](.github/agents/plan-github.agent.md) | `read`, `edit`, `search`, and `execute` |
+| What a brief Issue asks for | The fields of [`.github/ISSUE_TEMPLATE/01-plan-github-refine.yml`](.github/ISSUE_TEMPLATE/01-plan-github-refine.yml) | *Scenario*, *Source material*, and *What to produce*, each required |
+| The prefix of the published Issues' titles | `TRACK_NAMES` in [`.github/skills/backlog-publish/publish_backlog.py`](.github/skills/backlog-publish/publish_backlog.py) | `[Plan/Copilot]` |
+
+### What the copy adds
+
+```text
+.github/
+├── agents/plan-github.agent.md             the custom Copilot agent
+├── skills/
+│   ├── requirements-traceability/          backlog schema, validator, brief renderer
+│   └── backlog-publish/                    idempotent publisher to GitHub Issues
+├── workflows/
+│   ├── plan-github-brief.yml               validate on every change, publish on brief-approved
+│   └── plan-github-checks.yml              runs the unit tests on pull requests that change this solution's tooling
+├── ISSUE_TEMPLATE/01-plan-github-refine.yml   the form that asks Copilot for a brief
+└── LICENSE-ai-sdlc                         the licence that travels with the files
+planning/
+├── refine-task.md                          the task Copilot receives: the Issue's body, or Copilot CLI's prompt
+├── requirements.txt                        jsonschema, for the validator
+├── tests/test_backlog_publish.py           unit tests: the publisher adopts only Issues it could have opened, and publishes only a revision Foundry evaluated, when it did (offline, fake gh)
+└── inputs/
+    ├── stakeholder-transcript.md           synthetic workshop notes, paragraphs [T01]–[T24], with planted problems
+    └── routing-policies.md                 the routing policies the workshop refers to
+```
+
+### After you edit
+
+Run the publisher's unit tests as in [Getting started](#getting-started) step 3, then merge your change: the check and the publisher take their scripts from a brief's base branch, and the cloud agent its custom agent from your default branch, so your change applies to the next brief once it merges.
+
+## Clean up
+
+Close the published Issues first if you no longer want them, because the publisher's `--close` needs the files. Then remove what you copied, the labels, and what you added to `copilot-setup-steps.yml` only for this solution.
+
+```powershell
+python .github/skills/backlog-publish/publish_backlog.py --track github --close    # only if you want the published Issues closed
+Remove-Item -Recurse -Force .github/agents/plan-github.agent.md, .github/skills/requirements-traceability, .github/skills/backlog-publish, .github/workflows/plan-github-brief.yml, .github/workflows/plan-github-checks.yml, .github/ISSUE_TEMPLATE/01-plan-github-refine.yml, planning
+Remove-Item -Force .github/LICENSE-ai-sdlc    # unless you keep another solution from this repository
+gh label delete brief-approved --yes
+gh label delete phase:plan --yes    # unless other Issues carry it
+gh label delete ai-sdlc --yes       # unless other Issues carry it
+```
+
+The labels the publisher created, `type:epic`, `type:task`, and `track:github`, mark the Issues it published: delete them with `gh label delete` once you no longer need those Issues.
+
+This solution creates no token, secret, GitHub App, or webhook, so there is nothing to revoke: you act with your own GitHub CLI sign-in, and its workflow with the token GitHub gives each run.
+
+## Troubleshooting
+
+- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person; the merge box shows **N workflows awaiting approval**. Select **Approve workflows to run**, or use the terminal command in [Use it the first time](#use-it-the-first-time), item 2.
+- **Nothing is published after you apply `brief-approved` to Copilot's pull request.** That run waits for a person too, even though a person applied the label. Approve it the same way.
+- **`Refusing to publish: the backlog is not valid`.** The backlog changed after it was validated, or it cites something that doesn't exist. Fix it, then apply the label again.
+- **A *Nothing was published* comment on the pull request.** Microsoft Foundry evaluated the pull request's brief, in the [Plan combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes) with 01-plan-microsoft. The publisher then publishes only the revision that Foundry evaluated, once its gates passed and a person ticked every open item in the evaluation Issue. The comment says what is missing and what to do, then apply the label again.
+- **`dependencies: text-only`** in the publish comment. The Issue dependencies API isn't available for the repository, so the dependencies appear as links in each task instead.
 
 ## See it work
 
@@ -185,170 +491,11 @@ At 16:43 the owner removed the label and applied it again, at 16:43:17. That run
 - **Evidence a reviewer or auditor can follow.** The brief sits in a pull request with a source on every line, the check's verdict and the publish comment are on the same pull request, and each published Issue quotes the words it came from. Today's publisher also names, in the epic, the commit it published from.
 - **People stay in charge.** Workflows on Copilot's pull request run only after a person approves them, the brief reaches the tracker only after a person applies the label, and the decisions the notes left open stay with their owners.
 
-**The metric to track when you adopt it:** lead time from a request to a reviewed, published backlog: from the Issue that asks Copilot for the brief, or the brief's pull request, to the *Backlog published after review* comment on the pull request. Both timestamps are on GitHub. The recorded run measured 36 minutes 24 seconds from the Issue, 22 minutes 3 seconds of them waiting for a person to approve the workflow runs. Track alongside it how many open questions and unresolved conflicts each brief hands to a person, and how many published tasks change their acceptance criteria before the work starts. Compare both with backlogs refined before you adopted it. A target such as "a reviewed backlog on the day of the workshop" is your team's goal, never a result to report.
-
-## Add it to your repository
-
-The files are written for RequestHub's planning workshop: one transcript, one set of routing policies, and a backlog of one epic and exactly four tasks. [What to copy and what to change](#what-to-copy-and-what-to-change) names each setting to adapt for your notes. The commands are the ones this repository uses.
-
-### Prerequisites
-
-- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts need one package, `jsonschema`.
-- **A paid GitHub Copilot plan.** To draft from your terminal, install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli). To draft from an Issue, allow the Copilot cloud agent in your repository: for a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)).
-- **Notes Copilot can cite:** a transcript in Markdown in which each paragraph starts with a bold id, from `**[T01]**` up to `**[T99]**`, and policies with ids such as `POL-ROUTE-001`. The check compares every citation with them, and each published Issue quotes the paragraphs it cites.
-
-### What to copy and what to change
-
-From the root of your repository, in PowerShell 7, copy the agent, the skills, the workflows, and the issue form into `.github/`, and the inputs, the task, the package list, and the publisher's unit tests into a folder at the root of your repository, here `planning`:
-
-```powershell
-$plan = 'planning'
-$src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-01-plan-github'
-git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
-$from = Join-Path $src 'solutions/01-plan-github'
-Remove-Item -Recurse -Force (Join-Path $from '.github/skills/brief-compare')
-New-Item -ItemType Directory -Force .github, $plan | Out-Null
-Copy-Item -Recurse -Force (Join-Path $from '.github/*') .github
-Copy-Item -Recurse -Force (Join-Path $from 'inputs'), (Join-Path $from 'tests'), (Join-Path $from 'refine-task.md'), (Join-Path $from 'requirements.txt') $plan
-Remove-Item -Recurse -Force $src
-git status --short --untracked-files=all
-```
-
-What you should see: 15 new files, in about 10 seconds when this README was checked; the other files in `.github/` stay. The `brief-compare` skill stays behind, because its answer key fits only RequestHub's transcript. Then point the copied files at `planning/` instead of this repository's solution folder:
-
-```powershell
-$copied = Get-ChildItem -Recurse -File .github/agents/plan-github.agent.md, .github/skills/requirements-traceability, .github/skills/backlog-publish, .github/workflows/plan-github-*.yml, .github/ISSUE_TEMPLATE/01-plan-github-refine.yml, $plan
-foreach ($file in $copied) {
-  $text = Get-Content -Raw -LiteralPath $file.FullName
-  $new = $text.Replace('solutions/01-plan-github/', "$plan/").Replace('SOLUTION / ".github"', 'SOLUTION.parent / ".github"')
-  if ($new -ne $text) { Set-Content -LiteralPath $file.FullName -Value $new -NoNewline }
-}
-$copied | Select-String -SimpleMatch 'solutions/01-plan-github'
-```
-
-What you should see: nothing, because the last command lists any copied file that still names the old folder. It took under a second and changed 11 files: the paths in the agent, the issue form, the task, the workflows, and the skills' examples, and where the tests look for `.github/`, which is next to `planning/` rather than inside it. Keep the folder at the root of your repository, or adapt that last change. Then change what assumes RequestHub:
-
-| File | As shipped, for RequestHub | Change it to |
-| --- | --- | --- |
-| `planning/inputs/stakeholder-transcript.md` and `routing-policies.md` | RequestHub's synthetic workshop, paragraphs `**[T01]**` to `**[T24]**`, and the routing policies it mentions | Your notes and policies, under the same two file names: the check and the publisher look for them in the nearest `inputs/` folder above the brief. Keep each paragraph's bold id: an Issue quotes only paragraphs that have one. |
-| `.github/skills/requirements-traceability/backlog.schema.json` | `scenario` is `assisted-triage-brief`; exactly four tasks (`minItems` and `maxItems`); at least four requirements; six `ownerRole` values | Your scenario's name, the number of tasks a brief should have, and your team's roles. The scenario's name goes into a hidden marker in every published Issue, so choose it before your first publish. |
-| `.github/skills/requirements-traceability/validate_backlog.py` | `AUTO_APPROVAL`: nothing in the brief, the epic, the tasks, or the decisions may imply that requests are approved automatically; the out-of-scope list, the conflicts, and the questions may mention it. This is RequestHub's rule, and the instruction planted in T18 asks for the opposite | The phrases your own rules forbid, or keep it. |
-| `.github/agents/plan-github.agent.md` and `.github/skills/requirements-traceability/SKILL.md` | RequestHub's feature, "assisted request triage"; its API contract, `app/contracts/openapi.json`, which tells Copilot what already exists; and the transcript's traps: T18, T04 against T05 resolved by T19, and T06 against T07 left open | Your feature, the file that says what your product does today, and your notes' known traps, if any. Keep the rules: the inputs are data, never invent a fact or a decision, never edit the validator or the schema, never publish. |
-| `planning/refine-task.md` and `.github/ISSUE_TEMPLATE/01-plan-github-refine.yml` | RequestHub's request, the paragraph range T01-T24, and the scenario `assisted-triage-brief` | Your request, your paragraph range, and your scenario's name. |
-| `.github/skills/requirements-traceability/render_brief.py` | The brief's title, "Requirements brief: assisted request triage", the default of `--title` | Your title, or pass `--title` where the agent renders the brief. |
-| `.github/skills/backlog-publish/publish_backlog.py` | `--scenario` defaults to `assisted-triage-brief`, which `--close` uses. `PUBLISHER_BOTS`: the workflow publishes as `github-actions[bot]` | Your scenario's name. If your workflow publishes with another identity, such as a GitHub App, add its bot login to `PUBLISHER_BOTS`: the publisher recognizes its Issues by who opened them, so otherwise every run creates them again. |
-| `planning/tests/test_backlog_publish.py` | `SCENARIO = "assisted-triage-brief"` | Your scenario's name, if you changed the default of `--scenario`. |
-
-### One-time setup
-
-1. **Copy the files and make the changes above,** on a branch. Then install the package and run the publisher's unit tests:
-
-   ```powershell
-   pip install -r planning/requirements.txt
-   python -m unittest discover -s planning/tests
-   ```
-
-   What you should see: `pip` ends with `Successfully installed ... jsonschema-4.26.0 ...`, or `Requirement already satisfied`; it took 14 seconds in a fresh environment when this README was checked. The tests, which run offline against a fake `gh`, end with `OK`: 19 tests in about 6 seconds. Before you replace the inputs, you can also check the validator on the brief from [See it work](#see-it-work), which cites them:
-
-   ```powershell
-   New-Item -ItemType Directory -Force planning/brief | Out-Null
-   Invoke-WebRequest https://raw.githubusercontent.com/melabadi/adept-assessment-northstars/1a16e3fadd180ad9abdd056b49f64b82470258bf/solutions/01-plan-github/brief/backlog.json -OutFile planning/brief/backlog.json
-   python .github/skills/requirements-traceability/validate_backlog.py --backlog planning/brief/backlog.json
-   Remove-Item -Recurse -Force planning/brief
-   ```
-
-   It prints the brief's path, then `VALID - 4 tasks, 5 open questions, 1/2 conflicts unresolved`.
-2. **Give the Copilot cloud agent the package,** if you draft from Issues: the validator that Copilot runs needs `jsonschema`. Before Copilot starts, GitHub runs the job named `copilot-setup-steps` in `.github/workflows/copilot-setup-steps.yml`. Install Python and the package there, as [this repository's](../../.github/workflows/copilot-setup-steps.yml) does for every solution, or, if you have no such file, create it:
-
-   ```yaml
-   name: Copilot setup steps
-   on:
-     workflow_dispatch:
-   jobs:
-     copilot-setup-steps:
-       runs-on: ubuntu-latest
-       permissions:
-         contents: read
-       steps:
-         - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-         - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-           with:
-             python-version: '3.12'
-         - run: pip install -r planning/requirements.txt
-   ```
-
-   What you should see: once the file is on your default branch (step 5), `gh workflow run copilot-setup-steps.yml` starts it, and `gh run list --workflow copilot-setup-steps.yml --limit 1` then shows it `completed` with `success`.
-3. **Create the labels.** `brief-approved` is the one that publishes, and the issue form applies `ai-sdlc` and `phase:plan`. An issue form adds only labels that already exist.
-
-   ```powershell
-   gh label create brief-approved --color 0e8a16 --description "Plan: a person approved the brief; publish the backlog as Issues" --force
-   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
-   gh label create phase:plan --color C5DEF5 --description "SDLC phase 1: Plan" --force
-   ```
-
-   What you should see: `gh label list --search brief-approved` prints `brief-approved  Plan: a person approved the brief; publish the backlog as Issues  #0e8a16` on its first line. The publisher creates the labels it puts on the Issues, `type:epic`, `type:task`, and `track:github`, the first time it publishes.
-4. **Allow the Copilot cloud agent** in the repository, if you draft from Issues, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**.
-5. **Merge it into your default branch.** The cloud agent loads custom agents from the default branch, and GitHub offers issue forms from it. What you should see:
-
-   ```powershell
-   gh api 'repos/{owner}/{repo}/contents/.github/agents/plan-github.agent.md' --jq .path
-   ```
-
-   prints `.github/agents/plan-github.agent.md`, and **New issue** offers *Plan: refine requirements with Copilot*.
-
-### Use it the first time
-
-On your own notes, the steps are those of [See it work](#see-it-work), from step 2 on, without step 5's score: its answer key fits only RequestHub's transcript.
-
-1. **Ask Copilot for the brief,** from your terminal or from an Issue.
-   - **From your terminal,** with Copilot CLI. `--allow-all-tools` lets it run commands without asking, so run it in a working copy you trust:
-
-     ```powershell
-     git switch -c plan/copilot-brief
-     copilot --agent plan-github --allow-all-tools -p (Get-Content planning/refine-task.md -Raw)
-     git add planning/brief
-     git commit -m "Plan: Copilot requirements brief"
-     git push -u origin plan/copilot-brief
-     gh pr create --fill
-     ```
-
-     What you should see: Copilot ends with a summary of the open questions and the unresolved conflicts, as in [step 2](#2-copilot-drafted-the-brief-and-its-checks-waited-for-a-person), and `gh pr create` prints the pull request's address.
-   - **From an Issue:** file it with the *Plan: refine requirements with Copilot* form, then assign it to **Copilot**, with the **plan-github** agent and your default branch as the base. From a terminal instead, one call files and assigns it; replace the title, and `main` if your default branch has another name:
-
-     ```powershell
-     $body = @{
-       title = '<your request>'
-       body = (Get-Content planning/refine-task.md -Raw)
-       labels = @('ai-sdlc', 'phase:plan')
-       assignees = @('copilot-swe-agent[bot]')
-       agent_assignment = @{ target_repo = (gh repo view --json nameWithOwner -q .nameWithOwner); base_branch = 'main'; custom_agent = 'plan-github' }
-     } | ConvertTo-Json
-     $body | gh api --method POST 'repos/{owner}/{repo}/issues' --input - --jq .html_url
-     ```
-
-     What you should see: the Issue's address. Within seconds Copilot opens a draft pull request, and when its session ends, the pull request holds `planning/brief/backlog.json` and `brief.md`.
-2. **Approve the workflow runs on Copilot's pull request:** select **Approve workflows to run** in its merge box, or start every waiting run of its latest commit from a terminal:
-
-   ```powershell
-   $head = gh pr view <pr> --json headRefOid -q .headRefOid
-   gh run list --commit $head --json databaseId,conclusion -q '.[] | select(.conclusion == "action_required") | .databaseId' | ForEach-Object { gh run rerun $_ }
-   ```
-
-   A pull request that you open yourself runs its checks at once.
-3. **Read the check:** `gh pr checks <pr>`. What you should see: *Validate the brief* passes, *Publish to GitHub Issues* is skipped, and the run's summary reads `VALID - ...`, as in [step 3](#3-the-check-passed-in-9-seconds).
-4. **Review the brief.** In the pull request's **Files changed**, open the `⋯` menu of `brief.md` and choose **View file** to read it rendered. Check the sources of what matters to you. The unresolved conflicts and the open questions reach the epic as they are, for their owners to decide.
-5. **Publish it:** apply `brief-approved` in the pull request's **Labels** box, or run `gh pr edit <pr> --add-label brief-approved`. On Copilot's pull request, approve that run too, as in item 2. What you should see: within about a minute, a *Backlog published after review* comment on the pull request, with `created` for the epic and for each task.
-6. **When the brief changes,** apply the label again: remove it with `gh pr edit <pr> --remove-label brief-approved`, then add it back. The Issues are updated, never duplicated, and a "blocked by" link that the brief no longer lists is removed.
-
-Merge the pull request if you want the brief in your repository's history; the published Issues don't need it.
-
-### What it costs
-
-Setting it up uses no AI credits. Each brief draws on your Copilot plan's AI credits, and the cloud agent and the workflow run on GitHub Actions. In the recorded run, the Copilot cloud agent's session reported 1.6 AI credits and the Copilot CLI session 16.57. The run used 6.8 minutes of standard GitHub-hosted runners: 5.0 for Copilot's session, 1.3 for this solution's workflow, and 0.5 for the checks of this repository's other solutions, which your repository doesn't have. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 17 minutes for the recorded run, because each job is rounded up to a whole minute. Copilot CLI drafts on your machine, so a brief drafted with it uses runner minutes only for the check and the publishing ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on RequestHub's notes, before you adapt anything. You repeat the run in [See it work](#see-it-work) in your own copy, and it costs what [What it costs](#what-it-costs) lists for the recorded run.
+
+The copy also has the files of this folder that belong to the demo: [`evidence/2026-10-28-workflow-runs.md`](evidence/2026-10-28-workflow-runs.md), the recorded run's workflow runs: their jobs, times, and output; [`images/`](images/), the screenshots from the recorded run, and of the Plan combo (`combo-*`) in PRESENTING.md; and the [`brief-compare`](.github/skills/brief-compare/) skill, which scores a brief against the answer key of the transcript's planted problems, in step 5.
 
 ### Quick start
 
@@ -471,56 +618,8 @@ gh pr close <pr> --delete-branch                                                
 
 Closing Copilot's pull request doesn't close its Issue, because its `Fixes #<issue>` acts only on a merge. Never merge a brief into `main` in the copy, so that every run starts from the same state. What you should see: the [starting-state check](#check-the-starting-state) prints `0`, `0`, `absent`, `False`, and `1` again. The next publish reopens and updates the same Issues, so their numbers stay the same.
 
-## Clean up
+When you no longer need the copy, the [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete it.
 
-**In your repository,** close the published Issues first if you no longer want them, because the publisher's `--close` needs the files. Then remove what you copied, the labels, and what you added to `copilot-setup-steps.yml` only for this solution. 01-plan-microsoft uses the `requirements-traceability` and `backlog-publish` skills too.
+### Troubleshooting the copy
 
-```powershell
-python .github/skills/backlog-publish/publish_backlog.py --track github --close    # only if you want the published Issues closed
-Remove-Item -Recurse -Force .github/agents/plan-github.agent.md, .github/skills/requirements-traceability, .github/skills/backlog-publish, .github/workflows/plan-github-brief.yml, .github/workflows/plan-github-checks.yml, .github/ISSUE_TEMPLATE/01-plan-github-refine.yml, planning
-gh label delete brief-approved --yes
-gh label delete phase:plan --yes    # unless other Issues carry it
-gh label delete ai-sdlc --yes       # unless other Issues carry it
-```
-
-The labels the publisher created, `type:epic`, `type:task`, and `track:github`, mark the Issues it published: delete them with `gh label delete` once you no longer need those Issues.
-
-**In the copy,** [reset it](#reset-the-copy-for-another-run). The [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
-
-This solution creates no token, secret, GitHub App, or webhook, so there is nothing to revoke: you act with your own GitHub CLI sign-in, and its workflow with the token GitHub gives each run.
-
-## What's in this folder
-
-```text
-01-plan-github/
-├── README.md
-├── refine-task.md                      the task Copilot receives: the Issue's body, or Copilot CLI's prompt
-├── requirements.txt                    jsonschema, for the validator
-├── evidence/                           the recorded run's workflow runs: their jobs, times, and output
-├── images/                             screenshots from the recorded run, used in this README (combo-*: the Plan combo in PRESENTING.md)
-├── tests/test_backlog_publish.py       unit tests: the publisher adopts only Issues it could have opened, and publishes only a revision Foundry evaluated, when it did (offline, fake gh)
-├── inputs/
-│   ├── stakeholder-transcript.md       synthetic workshop notes, paragraphs [T01]–[T24], with planted problems
-│   └── routing-policies.md             the routing policies the workshop refers to
-└── .github/
-    ├── agents/plan-github.agent.md     the custom Copilot agent
-    ├── skills/
-    │   ├── requirements-traceability/  backlog schema, validator, brief renderer (shared with 01-plan-microsoft)
-    │   ├── backlog-publish/            idempotent publisher to GitHub Issues (shared)
-    │   └── brief-compare/              scores a brief against the answer key of the transcript's planted problems (shared)
-    ├── workflows/
-    │   ├── plan-github-brief.yml       validate on every change, publish on brief-approved
-    │   └── plan-github-checks.yml      runs the unit tests on pull requests that change this solution's tooling
-    └── ISSUE_TEMPLATE/01-plan-github-refine.yml   the form that asks Copilot for a brief
-```
-
-Copilot's pull request adds `brief/backlog.json` and `brief/brief.md` to this folder.
-
-## Troubleshooting
-
-- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person; the merge box shows **N workflows awaiting approval**. Select **Approve workflows to run**, or use the terminal command in [Use it the first time](#use-it-the-first-time), item 2.
-- **Nothing is published after you apply `brief-approved` to Copilot's pull request.** That run waits for a person too, even though a person applied the label. Approve it the same way.
-- **`Refusing to publish: the backlog is not valid`.** The backlog changed after it was validated, or it cites something that doesn't exist. Fix it, then apply the label again.
-- **A *Nothing was published* comment on the pull request.** Microsoft Foundry evaluated the pull request's brief, in the [Plan combo](../../PRESENTING.md#plan-copilot-drafts-foundry-evaluates-the-product-owner-publishes) with 01-plan-microsoft. The publisher then publishes only the revision that Foundry evaluated, once its gates passed and a person ticked every open item in the evaluation Issue. The comment says what is missing and what to do, then apply the label again.
-- **`dependencies: text-only`** in the publish comment. The Issue dependencies API isn't available for the repository, so the dependencies appear as links in each task instead.
 - **`gh pr close --delete-branch` leaves the remote branch.** It skips the remote branch when it can't delete the local one, for example because it is checked out. Switch to `main` first, or delete it with `git push origin --delete <branch>`.

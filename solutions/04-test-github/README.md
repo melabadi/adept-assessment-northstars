@@ -4,11 +4,30 @@ Defects that only show up under retries or simultaneous clicks slip through revi
 
 ![The review evidence on Copilot's pull request: every check passes, and Copilot's regression tests fail at the tests-only commit and pass at the head](images/07-evidence-checks.png)
 
+- **Install it in your repository:** [copy 20 files, edit them for your code, and set them up once](#install-it-in-your-repository), with the commands in order in [Getting started](#getting-started). The setup's commands took seconds when this README was checked, 5 to 9 to copy the files and 4 for the labels; the rest is a settings page, a token, a pull request, and the changes your stack needs.
+- **Files to edit to tweak it:** [the agent's instructions, the scenario runner's sign-in, the proof's test patterns and command, and the CI failure investigation's triggers](#files-to-edit-to-tweak-it).
 - **See it work:** [a real run on this repository](#see-it-work), step by step. A request that could be approved and then rejected was reproduced, tested with an eight-click race, fixed, and reviewed, with a screenshot and a link anyone can open for every step. A later run shows the agentic workflow explaining two red CI runs.
-- **Add it to your repository:** [copy 19 files, adapt them to your code, and set them up once](#add-it-to-your-repository). The setup's commands took seconds when this README was checked, 5 to 8 to copy the files and 4 for the labels; the rest is a settings page, a token, a pull request, and the changes your stack needs.
 - **Try it first in a copy of this repository:** [about 2 minutes to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution. A run then needs about 22 minutes of Copilot and the checks working unattended.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [Copilot cloud agent](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github) | Fixes the defect from its Issue, unattended, in a session on GitHub Actions: the failing tests in their own commit, then the fix |
+| A [custom agent](https://docs.github.com/en/copilot/concepts/customizations/custom-agents) and five [agent skills](https://docs.github.com/en/copilot/concepts/customizations/agent-skills) | Reproduce the defect with a scenario, prove that the new tests failed before the fix, run the test suites a change touches, keep the API contract additive, explain a red CI run, and post the review evidence |
+| [Copilot code review](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-code-review) | Looks for what the tests miss |
+| [GitHub Agentic Workflows](https://github.com/github/gh-aw) | Runs Copilot when CI fails on a fix's pull request, to explain each failure in one comment and one label |
+| [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-cli) | Optional: runs the same agent on your machine, to fix a defect from your terminal |
+| GitHub Issues, with an [issue form](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms) | Hold the defect: what was observed, how to reproduce it, and what is expected |
+| [GitHub Actions](https://docs.github.com/en/actions) | Runs your CI, the proof that the new tests fail before the fix and pass after it, and Copilot's session, which `copilot-setup-steps.yml` prepares |
+| Python 3.12, standard library only | The scenario runner, the proof, the evidence report, and the facts of a failed CI run |
+| GitHub CLI and PowerShell 7 | The commands in this README |
+
+The files are written for RequestHub's stack: a .NET 10 API, xUnit v3 integration tests, and PostgreSQL. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for yours.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 4 of 7: Test.** Today a defect is usually fixed first and tested afterwards, if at all. Nobody sees whether the new test would have caught the defect, races are hard to reproduce by hand, and a green check with an empty review looks like a clean one. With this solution the order of the evidence is the point: the tests fail at one known commit and pass at the next, the checks are reported apart from the review comments, and a person decides with that proof in hand.
 
@@ -20,18 +39,11 @@ Defects that only show up under retries or simultaneous clicks slip through revi
 | Review | A green check and a few comments. An empty review looks like a clean one. | Actions reruns the new tests at the tests-only commit (at least one must fail) and at the head (all must pass) and keeps both outputs. Comments are reported apart from the checks. |
 | Decision | Implicit in the merge button. | A person approves the workflow runs, reads the tests, and approves or requests changes; the evidence comment records who decided. |
 
-The value: a defect report becomes a proven, reviewable fix in under half an hour, and the reviewer gets evidence to check rather than a green mark to trust. The run in [See it work](#see-it-work), on 28 October 2026, measured:
-
-- **8 minutes 46 seconds** from assigning the Issue to Copilot's fix, in a 13-minute session. The failing tests came first, committed 6 minutes after the Issue was filed.
-- **5 of 7** selected tests failed at the tests-only commit, and **7 of 7** passed at the fix. Six were Copilot's new tests; the seventh was an existing test that the proof script of that day also picked up ([step 5](#5-the-proof-showed-the-tests-failing-first)). The proof took 1 minute 44 seconds.
-- **One authorization gap** that no test covered, found by Copilot code review in 6 minutes. Copilot fixed it, with a new test, 7 minutes after a person asked, and the new commit passed the same gates.
-- **23 minutes** from filing the Issue to a passing proof, 7 of them waiting for a person to approve the workflow runs.
-
-On 11 November, the agentic CI failure investigation told a test-first failure from a regression on two red pull requests. When no other investigation was running, its comment arrived 4 minutes 50 seconds to 5 minutes 44 seconds after CI failed, and each run used 14 to 16 AI credits ([step 10](#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026)).
+The value: a defect report becomes a proven, reviewable fix in under half an hour, and the reviewer gets evidence to check rather than a green mark to trust. [Results and value](#results-and-value) has what the recorded run measured.
 
 The Microsoft counterpart, [04-test-microsoft](../04-test-microsoft/), load-tests the API with Azure Load Testing. The [Test combo](../../PRESENTING.md#test-copilot-proves-the-repair-azure-load-tests-the-same-commit) uses both on one change: Azure load-tests the very commit that this solution proves.
 
-## How it works
+### How it works
 
 ```mermaid
 flowchart LR
@@ -56,6 +68,281 @@ flowchart LR
 - **A person** files the Issue, approves the workflow runs, reads the tests, and approves or requests changes. The `review-evidence` skill reports the checks apart from the comments and records who decided.
 
 **Outside contributions.** On a public repository anyone can open an Issue with this solution's form, or a pull request from a fork. Neither starts Copilot: only people with write access can assign an Issue to Copilot or mention `@copilot`. The proof runs a fork's pull request into a `lab/test-*` branch once someone with write access approves the run: it runs that pull request's tests with a read-only token, no secrets, and no credentials left in the checkout, and takes the proof script from the base branch. A pull request can still change the workflow files GitHub runs for it, so the evidence report flags one that does. The evidence comment is posted with your token, so it never speaks for anyone else: only reviews from the owner, members, and collaborators count as the decision, and everything it quotes from GitHub is inert: it can't mention anyone (`@copilot` included) or refer to an Issue or a pull request, and it can't add a link, an image, or HTML. The CI failure investigation investigates only a failed CI run of a pull request from one of this repository's own branches, opened by the owner, a member, a collaborator, or Copilot; for any other run, including one from a fork's pull request with a workflow of its own named CI, its agent never starts. gh-aw also checks that whoever triggered the run has write access. The investigation's comment can't mention anyone or refer to an Issue or a pull request, and its links can only point at GitHub.
+
+## Install it in your repository
+
+[Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for your code. The commands are the ones this repository uses.
+
+### Prerequisites
+
+- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts use only Python's standard library.
+- **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your repository. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). Copilot code review reviews the fix. To fix a defect from your terminal instead, as in the optional [step 9](#9-optional-copilot-cli-fixed-a-second-defect), install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli).
+- **A Copilot session on GitHub Actions.** Copilot runs your tests in its session, with the services that `copilot-setup-steps.yml` starts ([this repository's](../../.github/workflows/copilot-setup-steps.yml) starts PostgreSQL), and cloud sandboxes don't run setup steps ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)). If you're offered a choice of environment, pick GitHub Actions.
+- **An API you can run, and integration tests.** A scenario calls your API over HTTP, with a test sign-in, so you run the API on your machine and Copilot runs it in its session. CI and the proof run your integration tests on GitHub-hosted runners.
+- **For the CI failure investigation:** a CI workflow that runs your tests on pull requests, and [GitHub Agentic Workflows](https://github.com/github/gh-aw) with its `gh aw` extension, to compile the workflow after you change it: `gh extension install github/gh-aw --pin v1.2.2`. Its Copilot engine authenticates with a `COPILOT_GITHUB_TOKEN` secret, a fine-grained personal access token with **Copilot Requests: Read** ([one-time step 6](#one-time-setup)). In an organization with a Copilot subscription and centralized billing, gh-aw recommends `copilot-requests: write` in the workflow's `permissions:` instead, with no token.
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must list `workflow` among the token's scopes, Python must be 3.12 or later, and PowerShell 7.4 or later. `gh aw version` must print `v1.2.2`, the version that compiles the CI failure investigation: step 4 installs it if it's missing, and [Troubleshooting](#troubleshooting) says how to replace an older one. Copilot CLI is needed only to fix a defect from your terminal ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   copilot --version
+   gh aw version
+   ```
+
+2. **Copy the files on a new branch.** The copy adds the licence that must travel with the files, as `.github/LICENSE-ai-sdlc`, and prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-test-github
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-04-test-github'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   New-Item -ItemType Directory -Force .github, tests | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $src 'solutions/04-test-github/.github/*') .github
+   Copy-Item -Force (Join-Path $src 'solutions/04-test-github/tests/test_*.py') tests
+   Copy-Item -Force (Join-Path $src 'LICENSE') .github/LICENSE-ai-sdlc
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 20 new files, in 5 to 9 seconds when this README was checked; the other files in `.github/` and `tests/` stay. GitHub reads a repository's own licence only from its root, so yours doesn't change.
+
+3. **Edit the files for your code,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) lists. Then run the unit tests. They import the skills' scripts, so first keep Python from writing `__pycache__` folders into `.github/` and `tests/`:
+
+   ```powershell
+   $env:PYTHONDONTWRITEBYTECODE = '1'
+   python -m unittest discover -s tests
+   ```
+
+   They end with `OK` ([one-time step 1](#one-time-setup)), and `git status` lists no `__pycache__` folder.
+
+4. **Set it up once.** Give Copilot and the proof your test services, point the proof at your fixes, and allow the Copilot cloud agent ([one-time steps 2, 3, and 5](#one-time-setup)). Create a fine-grained token with **Copilot Requests: Read** on GitHub ([one-time step 6](#one-time-setup)). Then create the labels, store the token as a secret, and compile the CI failure investigation with your changes ([one-time steps 4, 6, and 7](#one-time-setup)):
+
+   ```powershell
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:test --color C5DEF5 --description "SDLC phase 4: Test" --force
+   gh label create ci:defect-reproduced --color 0E8A16 --description "CI failure investigation: tests this pull request adds fail as intended" --force
+   gh label create ci:regression --color B60205 --description "CI failure investigation: the change broke an existing test or check" --force
+   gh label create ci:infrastructure --color FBCA04 --description "CI failure investigation: fails on main too, or the failure isn't a test" --force
+   gh secret set COPILOT_GITHUB_TOKEN    # paste the token when prompted
+   gh extension install github/gh-aw --pin v1.2.2
+   gh aw compile test-github-ci-investigation --strict
+   ```
+
+5. **Merge it into your default branch,** where the cloud agent finds custom agents, GitHub offers issue forms, and the CI failure investigation runs ([one-time step 8](#one-time-setup)). Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .github tests
+   git commit -m "Add 04-test-github from ai-sdlc <commit>"
+   git push -u origin add-test-github
+   gh pr create --fill
+   ```
+
+   Merge the pull request as you merge any change. To make the proof a gate, require its check in a ruleset ([one-time step 3](#one-time-setup)).
+
+6. **Use it on your next defect.** Reproduce it with a scenario against your API, file it with the *Test: defect to fix test-first with Copilot* form, then assign it to Copilot with the `test-github` agent and, as the base branch, the branch that has the defect (replace `<scenario.json>`, `<your API's address>`, `<issue>`, and `<branch>`):
+
+   ```powershell
+   python .github/skills/failure-reproduction/repro.py <scenario.json> --api <your API's address>
+   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
+   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = '<branch>'; custom_agent = 'test-github' } } |
+     ConvertTo-Json -Compress | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '.assignees[].login'
+   ```
+
+   Then approve its workflow runs, read the proof, and decide, as [Use it the first time](#use-it-the-first-time) describes.
+
+### One-time setup
+
+1. **Copy the files and make the changes in [Files to edit to tweak it](#files-to-edit-to-tweak-it),** on a branch, as in [Getting started](#getting-started). What you should see: `python -m unittest discover -s tests` ends with `OK`. The unit tests run offline, with a fake `gh`, in a second or two.
+2. **Give Copilot and the proof your test services.** Before Copilot starts, GitHub runs the job named `copilot-setup-steps` in `.github/workflows/copilot-setup-steps.yml`. Start your database there as a service and install your toolchain, as [this repository's](../../.github/workflows/copilot-setup-steps.yml) does for PostgreSQL and .NET, and give `test-github-proof.yml` the same service. What you should see: once the file is on your default branch, `gh workflow run copilot-setup-steps.yml` starts it (it needs a `workflow_dispatch` trigger, as this repository's has), and `gh run list --workflow copilot-setup-steps.yml --limit 1` then shows it `completed` with `success`.
+3. **Point the proof at your fixes.** In `test-github-proof.yml`, set `branches` to the branches your fixes go into, for example `main`, and `paths` to your code. A pull request without a tests-only commit before its fix fails the proof, so if not every pull request into those branches is a fix, guard the job. [`develop-github-bounds.yml`](../../.github/workflows/develop-github-bounds.yml), from 03-develop-github, shows how: it looks up the Issues that a pull request closes and skips its checks when none carries its label. The same lookup with your defect label, for example `bug`, keeps the proof to fixes. To make the proof a gate, require its check, *Regression tests fail before the fix and pass after it*, in a ruleset on those branches. What you should see: after the merge in step 8, `gh workflow list` lists *Test · GitHub · prove the fix test-first* as `active`.
+4. **Create the labels** that the issue form applies (`bug` comes with every new repository), and the three that the CI failure investigation chooses from:
+
+   ```powershell
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:test --color C5DEF5 --description "SDLC phase 4: Test" --force
+   gh label create ci:defect-reproduced --color 0E8A16 --description "CI failure investigation: tests this pull request adds fail as intended" --force
+   gh label create ci:regression --color B60205 --description "CI failure investigation: the change broke an existing test or check" --force
+   gh label create ci:infrastructure --color FBCA04 --description "CI failure investigation: fails on main too, or the failure isn't a test" --force
+   ```
+
+   What you should see: `gh label list --search phase:test` prints `phase:test  SDLC phase 4: Test  #C5DEF5` on its first line, and `gh label list --search ci:` lists the three `ci:` labels. The search can take a few seconds to find a new label.
+5. **Allow the Copilot cloud agent** in the repository, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**.
+6. **Give the CI failure investigation access to Copilot.** Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new?name=COPILOT_GITHUB_TOKEN&description=GitHub+Agentic+Workflows+-+Copilot+engine+authentication&user_copilot_requests=read). Set the resource owner to your user account, and under **Account permissions** set **Copilot Requests** to **Read**. Nothing else is needed. Store it as a repository secret:
+
+   ```powershell
+   gh secret set COPILOT_GITHUB_TOKEN    # paste the token when prompted
+   ```
+
+   What you should see: `gh secret list` lists `COPILOT_GITHUB_TOKEN`. The investigations' AI credits count against the token owner's Copilot plan. In an organization with centralized Copilot billing, add `copilot-requests: write` under `permissions:` in the workflow's source instead, and compile it again. Without either, everything else works, and the investigation's run fails at `Validate COPILOT_GITHUB_TOKEN secret`.
+7. **Compile the CI failure investigation** after you change its source. GitHub runs the compiled `.lock.yml`, not the `.md`:
+
+   ```powershell
+   gh extension install github/gh-aw --pin v1.2.2
+   gh aw compile test-github-ci-investigation --strict
+   ```
+
+   What you should see: `✓ Compiled 1 workflow: 1 succeeded, 0 warnings`, after 3 seconds when this README was checked. Commit the `.lock.yml` with the `.md`: `test-github-checks.yml` compiles the source again with the version in `GH_AW_VERSION` and fails if the result differs. The lock file also records the frontmatter of every custom agent in `.github/agents/`, so compile again when an agent's frontmatter changes.
+8. **Merge it into your default branch.** The cloud agent loads custom agents from the default branch, GitHub offers issue forms from it, and an agentic workflow that another workflow starts runs from it; skills and scripts come from the branch Copilot works on. What you should see:
+
+   ```powershell
+   gh api 'repos/{owner}/{repo}/contents/.github/agents/test-github.agent.md' --jq .path
+   ```
+
+   prints `.github/agents/test-github.agent.md`, **New issue** offers *Test: defect to fix test-first with Copilot*, and `gh workflow list` lists *Test · GitHub · agentic CI failure investigation*.
+
+### Use it the first time
+
+On your own defect, the steps are those of [See it work](#see-it-work), from step 2 on:
+
+1. **Reproduce the defect.** Write the report as a scenario: who calls which endpoint, with what body, and what the correct answer is; `parallel` sends one call several times at once, for double-clicks and retries. [`repro.py`](.github/skills/failure-reproduction/repro.py) describes the format, and [`scenarios/duplicate-decision.json`](scenarios/duplicate-decision.json) is the run's. Run it against your API:
+
+   ```powershell
+   python .github/skills/failure-reproduction/repro.py <scenario.json> --api <your API's address>
+   ```
+
+   What you should see: it ends with `REPRODUCED` and lists the expectations the defect breaks, as in [step 2](#2-the-scenario-reproduced-the-defect).
+2. **Hand it to Copilot.** File the Issue with the *Test: defect to fix test-first with Copilot* form, with the scenario and its output under *Reproduce*. Assign it to **Copilot** with the **test-github** agent and, as the base branch, the branch that has the defect: one the proof watches. From a terminal instead (replace `<issue>` and `<branch>`; it prints `Copilot` and your login):
+
+   ```powershell
+   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
+   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = '<branch>'; custom_agent = 'test-github' } } |
+     ConvertTo-Json -Compress | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '.assignees[].login'
+   ```
+
+   What you should see: within seconds Copilot opens a draft pull request, and when its session ends, a tests-only commit comes before the fix, as in [step 3](#3-copilot-committed-failing-tests-then-the-fix).
+3. **Approve its workflow runs:** select **Approve workflows to run** in the pull request's merge box, or start every waiting run of its latest commit from a terminal:
+
+   ```powershell
+   $head = gh pr view <pr> --json headRefOid -q .headRefOid
+   gh run list --commit $head --json databaseId,conclusion -q '.[] | select(.conclusion == "action_required") | .databaseId' | ForEach-Object { gh run rerun $_ }
+   ```
+
+   See [step 4](#4-a-person-approved-the-workflow-runs).
+4. **Read the proof:** `gh pr checks <pr> --watch`. What you should see: *Regression tests fail before the fix and pass after it* passes, and its summary lists each failure at the tests-only commit in the tests' own words, as in [step 5](#5-the-proof-showed-the-tests-failing-first).
+5. **If CI fails, read why.** When CI fails on the pull request, the CI failure investigation adds one label and posts a comment headed *CI failure investigation*. For each failing test it gives the assertion message, the file and line, a link to the log, its class, and the next step. `ci:defect-reproduced` means every failure is a test that the pull request adds or changes, failing as intended, as on a tests-only commit: the fix should make it pass. `ci:regression` means the change broke a test or a check that passes on main: fix the code, not the test. `ci:infrastructure` means a failure also happens on main, or isn't a test: rerun the failed job. The comment explains; you decide. [Step 10](#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026) shows a `ci:defect-reproduced` comment and a `ci:regression` one.
+6. **Ask Copilot for a code review:** select **Reviewers** > **Copilot** in the pull request, or run `gh pr edit <pr> --add-reviewer "@copilot"`. See [step 6](#6-copilot-code-review-found-a-gap-the-tests-missed).
+7. **Post the evidence** on the pull request. Run it from your default branch, never from the pull request's branch: its copy of the script could leave out what the report must say.
+
+   ```powershell
+   python .github/skills/review-evidence/review_evidence.py --pr <pr> --comment
+   ```
+
+   Section 1 lists the checks and the proof: they decide. If the pull request changes where its checks are defined (anything under the folders in `CHECK_DEFINITIONS`), section 1 opens with a warning that lists those files, because its checks ran with its own version of its workflows: read them first. Section 2 lists the review comments: they inform. Section 3 records the decision: only reviews from the repository's owner, members, and collaborators count, and anyone else's review is listed as not counted, without its text. The comment is posted with your token, so everything it quotes from GitHub is inert: it can't mention anyone, which would start Copilot in your name, or refer to an Issue or a pull request, and it can't add a link, an image, or HTML. See [step 7](#7-the-evidence-comment-kept-checks-apart-from-comments).
+8. **Decide.** Read the tests in the tests-only commit: do they assert what the Issue expects, including the concurrent case? If the review found a gap, ask `@copilot` on the pull request, as in [step 8](#8-a-person-asked-for-a-change-and-the-new-commit-passed-the-same-gates), approve the new commit's runs, and post the evidence again. Then approve or request changes as a GitHub review, and post the evidence once more, so it records who decided:
+
+   ```powershell
+   gh pr review <pr> --approve --body "<what you checked: the tests, the proof, the review>"
+   python .github/skills/review-evidence/review_evidence.py --pr <pr> --comment
+   ```
+
+   Use `--request-changes` instead of `--approve` to send it back. Once you approve, merge the fix as you merge any change.
+
+Then make it part of your workflow: write each reproducible defect as a scenario and hand it to Copilot with the `test-github` agent, and require the proof's check on the branches your fixes go into ([one-time step 3](#one-time-setup)), so that no fix merges without a test that failed first. When CI fails on a fix's pull request, start from the investigation's label and comment.
+
+**The metric to track when you adopt it:** lead time from a defect report to a proven fix, from the Issue's creation to the first passing proof check on Copilot's pull request. Both timestamps are on GitHub. The recorded run measured 23 minutes 26 seconds, 7 minutes 26 seconds of them waiting for a person to approve the runs; the 10 November run measured 14 minutes 50 seconds. Track alongside it how many fixes arrive with tests that failed first (the proof's verdict), and how many review findings become a commit before merge. For the CI failure investigation, track how often its label matches what the reviewer concluded about the failure. Compare each with similar defects fixed before you adopted it. A target such as "a proven fix within an hour of the report" is your team's goal, never a result to report.
+
+### What it costs
+
+Setting it up uses no AI credits. Each defect fixed this way draws on your Copilot plan's AI credits, for the cloud agent's sessions and its code review, and on GitHub Actions. In the recorded run, Copilot's first session reported 6.3 AI credits, and the optional Copilot CLI session of step 9 reported 25.48. The run used 42.8 minutes of standard GitHub-hosted runners: 29.8 for Copilot's two sessions and its code review, 8.2 for CI, 3.1 for the proof, and 1.7 for this repository's other workflows. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 57 minutes for the recorded run, because each job is rounded up to a whole minute. The length of your test suite changes the CI and proof minutes ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
+
+The CI failure investigation runs only when CI fails on a fix's pull request. In step 10's four runs, Copilot used 13.3 to 15.2 AI credits per run and threat detection 0.62, drawn from the Copilot plan of the token's owner. gh-aw stops a run at 40 credits for Copilot and 2 for detection, about 2.5 times the most a run used, and stops the workflow at 400 credits a day, about 25 investigations. These caps are `max-ai-credits`, `safe-outputs.threat-detection.max-ai-credits`, and `max-daily-ai-credits` in its source. Each run used 4 min 49 s to 6 min 0 s of runner time: 3.5 to 4.5 minutes on `ubuntu-latest` for Copilot and detection, and 1.1 to 1.6 on the single-CPU `ubuntu-slim` for the other four jobs. Those minutes are free in a public repository. In a private one, each job is rounded up to a whole minute, so each run counted 5 minutes of 2-core Linux and 4 of 1-core Linux ([runner pricing](https://docs.github.com/en/billing/reference/actions-runner-pricing)).
+
+## Files to edit to tweak it
+
+The copy adds the agent, five skills, the proof and checks workflows, the CI failure investigation with its compiled lock file, and the issue form to your `.github/` folder, with the licence, `.github/LICENSE-ai-sdlc`, and the unit tests to `tests/`. The solution also relies on two files of your own: your CI workflow, which runs your tests on pull requests, as RequestHub's [`ci.yml`](../../.github/workflows/ci.yml) does, and `copilot-setup-steps.yml`, the cloud agent's environment. The scenarios, the lab patch, and the defect report stay behind, because they describe RequestHub's defect: use them as examples for yours.
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File, under `.github/` | As shipped, for RequestHub | Change it to |
+| --- | --- | --- |
+| [`agents/test-github.agent.md`](.github/agents/test-github.agent.md) | How to start the API (`dotnet run --project app/src/RequestHub.Api`, port 5080), where the tests live (`app/tests/RequestHub.Tests/`: xUnit v3, `ApiFixture`, personas through `X-RequestHub-User`), how to run one test, and RequestHub's rules: approval authority, and the contract in `app/contracts/openapi.json` | Your start command and health URL, your test folder, framework, and fixtures, the command that runs one test, and the rules Copilot must never break in your code. Keep the order of the commits (the tests alone, then the fix) and the *Evidence* section. |
+| [`skills/failure-reproduction/repro.py`](.github/skills/failure-reproduction/repro.py) | Development sign-in through the `X-RequestHub-User` header, and `--api` defaulting to `http://localhost:5080` | Your API's test sign-in and address. The scenario format stays. |
+| [`skills/review-evidence/prove_fix.py`](.github/skills/review-evidence/prove_fix.py) | .NET and xUnit v3: `SOLUTION`, `DOTNET_TESTS`, `TEST_FILE`, `TEST_ATTRIBUTE`, `METHOD`, and `CLASS` find the tests a commit added, and `run_tests` runs them with `dotnet test`, whose xUnit v3 reporter writes a [CTRF](https://ctrf.io/) report | Your test folder, how a test method and its class start in your language, and a test command that runs the selected tests and writes a CTRF report. |
+| [`skills/review-evidence/review_evidence.py`](.github/skills/review-evidence/review_evidence.py) | `CHECK_DEFINITIONS`: the folders that hold what this repository's workflows run (`.github/workflows/`, `.github/actions/`, `.github/skills/`, and `tools/`) | The folders that hold what yours run, so a pull request that changes them is flagged. `tests/test_review_evidence.py` expects these four: update it with yours. |
+| [`skills/regression-validation/run_regression.py`](.github/skills/regression-validation/run_regression.py) | RequestHub's suites: the .NET build and tests, the web typecheck and unit tests, the contract check, and the Playwright tests with `--e2e` | Your suites. |
+| [`skills/ci-investigation/ci_failure_facts.py`](.github/skills/ci-investigation/ci_failure_facts.py) | How a failure looks in the output of .NET's test platform with xUnit v3, Playwright, Vitest, and the C# and TypeScript compilers; `prove_fix.py`'s patterns tell whether the pull request adds or changes a test | How your test runners print a failure, if they print it differently. `tests/test_ci_investigation.py` has a sample of each format: add yours. |
+| [`skills/contract-impact/`](.github/skills/contract-impact/) | An OpenAPI contract in `app/contracts/openapi.json` that may only grow | Your contract file, or delete the skill and its call in `run_regression.py`. |
+| [`workflows/test-github-proof.yml`](.github/workflows/test-github-proof.yml) | Pull requests into `lab/test-**` that change `app/**`, a PostgreSQL service, and .NET 10 | The branches and paths of your fixes, your database service, and your toolchain: see [one-time step 3](#one-time-setup). |
+| [`workflows/test-github-ci-investigation.md`](.github/workflows/test-github-ci-investigation.md) | Starts when the workflow named `CI`, in `.github/workflows/ci.yml`, fails on a pull request from a `copilot/**` or `fix/**` branch into a `lab/test-*` branch | Your CI workflow's name (`workflows:`) and file (`workflow_run.path` in the `if:`), the branches your fixes come from (`branches:`), and the branches they go into: `lab/test-` in the `if:` and `--base` in its step, for example `main`. Then compile it, in [one-time step 7](#one-time-setup). |
+| [`workflows/test-github-checks.yml`](.github/workflows/test-github-checks.yml) | This solution's folder: it watches `solutions/04-test-github/**` and runs `solutions/04-test-github/tests`. It also compiles the CI failure investigation with the gh-aw version in `GH_AW_VERSION`, v1.2.2, and fails if the committed lock file differs | Watch `tests/**` and run `tests`. Keep `GH_AW_VERSION` at the version you compile with. |
+| [`ISSUE_TEMPLATE/04-test-github-defect.yml`](.github/ISSUE_TEMPLATE/04-test-github-defect.yml) | The labels `ai-sdlc`, `phase:test`, and `bug` | Your labels, if you don't create these in [one-time step 4](#one-time-setup). |
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your code:
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| The tools Copilot may use | `tools` in the front matter of [`agents/test-github.agent.md`](.github/agents/test-github.agent.md) | `read`, `edit`, `search`, and `execute` |
+| What Copilot must never do | *Rules* in the same file | Only the code and tests the fix needs; no weakened, skipped, or deleted test, guard, or validation; no sleep, retry, or catch-all exception handler to hide a race; no approval, merge, or review evidence |
+| What a defect Issue asks for | The fields of [`ISSUE_TEMPLATE/04-test-github-defect.yml`](.github/ISSUE_TEMPLATE/04-test-github-defect.yml) | *Observed behavior*, *Reproduce*, and *Expected behavior*, each required |
+| How long the proof keeps both test outputs | `retention-days` in [`workflows/test-github-proof.yml`](.github/workflows/test-github-proof.yml) | 90 days |
+| What the CI failure investigation may spend | `max-ai-credits`, `max-daily-ai-credits`, and `safe-outputs.threat-detection.max-ai-credits` in [`workflows/test-github-ci-investigation.md`](.github/workflows/test-github-ci-investigation.md), then compile it as in [one-time step 7](#one-time-setup) | 40 AI credits a run, 400 a day, and 2 a run for threat detection |
+
+### What the copy adds
+
+```text
+.github/
+├── agents/test-github.agent.md     the custom Copilot agent: reproduce, failing tests first, then the fix
+├── skills/
+│   ├── failure-reproduction/       repro.py runs a scenario against a running API
+│   ├── review-evidence/            prove_fix.py (fails before, passes after) and review_evidence.py (the report)
+│   ├── ci-investigation/           ci_failure_facts.py collects a failed CI run's facts; SKILL.md sorts them into three classes
+│   ├── regression-validation/      runs the test suites that cover a change (shared with 03-develop-github)
+│   └── contract-impact/            additive-only API contract check that regression-validation calls (shared)
+├── workflows/
+│   ├── test-github-proof.yml       proves the fix test-first on fix pull requests
+│   ├── test-github-ci-investigation.md         the agentic workflow: explains why CI failed on a fix's pull request
+│   ├── test-github-ci-investigation.lock.yml   what GitHub runs: compiled from the .md by gh-aw v1.2.2
+│   └── test-github-checks.yml      runs the unit tests, and checks the lock file, on pull requests that change this solution
+├── ISSUE_TEMPLATE/04-test-github-defect.yml
+└── LICENSE-ai-sdlc                 the licence that travels with the files, added by the copy
+tests/
+├── test_review_evidence.py         unit tests: the evidence report never speaks for anyone else (offline, fake gh)
+└── test_ci_investigation.py        unit tests: the CI investigation's facts, and the runs it must leave alone (offline, fake gh)
+```
+
+### After you edit
+
+Run the unit tests as in [Getting started](#getting-started) step 3. After a change to the CI failure investigation's source, compile it as in [one-time step 7](#one-time-setup) and commit its `.lock.yml` with it. Then merge your change: custom agents, issue forms, and the CI failure investigation take effect from your default branch, and the proof runs its script from each pull request's base branch.
+
+## Clean up
+
+Remove what you copied, the labels, the token, and the services you added to `copilot-setup-steps.yml` only for this solution. Two skills are shared: 03-develop-github uses `regression-validation` and `contract-impact`, and 02-design-github uses `contract-impact`. If you required the proof's check in a ruleset ([one-time step 3](#one-time-setup)), remove it from the ruleset first.
+
+```powershell
+Remove-Item -Recurse -Force .github/agents/test-github.agent.md, .github/skills/failure-reproduction, .github/skills/review-evidence, .github/skills/ci-investigation, .github/workflows/test-github-proof.yml, .github/workflows/test-github-checks.yml, .github/workflows/test-github-ci-investigation.md, .github/workflows/test-github-ci-investigation.lock.yml, .github/ISSUE_TEMPLATE/04-test-github-defect.yml, tests/test_review_evidence.py, tests/test_ci_investigation.py
+Remove-Item -Recurse -Force .github/skills/regression-validation, .github/skills/contract-impact    # unless another solution uses them
+Remove-Item -Force .github/LICENSE-ai-sdlc    # unless you keep another solution from this repository
+gh label delete phase:test --yes
+gh label delete ci:defect-reproduced --yes
+gh label delete ci:regression --yes
+gh label delete ci:infrastructure --yes
+gh label delete ai-sdlc --yes    # unless other Issues carry it
+gh secret delete COPILOT_GITHUB_TOKEN    # unless another agentic workflow uses it
+```
+
+Then revoke the token: on GitHub, **Settings** → **Developer settings** → **Personal access tokens** → [**Fine-grained tokens**](https://github.com/settings/personal-access-tokens), delete `COPILOT_GITHUB_TOKEN`. The agentic workflows of [06-release-github](../06-release-github/) and [07-operate-github](../07-operate-github/) use the same secret: keep it if you use them.
+
+This solution creates no GitHub App or webhook, and apart from the CI failure investigation's token, no secret: you act with your own GitHub CLI sign-in, and its workflows with the token GitHub gives each run.
+
+## Troubleshooting
+
+- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run**, or run `gh run rerun <run-id>`.
+- **The runs of an earlier commit show as cancelled.** Approving the waiting runs of several commits starts them together, and the newest run in each concurrency group cancels the older ones. Approve the latest commit's runs; the proof still tests the tests-only commit.
+- **The proof fails with *Not proven: no tests-only commit before the fix* on a pull request that isn't a fix.** The proof ran on a pull request into one of its `branches` that has no tests-only commit. Narrow `branches`, or guard the proof as in [one-time step 3](#one-time-setup).
+- **The pull request description has no evidence.** Copilot sometimes writes its evidence summary only at the end of the session. Read it under **View session**, or ask `@copilot` to add it to the description.
+- **`error: cannot reach http://localhost:5080`.** The API is not running yet, or runs on another port.
+- **`gh aw compile` fails with *Unknown properties: report-missing-data, report-missing-tool*.** Your gh-aw is older than the workflow: v0.92.0 printed this when this README was checked. `gh aw version` must print `v1.2.2`, the version in `test-github-checks.yml`. Run `gh extension remove gh-aw`, then `gh extension install github/gh-aw --pin v1.2.2`, and compile again.
+- **`gh aw compile --strict` fails with *CTR-021: [workflow-run-scope] workflow_run lacks positive branch scope*.** Strict mode refuses `branches: ["**"]` and negative-only patterns under `on.workflow_run`. Name the branches your fixes come from, such as `copilot/**` for Copilot's and `fix/**` for your own.
+- **The links in the CI failure investigation's comment are broken, with `%60%60` in them.** With `allowed-github-references: []`, which keeps the comment from adding an item to any Issue's or pull request's timeline, gh-aw wraps everything shaped like a GitHub reference (`#123`, `owner/repo#123`) in a code span, inside links too. A link that ends in `…/RequestHub.Tests/RequestLifecycleTests.cs#L102` or `…/job/130606824425#step:6:1` has that shape: the first comes out as `…/RequestHub.%60%60Tests/RequestLifecycleTests.cs#L102%60%60`. `ci_failure_facts.py` puts a query before every `#` (`?plain=1#L102`, `?pr=359#step:6:1`), which the pattern can't match, and `tests/test_ci_investigation.py` runs gh-aw's pattern over every link the facts hold. If you change how the facts build a link, keep a query before its `#`.
 
 ## See it work
 
@@ -262,146 +549,11 @@ At 15:33 the owner pushed the fix to #359, in [`ea02930`](https://github.com/mel
 - **People stay in charge.** Workflows on Copilot's pull request run only after a person approves them, a person decides on the change, and RequestHub's own rule is untouched: only approvers decide, never on their own request.
 - **A red CI run explained.** Minutes after CI fails, the pull request says which failures reproduce the defect on purpose and which are a regression the change caused, with the line, the log, and the next step for each. On #360 that was a dropped condition behind four failing tests, while the proof's check was green.
 
-**The metric to track when you adopt it:** lead time from a defect report to a proven fix, from the Issue's creation to the first passing proof check on Copilot's pull request. Both timestamps are on GitHub. The recorded run measured 23 minutes 26 seconds, 7 minutes 26 seconds of them waiting for a person to approve the runs; the 10 November run measured 14 minutes 50 seconds. Track alongside it how many fixes arrive with tests that failed first (the proof's verdict), and how many review findings become a commit before merge. For the CI failure investigation, track how often its label matches what the reviewer concluded about the failure. Compare each with similar defects fixed before you adopted it. A target such as "a proven fix within an hour of the report" is your team's goal, never a result to report.
-
-## Add it to your repository
-
-The files are written for RequestHub's stack: a .NET 10 API, xUnit v3 integration tests, and PostgreSQL. [What to copy and what to change](#what-to-copy-and-what-to-change) names each setting to adapt for yours. The commands are the ones this repository uses.
-
-### Prerequisites
-
-- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, PowerShell 7.4 or later, and Python 3.12 or later. This solution's scripts use only Python's standard library.
-- **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your repository. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)). Copilot code review reviews the fix. To fix a defect from your terminal instead, as in the optional [step 9](#9-optional-copilot-cli-fixed-a-second-defect), install [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli).
-- **A Copilot session on GitHub Actions.** Copilot runs your tests in its session, with the services that `copilot-setup-steps.yml` starts ([this repository's](../../.github/workflows/copilot-setup-steps.yml) starts PostgreSQL), and cloud sandboxes don't run setup steps ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)). Assigning the Issue started a GitHub Actions-based session in the recorded run and in the 10 November run; if you're offered a choice of environment, pick GitHub Actions.
-- **An API you can run, and integration tests.** A scenario calls your API over HTTP, with a test sign-in, so you run the API on your machine and Copilot runs it in its session. CI and the proof run your integration tests on GitHub-hosted runners.
-- **For the CI failure investigation:** a CI workflow that runs your tests on pull requests, and [GitHub Agentic Workflows](https://github.com/github/gh-aw) with its `gh aw` extension, to compile the workflow after you change it: `gh extension install github/gh-aw --pin v1.2.2`. Its Copilot engine authenticates with a `COPILOT_GITHUB_TOKEN` secret, a fine-grained personal access token with **Copilot Requests: Read** ([one-time step 6](#one-time-setup)). In an organization with a Copilot subscription and centralized billing, gh-aw recommends `copilot-requests: write` in the workflow's `permissions:` instead, with no token.
-
-### What to copy and what to change
-
-From the root of your repository, in PowerShell 7, copy the agent, the skills, the workflows, the issue form, and the unit tests:
-
-```powershell
-$src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-04-test-github'
-git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
-New-Item -ItemType Directory -Force .github, tests | Out-Null
-Copy-Item -Recurse -Force (Join-Path $src 'solutions/04-test-github/.github/*') .github
-Copy-Item -Force (Join-Path $src 'solutions/04-test-github/tests/test_*.py') tests
-Remove-Item -Recurse -Force $src
-git status --short --untracked-files=all
-```
-
-What you should see: 19 new files, in 5 to 8 seconds in three runs when this README was checked; the other files in `.github/` and `tests/` stay. The scenarios, the lab patch, and the defect report stay behind, because they describe RequestHub's defect: use them as examples for yours. Then change what assumes RequestHub:
-
-| File, under `.github/` | As shipped, for RequestHub | Change it to |
-| --- | --- | --- |
-| [`agents/test-github.agent.md`](.github/agents/test-github.agent.md) | How to start the API (`dotnet run --project app/src/RequestHub.Api`, port 5080), where the tests live (`app/tests/RequestHub.Tests/`: xUnit v3, `ApiFixture`, personas through `X-RequestHub-User`), how to run one test, and RequestHub's rules: approval authority, and the contract in `app/contracts/openapi.json` | Your start command and health URL, your test folder, framework, and fixtures, the command that runs one test, and the rules Copilot must never break in your code. Keep the order of the commits (the tests alone, then the fix) and the *Evidence* section. |
-| [`skills/failure-reproduction/repro.py`](.github/skills/failure-reproduction/repro.py) | Development sign-in through the `X-RequestHub-User` header, and `--api` defaulting to `http://localhost:5080` | Your API's test sign-in and address. The scenario format stays. |
-| [`skills/review-evidence/prove_fix.py`](.github/skills/review-evidence/prove_fix.py) | .NET and xUnit v3: `SOLUTION`, `DOTNET_TESTS`, `TEST_FILE`, `TEST_ATTRIBUTE`, `METHOD`, and `CLASS` find the tests a commit added, and `run_tests` runs them with `dotnet test`, whose xUnit v3 reporter writes a [CTRF](https://ctrf.io/) report | Your test folder, how a test method and its class start in your language, and a test command that runs the selected tests and writes a CTRF report. |
-| [`skills/review-evidence/review_evidence.py`](.github/skills/review-evidence/review_evidence.py) | `CHECK_DEFINITIONS`: the folders that hold what this repository's workflows run (`.github/workflows/`, `.github/actions/`, `.github/skills/`, and `tools/`) | The folders that hold what yours run, so a pull request that changes them is flagged. `tests/test_review_evidence.py` expects these four: update it with yours. |
-| [`skills/regression-validation/run_regression.py`](.github/skills/regression-validation/run_regression.py) | RequestHub's suites: the .NET build and tests, the web typecheck and unit tests, the contract check, and the Playwright tests with `--e2e` | Your suites. |
-| [`skills/ci-investigation/ci_failure_facts.py`](.github/skills/ci-investigation/ci_failure_facts.py) | How a failure looks in the output of .NET's test platform with xUnit v3, Playwright, Vitest, and the C# and TypeScript compilers; `prove_fix.py`'s patterns tell whether the pull request adds or changes a test | How your test runners print a failure, if they print it differently. `tests/test_ci_investigation.py` has a sample of each format: add yours. |
-| [`skills/contract-impact/`](.github/skills/contract-impact/) | An OpenAPI contract in `app/contracts/openapi.json` that may only grow | Your contract file, or delete the skill and its call in `run_regression.py`. |
-| [`workflows/test-github-proof.yml`](.github/workflows/test-github-proof.yml) | Pull requests into `lab/test-**` that change `app/**`, a PostgreSQL service, and .NET 10 | The branches and paths of your fixes, your database service, and your toolchain: see [one-time step 3](#one-time-setup). |
-| [`workflows/test-github-ci-investigation.md`](.github/workflows/test-github-ci-investigation.md) | Starts when the workflow named `CI`, in `.github/workflows/ci.yml`, fails on a pull request from a `copilot/**` or `fix/**` branch into a `lab/test-*` branch | Your CI workflow's name (`workflows:`) and file (`workflow_run.path` in the `if:`), the branches your fixes come from (`branches:`), and the branches they go into: `lab/test-` in the `if:` and `--base` in its step, for example `main`. Then compile it, in [one-time step 7](#one-time-setup). |
-| [`workflows/test-github-checks.yml`](.github/workflows/test-github-checks.yml) | This solution's folder: it watches `solutions/04-test-github/**` and runs `solutions/04-test-github/tests`. It also compiles the CI failure investigation with the gh-aw version in `GH_AW_VERSION`, v1.2.2, and fails if the committed lock file differs | Watch `tests/**` and run `tests`. Keep `GH_AW_VERSION` at the version you compile with. |
-| [`ISSUE_TEMPLATE/04-test-github-defect.yml`](.github/ISSUE_TEMPLATE/04-test-github-defect.yml) | The labels `ai-sdlc`, `phase:test`, and `bug` | Your labels, if you don't create these in [one-time step 4](#one-time-setup). |
-
-### One-time setup
-
-1. **Copy the files and make the changes above,** on a branch. What you should see: `python -m unittest discover -s tests` ends with `OK`. The unit tests run offline, with a fake `gh`, in a second or two.
-2. **Give Copilot and the proof your test services.** Before Copilot starts, GitHub runs the job named `copilot-setup-steps` in `.github/workflows/copilot-setup-steps.yml`. Start your database there as a service and install your toolchain, as [this repository's](../../.github/workflows/copilot-setup-steps.yml) does for PostgreSQL and .NET, and give `test-github-proof.yml` the same service. What you should see: once the file is on your default branch, `gh workflow run copilot-setup-steps.yml` starts it (it needs a `workflow_dispatch` trigger, as this repository's has), and `gh run list --workflow copilot-setup-steps.yml --limit 1` then shows it `completed` with `success`.
-3. **Point the proof at your fixes.** In `test-github-proof.yml`, set `branches` to the branches your fixes go into, for example `main`, and `paths` to your code. A pull request without a tests-only commit before its fix fails the proof, so if not every pull request into those branches is a fix, guard the job. [`develop-github-bounds.yml`](../../.github/workflows/develop-github-bounds.yml), from 03-develop-github, shows how: it looks up the Issues that a pull request closes and skips its checks when none carries its label. The same lookup with your defect label, for example `bug`, keeps the proof to fixes. To make the proof a gate, require its check, *Regression tests fail before the fix and pass after it*, in a ruleset on those branches. What you should see: after the merge in step 8, `gh workflow list` lists *Test · GitHub · prove the fix test-first* as `active`.
-4. **Create the labels** that the issue form applies (`bug` comes with every new repository), and the three that the CI failure investigation chooses from:
-
-   ```powershell
-   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
-   gh label create phase:test --color C5DEF5 --description "SDLC phase 4: Test" --force
-   gh label create ci:defect-reproduced --color 0E8A16 --description "CI failure investigation: tests this pull request adds fail as intended" --force
-   gh label create ci:regression --color B60205 --description "CI failure investigation: the change broke an existing test or check" --force
-   gh label create ci:infrastructure --color FBCA04 --description "CI failure investigation: fails on main too, or the failure isn't a test" --force
-   ```
-
-   What you should see: `gh label list --search phase:test` prints `phase:test  SDLC phase 4: Test  #C5DEF5` on its first line, and `gh label list --search ci:` lists the three `ci:` labels. The search can take a few seconds to find a new label.
-5. **Allow the Copilot cloud agent** in the repository, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**.
-6. **Give the CI failure investigation access to Copilot.** Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new?name=COPILOT_GITHUB_TOKEN&description=GitHub+Agentic+Workflows+-+Copilot+engine+authentication&user_copilot_requests=read). Set the resource owner to your user account, and under **Account permissions** set **Copilot Requests** to **Read**. Nothing else is needed. Store it as a repository secret:
-
-   ```powershell
-   gh secret set COPILOT_GITHUB_TOKEN    # paste the token when prompted
-   ```
-
-   What you should see: `gh secret list` lists `COPILOT_GITHUB_TOKEN`. The investigations' AI credits count against the token owner's Copilot plan. In an organization with centralized Copilot billing, add `copilot-requests: write` under `permissions:` in the workflow's source instead, and compile it again. Without either, everything else works, and the investigation's run fails at `Validate COPILOT_GITHUB_TOKEN secret`.
-7. **Compile the CI failure investigation** after you change its source. GitHub runs the compiled `.lock.yml`, not the `.md`:
-
-   ```powershell
-   gh extension install github/gh-aw --pin v1.2.2
-   gh aw compile test-github-ci-investigation --strict
-   ```
-
-   What you should see: `✓ Compiled 1 workflow: 1 succeeded, 0 warnings`, after 3 seconds when this README was checked. Commit the `.lock.yml` with the `.md`: `test-github-checks.yml` compiles the source again with the version in `GH_AW_VERSION` and fails if the result differs. The lock file also records the frontmatter of every custom agent in `.github/agents/`, so compile again when an agent's frontmatter changes.
-8. **Merge it into your default branch.** The cloud agent loads custom agents from the default branch, GitHub offers issue forms from it, and an agentic workflow that another workflow starts runs from it; skills and scripts come from the branch Copilot works on. What you should see:
-
-   ```powershell
-   gh api 'repos/{owner}/{repo}/contents/.github/agents/test-github.agent.md' --jq .path
-   ```
-
-   prints `.github/agents/test-github.agent.md`, **New issue** offers *Test: defect to fix test-first with Copilot*, and `gh workflow list` lists *Test · GitHub · agentic CI failure investigation*.
-
-### Use it the first time
-
-On your own defect, the steps are those of [See it work](#see-it-work), from step 2 on:
-
-1. **Reproduce the defect.** Write the report as a scenario: who calls which endpoint, with what body, and what the correct answer is; `parallel` sends one call several times at once, for double-clicks and retries. [`repro.py`](.github/skills/failure-reproduction/repro.py) describes the format, and [`scenarios/duplicate-decision.json`](scenarios/duplicate-decision.json) is the run's. Run it against your API:
-
-   ```powershell
-   python .github/skills/failure-reproduction/repro.py <scenario.json> --api <your API's address>
-   ```
-
-   What you should see: it ends with `REPRODUCED` and lists the expectations the defect breaks, as in [step 2](#2-the-scenario-reproduced-the-defect).
-2. **Hand it to Copilot.** File the Issue with the *Test: defect to fix test-first with Copilot* form, with the scenario and its output under *Reproduce*. Assign it to **Copilot** with the **test-github** agent and, as the base branch, the branch that has the defect: one the proof watches. From a terminal instead (replace `<issue>` and `<branch>`; it prints `Copilot` and your login):
-
-   ```powershell
-   $repo = gh repo view --json nameWithOwner -q .nameWithOwner
-   @{ assignees = @('copilot-swe-agent[bot]'); agent_assignment = @{ target_repo = $repo; base_branch = '<branch>'; custom_agent = 'test-github' } } |
-     ConvertTo-Json -Compress | gh api -X POST "repos/$repo/issues/<issue>/assignees" --input - --jq '.assignees[].login'
-   ```
-
-   What you should see: within seconds Copilot opens a draft pull request, and when its session ends, a tests-only commit comes before the fix, as in [step 3](#3-copilot-committed-failing-tests-then-the-fix).
-3. **Approve its workflow runs:** select **Approve workflows to run** in the pull request's merge box, or start every waiting run of its latest commit from a terminal:
-
-   ```powershell
-   $head = gh pr view <pr> --json headRefOid -q .headRefOid
-   gh run list --commit $head --json databaseId,conclusion -q '.[] | select(.conclusion == "action_required") | .databaseId' | ForEach-Object { gh run rerun $_ }
-   ```
-
-   See [step 4](#4-a-person-approved-the-workflow-runs).
-4. **Read the proof:** `gh pr checks <pr> --watch`. What you should see: *Regression tests fail before the fix and pass after it* passes, and its summary lists each failure at the tests-only commit in the tests' own words, as in [step 5](#5-the-proof-showed-the-tests-failing-first).
-5. **If CI fails, read why.** When CI fails on the pull request, the CI failure investigation adds one label and posts a comment headed *CI failure investigation*. For each failing test it gives the assertion message, the file and line, a link to the log, its class, and the next step. `ci:defect-reproduced` means every failure is a test that the pull request adds or changes, failing as intended, as on a tests-only commit: the fix should make it pass. `ci:regression` means the change broke a test or a check that passes on main: fix the code, not the test. `ci:infrastructure` means a failure also happens on main, or isn't a test: rerun the failed job. The comment explains; you decide. [Step 10](#10-added-since-an-agentic-workflow-explained-two-red-ci-runs-11-november-2026) shows a `ci:defect-reproduced` comment and a `ci:regression` one.
-6. **Ask Copilot for a code review:** select **Reviewers** > **Copilot** in the pull request, or run `gh pr edit <pr> --add-reviewer "@copilot"`. See [step 6](#6-copilot-code-review-found-a-gap-the-tests-missed).
-7. **Post the evidence** on the pull request. Run it from your default branch, never from the pull request's branch: its copy of the script could leave out what the report must say.
-
-   ```powershell
-   python .github/skills/review-evidence/review_evidence.py --pr <pr> --comment
-   ```
-
-   Section 1 lists the checks and the proof: they decide. If the pull request changes where its checks are defined (anything under the folders in `CHECK_DEFINITIONS`), section 1 opens with a warning that lists those files, because its checks ran with its own version of its workflows: read them first. Section 2 lists the review comments: they inform. Section 3 records the decision: only reviews from the repository's owner, members, and collaborators count, and anyone else's review is listed as not counted, without its text. The comment is posted with your token, so everything it quotes from GitHub is inert: it can't mention anyone, which would start Copilot in your name, or refer to an Issue or a pull request, and it can't add a link, an image, or HTML. See [step 7](#7-the-evidence-comment-kept-checks-apart-from-comments).
-8. **Decide.** Read the tests in the tests-only commit: do they assert what the Issue expects, including the concurrent case? If the review found a gap, ask `@copilot` on the pull request, as in [step 8](#8-a-person-asked-for-a-change-and-the-new-commit-passed-the-same-gates), approve the new commit's runs, and post the evidence again. Then approve or request changes as a GitHub review, and post the evidence once more, so it records who decided:
-
-   ```powershell
-   gh pr review <pr> --approve --body "<what you checked: the tests, the proof, the review>"
-   python .github/skills/review-evidence/review_evidence.py --pr <pr> --comment
-   ```
-
-   Use `--request-changes` instead of `--approve` to send it back. Once you approve, merge the fix as you merge any change.
-
-### What it costs
-
-Setting it up uses no AI credits. Each defect fixed this way draws on your Copilot plan's AI credits, for the cloud agent's sessions and its code review, and on GitHub Actions. In the recorded run, Copilot's first session reported 6.3 AI credits, and the optional Copilot CLI session of step 9 reported 25.48. The run used 42.8 minutes of standard GitHub-hosted runners: 29.8 for Copilot's two sessions and its code review, 8.2 for CI, 3.1 for the proof, and 1.7 for this repository's other workflows. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 57 minutes for the recorded run, because each job is rounded up to a whole minute. The length of your test suite changes the CI and proof minutes ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
-
-The CI failure investigation runs only when CI fails on a fix's pull request. In step 10's four runs, Copilot used 13.3 to 15.2 AI credits per run and threat detection 0.62, drawn from the Copilot plan of the token's owner. gh-aw stops a run at 40 credits for Copilot and 2 for detection, about 2.5 times the most a run used, and stops the workflow at 400 credits a day, about 25 investigations. These caps are `max-ai-credits`, `safe-outputs.threat-detection.max-ai-credits`, and `max-daily-ai-credits` in its source. Each run used 4 min 49 s to 6 min 0 s of runner time: 3.5 to 4.5 minutes on `ubuntu-latest` for Copilot and detection, and 1.1 to 1.6 on the single-CPU `ubuntu-slim` for the other four jobs. Those minutes are free in a public repository. In a private one, each job is rounded up to a whole minute, so each run counted 5 minutes of 2-core Linux and 4 of 1-core Linux ([runner pricing](https://docs.github.com/en/billing/reference/actions-runner-pricing)).
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on RequestHub, before you adapt anything. You repeat the run in [See it work](#see-it-work) in your own copy, and it costs what [What it costs](#what-it-costs) lists for the recorded run.
+
+The copy also has the files of this folder that belong to the demo: [`duplicate-decision-issue.md`](duplicate-decision-issue.md), the defect report that becomes the Issue Copilot receives; [`lab/duplicate-decision.patch`](lab/duplicate-decision.patch), the defect, which removes the decision guards and the tests that cover them; [`scenarios/duplicate-decision.json`](scenarios/duplicate-decision.json), the reported defect as data (a retry, a second approver, and eight parallel clicks), and [`scenarios/whitespace-rejection.json`](scenarios/whitespace-rejection.json), a second, smaller defect for the same procedure; [`evidence/`](evidence/), the recorded run's two proofs, and the CI failure investigation's runs of 11 November; and [`images/`](images/), the screenshots from the recorded run and from step 10's run.
 
 ### Quick start
 
@@ -559,75 +711,16 @@ git branch -D test/whitespace-rejection    # if you ran step 9
 
 Never merge Copilot's pull request in the copy: step 1 rebuilds the lab branch from `main` for the next run. What you should see: `gh pr list --base lab/test-duplicate-decision` prints nothing, and `gh issue list --label phase:test --state open` lists no Issue from the run.
 
-## Clean up
-
-**In your repository,** remove what you copied, the labels, the token, and the services you added to `copilot-setup-steps.yml` only for this solution. Two skills are shared: 03-develop-github uses `regression-validation` and `contract-impact`, and 02-design-github uses `contract-impact`.
-
-```powershell
-Remove-Item -Recurse -Force .github/agents/test-github.agent.md, .github/skills/failure-reproduction, .github/skills/review-evidence, .github/skills/ci-investigation, .github/workflows/test-github-proof.yml, .github/workflows/test-github-checks.yml, .github/workflows/test-github-ci-investigation.md, .github/workflows/test-github-ci-investigation.lock.yml, .github/ISSUE_TEMPLATE/04-test-github-defect.yml, tests/test_review_evidence.py, tests/test_ci_investigation.py
-Remove-Item -Recurse -Force .github/skills/regression-validation, .github/skills/contract-impact    # unless another solution uses them
-gh label delete phase:test --yes
-gh label delete ci:defect-reproduced --yes
-gh label delete ci:regression --yes
-gh label delete ci:infrastructure --yes
-gh label delete ai-sdlc --yes    # unless other Issues carry it
-gh secret delete COPILOT_GITHUB_TOKEN    # unless another agentic workflow uses it
-```
-
-Then revoke the token: on GitHub, **Settings** → **Developer settings** → **Personal access tokens** → [**Fine-grained tokens**](https://github.com/settings/personal-access-tokens), delete `COPILOT_GITHUB_TOKEN`. The agentic workflows of [06-release-github](../06-release-github/) and [07-operate-github](../07-operate-github/) use the same secret: keep it if you use them.
-
-**In the copy,** [reset it](#reset-the-copy-for-another-run), then delete the lab branch:
+When you no longer use this solution in the copy, delete the lab branch:
 
 ```powershell
 git branch -D lab/test-duplicate-decision
 git push origin --delete lab/test-duplicate-decision
 ```
 
-The [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
+When you no longer need the copy, the [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete it.
 
-This solution creates no GitHub App or webhook, and apart from the CI failure investigation's token, no secret: you act with your own GitHub CLI sign-in, and its workflows with the token GitHub gives each run.
+### Troubleshooting the copy
 
-## What's in this folder
-
-```text
-04-test-github/
-├── README.md
-├── duplicate-decision-issue.md         the defect report: becomes the Issue Copilot receives
-├── requirements.txt                    no packages needed: the scripts use the Python standard library
-├── evidence/                           the recorded run's two proofs, and the CI failure investigation's runs of 11 November
-├── images/                             screenshots from the recorded run and from step 10's run, used in this README
-├── lab/duplicate-decision.patch        the defect: removes the decision guards and the tests that cover them
-├── scenarios/
-│   ├── duplicate-decision.json         the reported defect as data: a retry, a second approver, eight parallel clicks
-│   └── whitespace-rejection.json       a second, smaller defect for the same procedure
-├── tests/
-│   ├── test_review_evidence.py         unit tests: the evidence report never speaks for anyone else (offline, fake gh)
-│   └── test_ci_investigation.py        unit tests: the CI investigation's facts, and the runs it must leave alone (offline, fake gh)
-└── .github/
-    ├── agents/test-github.agent.md     the custom Copilot agent: reproduce, failing tests first, then the fix
-    ├── skills/
-    │   ├── failure-reproduction/       repro.py runs a scenario against a running API
-    │   ├── review-evidence/            prove_fix.py (fails before, passes after) and review_evidence.py (the report)
-    │   ├── ci-investigation/           ci_failure_facts.py collects a failed CI run's facts; SKILL.md sorts them into three classes
-    │   ├── regression-validation/      runs the test suites that cover a change (shared with 03-develop-github)
-    │   └── contract-impact/            additive-only API contract check that regression-validation calls (shared)
-    ├── workflows/
-    │   ├── test-github-proof.yml       proves the fix test-first on fix pull requests
-    │   ├── test-github-ci-investigation.md         the agentic workflow: explains why CI failed on a fix's pull request
-    │   ├── test-github-ci-investigation.lock.yml   what GitHub runs: compiled from the .md by gh-aw v1.2.2
-    │   └── test-github-checks.yml      runs the unit tests, and checks the lock file, on pull requests that change this solution
-    └── ISSUE_TEMPLATE/04-test-github-defect.yml
-```
-
-## Troubleshooting
-
-- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run**, or run `gh run rerun <run-id>`.
-- **The runs of an earlier commit show as cancelled.** Approving the waiting runs of several commits starts them together, and the newest run in each concurrency group cancels the older ones. Approve the latest commit's runs; the proof still tests the tests-only commit.
 - **The feature bounds check on Copilot's *Initial plan* commit keeps waiting.** Nothing needs it: approve the latest commit's runs, which include the same check. When the pull request closes, GitHub marks the waiting run as failed, without running it.
-- **The proof fails with *Not proven: no tests-only commit before the fix* on a pull request that isn't a fix.** The proof ran on a pull request into one of its `branches` that has no tests-only commit. Narrow `branches`, or guard the proof as in [one-time step 3](#one-time-setup).
-- **The pull request description has no evidence.** Copilot sometimes writes its evidence summary only at the end of the session. Read it under **View session**, or ask `@copilot` to add it to the description.
 - **Port 5080 or the `requesthub` database is already in use** (for example on a shared machine). Give the API its own: set `$env:ConnectionStrings__RequestHub = "Host=localhost;Port=5432;Database=rh_lab;Username=requesthub;Password=devpass"`, start it with `--urls http://localhost:5081`, and pass `--api http://localhost:5081` to `repro.py`. Tell Copilot CLI the same port and database in its prompt.
-- **`error: cannot reach http://localhost:5080`.** The API is not running yet, or runs on another port.
-- **`gh aw compile` fails with *Unknown properties: report-missing-data, report-missing-tool*.** Your gh-aw is older than the workflow: v0.92.0 printed this when this README was checked. `gh aw version` must print `v1.2.2`, the version in `test-github-checks.yml`. Run `gh extension remove gh-aw`, then `gh extension install github/gh-aw --pin v1.2.2`, and compile again.
-- **`gh aw compile --strict` fails with *CTR-021: [workflow-run-scope] workflow_run lacks positive branch scope*.** Strict mode refuses `branches: ["**"]` and negative-only patterns under `on.workflow_run`. Name the branches your fixes come from, such as `copilot/**` for Copilot's and `fix/**` for your own.
-- **The links in the CI failure investigation's comment are broken, with `%60%60` in them.** With `allowed-github-references: []`, which keeps the comment from adding an item to any Issue's or pull request's timeline, gh-aw wraps everything shaped like a GitHub reference (`#123`, `owner/repo#123`) in a code span, inside links too. A link that ends in `…/RequestHub.Tests/RequestLifecycleTests.cs#L102` or `…/job/130606824425#step:6:1` has that shape, so the first comments on #359 and #360 came out with links such as `…/RequestHub.%60%60Tests/RequestLifecycleTests.cs#L102%60%60`. [#361](https://github.com/melabadi/adept-assessment-northstars/pull/361) fixed it: `ci_failure_facts.py` puts a query before every `#` (`?plain=1#L102`, `?pr=359#step:6:1`), which the pattern can't match, and `tests/test_ci_investigation.py` runs gh-aw's pattern over every link the facts hold. If you change how the facts build a link, keep a query before its `#`.

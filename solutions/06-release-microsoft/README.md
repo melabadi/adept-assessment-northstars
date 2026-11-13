@@ -4,11 +4,32 @@ Most release incidents start the same way: a new build replaces the one users ar
 
 ![The Azure portal during a release: the new build runs as the candidate revision with 0% of traffic, beside the stable revision with 100% and the previous one with 0%, kept running for a rollback](images/02-portal-candidate.png)
 
+- **[Install it in your repository](#install-it-in-your-repository):** about 15 minutes of one-time setup in Azure and GitHub, once your API runs on Container Apps in multiple-revision mode and the release's smoke test uses your API. [Getting started](#getting-started) lists the commands in order.
+- **[Files to edit to tweak it](#files-to-edit-to-tweak-it):** the release's smoke test, the build, your app's platform in the Bicep, and the gate's timings.
 - **[See it work](#see-it-work):** a real run on RequestHub, this repository's sample app. A commit of `main` became a tested candidate 4 minutes 10 seconds after its build started, and the promote job moved all traffic to it in one change. A rehearsed bad release failed the gate 79 seconds after it was created, without receiving a user request, and a rollback moved traffic back in 16 seconds.
-- **[Add it to your repository](#add-it-to-your-repository):** about 15 minutes of one-time setup in Azure and GitHub, once your API runs on Container Apps in multiple-revision mode and the release's smoke test uses your API.
 - **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 20 minutes to set it up on RequestHub, then about 15 minutes for the steps of See it work: 17 and 14 minutes in a fresh setup we timed, without Azure Copilot's step.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/revisions), in multiple-revision mode | Runs the new build as a candidate revision with 0% of traffic, beside the stable one, on its own label URL; one traffic change promotes it, and one rolls back |
+| [Container Apps jobs](https://learn.microsoft.com/azure/container-apps/jobs) | Five jobs, from one image, run the steps: release, promote, abort, rollback, and drill |
+| [Azure Container Registry tasks](https://learn.microsoft.com/azure/container-registry/container-registry-tasks-overview) | Build each commit of `main` once, started by GitHub's webhook |
+| [Event Grid](https://learn.microsoft.com/azure/event-grid/overview) | Delivers each push of the API's image to the release trigger |
+| [Azure Functions](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan), on the Flex Consumption plan, in Python | The release trigger: checks each push, then starts the release job with the image's digest |
+| [Azure Monitor](https://learn.microsoft.com/azure/azure-monitor/visualize/workbooks-overview): Log Analytics and a workbook | Keep each step's release record, and show it with who started each step, from the Activity log, and every traffic change, from Azure Resource Graph |
+| [Azure Copilot](https://learn.microsoft.com/azure/copilot/overview) | Answers the release manager's questions about a failing revision, in the portal |
+| Managed identities and Microsoft Entra ID | The jobs run as the release identity, which the smoke test signs in with; the trigger function may start the release job and nothing else |
+| [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/) and [Bicep](https://learn.microsoft.com/azure/azure-resource-manager/bicep/overview) | Deploy the release with `azd up`, whose hooks run the unit tests and connect Event Grid to the function |
+| GitHub: a [fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) and a [webhook](https://docs.github.com/en/webhooks/about-webhooks) | The build task clones the repository with the token, and the webhook tells it about commits to `main`. Nothing runs in GitHub Actions |
+| Python 3.12 and PowerShell 7 | The scripts, which use only Python's standard library (the trigger adds `azure-functions`), and the commands in this README |
+
+The shipped files are RequestHub's: its API's image, `requesthub-api`, built from `app/Dockerfile`; its platform, from `app/infra`; and a smoke test of its business flow. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for yours.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 6 of 7: Release.** The GitHub counterpart is [06-release-github](../06-release-github/): release evidence and approval on GitHub. This solution covers how a new build reaches users on Azure, with the release orchestrated in Azure itself. To release the exact image whose test evidence GitHub recorded, instead of a build of its own, use both, as in the [Release solution combo](../../PRESENTING.md#release-github-tests-one-image-azure-stages-that-digest-a-person-decides).
 
@@ -22,14 +43,9 @@ Most release incidents start the same way: a new build replaces the one users ar
 | Understanding a failure | Someone digs through logs. | Azure Copilot answers questions in the portal, in plain language, and the workbook shows what the gate read from the failing revision. |
 | Rolling back | Rebuild or redeploy the old version while users wait. | One traffic change to the previous revision, still running, then the same checks. |
 
-**The value:** every build is tested where it will run before any user reaches it, a person decides with the evidence in front of them, and recovery takes seconds, with no build agent and no Azure credential in GitHub. In [See it work](#see-it-work):
+**The value:** every build is tested where it will run before any user reaches it, a person decides with the evidence in front of them, and recovery takes seconds, with no build agent and no Azure credential in GitHub. [Results and value](#results-and-value) has what the recorded run measured.
 
-- A commit of `main` was built once and became a tested candidate, waiting for a person, 4 minutes 10 seconds after its build started. Nobody ran a pipeline.
-- While the candidate was tested on its own URL, production kept 100% of traffic: all 91 calls the release job made to production during the gate succeeded.
-- The promote job moved traffic to the candidate in one change of 13 seconds, and the rollback job moved it back in one change of 16 seconds. Production passed every check after each.
-- A rehearsed bad release failed the gate 79 seconds after it was created and was removed without receiving a user request. Its record named the cause, in Azure's words and the app's own.
-
-## How it works
+### How it works
 
 ```mermaid
 sequenceDiagram
@@ -70,6 +86,340 @@ sequenceDiagram
 - **People** merge, read the record, decide go or no-go, and roll back. The gate is deterministic, and nothing in the solution, AI or not, promotes, aborts, or rolls back on its own.
 
 **Outside contributions reach nothing in Azure.** On a public repository anyone can open an Issue or a pull request, from a fork too, and comment. None of that starts a build or a release: the only thing GitHub sends Azure is the build task's webhook for pushes, and only a push to `main` (a merge by someone with write access) starts a build. The registry, Event Grid, and the jobs are reachable only from Azure, and the trigger function answers only calls with its Event Grid key, which Event Grid reads from Azure itself. No GitHub Actions workflow takes part.
+
+## Install it in your repository
+
+These are the steps that set the solution up on RequestHub. We have run them only on RequestHub: for your app, the commands stay the same, and [Files to edit to tweak it](#files-to-edit-to-tweak-it) names the changes. Try your first releases on a test environment of your app. [Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see.
+
+### Prerequisites
+
+- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. Docker is not needed: Azure Container Registry builds every image.
+- Admin rights on the repository, to create the build task's token.
+- Your app's API on Azure Container Apps, with its image in an Azure container registry, and:
+  - multiple-revision mode (`activeRevisionsMode: Multiple`) with ingress, so that revisions get labels and traffic weights;
+  - an HTTP readiness probe that checks what a request needs, such as the database, as RequestHub's `/health/ready` does in [`app/infra/api.bicep`](../../app/infra/api.bicep);
+  - an anonymous endpoint that reports the commit the image was built from, as RequestHub's `/api/meta` does from the `BUILD_SHA` build argument;
+  - Microsoft Entra ID sign-in, which the smoke test uses with the jobs' managed identity: if your API signs in another way, change `api_token()` in `release.py`;
+  - a Log Analytics workspace behind its Container Apps environment, which keeps the jobs' release records.
+- An Azure subscription where you can create resources and role assignments in your app's resource group, for example as Owner.
+- Azure Copilot in the Azure portal, which is on by default; an administrator can [limit who uses it](https://learn.microsoft.com/azure/copilot/manage-access).
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must say you're logged in to github.com, Python must be 3.12 or later, and PowerShell 7.4 or later; the Azure CLI and the Azure Developer CLI print their versions ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   "az: " + (az version | ConvertFrom-Json).'azure-cli'; azd version
+   ```
+
+2. **Copy the folder on a new branch,** here as `release/`, without the evidence and the screenshots. The copy adds the licence that must travel with the files and a `.gitignore` for what the scripts and tests write, and prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-safe-rollout
+   $dest = 'release'
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-06-release-microsoft'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   $from = Join-Path $src 'solutions/06-release-microsoft'
+   Remove-Item -Recurse -Force (Join-Path $from 'evidence'), (Join-Path $from 'images')
+   New-Item -ItemType Directory -Force $dest | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $from '*') $dest
+   Copy-Item -Force (Join-Path $src 'LICENSE') $dest
+   Set-Content (Join-Path $dest '.gitignore') '__pycache__/', '.venv/', 'out/'
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 25 new files under `release/`, in 7 to 10 seconds when this README was checked. GitHub reads a repository's own licence only from its root, so yours doesn't change. The folder can sit anywhere in your repository: nothing in it depends on its place but the paths to RequestHub's `app/` in `infra/main.bicep` and `azure.yaml`, which step 3 replaces with your app's, and [one-time step 3](#3-let-azure-build-every-commit-of-main) finds `acr-build.yaml` wherever it is.
+
+3. **Edit the files for your code,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) lists. Then, from the folder, run the offline tests, which azd also runs before every deploy:
+
+   ```powershell
+   cd release
+   python -m unittest -v
+   ```
+
+   They end with `OK`. The copy's `.gitignore` keeps the `__pycache__/` folders they write out of git.
+
+4. **Set it up once,** from the folder: deploy, then check the setup ([Deploy](#1-deploy) and [Check the setup](#2-check-the-setup)):
+
+   ```powershell
+   az login
+   azd auth login
+   azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+   azd env set API_APP_NAME <your API's container app>   # and every other value your main.bicep reads
+   azd up
+   python preflight.py
+   ```
+
+   `azd up` ends with `SUCCESS`, and every line of the preflight reads `PASS`, except **Build**, which warns until step 5 creates the build task. Meanwhile, create the build task's token on GitHub ([one-time step 3](#3-let-azure-build-every-commit-of-main)).
+
+5. **Merge it into your default branch,** then let Azure build every commit of it: the build task reads `acr-build.yaml` from `main` ([one-time step 3](#3-let-azure-build-every-commit-of-main)). Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .
+   git commit -m "Add 06-release-microsoft from ai-sdlc <commit>"
+   git push -u origin add-safe-rollout
+   gh pr create --fill
+   ```
+
+   azd keeps its environment out of git. Merge the pull request as you merge any change. Then, from the folder, create the build task, pasting the token when asked:
+
+   ```powershell
+   $registry = azd env get-value AZURE_CONTAINER_REGISTRY_NAME
+   $repo = gh repo view --json url --jq .url
+   $token = Read-Host -MaskInput 'Fine-grained token for this repository'
+   az acr task create --registry $registry --name build-api --context "$repo.git#main" `
+     --file (git ls-files --full-name acr-build.yaml) --git-access-token $token `
+     --commit-trigger-enabled true --pull-request-trigger-enabled false --base-image-trigger-enabled false --output none
+   Remove-Variable token
+   ```
+
+   `python preflight.py` then reads `PASS  Build  build-api builds every commit to main`.
+
+6. **Use it on your next merge to `main`.** The registry builds the merge commit, and its push starts the release job. When the candidate waits for a person, read the release job's `gate` row in the workbook **RequestHub release records**, then run the promote job for a go or the abort job for a no-go ([Use it the first time](#use-it-the-first-time)). For a go, from the folder:
+
+   ```powershell
+   $rg = azd env get-value AZURE_RESOURCE_GROUP
+   $job = @{}; 'release', 'promote', 'abort', 'rollback', 'drill' | ForEach-Object { $job[$_] = (azd env get-value SERVICE_RELEASE_NAME) -replace '^caj-release-', "caj-$_-" }
+   az containerapp job start -g $rg -n $job.promote --query name -o tsv
+   ```
+
+### One-time setup
+
+About 15 minutes, once the files describe your app. On RequestHub, the `azd provision` that added the trigger function's resources to the running platform took 5 minutes 38 seconds, and deploying the jobs and the trigger took about a minute each. Creating the build task takes a few minutes. A fresh setup on 12 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, deployed RequestHub too, which took most of the time ([the evidence](evidence/2026-11-12-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Deploy: `azd up` | 15 minutes 34 seconds, RequestHub included: its Container Apps environment took 6 minutes 34 seconds and its PostgreSQL server 6 minutes 40 seconds, side by side, and azd counted 10 minutes 33 seconds of provisioning and 4 minutes 47 seconds of deploying |
+| 2. Check the setup: `python preflight.py` | 1 minute 16 seconds: 18 checks passed, and **Build** warned |
+| 3. Let Azure build every commit of main: the token | a few minutes for a person on GitHub |
+| 3. Let Azure build every commit of main: `az acr task create` and the lines before it | 6 seconds; the preflight then took 1 minute 14 seconds and passed all 19 checks |
+
+#### 1. Deploy
+
+From the folder you copied, give azd the values your `main.bicep` reads for your app, then deploy:
+
+```powershell
+cd release
+az login
+azd auth login
+azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+azd env set API_APP_NAME <your API's container app>   # and every other value your main.bicep reads
+azd up
+```
+
+`--subscription` deploys to the subscription that `az` signed in to, where `preflight.py` and the README's `az` commands look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd env new` stores no subscription, and `azd up` asks you to pick one of yours.
+
+**What you should see:** `azd up` ends with `SUCCESS`. Before it deploys the services, azd runs the unit tests (the `predeploy` hook), which end with `OK`; afterwards, it connects Event Grid to the function (the `postdeploy` hook), which prints nothing unless it fails. In the Azure portal, your app's resource group now has the five release jobs (`caj-release-*`, `caj-promote-*`, `caj-abort-*`, `caj-rollback-*`, and `caj-drill-*`), the trigger function (`func-release-*`), the Event Grid system topic on your registry (`evgt-registry-*`), and the workbook **RequestHub release records**.
+
+From now on, ship your API only through the release: deploying it another way replaces the stable revision without a gate. To change the release itself, run `azd deploy release`; to change the trigger, `azd deploy trigger`.
+
+#### 2. Check the setup
+
+From the same folder, run `python preflight.py`. It checks the API's revision mode, traffic, and probes, the database, production's readiness, the five jobs and the release identity's roles, the trigger function and its sole right to start the release job, Event Grid's topic and subscription, the build task, and the workbook.
+
+**What you should see:** every line reads `PASS`, except **Build**, which warns until you create the build task in step 3. On RequestHub, on 10 November 2026, with the build task's commit trigger off:
+
+![The preflight: 18 checks pass, covering multiple-revision mode, traffic, probes, the database, production, the five jobs, the release identity's three roles, the trigger function, its sole right to start the release job, Event Grid's topic and subscription, and the workbook; Build warns because the build task's commit trigger is off](images/00-preflight.png)
+
+When you run it, the hint under **Build** points to step 3 below and to [Use it the first time](#use-it-the-first-time).
+
+#### 3. Let Azure build every commit of main
+
+A person with admin rights on the repository does this once; it is the only GitHub access Azure gets.
+
+1. In GitHub, open **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**. Name it, for example, `ACR Tasks · release builds`, choose an expiration, and under **Repository access** select **Only select repositories** and your repository. Under **Repository permissions**, set **Contents** to **Read-only**, **Commit statuses** to **Read-only**, and **Webhooks** to **Read and write**; GitHub adds **Metadata: Read-only** itself. That is the set ACR accepted in our setup. ACR clones the repository with the token, and creates the webhook that tells it about commits to `main`.
+2. Commit the folder to `main`: the task reads `acr-build.yaml` from there. Then create the task from the folder, pasting the token when asked:
+
+   ```powershell
+   $registry = azd env get-value AZURE_CONTAINER_REGISTRY_NAME
+   $repo = gh repo view --json url --jq .url
+   $token = Read-Host -MaskInput 'Fine-grained token for this repository'
+   az acr task create --registry $registry --name build-api --context "$repo.git#main" `
+     --file (git ls-files --full-name acr-build.yaml) --git-access-token $token `
+     --commit-trigger-enabled true --pull-request-trigger-enabled false --base-image-trigger-enabled false --output none
+   Remove-Variable token
+   ```
+
+**What you should see:** `python preflight.py` reads `PASS  Build  build-api builds every commit to main`. It fails if a pull request can start the task: keep `--pull-request-trigger-enabled false`. From now on, every commit to `main` is built once and released as a candidate.
+
+**To pause the builds, or renew the token.** Azure CLI 2.91 and 2.92 can't change a task's source trigger: `az acr task update` fails with "Object of type set is not JSON serializable", even to change only the trigger's status or its token. Change the task through Azure Resource Manager with `Update-BuildTask` instead. Define it once in each terminal, in the folder; defining it changes nothing:
+
+```powershell
+$taskUrl = "https://management.azure.com$(az acr task show --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --name build-api --query id -o tsv)?api-version=2019-06-01-preview"
+function Update-BuildTask($properties) {
+  $arm = @{ Authorization = "Bearer $(az account get-access-token --query accessToken -o tsv)" }
+  $body = @{ properties = $properties } | ConvertTo-Json -Depth 8
+  $task = Invoke-RestMethod -Method Patch -Uri $taskUrl -Headers $arm -ContentType 'application/json' -Body $body
+  "commit trigger: $($task.properties.trigger.sourceTriggers.status)"
+}
+```
+
+Then turn the commit trigger off, for example on a day with many merges:
+
+```powershell
+Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; status = 'Disabled' }) } }
+```
+
+Or back on:
+
+```powershell
+Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; status = 'Enabled' }) } }
+```
+
+Each call prints the trigger's new state, for example `commit trigger: Disabled`. While the trigger is off, start each build yourself, as in [Use it the first time](#use-it-the-first-time).
+
+Before the token expires, give the task a new one, pasting it when asked. Define `Update-BuildTask` first, as above. The token goes to Azure in the request body, never on a command line:
+
+```powershell
+$token = Read-Host -MaskInput 'New fine-grained token for this repository'
+Update-BuildTask @{
+  step = @{ type = 'FileTask'; contextAccessToken = $token }
+  trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; sourceRepository = @{ sourceControlAuthProperties = @{ tokenType = 'PAT'; token = $token } } }) }
+}
+Remove-Variable token
+```
+
+**Without the build task**, build an export of `main` with `az acr build`, with your build context and Dockerfile in place of RequestHub's `app`. The push starts the release exactly the same way:
+
+```powershell
+git fetch origin main
+$sha = git rev-parse origin/main
+$src = New-Item -ItemType Directory -Force (Join-Path ([IO.Path]::GetTempPath()) "requesthub-$sha")
+git -C (git rev-parse --show-toplevel) archive $sha app | tar -x -C $src
+az acr build --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --image "requesthub-api:$sha" --image requesthub-api:main `
+  --build-arg "BUILD_SHA=$sha" --file "$src/app/Dockerfile" --no-logs "$src/app"
+```
+
+### Use it the first time
+
+Merge a pull request to `main`. The registry builds the merge commit, and its push starts the release job. On RequestHub, merging pull request [#251](https://github.com/melabadi/adept-assessment-northstars/pull/251) at 03:05:30 UTC on 1 November 2026 started the build 2 seconds later, and the candidate passed the gate and waited for a person at 03:09:35, 4 minutes 5 seconds after the merge ([the evidence](evidence/2026-11-01-recorded-run.md#a-merge-with-the-commit-trigger-on)). In a fresh setup on 12 November, a merge to a copy's `main` started the build 2.6 seconds later, and the candidate waited for a person 4 minutes 28 seconds after the merge ([the evidence](evidence/2026-11-12-fresh-setup.md#the-run)).
+
+While the commit trigger is off, start the build yourself for the newest commit of `main`. `--context` pins it to that commit, even if `main` moves on meanwhile; ACR clones it with the task's token and tags the image with it:
+
+```powershell
+git fetch origin main
+$sha = git rev-parse origin/main
+$repo = gh repo view --json url --jq .url
+az acr task run --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --name build-api `
+  --context "$repo.git#$sha" --set "commit=$sha" --no-logs
+```
+
+**What you should see:** in the Azure portal, the release job's **Execution history** lists the execution the push started (the job's name is `azd env get-value SERVICE_RELEASE_NAME`), which succeeds about 2½ minutes later. In the workbook **RequestHub release records**, in your resource group, the release job's `gate` row lists the checks, and in the API's **Revisions and replicas**, the new revision is `candidate` with 0% of traffic; `python release.py status` shows the same from the terminal. Then decide: run the promote job (go) or the abort job (no-go), with **Run now** on its page, or from the terminal:
+
+```powershell
+$rg = azd env get-value AZURE_RESOURCE_GROUP
+$job = @{}; 'release', 'promote', 'abort', 'rollback', 'drill' | ForEach-Object { $job[$_] = (azd env get-value SERVICE_RELEASE_NAME) -replace '^caj-release-', "caj-$_-" }
+az containerapp job start -g $rg -n $job.promote --query name -o tsv
+```
+
+Then make it part of your workflow:
+
+- **Rehearse a bad release once**, with the drill job, before you rely on the gate: the gate must fail the drill's candidate and remove it.
+- **Keep database migrations backward compatible.** Every revision shares one database, and a candidate runs its migrations when it starts, even without traffic, so the previous revision must keep working with them. A revision switch is not a database rollback.
+- **Releases that change configuration.** `deploy` copies the stable revision's configuration and changes only the image, so a release changes one thing. If a release must also change settings, deploy the candidate from your Bicep with traffic pinned to the stable revision.
+- **Background workers** that don't serve traffic can stay in single-revision mode and update after the API is promoted.
+- **Keep revision suffixes free of hyphens.** Azure's system logs cut a revision name at the first hyphen of its suffix, which breaks log queries by revision.
+
+**The metric to track when you adopt it:** how many builds that failed their checks reached users, which the gate should keep at zero, and how long it takes to restore service when a promoted build misbehaves: the rollback job took 45 seconds in See it work. Compare both with how releases went before. A target is a goal you set, never a result.
+
+### What it costs
+
+Your app bills as it already does. The solution adds the previous revision, which keeps running for an instant rollback (one more replica of your API while it exists); the trigger's private endpoint, about $7 a month; and, for each release, about 2 minutes of building in the registry and a few minutes of Container Apps jobs, which cost cents. The function and Event Grid run only when a build is pushed. Azure Copilot's answers cost nothing extra: its capabilities are included at no extra cost, except the Observability Agent ([Microsoft Learn](https://learn.microsoft.com/azure/copilot/overview#pricing-and-availability)). On RequestHub, the whole resource group, the app's platform included, costs about $120 a month: see [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository). The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+
+## Files to edit to tweak it
+
+The copy brings the whole folder except `evidence/` and `images/`, which belong to the run in [See it work](#see-it-work). RequestHub's app and its platform, in this repository's `app/`, stay behind: `infra/main.bicep` and `azure.yaml` deploy them from there until you point them at your app, as the table below says.
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File | What it does here | What to change for your app |
+| --- | --- | --- |
+| [`release.py`](release.py) | The release steps, and the smoke test, `smoke()`: RequestHub's sign-in, submit, safe retry, read, attachment, approval guard, and audit history | `CONTAINER` and `REPOSITORY`, your container's and image's names, and `CONTRACT` with the `/api/meta` check at the start of `smoke()`, to what your build endpoint reports. The rest of `smoke()`: your own critical journeys, safe to repeat, including one that proves a business rule and one for each dependency your readiness probe doesn't cover (RequestHub's Blob storage). The drill's fault, `Faults__FailReadiness` with `Faults__ExpiresAtUtc` in `deploy_candidate`, which promote and rollback refuse: a setting that makes your readiness probe fail until it expires. |
+| [`test_release.py`](test_release.py) | Offline tests of the release's safety rules | Its fixtures name RequestHub's image, `requesthub-api`, and the drill's fault setting: change them when you change `REPOSITORY` or the fault. |
+| [`acr-build.yaml`](acr-build.yaml) | The build task: build the API for a commit, push `requesthub-api:<commit>` and `:main` | The image name, the Dockerfile, and the build context (`-f app/Dockerfile app`). Keep passing the commit as the `BUILD_SHA` build argument. |
+| [`infra/main.bicep`](infra/main.bicep), [`main.parameters.json`](infra/main.parameters.json) | Creates the resource group, RequestHub's platform (`module app`), and the release | Replace RequestHub's platform with your app's, as described below the table. |
+| [`infra/release.bicep`](infra/release.bicep) | Event Grid on the registry, the trigger function with its network and storage, the workbook, and AcrPull for the jobs | `repository`, your image's name: Event Grid's filter and the function's check both use it. The trigger's network links to the app's private DNS zone for Blob storage (`blobZone`); if your platform has none, create the zone here. |
+| [`infra/jobs.bicep`](infra/jobs.bicep), [`jobs.parameters.json`](infra/jobs.parameters.json) | The five jobs, their settings, and the function's right to start the release job | Nothing, if your `main.bicep` keeps the outputs they read. |
+| [`azure.yaml`](azure.yaml) | The azd project: RequestHub's `api` and `worker`, the `release` jobs, the `trigger` function, and the hooks | Remove the `api` and `worker` services, which deploy RequestHub. Keep `release`, `trigger`, and both hooks. |
+| [`preflight.py`](preflight.py) | Checks the setup and the starting state | `check_database`, which checks RequestHub's PostgreSQL server: point it at your app's database, or remove it. |
+| [`trigger/`](trigger/) | The release trigger function | Nothing: it reads the registry, the repository, and the job from its app settings. |
+| [`test_trigger.py`](test_trigger.py) | Offline tests of the trigger, and checks of its wiring | Its event fixtures and its check of Event Grid's filter name `requesthub-api`: change them when you change `repository` in `release.bicep`. |
+
+**`infra/main.bicep` for your app.** Remove `module app`, which deploys RequestHub's platform from `app/infra/requesthub.bicep`, and the resource group that `main.bicep` creates for it. Deploy `module release` into your app's resource group instead, declared as `existing`, and pass it your registry's name, the principal id of the identity the jobs run as, your Log Analytics workspace's resource id, your API's container app name, and your Application Insights connection string, in place of `app.outputs`. The jobs' identity, which you create or reuse, needs Container Apps Contributor and Container Apps Jobs Reader on that resource group, and the app roles your smoke test signs in with; RequestHub's platform grants them through `automationRoleDefinitionIds` and `automationAppRoleNames`. Keep the outputs the rest reads:
+
+- `jobs.parameters.json`: `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_ENVIRONMENT_NAME`, `AUTOMATION_IDENTITY_ID`, `AUTOMATION_CLIENT_ID`, `API_APP_NAME`, `API_IDENTIFIER_URI`, and `RELEASE_TRIGGER_PRINCIPAL_ID`;
+- the `postdeploy` hook: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `RELEASE_TRIGGER_NAME`, `RELEASE_TOPIC_NAME`, and `RELEASE_REPOSITORY`;
+- `release.py` in a terminal: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `API_APP_NAME`, `API_IDENTIFIER_URI`, and `AZURE_CONTAINER_REGISTRY_ENDPOINT`; and `preflight.py`: `AZURE_RESOURCE_GROUP`, `API_APP_NAME`, `AZURE_CONTAINER_REGISTRY_NAME`, `AUTOMATION_IDENTITY_ID`, and the three `RELEASE_*` names above.
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your app:
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| How long the gate keeps calling the candidate after the smoke test, and the shortest bake that promote accepts | `STANDARD_BAKE` in [`release.py`](release.py) | 60 seconds |
+| How long a candidate may take to become ready, and how long its started container may stay not ready before the gate fails | `--ready-timeout` and `--not-ready-grace` in `gate_options()` in [`release.py`](release.py) | 300 and 60 seconds |
+| How long promote accepts the gate's verdict | `GATE_VALID_HOURS` in [`release.py`](release.py) | 24 hours |
+| How long a release waits for an earlier step to finish | `--wait` of the `release` command in [`release.py`](release.py) | 900 seconds |
+| Each job's time limit | `timeout` in `steps` in [`infra/jobs.bicep`](infra/jobs.bicep) | 1800 seconds for release and drill, 900 for promote, abort, and rollback |
+| How often Event Grid delivers a failed push again | `retryPolicy` in [`infra/release-on-push.bicep`](infra/release-on-push.bicep) | `maxDeliveryAttempts: 5` within `eventTimeToLiveInMinutes: 60` |
+
+### What the copy adds
+
+```text
+release/
+├── release.py                  the release steps: release, drill, deploy, gate, promote, abort, rollback, verify, status, watch
+├── test_release.py             unit tests for the release's safety rules; they need no Azure access
+├── test_trigger.py             unit tests for the release trigger: what reaches the release job, and what never does
+├── preflight.py                checks the setup and the starting state
+├── azd_env.py                  reads settings from this solution's azd environment
+├── Dockerfile                  the release jobs' image: Python and release.py
+├── .dockerignore
+├── acr-build.yaml              ACR task: build the API for a commit of main, push requesthub-api:<commit> and :main
+├── requirements.txt            no third-party packages: standard library and the Azure CLI
+├── azure.yaml                  azd project: infra, the shared app's api and worker, the release jobs, and the trigger
+├── trigger/                    the release trigger, an Azure Function (Python, Flex Consumption)
+├── infra/                      Bicep: the resource group, RequestHub's platform, Event Grid, the trigger's function app, the workbook, and the five jobs
+├── README.md                   this README
+├── LICENSE                     the licence that travels with the files
+└── .gitignore                  what the scripts and tests write, added by the copy
+```
+
+### After you edit
+
+From the folder, run the offline tests as in [Getting started](#getting-started) step 3: they check the safety rules without Azure. Then apply the change where it runs:
+
+- `release.py` or `infra/jobs.bicep`: run `azd deploy release`.
+- `trigger/` or `infra/release-on-push.bicep`: run `azd deploy trigger`, after which azd connects Event Grid to the function again.
+- `infra/main.bicep` or `infra/release.bicep`: run `azd provision`.
+- `acr-build.yaml`: merge it. The build task reads it from `main`.
+
+## Clean up
+
+When you no longer need the solution, delete the build task's token on GitHub (**Settings** → **Developer settings** → **Fine-grained tokens**), and, in the repository's **Settings** → **Webhooks**, delete the webhook the task created, if it is still there. Then remove what azd deployed: the release's resources are in your app's resource group, so don't run `azd down`, which deletes the whole group, your app included. Remove the release from your Bicep, then delete what it created: the five release jobs, the trigger's function app with its plan, storage account, virtual network and its two network security groups, and private endpoint, the link from your Blob storage DNS zone to the trigger's network, the Event Grid system topic on your registry, the workbook, the jobs' identity's role assignments, and the build task (`az acr task delete --registry <registry> --name build-api`).
+
+In the copy, which deploys RequestHub too, delete the token and the webhook the same way, then remove the rest as [Reset the copy for another run](#reset-the-copy-for-another-run) says.
+
+## Troubleshooting
+
+- **The release job ends with "already serves users: nothing to release".** The pushed build is the one users have, for example a second build of the same commit. Nothing is wrong. To release a change, run the rollback job first, or run the release job yourself to release the newest build (`requesthub-api:main`).
+- **The release job ends with "Execution … already got a push of this image".** Event Grid delivers each event at least once, so now and then one push starts the release job twice; pushing the same image again, for example with `az acr import`, does too. The later execution finds the earlier one in the job's execution history and releases nothing: the earlier one owns that image. The message names it and how it ended. Open it in the release job's **Execution history** if it failed, and to release the build after a failure or an abort, run the release job yourself.
+- **A pushed build starts no release job.** Open the trigger function → **release_on_push** → **Invocations**, or run the preflight. A failed invocation names each check the event failed, or the call Azure refused with its HTTP status and error code (for example `Could not start the release job: HTTP 403 AuthorizationFailed`), and Event Grid delivers a failed event again, up to five times in an hour. No invocation at all means Event Grid isn't connected to the function: run `azd deploy trigger`, after which azd connects it.
+- **The preflight fails: another role assignment may start the release job.** Only the trigger function, with its role on the release job itself, should start it. Run the command the preflight prints: it deletes the other role assignments.
+- **A step refuses with "A release step is running".** One step runs at a time. Wait for the running one to finish (a release takes about 2½ minutes), then start the step again. Any execution that hasn't succeeded, failed, or stopped counts as running. An execution stuck in another state stops counting once its job's time limit (30 minutes for release and drill, 15 for the others) plus 15 minutes has passed.
+- **Promote refuses: "the gate has not passed it", or the verdict is for another candidate or image, older than 24 hours, or from a gate with a bake shorter than 60 seconds.** Promote moves traffic only to a candidate the gate passed with the standard bake, as recorded on the app. `python release.py gate --bake 0` from a terminal is fine for trying things out, but promote won't accept it. Run the release job again: it gates the build again.
+- **A step is missing from the workbook.** Log Analytics shows a release record about a minute after the step writes it, and the Activity log can take a few minutes more. Select the time range again, or **Refresh**.
+- **`az acr build` of a working copy fails with long paths.** It uploads `app/web/node_modules` too. Build an export of the commit with `git archive`, as in [One-time setup, step 3](#3-let-azure-build-every-commit-of-main).
+- **`az acr build` stops with `UnicodeEncodeError` when its output is redirected to a file.** The build itself continues in Azure. Add `--no-logs`, and follow the build with `az acr task list-runs --registry <registry> --top 1`.
+- **`az acr task update` fails with "Object of type set is not JSON serializable".** Azure CLI 2.91 and 2.92 can't update a task's source trigger, so the command fails even when it only changes the token or turns the trigger on or off. Define `Update-BuildTask` first ([One-time setup, step 3](#3-let-azure-build-every-commit-of-main)), then change the task with it. `az acr task create`, `show`, `run`, and `list-runs` work.
 
 ## See it work
 
@@ -215,194 +565,11 @@ Evidence: [who started each step](evidence/2026-11-01-recorded-run.md#who-starte
 - **Risk removed.** A build that fails the gate never receives a user request, and promote moves traffic only to the candidate and image the gate passed. A rollback rebuilds nothing. GitHub holds no Azure credential, and no pull request, from a fork or not, starts a build.
 - **Evidence a reviewer or an auditor can follow.** Every step's checks and measurements are in Log Analytics, who started each step is in the Activity log, and every traffic change is in Resource Graph. The workbook shows all three.
 
-**The metric to track when you adopt it:** how many builds that failed their checks reached users, which the gate should keep at zero, and how long it takes to restore service when a promoted build misbehaves: the rollback job took 45 seconds in See it work. Compare both with how releases went before. A target is a goal you set, never a result.
-
-## Add it to your repository
-
-These are the steps that set the solution up on RequestHub, with what to change for your app. We have run them only on RequestHub: for your app, the commands stay the same, and the changes are the ones named below. Try your first releases on a test environment of your app.
-
-### Prerequisites
-
-- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI. Docker is not needed: Azure Container Registry builds every image.
-- Admin rights on the repository, to create the build task's token.
-- Your app's API on Azure Container Apps, with its image in an Azure container registry, and:
-  - multiple-revision mode (`activeRevisionsMode: Multiple`) with ingress, so that revisions get labels and traffic weights;
-  - an HTTP readiness probe that checks what a request needs, such as the database, as RequestHub's `/health/ready` does in [`app/infra/api.bicep`](../../app/infra/api.bicep);
-  - an anonymous endpoint that reports the commit the image was built from, as RequestHub's `/api/meta` does from the `BUILD_SHA` build argument;
-  - Microsoft Entra ID sign-in, which the smoke test uses with the jobs' managed identity: if your API signs in another way, change `api_token()` in `release.py`;
-  - a Log Analytics workspace behind its Container Apps environment, which keeps the jobs' release records.
-- An Azure subscription where you can create resources and role assignments in your app's resource group, for example as Owner.
-- Azure Copilot in the Azure portal, which is on by default; an administrator can [limit who uses it](https://learn.microsoft.com/azure/copilot/manage-access).
-
-### What to copy and what to change
-
-Copy this folder into your repository, for example as `release/`, without `evidence/` and `images/`, which belong to the run in [See it work](#see-it-work). Then change these files:
-
-| File | What it does here | What to change for your app |
-| --- | --- | --- |
-| [`release.py`](release.py) | The release steps, and the smoke test, `smoke()`: RequestHub's sign-in, submit, safe retry, read, attachment, approval guard, and audit history | `CONTAINER` and `REPOSITORY`, your container's and image's names, and `CONTRACT` with the `/api/meta` check at the start of `smoke()`, to what your build endpoint reports. The rest of `smoke()`: your own critical journeys, safe to repeat, including one that proves a business rule and one for each dependency your readiness probe doesn't cover (RequestHub's Blob storage). The drill's fault, `Faults__FailReadiness` with `Faults__ExpiresAtUtc` in `deploy_candidate`, which promote and rollback refuse: a setting that makes your readiness probe fail until it expires. |
-| [`test_release.py`](test_release.py) | Offline tests of the release's safety rules | Its fixtures name RequestHub's image, `requesthub-api`, and the drill's fault setting: change them when you change `REPOSITORY` or the fault. |
-| [`acr-build.yaml`](acr-build.yaml) | The build task: build the API for a commit, push `requesthub-api:<commit>` and `:main` | The image name, the Dockerfile, and the build context (`-f app/Dockerfile app`). Keep passing the commit as the `BUILD_SHA` build argument. |
-| [`infra/main.bicep`](infra/main.bicep), [`main.parameters.json`](infra/main.parameters.json) | Creates the resource group, RequestHub's platform (`module app`), and the release | Replace RequestHub's platform with your app's, as described below the table. |
-| [`infra/release.bicep`](infra/release.bicep) | Event Grid on the registry, the trigger function with its network and storage, the workbook, and AcrPull for the jobs | `repository`, your image's name: Event Grid's filter and the function's check both use it. The trigger's network links to the app's private DNS zone for Blob storage (`blobZone`); if your platform has none, create the zone here. |
-| [`infra/jobs.bicep`](infra/jobs.bicep), [`jobs.parameters.json`](infra/jobs.parameters.json) | The five jobs, their settings, and the function's right to start the release job | Nothing, if your `main.bicep` keeps the outputs they read. |
-| [`azure.yaml`](azure.yaml) | The azd project: RequestHub's `api` and `worker`, the `release` jobs, the `trigger` function, and the hooks | Remove the `api` and `worker` services, which deploy RequestHub. Keep `release`, `trigger`, and both hooks. |
-| [`preflight.py`](preflight.py) | Checks the setup and the starting state | `check_database`, which checks RequestHub's PostgreSQL server: point it at your app's database, or remove it. |
-| [`trigger/`](trigger/) | The release trigger function | Nothing: it reads the registry, the repository, and the job from its app settings. |
-| [`test_trigger.py`](test_trigger.py) | Offline tests of the trigger, and checks of its wiring | Its event fixtures and its check of Event Grid's filter name `requesthub-api`: change them when you change `repository` in `release.bicep`. |
-
-**`infra/main.bicep` for your app.** Remove `module app`, which deploys RequestHub's platform from `app/infra/requesthub.bicep`, and the resource group that `main.bicep` creates for it. Deploy `module release` into your app's resource group instead, declared as `existing`, and pass it your registry's name, the principal id of the identity the jobs run as, your Log Analytics workspace's resource id, your API's container app name, and your Application Insights connection string, in place of `app.outputs`. The jobs' identity, which you create or reuse, needs Container Apps Contributor and Container Apps Jobs Reader on that resource group, and the app roles your smoke test signs in with; RequestHub's platform grants them through `automationRoleDefinitionIds` and `automationAppRoleNames`. Keep the outputs the rest reads:
-
-- `jobs.parameters.json`: `AZURE_CONTAINER_REGISTRY_NAME`, `AZURE_CONTAINER_ENVIRONMENT_NAME`, `AUTOMATION_IDENTITY_ID`, `AUTOMATION_CLIENT_ID`, `API_APP_NAME`, `API_IDENTIFIER_URI`, and `RELEASE_TRIGGER_PRINCIPAL_ID`;
-- the `postdeploy` hook: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `RELEASE_TRIGGER_NAME`, `RELEASE_TOPIC_NAME`, and `RELEASE_REPOSITORY`;
-- `release.py` in a terminal: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `API_APP_NAME`, `API_IDENTIFIER_URI`, and `AZURE_CONTAINER_REGISTRY_ENDPOINT`; and `preflight.py`: `AZURE_RESOURCE_GROUP`, `API_APP_NAME`, `AZURE_CONTAINER_REGISTRY_NAME`, `AUTOMATION_IDENTITY_ID`, and the three `RELEASE_*` names above.
-
-After each change to `release.py` or `trigger/`, run `python -m unittest -v` in the folder: the tests check the safety rules without Azure, and azd runs them before every deploy.
-
-### One-time setup
-
-About 15 minutes, once the files describe your app. On RequestHub, the `azd provision` that added the trigger function's resources to the running platform took 5 minutes 38 seconds, and deploying the jobs and the trigger took about a minute each. Creating the build task takes a few minutes. A fresh setup on 12 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, deployed RequestHub too, which took most of the time ([the evidence](evidence/2026-11-12-fresh-setup.md)):
-
-| Step | Took |
-| --- | --- |
-| 1. Deploy: `azd up` | 15 minutes 34 seconds, RequestHub included: its Container Apps environment took 6 minutes 34 seconds and its PostgreSQL server 6 minutes 40 seconds, side by side, and azd counted 10 minutes 33 seconds of provisioning and 4 minutes 47 seconds of deploying |
-| 2. Check the setup: `python preflight.py` | 1 minute 16 seconds: 18 checks passed, and **Build** warned |
-| 3. Let Azure build every commit of main: the token | a few minutes for a person on GitHub |
-| 3. Let Azure build every commit of main: `az acr task create` and the lines before it | 6 seconds; the preflight then took 1 minute 14 seconds and passed all 19 checks |
-
-#### 1. Deploy
-
-From the folder you copied, give azd the values your `main.bicep` reads for your app, then deploy:
-
-```powershell
-cd release
-az login
-azd auth login
-azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
-azd env set API_APP_NAME <your API's container app>   # and every other value your main.bicep reads
-azd up
-```
-
-`--subscription` deploys to the subscription that `az` signed in to, where `preflight.py` and the README's `az` commands look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd env new` stores no subscription, and `azd up` asks you to pick one of yours.
-
-**What you should see:** `azd up` ends with `SUCCESS`. Before it deploys the services, azd runs the unit tests (the `predeploy` hook), which end with `OK`; afterwards, it connects Event Grid to the function (the `postdeploy` hook), which prints nothing unless it fails. In the Azure portal, your app's resource group now has the five release jobs (`caj-release-*`, `caj-promote-*`, `caj-abort-*`, `caj-rollback-*`, and `caj-drill-*`), the trigger function (`func-release-*`), the Event Grid system topic on your registry (`evgt-registry-*`), and the workbook **RequestHub release records**.
-
-From now on, ship your API only through the release: deploying it another way replaces the stable revision without a gate. To change the release itself, run `azd deploy release`; to change the trigger, `azd deploy trigger`.
-
-#### 2. Check the setup
-
-From the same folder, run `python preflight.py`. It checks the API's revision mode, traffic, and probes, the database, production's readiness, the five jobs and the release identity's roles, the trigger function and its sole right to start the release job, Event Grid's topic and subscription, the build task, and the workbook.
-
-**What you should see:** every line reads `PASS`, except **Build**, which warns until you create the build task in step 3. On RequestHub, on 10 November 2026, with the build task's commit trigger off:
-
-![The preflight: 18 checks pass, covering multiple-revision mode, traffic, probes, the database, production, the five jobs, the release identity's three roles, the trigger function, its sole right to start the release job, Event Grid's topic and subscription, and the workbook; Build warns because the build task's commit trigger is off](images/00-preflight.png)
-
-The hint under **Build** names the sections this README had then: today it points to step 3 below and to [Use it the first time](#use-it-the-first-time).
-
-#### 3. Let Azure build every commit of main
-
-A person with admin rights on the repository does this once; it is the only GitHub access Azure gets.
-
-1. In GitHub, open **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**. Name it, for example, `ACR Tasks · release builds`, choose an expiration, and under **Repository access** select **Only select repositories** and your repository. Under **Repository permissions**, set **Contents** to **Read-only**, **Commit statuses** to **Read-only**, and **Webhooks** to **Read and write**; GitHub adds **Metadata: Read-only** itself. That is the set ACR accepted in our setup. ACR clones the repository with the token, and creates the webhook that tells it about commits to `main`.
-2. Commit the folder to `main`: the task reads `acr-build.yaml` from there. Then create the task from the folder, pasting the token when asked:
-
-   ```powershell
-   $registry = azd env get-value AZURE_CONTAINER_REGISTRY_NAME
-   $repo = gh repo view --json url --jq .url
-   $token = Read-Host -MaskInput 'Fine-grained token for this repository'
-   az acr task create --registry $registry --name build-api --context "$repo.git#main" `
-     --file (git ls-files --full-name acr-build.yaml) --git-access-token $token `
-     --commit-trigger-enabled true --pull-request-trigger-enabled false --base-image-trigger-enabled false --output none
-   Remove-Variable token
-   ```
-
-**What you should see:** `python preflight.py` reads `PASS  Build  build-api builds every commit to main`. It fails if a pull request can start the task: keep `--pull-request-trigger-enabled false`. From now on, every commit to `main` is built once and released as a candidate.
-
-**To pause the builds, or renew the token.** Azure CLI 2.91 and 2.92 can't change a task's source trigger: `az acr task update` fails with "Object of type set is not JSON serializable", even to change only the trigger's status or its token. Change the task through Azure Resource Manager with `Update-BuildTask` instead. Define it once in each terminal, in the folder; defining it changes nothing:
-
-```powershell
-$taskUrl = "https://management.azure.com$(az acr task show --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --name build-api --query id -o tsv)?api-version=2019-06-01-preview"
-function Update-BuildTask($properties) {
-  $arm = @{ Authorization = "Bearer $(az account get-access-token --query accessToken -o tsv)" }
-  $body = @{ properties = $properties } | ConvertTo-Json -Depth 8
-  $task = Invoke-RestMethod -Method Patch -Uri $taskUrl -Headers $arm -ContentType 'application/json' -Body $body
-  "commit trigger: $($task.properties.trigger.sourceTriggers.status)"
-}
-```
-
-Then turn the commit trigger off, for example on a day with many merges:
-
-```powershell
-Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; status = 'Disabled' }) } }
-```
-
-Or back on:
-
-```powershell
-Update-BuildTask @{ trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; status = 'Enabled' }) } }
-```
-
-Each call prints the trigger's new state, for example `commit trigger: Disabled`. While the trigger is off, start each build yourself, as in [Use it the first time](#use-it-the-first-time).
-
-Before the token expires, give the task a new one, pasting it when asked. Define `Update-BuildTask` first, as above. The token goes to Azure in the request body, never on a command line:
-
-```powershell
-$token = Read-Host -MaskInput 'New fine-grained token for this repository'
-Update-BuildTask @{
-  step = @{ type = 'FileTask'; contextAccessToken = $token }
-  trigger = @{ sourceTriggers = @(@{ name = 'defaultSourceTriggerName'; sourceRepository = @{ sourceControlAuthProperties = @{ tokenType = 'PAT'; token = $token } } }) }
-}
-Remove-Variable token
-```
-
-**Without the build task**, build an export of `main` with `az acr build`, with your build context and Dockerfile in place of RequestHub's `app`. The push starts the release exactly the same way:
-
-```powershell
-git fetch origin main
-$sha = git rev-parse origin/main
-$src = New-Item -ItemType Directory -Force (Join-Path ([IO.Path]::GetTempPath()) "requesthub-$sha")
-git -C (git rev-parse --show-toplevel) archive $sha app | tar -x -C $src
-az acr build --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --image "requesthub-api:$sha" --image requesthub-api:main `
-  --build-arg "BUILD_SHA=$sha" --file "$src/app/Dockerfile" --no-logs "$src/app"
-```
-
-### Use it the first time
-
-Merge a pull request to `main`. The registry builds the merge commit, and its push starts the release job. On RequestHub, merging pull request [#251](https://github.com/melabadi/adept-assessment-northstars/pull/251) at 03:05:30 UTC on 1 November 2026 started the build 2 seconds later, and the candidate passed the gate and waited for a person at 03:09:35, 4 minutes 5 seconds after the merge ([the evidence](evidence/2026-11-01-recorded-run.md#a-merge-with-the-commit-trigger-on)). In a fresh setup on 12 November, a merge to a copy's `main` started the build 2.6 seconds later, and the candidate waited for a person 4 minutes 28 seconds after the merge ([the evidence](evidence/2026-11-12-fresh-setup.md#the-run)).
-
-While the commit trigger is off, start the build yourself for the newest commit of `main`. `--context` pins it to that commit, even if `main` moves on meanwhile; ACR clones it with the task's token and tags the image with it:
-
-```powershell
-git fetch origin main
-$sha = git rev-parse origin/main
-$repo = gh repo view --json url --jq .url
-az acr task run --registry (azd env get-value AZURE_CONTAINER_REGISTRY_NAME) --name build-api `
-  --context "$repo.git#$sha" --set "commit=$sha" --no-logs
-```
-
-**What you should see:** in the Azure portal, the release job's **Execution history** lists the execution the push started (the job's name is `azd env get-value SERVICE_RELEASE_NAME`), which succeeds about 2½ minutes later. In the workbook **RequestHub release records**, in your resource group, the release job's `gate` row lists the checks, and in the API's **Revisions and replicas**, the new revision is `candidate` with 0% of traffic; `python release.py status` shows the same from the terminal. Then decide: run the promote job (go) or the abort job (no-go), with **Run now** on its page, or from the terminal:
-
-```powershell
-$rg = azd env get-value AZURE_RESOURCE_GROUP
-$job = @{}; 'release', 'promote', 'abort', 'rollback', 'drill' | ForEach-Object { $job[$_] = (azd env get-value SERVICE_RELEASE_NAME) -replace '^caj-release-', "caj-$_-" }
-az containerapp job start -g $rg -n $job.promote --query name -o tsv
-```
-
-Then make it part of your workflow:
-
-- **Rehearse a bad release once**, with the drill job, before you rely on the gate: the gate must fail the drill's candidate and remove it.
-- **Keep database migrations backward compatible.** Every revision shares one database, and a candidate runs its migrations when it starts, even without traffic, so the previous revision must keep working with them. A revision switch is not a database rollback.
-- **Releases that change configuration.** `deploy` copies the stable revision's configuration and changes only the image, so a release changes one thing. If a release must also change settings, deploy the candidate from your Bicep with traffic pinned to the stable revision.
-- **Background workers** that don't serve traffic can stay in single-revision mode and update after the API is promoted.
-- **Keep revision suffixes free of hyphens.** Azure's system logs cut a revision name at the first hyphen of its suffix, which breaks log queries by revision.
-
-### What it costs
-
-Your app bills as it already does. The solution adds the previous revision, which keeps running for an instant rollback (one more replica of your API while it exists); the trigger's private endpoint, about $7 a month; and, for each release, about 2 minutes of building in the registry and a few minutes of Container Apps jobs, which cost cents. The function and Event Grid run only when a build is pushed. Azure Copilot's answers cost nothing extra: its capabilities are included at no extra cost, except the Observability Agent ([Microsoft Learn](https://learn.microsoft.com/azure/copilot/overview#pricing-and-availability)). On RequestHub, the whole resource group, the app's platform included, costs about $120 a month: see [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository). The root README compares [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your app, permission to create Microsoft Entra app registrations (RequestHub signs in with its own), and a region that allows PostgreSQL Flexible Server for your subscription. In the copy, the other solutions' workflows also see step 1's pull request: in our fresh setup, it started *Repository checks* and *Develop · GitHub · feature bounds*, and its merge *Repository checks* again, five jobs of under 10 seconds each, and no model ran. If 05-secure-microsoft is set up in the same copy, its posture Function receives the pull request too, and previews it only if it changes that solution's `infra/`.
+
+The copy also has the folders of this one that belong to the demo: [`evidence/`](evidence/), what Azure recorded during the run in See it work, exported for anyone to check, and a setup from scratch that followed only this README, timed step by step; and [`images/`](images/), the screenshots of the run in See it work and of the Release combo. RequestHub lives in [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`](../../app/infra/api.bicep), runs in multiple-revision mode with startup, liveness, and readiness probes. Its fault switch `Faults:FailReadiness`, which needs an expiry, makes a revision's readiness probe fail: the drill uses it to rehearse a bad release.
 
 ### Quick start
 
@@ -557,79 +724,27 @@ curl.exe -X POST -H "Authorization: Bearer $token" "$(azd env get-value API_URL)
 
 The reset empties the database; the smoke tests' small attachment files stay in the storage account until you remove the solution.
 
-## Clean up
+When you no longer need the copy, delete the build task's token and its webhook as in [Clean up](#clean-up), then remove what azd deployed, from `solutions/06-release-microsoft`:
 
-When you no longer need the solution, delete the build task's token on GitHub (**Settings** → **Developer settings** → **Fine-grained tokens**), and, in the repository's **Settings** → **Webhooks**, delete the webhook the task created, if it is still there. Then remove what azd deployed:
-
-- **In your repository:** the release's resources are in your app's resource group, so don't run `azd down`, which deletes the whole group, your app included. Remove the release from your Bicep, then delete what it created: the five release jobs, the trigger's function app with its plan, storage account, virtual network and its two network security groups, and private endpoint, the link from your Blob storage DNS zone to the trigger's network, the Event Grid system topic on your registry, the workbook, the jobs' identity's role assignments, and the build task (`az acr task delete --registry <registry> --name build-api`).
-- **In the copy**, from `solutions/06-release-microsoft`:
-
-  ```powershell
-  $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-  $sp = az ad sp show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-  azd down --purge --force
-  az ad app delete --id $app
-  az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
-  az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$sp"
-  ```
-
-  `azd down` deletes the resource group, with the registry, the build task, the jobs, the trigger function and its network and storage, and the workbook, and `--purge` purges the Log Analytics workspace, so that its name can be used again at once. Without `--force`, `azd down` lists what it will delete and asks you to confirm; without a terminal to ask in, it stops there and deletes nothing. RequestHub's sign-in app registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it, with its service principal, which Entra moves to its recycle bin with the app, and the two `az rest` calls empty both from the recycle bin. Without the first, a new `azd up` with the same environment name can't create the app registration again for 30 days. Deleting the group also moves the service principals of its three managed identities to the recycle bin: the app's, the release identity, and the trigger function's. Entra refused to purge them in our fresh setup; it removes them after 30 days.
-
-  Allow about half an hour: `azd down --purge --force` took 27 minutes 51 seconds in our fresh setup, most of it for the Container Apps environment. Afterwards nothing of the copy's environment was left in Azure, and in Microsoft Entra ID only those principals in the recycle bin ([the evidence](evidence/2026-11-12-fresh-setup.md#the-clean-up-and-what-is-left)).
-
-## What's in this folder
-
-```text
-06-release-microsoft/
-├── README.md
-├── release.py                       the release steps: release, drill, deploy, gate, promote, abort, rollback, verify, status, watch
-├── test_release.py                  unit tests for the release's safety rules; they need no Azure access
-├── test_trigger.py                  unit tests for the release trigger: what reaches the release job, and what never does
-├── preflight.py                     checks the setup and the starting state
-├── azd_env.py                       reads settings from this solution's azd environment
-├── Dockerfile                       the release jobs' image: Python and release.py
-├── .dockerignore
-├── acr-build.yaml                   ACR task: build the API for a commit of main, push requesthub-api:<commit> and :main
-├── requirements.txt                 no third-party packages: standard library and the Azure CLI
-├── azure.yaml                       azd project: infra, the shared app's api and worker, the release jobs, and the trigger
-├── trigger/                         the release trigger, an Azure Function (Python, Flex Consumption)
-│   ├── function_app.py              release_on_push: Event Grid calls it for each pushed build
-│   ├── release_trigger.py           its logic in plain Python: check the event, start the release job with the digest
-│   ├── host.json
-│   ├── .funcignore
-│   └── requirements.txt             azure-functions only
-├── evidence/
-│   ├── 2026-11-01-recorded-run.md   what Azure recorded during the run in See it work, exported for anyone to check
-│   └── 2026-11-12-fresh-setup.md    a setup from scratch that followed only this README, timed step by step
-├── images/                          screenshots of the run in See it work, and of the Release combo (combo-*)
-└── infra/
-    ├── main.bicep                   resource group, RequestHub's platform (app/infra), the release identity's roles
-    ├── main.parameters.json
-    ├── release.bicep                Event Grid on the registry, the trigger's function app with its network and storage, the workbook, AcrPull for the jobs
-    ├── release-on-push.bicep        Event Grid's subscription to the function, deployed after the function's code
-    ├── release-records.workbook.json   the "RequestHub release records" workbook
-    ├── jobs.bicep                   the five release jobs, and the trigger's right to start the release job
-    └── jobs.parameters.json
+```powershell
+$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
+$sp = az ad sp show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
+azd down --purge --force
+az ad app delete --id $app
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$sp"
 ```
 
-RequestHub lives in [`app/`](../../app/README.md). Its API module, [`app/infra/api.bicep`](../../app/infra/api.bicep), runs in multiple-revision mode with startup, liveness, and readiness probes. Its fault switch `Faults:FailReadiness`, which needs an expiry, makes a revision's readiness probe fail: the drill uses it to rehearse a bad release.
+`azd down` deletes the resource group, with the registry, the build task, the jobs, the trigger function and its network and storage, and the workbook, and `--purge` purges the Log Analytics workspace, so that its name can be used again at once. Without `--force`, `azd down` lists what it will delete and asks you to confirm; without a terminal to ask in, it stops there and deletes nothing. RequestHub's sign-in app registration is a Microsoft Entra object, which no resource group contains, so `az ad app delete` removes it, with its service principal, which Entra moves to its recycle bin with the app, and the two `az rest` calls empty both from the recycle bin. Without the first, a new `azd up` with the same environment name can't create the app registration again for 30 days. Deleting the group also moves the service principals of its three managed identities to the recycle bin: the app's, the release identity, and the trigger function's. Entra refused to purge them in our fresh setup; it removes them after 30 days.
 
-## Troubleshooting
+Allow about half an hour: `azd down --purge --force` took 27 minutes 51 seconds in our fresh setup, most of it for the Container Apps environment. Afterwards nothing of the copy's environment was left in Azure, and in Microsoft Entra ID only those principals in the recycle bin ([the evidence](evidence/2026-11-12-fresh-setup.md#the-clean-up-and-what-is-left)).
 
-- **`azd up` shows nothing that its hooks print, not even the unit tests' result.** azd shows a hook that isn't `interactive` in a small pane that it clears once the hook succeeds. Since 12 November, this folder's [`azure.yaml`](azure.yaml) makes both hooks interactive. With an older copy, `azd hooks run predeploy` shows the tests' result, and `python preflight.py` shows whether Event Grid is connected to the function.
+The [root README](../../README.md#try-it-in-a-copy-of-this-repository) then says how to delete the copy itself.
+
+### Troubleshooting the copy
+
 - **The app times out, or every revision fails readiness and the gate fails before its smoke test.** The PostgreSQL server was stopped; a tenant policy can stop it on a schedule. The preflight's **Database** line shows it. Start it as in [Check the starting state](#check-the-starting-state) (3 to 5 minutes).
-- **The release job ends with "already serves users: nothing to release".** The pushed build is the one users have, for example a second build of the same commit. Nothing is wrong. To release a change, run the rollback job first, or run the release job yourself to release the newest build (`requesthub-api:main`).
-- **The release job ends with "Execution … already got a push of this image".** Event Grid delivers each event at least once, so now and then one push starts the release job twice; pushing the same image again, for example with `az acr import`, does too. The later execution finds the earlier one in the job's execution history and releases nothing: the earlier one owns that image. The message names it and how it ended. Open it in the release job's **Execution history** if it failed, and to release the build after a failure or an abort, run the release job yourself.
-- **A pushed build starts no release job.** Open the trigger function → **release_on_push** → **Invocations**, or run the preflight. A failed invocation names each check the event failed, or the call Azure refused with its HTTP status and error code (for example `Could not start the release job: HTTP 403 AuthorizationFailed`), and Event Grid delivers a failed event again, up to five times in an hour. No invocation at all means Event Grid isn't connected to the function: run `azd deploy trigger`, after which azd connects it.
-- **Every pushed build fails with `Could not start the release job: HTTP 400 JobStartOverrideAuthorizationFailed`.** Since November 2026, Azure requires write permission on a job to start it with settings of its own, as the trigger does with each build's digest. Environments deployed earlier gave the function Container Apps Jobs Operator, which only starts the job. Run `azd deploy release` in this folder, which gives it Container Apps Jobs Contributor on the release job, then `python preflight.py`, and delete the earlier role assignment with the command it prints. Then push the build again, or run the release job yourself.
-- **The preflight fails: "Logic App logic-release-…, the earlier trigger, still exists", or another role assignment may start the release job.** An environment deployed before the trigger became a function keeps the Logic App, because `azd provision` adds and updates resources but deletes none, and its Jobs Operator role on the release job. Run the commands the preflight prints: they delete the Logic App and that role assignment.
-- **A step refuses with "A release step is running".** One step runs at a time. Wait for the running one to finish (a release takes about 2½ minutes), then start the step again. Any execution that hasn't succeeded, failed, or stopped counts as running. An execution stuck in another state stops counting once its job's time limit (30 minutes for release and drill, 15 for the others) plus 15 minutes has passed.
-- **Promote refuses: "the gate has not passed it", or the verdict is for another candidate or image, older than 24 hours, or from a gate with a bake shorter than 60 seconds.** Promote moves traffic only to a candidate the gate passed with the standard bake, as recorded on the app. `python release.py gate --bake 0` from a terminal is fine for trying things out, but promote won't accept it. Run the release job again: it gates the build again.
-- **A step is missing from the workbook.** Log Analytics shows a release record about a minute after the step writes it, and the Activity log can take a few minutes more. Select the time range again, or **Refresh**.
-- **`az acr build` of a working copy fails with long paths.** It uploads `app/web/node_modules` too. Build an export of the commit with `git archive`, as in [One-time setup, step 3](#3-let-azure-build-every-commit-of-main).
-- **`az acr build` stops with `UnicodeEncodeError` when its output is redirected to a file.** The build itself continues in Azure. Add `--no-logs`, and follow the build with `az acr task list-runs --registry <registry> --top 1`.
 - **Signing in on a label URL fails with `AADSTS50011`.** Only the production URL is registered for sign-in. The gate calls the API with a token, and `/api/meta` and `/health/*` are anonymous, so open a candidate with `https://<app>---candidate.<domain>/api/meta`.
 - **A button in RequestHub fails with HTTP 403 and no body.** You are on a revision label URL, which has a different origin, or the deployment predates [#134](https://github.com/melabadi/adept-assessment-northstars/pull/134). Use the production URL; for an older deployment, run `azd deploy api` from `main`. That deploy replaces the stable revision and clears the labels; the next release labels them again.
 - **Attachment uploads return HTTP 500 and the gate's `attachment` check fails, while every revision is ready.** An Azure Policy disabled public network access on the storage account. The shared module reaches Blob storage through a private endpoint by default; run `azd provision` in this folder to add it to an environment created before that change (about 5 minutes; revisions and traffic are not touched).
 - **`LocationIsOfferRestricted` for PostgreSQL during `azd up`.** Your subscription cannot create PostgreSQL Flexible Server in that region. Create a new azd environment in another region, for example `centralus`.
-- **`az acr task update` fails with "Object of type set is not JSON serializable".** Azure CLI 2.91 and 2.92 can't update a task's source trigger, so the command fails even when it only changes the token or turns the trigger on or off. Define `Update-BuildTask` first ([One-time setup, step 3](#3-let-azure-build-every-commit-of-main)), then change the task with it. `az acr task create`, `show`, `run`, and `list-runs` work.

@@ -4,11 +4,28 @@ When an alert fires, the on-call engineer spends the first part of the incident 
 
 ![Azure SRE Agent's report in the run of 10 November 2026, 2 minutes 34 seconds after the alert fired: the impact, a UTC timeline, the confirmed facts with their evidence, the hypothesis with its confidence and gaps, and the mitigation with its rollback and the time the fault would have expired; then the approval card for the exact az containerapp update command, marked Approved](images/00-hero.png)
 
+- **[Install it in your repository](#install-it-in-your-repository):** about 20 minutes of one-time setup in Azure and GitHub, once the alert, the agent's instructions, and its runbook describe your service. [Getting started](#getting-started) lists the commands in order.
+- **[Files to edit to tweak it](#files-to-edit-to-tweak-it):** the alert, the agent's instructions and response plan, its skills, and its runbook.
 - **[See it work](#see-it-work):** a real run on RequestHub, this repository's sample app, on 10 November 2026. A slowed worker fired the alert, the agent proposed the fix with its evidence 2 minutes 34 seconds later, and the backlog drained 1 minute 49 seconds after the approved change began. The agent's draft became Issue [#301](https://github.com/melabadi/adept-assessment-northstars/issues/301), unchanged.
-- **[Add it to your repository](#add-it-to-your-repository):** about 20 minutes of one-time setup in Azure and GitHub, once the alert, the agent's instructions, and its runbook describe your service.
 - **[Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository):** about 20 minutes to set it up on RequestHub, then about 25 minutes for the steps of See it work. In a fresh setup we timed, the setup took 18½ minutes of commands, plus a few minutes for a person to connect GitHub, and the steps 29 minutes from the fault to the agent's draft, 13 of them waiting for the approval.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/overview) | Investigates the alert with a custom agent, three skills, and your runbook; proposes one command that runs only after an SRE Agent Administrator approves it, with that person's permissions; checks the recovery; and drafts the incident record |
+| [Azure Monitor alerts](https://learn.microsoft.com/azure/azure-monitor/alerts/alerts-overview) | A metric alert on your service's telemetry starts the investigation, through the agent's response plan |
+| [Application Insights](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview) and Log Analytics | Hold your service's telemetry and logs, which the agent queries with read-only roles |
+| An [Azure Monitor workbook](https://learn.microsoft.com/azure/azure-monitor/visualize/workbooks-overview) | Shows whether a drill can start, then the backlog, deliveries per minute, and the worker's revisions on one page |
+| [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/) and [Bicep](https://learn.microsoft.com/azure/azure-resource-manager/bicep/overview) | Deploy the alert, the workbook, and the agent into one resource group with `azd up`, whose hook applies the agent's configuration from `sre-agent/` |
+| GitHub: a read-only [fine-grained personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) | Connects your repository under the agent's **Code access**, so that it can read your code. The agent has no GitHub tool that writes: a person files the record as an Issue |
+| Python 3.12 and PowerShell 7 | `configure_sre_agent.py`, which applies `sre-agent/` and checks it offline, and the commands in this README |
+
+The shipped alert, agent, skills, and runbook are written for RequestHub's notification worker, a container app that sends the age of its oldest pending notification to Application Insights. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for your service.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 7 of 7: Operate.** The GitHub counterpart is [07-operate-github](../07-operate-github/), where Copilot triages an incident Issue and the Copilot cloud agent opens a regression-test pull request, proven to fail without the fix. This solution handles the incident itself, with the AI and the orchestration in Azure. GitHub holds the code and the incident record. To follow one incident from this agent's recovery to a regression test that Copilot proves, use both as in the [Operate solution combo](../../PRESENTING.md#operate-azure-recovers-a-person-files-copilot-proves-the-follow-up); the GitHub side needs a paid GitHub Copilot plan.
 
@@ -21,13 +38,9 @@ When an alert fires, the on-call engineer spends the first part of the incident 
 | Incident record | Written days later from memory, often with host names and ids pasted in. | The agent drafts it from its investigation: a UTC timeline, the cause, the fix, and one follow-up, with placeholders instead of identifiers. A person reads it and files it as a GitHub Issue; the agent can't write to GitHub. |
 | Agent configuration | Clicked together in a portal. | Instructions, skills, runbook, response plan, tool policy, and guard hook are files in the repository, reviewed in pull requests. `azd provision` applies them, and `python configure_sre_agent.py --check` rejects a change that weakens a guardrail. |
 
-**The value:** the first minutes of an incident go to a decision instead of to gathering context, the fix runs only with a person's approval and permissions, and the record exists before anyone has to remember what happened. In [See it work](#see-it-work):
+**The value:** the first minutes of an incident go to a decision instead of to gathering context, the fix runs only with a person's approval and permissions, and the record exists before anyone has to remember what happened. [Results and value](#results-and-value) has what the recorded run measured.
 
-- The agent's report, with the root cause, its evidence, and the exact command, came 2 minutes 34 seconds after the alert fired. Nobody opened a dashboard.
-- The approved command ran with the approver's permissions. The backlog drained 1 minute 49 seconds after the change began, and Azure Monitor resolved the alert 12 minutes 57 seconds after it fired.
-- The record was filed unchanged as Issue #301, 1 minute 36 seconds after the agent's last reply, with no host name, GUID, or e-mail address in it.
-
-## How it works
+### How it works
 
 ```mermaid
 flowchart LR
@@ -60,6 +73,278 @@ flowchart LR
 - **azd** deploys everything. Its `postprovision` hook, [`configure_sre_agent.py`](configure_sre_agent.py), applies the agent's configuration from [`sre-agent/`](sre-agent/) through the agent's own API, and reads it back.
 
 **Outside contributions.** Nothing here listens to GitHub. Azure Monitor alerts start the investigations, and the agent's GitHub access is a read-only token for this repository's code. On a public repository, nobody outside it can start an investigation; an Issue or a comment from outside reaches the agent only if a person asks it to read one, and every Issue tool asks a person first.
+
+## Install it in your repository
+
+These are the steps that set the solution up on RequestHub. We have run them only on RequestHub: for your service, the commands stay the same, and [Files to edit to tweak it](#files-to-edit-to-tweak-it) names the changes. Point the agent at a test environment of your service first, not at production. [Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see.
+
+### Prerequisites
+
+- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI.
+- Your service in Azure, with Application Insights on a Log Analytics workspace, and a metric that shows the problem you want to catch: a platform metric, or a custom metric that your service sends through OpenTelemetry, as RequestHub's worker sends the age of its oldest pending notification.
+- An Azure subscription where you can create resource groups and role assignments, for example as Owner, in a region that offers Azure SRE Agent. To see where your subscription can create the agent, run `az provider show -n Microsoft.App --query "resourceTypes[?resourceType=='agents'].locations" -o tsv`. If the list is empty, [register the subscription](https://learn.microsoft.com/azure/sre-agent/supported-regions#check-your-available-regions).
+- A GitHub account that can create a fine-grained personal access token for your repository, with read-only access to its code. Without it the agent still investigates, without reading your code.
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must say you're logged in to github.com, Python must be 3.12 or later, and PowerShell 7.4 or later; the Azure CLI and the Azure Developer CLI print their versions ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   "az: " + (az version | ConvertFrom-Json).'azure-cli'; azd version
+   ```
+
+2. **Copy the folder on a new branch,** two levels below your repository's root (`azd_env.py` looks for the root two levels up), here as `ops/incident-response/`, without the drill, the evidence, and the screenshots. The copy adds the licence that must travel with the files and a `.gitignore` for what the scripts and tests write, and prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-incident-response
+   $dest = 'ops/incident-response'
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-07-operate-microsoft'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   $from = Join-Path $src 'solutions/07-operate-microsoft'
+   Remove-Item -Recurse -Force (Join-Path $from 'incident.py'), (Join-Path $from 'evidence'), (Join-Path $from 'images')
+   New-Item -ItemType Directory -Force $dest | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $from '*') $dest
+   Copy-Item -Force (Join-Path $src 'LICENSE') $dest
+   Set-Content (Join-Path $dest '.gitignore') '__pycache__/', '.venv/', 'out/'
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 21 new files under `ops/incident-response/`, in 6 to 10 seconds when this README was checked. GitHub reads a repository's own licence only from its root, so yours doesn't change.
+
+3. **Edit the files for your service,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) lists. Then, from the folder, install the scripts' packages and run the offline checks:
+
+   ```powershell
+   cd ops/incident-response
+   pip install -r requirements.txt
+   python configure_sre_agent.py --check
+   python -m unittest -q test_configure_sre_agent
+   ```
+
+   The check ends with `sre-agent/ is valid: ...`, and the tests with `OK`; neither needs Azure access. The copy's `.gitignore` keeps the `__pycache__` folder they write out of git.
+
+4. **Set it up once,** from the folder: deploy, and create the labels your record asks for ([step 1](#1-deploy)):
+
+   ```powershell
+   az login
+   azd auth login
+   azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+   azd up
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:operate --color C5DEF5 --description "SDLC phase 7: Operate" --force
+   ```
+
+   Then open the agent once at the URL that `azd env get-value SRE_AGENT_PORTAL_URL` prints ([step 2](#2-open-the-agent-once)), connect your repository under **Code access** with a read-only token ([step 3](#3-connect-github)), and check the connection:
+
+   ```powershell
+   python configure_sre_agent.py
+   ```
+
+5. **Merge it into your default branch,** where later changes to the agent are reviewed in pull requests ([Use it the first time](#use-it-the-first-time)). Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .
+   git commit -m "Add 07-operate-microsoft from ai-sdlc <commit>"
+   git push -u origin add-incident-response
+   gh pr create --fill
+   ```
+
+   azd keeps its environment out of git. Merge the pull request as you merge any change.
+
+6. **Use it on your next alert.** Let your alert fire once in a test environment, follow the investigation in the SRE Agent portal's **Incidents**, approve the command only if it is the change you would make, and file the record that the agent drafts, as [Use it the first time](#use-it-the-first-time) describes.
+
+### One-time setup
+
+About 20 minutes, once the files describe your service. On RequestHub, `azd up` takes about 15 minutes, including the app. A fresh setup on 12 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, timed each step ([the evidence](evidence/2026-11-12-fresh-setup.md)):
+
+| Step | Took |
+| --- | --- |
+| 1. Deploy: `pip install` | 44 seconds, in a new virtual environment |
+| 1. Deploy: `azd up` | 15 minutes 10 seconds, RequestHub included: its PostgreSQL server took 6 minutes 39 seconds and its Container Apps environment 7 minutes 2 seconds, side by side, and the agent 1 minute 19 seconds; azd counted 12 minutes 7 seconds of provisioning and 2 minutes 45 seconds of deploying |
+| 1. Deploy: the two labels | 2 seconds |
+| 2. Open the agent once | 1 minute 54 seconds, from loading its page to the *Team onboarding* chat |
+| 3. Connect GitHub: the token and **Add repository** | a few minutes for a person |
+| 3. Connect GitHub: `python configure_sre_agent.py` | 36.5 seconds |
+
+#### 1. Deploy
+
+From the folder you copied:
+
+```powershell
+pip install -r requirements.txt
+az login
+azd auth login
+azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
+azd up
+```
+
+`--subscription` deploys to the subscription that `az` signed in to, where `incident.py` and this README's `az` commands look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd env new` stores no subscription, and `azd up` asks you to pick one of yours. Run azd in the shell where `pip install` ran, with the same virtual environment active if you use one: its `postprovision` hook runs that `python`.
+
+**What you should see:** `azd up` ends with `SUCCESS: Your application was provisioned and deployed to Azure`. Once the resources are provisioned, the `postprovision` hook lists every item it applied to the agent with `ok`, and ends with `SRE Agent configured.` and `... every GitHub write tool is denied.` A file that breaks the solution's rules stops the hook before anything reaches the agent. You get the **SRE Agent Administrator** role on the agent.
+
+Then create the labels your record asks for, as RequestHub's are created:
+
+```powershell
+gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+gh label create phase:operate --color C5DEF5 --description "SDLC phase 7: Operate" --force
+```
+
+#### 2. Open the agent once
+
+Open the URL from `azd env get-value SRE_AGENT_PORTAL_URL` and sign in.
+
+**What you should see:** the first visit shows a setup checklist (2 log providers, 1 resource group, Azure Monitor connected) and starts a *Team onboarding* chat, which **Done and go to agent** opens. In it, the agent reads the resource group and writes notes about it to its memory; that uses a few AAUs and changes nothing. Under **Incidents**, **Triggers & response plans** lists your response plan: On, your custom agent, your severity, Review.
+
+This first visit also adds the one role that isn't in the Bicep: Monitoring Contributor on the subscription for the agent's identity, to acknowledge and close alerts. In our fresh setup, `azd up` didn't add it: the Activity Log recorded the assignment 21 seconds after the agent's page began to load, made with the account that opened it. So the person who opens the agent first needs the right to assign roles on the subscription, for example as Owner; if the role is missing, a banner in the portal asks for it ([Learn](https://learn.microsoft.com/azure/sre-agent/diagnose-azure-observability#azure-monitor-metrics)). The tool policy denies `az monitor` writes, and [Clean up](#clean-up) removes the role.
+
+#### 3. Connect GitHub
+
+A person does this once, because it gives an Azure service access to GitHub. The agent reads the repository's code through **Code access**; it never writes to GitHub.
+
+1. In GitHub, open **Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained tokens**, and select **Generate new token**:
+   - **Token name:** for example `sre-agent-code-access`. **Expiration:** 30 days.
+   - **Repository access:** Only select repositories, and pick your repository.
+   - **Permissions:** Repository permissions, **Contents: Read-only**: Code access clones the repository to connect it ([Learn](https://learn.microsoft.com/azure/sre-agent/github-connector#permissions-by-auth-type)). GitHub adds **Metadata: Read-only** by itself. Nothing else.
+
+   Select **Generate token** and copy it.
+2. In the [SRE Agent portal](https://sre.azure.com), open your agent, then **Build + setup**, **Code access**, the **GitHub** tab, and **Add repository**. In *Add repositories*, GitHub is selected:
+   - **Repository URL:** your repository's URL, `https://github.com/<owner>/<repo>`.
+   - **Connection method:** **Personal access token (PAT)**. Paste the token under **Provide PAT** and select **Connect**. A *Connected* card appears.
+
+   Select **Next**, then **Save**.
+3. Check the connection, from the folder you copied:
+
+   ```powershell
+   python configure_sre_agent.py
+   ```
+
+**What you should see:** the repository is listed under **Code access** with a green connection and a **Last synced** time, and the script's `Tools` section reports `GitHub: <owner>/<repo> is connected, credential healthy, code ready; the agent can read its code and has no GitHub tool that writes`. The script applies the configuration again, unchanged.
+
+A token that allows more, for example one you share with other tools, still doesn't let the agent write: the custom agent has no GitHub tool, and the tool policy denies every GitHub tool that writes, Issue writes included, and the terminal, shell, and Python tools, which could use the token. Two choices in the portal would widen the access: **OAuth** in that dialog applies to every repository your GitHub account can reach, and the **GitHub** card under **Build + setup**, **Connectors** is GitHub's MCP server, with GitHub's whole tool catalog. When the token expires, create a new one the same way, then select the repository under **Code access** and connect again with the new token.
+
+### Use it the first time
+
+Let your alert fire once in a test environment: inject a fault with an expiry, the way `incident.py` does on RequestHub, or lower the alert's threshold for a while.
+
+**What you should see:** within about a minute of the alert, the SRE Agent portal's **Incidents** lists it, with the agent *In progress*, then *Pending user input* when its proposal waits for approval. Open it to follow the investigation and read the report. Approve the command only if it is the change you would make: **Allow once**, then **Grant permissions**, as in [step 5 of the copy](#5-approve-the-fix). After the recovery, the agent's last reply holds the draft: read it, then file it, as in [step 7 of the copy](#7-file-the-record). On RequestHub, the report came 2 minutes 34 seconds after the alert (1 minute 54 seconds in a fresh setup on 12 November 2026), and the whole drill took about 25 minutes.
+
+Then make it part of your workflow:
+
+- **Keep a person in the loop.** Leave the response plan in **Review** mode, so every proposal waits for an SRE Agent Administrator, and keep the deny lists: `configure_sre_agent.py --check` fails if a change sets the plan to Autonomous, allows writes without approval, allows `az monitor` writes, gives the agent a GitHub tool, stops denying a GitHub write tool, the terminal, or the Azure DevOps pipeline, repository, and MCP tools, or weakens the guard hook.
+- **Change the agent in a pull request.** Edit `sre-agent/`, run `python configure_sre_agent.py --check`, and open the pull request. When it merges, `azd provision`, or only `python configure_sre_agent.py`, applies the change and reads it back.
+- **Keep the evidence of an incident you want to show.** Export the alert's history, the Activity Log, and the queries behind your numbers with only the fields you need, as [`evidence/`](evidence/) does here, and check the export for host names, GUIDs, and e-mail addresses before you commit it. Application Insights keeps the telemetry only as long as your workspace's retention.
+
+**The metric to track when you adopt it:** the time from an alert to a proposed mitigation with its evidence (2 minutes 34 seconds in See it work), the time from an alert to its resolution (12 minutes 57 seconds), and the share of incidents with a filed record. Compare them with your incidents before. A target is a goal you set, never a result.
+
+### What it costs
+
+Your service bills as it already does. The agent's always-on flow costs 4 Azure Agent Units (AAUs) an hour, at $0.10 per AAU, for as long as the agent exists: about $292 a month. A new customer's [30-day evaluation](https://learn.microsoft.com/azure/sre-agent/evaluate) waives it. Each investigation adds active flow, roughly 10 to 35 AAUs ($1 to $3.50; our drills used 15 to 25), and about $1 of log ingestion; the Bicep caps active flow at 1,000 AAUs a month. See [pricing](https://learn.microsoft.com/azure/sre-agent/pricing-billing), and the root README's [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
+
+## Files to edit to tweak it
+
+The copy brings the whole folder except `incident.py`, `evidence/`, and `images/`, which belong to RequestHub and to the run in [See it work](#see-it-work). It goes two levels below your repository's root, as `ops/incident-response/` in [Getting started](#getting-started), because `azd_env.py` looks for the root two levels up. The folder has no `.github/` files: everything runs in Azure.
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File | What it does here | What to change for your service |
+| --- | --- | --- |
+| [`infra/main.bicep`](infra/main.bicep) and [`main.parameters.json`](infra/main.parameters.json) | Deploys RequestHub's platform (`module app`), the alert and the workbook (`monitoring`), and the agent (`sreAgent`), and outputs the settings that the other files read | Remove `module app` and the outputs it fed. Pass your service's Application Insights and Log Analytics workspace to `monitoring` and `sreAgent`, and output the names your placeholders read, as `WORKER_APP_NAME` is now. Keep the agent in the resource group that `main.bicep` creates, never in your service's: `azd down --purge` deletes the whole group. |
+| [`infra/monitoring.bicep`](infra/monitoring.bicep) | The backlog alert (Sev2; every minute, the maximum over one minute above 60 seconds; resolves itself) and the workbook | Your signal: the metric's namespace and name, the threshold, the severity, and the alert's name and description, which tell the agent what is wrong. Its `existing` Application Insights and workspace are in its own resource group: scope them to your service's group. |
+| [`infra/workbook.json`](infra/workbook.json) | The workbook: the **Ready for a drill** table (Azure Resource Graph) and the backlog charts (KQL) | Your rows and charts, or leave the workbook out. |
+| [`infra/sre-agent.bicep`](infra/sre-agent.bicep) | The agent, its identities and their read-only roles (Reader, Monitoring Reader, Log Analytics Reader) on the resource group, the resource groups it manages (`managedResources`), the Azure Monitor incident platform, the telemetry connectors, and the monthly cap on active flow | Add your service's resource group to `managedResources`, give the agent's identities the same three reader roles there (a module scoped to that group), and scope the `existing` Application Insights and workspace to it. `monthlyAgentUnitLimit` caps active flow, at 1,000 AAUs a month. |
+| [`sre-agent/agent.yaml`](sre-agent/agent.yaml) | The custom agent, its skills and tools, the GitHub deny list and the guard hook, the response plan, and the tool policy | The response plan's `titleContains` and `severities`, to match your alert, and the custom agent's name and description. The agent reads the Azure Monitor alerts of its whole subscription, not only those of the resource groups it manages, so make `titleContains` match only your alert: if another agent's plan in the subscription matches it too, the first agent to pick it up investigates it (see [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository)). Keep the deny lists, and `agentMode: Review` until you trust its proposals. |
+| [`sre-agent/instructions.md`](sre-agent/instructions.md) | How the custom agent investigates, and the only change it may propose: removing the worker's two fault settings | Your service's scope, and the changes the agent may propose, each naming its subscription (`--subscription`) so that it runs where you expect. |
+| [`sre-agent/skills/`](sre-agent/skills/) | `investigate-notification-backlog` and `verify-worker-recovery`: RequestHub's KQL and read-only commands; `draft-incident-record`: the record's template, its title, and its labels | Your telemetry's KQL, your recovery criteria, and your incident record: the fields your incident process asks for, and your labels. |
+| [`sre-agent/knowledge/`](sre-agent/knowledge/) | RequestHub's runbook, in the agent's knowledge base | Your runbook. |
+| [`configure_sre_agent.py`](configure_sre_agent.py) and [`test_configure_sre_agent.py`](test_configure_sre_agent.py) | Applies `sre-agent/`, and checks it offline: the solution's rules, the guard hook's tests, and `RECORD_FIELDS`, what the record must state | `PLACEHOLDERS`, the `{{...}}` settings your files use; `RECORD_FIELDS`, if your record's fields differ; and `resource_suffixes()`, which takes the random suffix of your resource names from `WORKER_APP_NAME`. Update the tests to match. |
+| [`azure.yaml`](azure.yaml) | The azd project: the infrastructure, RequestHub's `api` and `worker` services, and the `postprovision` hook | Remove the `api` and `worker` services. |
+
+If you connect Azure DevOps to the agent, check the names of its MCP server's tools. `toolPolicy.deny` covers them with the pattern `*DevOps*_*`, chosen before their names could be seen: while the server is disabled, the tool catalog lists only its `AzureDevOps` entry. This lists the tools that aren't built in, with their connection:
+
+```powershell
+$endpoint = az resource show -g (azd env get-value AZURE_RESOURCE_GROUP) -n (azd env get-value SRE_AGENT_NAME) --resource-type Microsoft.App/agents --api-version 2026-01-01 --query properties.agentEndpoint -o tsv
+az rest --url "$endpoint/api/v2/agent/tools" --resource https://azuresre.dev --query "data[?source!='system'].{tool: name, connection: mcpConnector || mcpConnectorDisplayName}" -o table
+```
+
+Each Azure DevOps tool's name must contain `DevOps`, capitalized like that, followed by an underscore. If one doesn't, add a pattern that matches all of its connection's tools, such as `<connection>_*`, to `toolPolicy.deny` in `sre-agent/agent.yaml`, and the tool's name to `DEVOPS_MCP_SAMPLES` in `configure_sre_agent.py`, so that `--check` fails if the pattern is removed.
+
+To rehearse an incident before a real one, write a drill for your service like [`incident.py`](incident.py), or use an [Azure Chaos Studio](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-overview) experiment. Give every fault an expiry.
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your service. Set the azd environment's value with `azd env set` before `azd up`, or run `azd provision` after; [After you edit](#after-you-edit) says how a change to `sre-agent/` takes effect:
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| The model provider | `SRE_AGENT_MODEL_PROVIDER` in the azd environment (`sreAgentModelProvider` in [`infra/main.bicep`](infra/main.bicep)): `MicrosoftFoundry` or `Anthropic` | `MicrosoftFoundry`, which is Azure OpenAI; the agent picks the model for each task |
+| The tools the custom agent may call | `customAgent.tools` in [`sre-agent/agent.yaml`](sre-agent/agent.yaml) | Azure CLI reads, and writes that ask first; Application Insights and Log Analytics queries; its memory; and two chart tools |
+| What the agent must show before it finishes | The Stop hook, [`sre-agent/hooks/evidence-checklist.md`](sre-agent/hooks/evidence-checklist.md) | For an investigation, the UTC window and the affected resources, evidence with UTC timestamps, facts apart from hypotheses with a confidence, and the next validation step; for a mitigation, also the exact command, how to roll it back, and that it waits for approval; for a recovery, evidence from after the change |
+| How many automated investigation attempts an alert gets | `responsePlan.maxAutomatedInvestigationAttempts` in `sre-agent/agent.yaml` | 3 |
+| Whether alerts share an investigation thread | `responsePlan.mergeEnabled` in the same file | `false`: every drill starts a fresh investigation thread |
+
+### What the copy adds
+
+```text
+ops/incident-response/
+├── configure_sre_agent.py             applies sre-agent/ to the live agent, or checks it offline (--check)
+├── test_configure_sre_agent.py        offline tests: the incident record's facts, the Azure DevOps denials, and retries
+├── azd_env.py                         reads settings from this solution's azd environment
+├── requirements.txt                   Python packages
+├── azure.yaml                         azd project: infra, the shared app's api and worker, and the postprovision hook
+├── sre-agent/                         Azure SRE Agent configuration, versioned
+│   ├── agent.yaml                     custom agent, skills, the GitHub write tools it denies, guard hook, response plan, tool policy
+│   ├── instructions.md                how the custom agent investigates, and the only change it may propose
+│   ├── skills/                        investigate-notification-backlog, verify-worker-recovery, draft-incident-record
+│   ├── knowledge/                     requesthub-worker-runbook.md, the team's runbook
+│   └── hooks/
+│       ├── evidence-checklist.md      Stop hook: evidence, facts versus hypotheses, rollback, approval
+│       └── no-identifiers.py          guard hook (backstop): blocks GitHub write tools, and identifiers in GitHub Issue calls
+├── infra/                             resource group, RequestHub platform (app/infra), monitoring, SRE Agent
+├── README.md                          this README
+├── LICENSE                            the licence that travels with the files
+└── .gitignore                         what the scripts and tests write, added by the copy
+```
+
+### After you edit
+
+From the folder, run the offline checks as in [Getting started](#getting-started) step 3 before you open the pull request: `python configure_sre_agent.py --check` runs the solution's rules and the guard hook's tests on your machine, with no Azure access. Once the change merges, apply it where it runs:
+
+- `sre-agent/`: `python configure_sre_agent.py` applies it and reads it back. `azd provision` runs it too, after the Bicep.
+- `infra/`, or a setting in the azd environment: `azd provision`.
+
+## Clean up
+
+When you no longer need the solution, first remove the agent's access to GitHub: in the SRE Agent portal, select the repository under **Build + setup**, **Code access**, **GitHub**, and select **Delete**, which asks no confirmation. Then delete the token in GitHub (**Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained tokens**), which revokes it at once. Then, from the solution's folder, remove the Monitoring Contributor role that the platform gave the agent's identity on the subscription, which `azd down` leaves because it isn't in the resource group. Then `azd down --purge --force` deletes the solution's resource group, with the agent, which stops its charges, the alert, and the workbook. Your service stays as it is.
+
+```powershell
+$sre = (az identity list -g (azd env get-value AZURE_RESOURCE_GROUP) -o json | ConvertFrom-Json | Where-Object name -like 'id-sre-*').principalId
+az role assignment delete --assignee $sre --role "Monitoring Contributor" --scope "/subscriptions/$(azd env get-value AZURE_SUBSCRIPTION_ID)"
+azd down --purge --force
+```
+
+Without `--force`, `azd down` lists what it will delete and asks you to confirm; without a terminal to ask in, it stops there and deletes nothing. Deleting the group moves the service principals of the agent's two managed identities to Entra's recycle bin. Entra refused to purge such principals in the fresh setups of [04-test-microsoft](../04-test-microsoft/evidence/2026-11-11-fresh-setup.md#the-clean-up-and-what-is-left) and [06-release-microsoft](../06-release-microsoft/evidence/2026-11-12-fresh-setup.md#the-clean-up-and-what-is-left); it removes them after 30 days.
+
+In the copy, [Reset the copy for another run](#reset-the-copy-for-another-run) ends with what else to delete: the Microsoft Entra app registration that RequestHub signs in with.
+
+## Troubleshooting
+
+- **The agent says it got an authorization error after you approved.** That is the design: its identities have no right to change the worker. Select **Grant permissions** on the next card to run the command with your permissions, or run it yourself.
+- **Grant permissions does not respond.** Reload the thread and select it again. If nothing happens, select **Cancel** on that card and run the command from the agent's report yourself; the workbook's worker fault row turns **None**.
+- **After Grant permissions, the run fails with "containerapp does not exist".** The command did not name its subscription, and your sign-in's default subscription is another one. The instructions in this folder include `--subscription`; keep it if you change them. The agent reads the fault settings again and asks for approval once more; if it stops instead, reply *Submit the same command again with --subscription for this resource group.*
+- **The approved command fails with "OBO sandbox CLI dispatched but response failed".** The platform's on-behalf-of run failed, possibly before the command reached Azure. The workbook's worker fault row shows whether the fault is still set. If it is, the agent submits the command again for approval; if it stops instead, reply *Approved, but the run failed and the fault is still set. Submit the command again.* You can also run the command from its report yourself.
+- **Why doesn't the agent file the Issue itself?** Don't give it `CreateGithubIssue`, SRE Agent's own tool for filing Issues. After a person allows the call, the tool appends a footer: the agent's instance name, and a link to the thread with the subscription ID and the thread GUID. Neither the guard hook nor the approval card shows that footer, and the Issue's edit history keeps it even after someone edits it out. So the agent drafts the record and a person files it, and `python configure_sre_agent.py --check` fails unless the tool is denied by name.
+- **The agent asks to create an Issue, or says a GitHub call was blocked.** That is the backstop working: the guard hook and the tool policy block every GitHub write tool. File the record from the agent's reply yourself, as in [File the record](#7-file-the-record).
+- **The repository's row under Code access shows Failed.** The token can't read the repository's contents. Create a token with **Contents: Read-only**, as in [Connect GitHub](#3-connect-github), and connect again.
+- **No investigation appears after the alert fires.** In the SRE Agent portal, **Incidents**, **Triggers & response plans**: the plan must be On, Sev2, with the title containing "notification backlog". Run `python configure_sre_agent.py` again to restore it. If the plan is right and the alert reads *Acknowledged* in Azure Monitor, another agent in the subscription took it: its history says *Acknowledged by SRE Agent*, and the Activity Log names that agent's identity. Switch the other agent's plan Off, as in [Check the starting state](#check-the-starting-state), reset, and start again once the alert has resolved.
+- **`AzureCLICredential: exit status 1` during `azd up`.** azd could not get a token from the Azure CLI. Run `az account get-access-token`, then run `azd up` again.
+- **A multi-line KQL query returns the whole table from `az monitor app-insights query`.** On Windows, `az` cuts an argument at its first line break. Put the query on one line.
 
 ## See it work
 
@@ -199,132 +484,6 @@ Evidence: Issue [#301](https://github.com/melabadi/adept-assessment-northstars/i
 
 **What it doesn't do yet.** The worker reports its backlog only after a batch, so a slow worker delays its own alert: the first report above the threshold came 3 minutes 20 seconds after the previous report, and the alert fired 3 minutes after that. If your alert must be faster, measure the queue independently of the worker.
 
-**The metric to track when you adopt it:** the time from an alert to a proposed mitigation with its evidence (2 minutes 34 seconds in See it work), the time from an alert to its resolution (12 minutes 57 seconds), and the share of incidents with a filed record. Compare them with your incidents before. A target is a goal you set, never a result.
-
-## Add it to your repository
-
-These are the steps that set the solution up on RequestHub, with what to change for your service. We have run them only on RequestHub: for your service, the commands stay the same, and the changes are the ones named below. Point the agent at a test environment of your service first, not at production.
-
-### Prerequisites
-
-- Your repository on GitHub, and the tools in the root README's [Before you start](../../README.md#before-you-start): the GitHub CLI, Python 3.12 or later, PowerShell 7, the Azure CLI, and the Azure Developer CLI.
-- Your service in Azure, with Application Insights on a Log Analytics workspace, and a metric that shows the problem you want to catch: a platform metric, or a custom metric that your service sends through OpenTelemetry, as RequestHub's worker sends the age of its oldest pending notification.
-- An Azure subscription where you can create resource groups and role assignments, for example as Owner, in a region that offers Azure SRE Agent. To see where your subscription can create the agent, run `az provider show -n Microsoft.App --query "resourceTypes[?resourceType=='agents'].locations" -o tsv`. If the list is empty, [register the subscription](https://learn.microsoft.com/azure/sre-agent/supported-regions#check-your-available-regions).
-- A GitHub account that can create a fine-grained personal access token for your repository, with read-only access to its code. Without it the agent still investigates, without reading your code.
-
-### What to copy and what to change
-
-Copy this folder into your repository, two levels below its root, for example as `ops/incident-response/` (`azd_env.py` looks for the root two levels up). Leave out `incident.py`, `evidence/`, and `images/`, which belong to RequestHub and to the run in [See it work](#see-it-work). Then change these files:
-
-| File | What it does here | What to change for your service |
-| --- | --- | --- |
-| [`infra/main.bicep`](infra/main.bicep) and [`main.parameters.json`](infra/main.parameters.json) | Deploys RequestHub's platform (`module app`), the alert and the workbook (`monitoring`), and the agent (`sreAgent`), and outputs the settings that the other files read | Remove `module app` and the outputs it fed. Pass your service's Application Insights and Log Analytics workspace to `monitoring` and `sreAgent`, and output the names your placeholders read, as `WORKER_APP_NAME` is now. Keep the agent in the resource group that `main.bicep` creates, never in your service's: `azd down --purge` deletes the whole group. |
-| [`infra/monitoring.bicep`](infra/monitoring.bicep) | The backlog alert (Sev2; every minute, the maximum over one minute above 60 seconds; resolves itself) and the workbook | Your signal: the metric's namespace and name, the threshold, the severity, and the alert's name and description, which tell the agent what is wrong. Its `existing` Application Insights and workspace are in its own resource group: scope them to your service's group. |
-| [`infra/workbook.json`](infra/workbook.json) | The workbook: the **Ready for a drill** table (Azure Resource Graph) and the backlog charts (KQL) | Your rows and charts, or leave the workbook out. |
-| [`infra/sre-agent.bicep`](infra/sre-agent.bicep) | The agent, its identities and their read-only roles (Reader, Monitoring Reader, Log Analytics Reader) on the resource group, the resource groups it manages (`managedResources`), the Azure Monitor incident platform, the telemetry connectors, and the monthly cap on active flow | Add your service's resource group to `managedResources`, give the agent's identities the same three reader roles there (a module scoped to that group), and scope the `existing` Application Insights and workspace to it. `monthlyAgentUnitLimit` caps active flow, at 1,000 AAUs a month. |
-| [`sre-agent/agent.yaml`](sre-agent/agent.yaml) | The custom agent, its skills and tools, the GitHub deny list and the guard hook, the response plan, and the tool policy | The response plan's `titleContains` and `severities`, to match your alert, and the custom agent's name and description. The agent reads the Azure Monitor alerts of its whole subscription, not only those of the resource groups it manages, so make `titleContains` match only your alert: if another agent's plan in the subscription matches it too, the first agent to pick it up investigates it (see [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository)). Keep the deny lists, and `agentMode: Review` until you trust its proposals. |
-| [`sre-agent/instructions.md`](sre-agent/instructions.md) | How the custom agent investigates, and the only change it may propose: removing the worker's two fault settings | Your service's scope, and the changes the agent may propose, each naming its subscription (`--subscription`) so that it runs where you expect. |
-| [`sre-agent/skills/`](sre-agent/skills/) | `investigate-notification-backlog` and `verify-worker-recovery`: RequestHub's KQL and read-only commands; `draft-incident-record`: the record's template, its title, and its labels | Your telemetry's KQL, your recovery criteria, and your incident record: the fields your incident process asks for, and your labels. |
-| [`sre-agent/knowledge/`](sre-agent/knowledge/) | RequestHub's runbook, in the agent's knowledge base | Your runbook. |
-| [`configure_sre_agent.py`](configure_sre_agent.py) and [`test_configure_sre_agent.py`](test_configure_sre_agent.py) | Applies `sre-agent/`, and checks it offline: the solution's rules, the guard hook's tests, and `RECORD_FIELDS`, what the record must state | `PLACEHOLDERS`, the `{{...}}` settings your files use; `RECORD_FIELDS`, if your record's fields differ; and `resource_suffixes()`, which takes the random suffix of your resource names from `WORKER_APP_NAME`. Update the tests to match. |
-| [`azure.yaml`](azure.yaml) | The azd project: the infrastructure, RequestHub's `api` and `worker` services, and the `postprovision` hook | Remove the `api` and `worker` services. |
-
-If you connect Azure DevOps to the agent, check the names of its MCP server's tools. `toolPolicy.deny` covers them with the pattern `*DevOps*_*`, chosen before their names could be seen: while the server is disabled, the tool catalog lists only its `AzureDevOps` entry. This lists the tools that aren't built in, with their connection:
-
-```powershell
-$endpoint = az resource show -g (azd env get-value AZURE_RESOURCE_GROUP) -n (azd env get-value SRE_AGENT_NAME) --resource-type Microsoft.App/agents --api-version 2026-01-01 --query properties.agentEndpoint -o tsv
-az rest --url "$endpoint/api/v2/agent/tools" --resource https://azuresre.dev --query "data[?source!='system'].{tool: name, connection: mcpConnector || mcpConnectorDisplayName}" -o table
-```
-
-Each Azure DevOps tool's name must contain `DevOps`, capitalized like that, followed by an underscore. If one doesn't, add a pattern that matches all of its connection's tools, such as `<connection>_*`, to `toolPolicy.deny` in `sre-agent/agent.yaml`, and the tool's name to `DEVOPS_MCP_SAMPLES` in `configure_sre_agent.py`, so that `--check` fails if the pattern is removed.
-
-To rehearse an incident before a real one, write a drill for your service like [`incident.py`](incident.py), or use an [Azure Chaos Studio](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-overview) experiment. Give every fault an expiry. Before you open the pull request, `python configure_sre_agent.py --check` runs the solution's rules and the guard hook's tests on your machine, with no Azure access.
-
-### One-time setup
-
-About 20 minutes, once the files describe your service. On RequestHub, `azd up` takes about 15 minutes, including the app. A fresh setup on 12 November 2026, which followed [Try it first in a copy of this repository](#try-it-first-in-a-copy-of-this-repository) in a new resource group, timed each step ([the evidence](evidence/2026-11-12-fresh-setup.md)):
-
-| Step | Took |
-| --- | --- |
-| 1. Deploy: `pip install` | 44 seconds, in a new virtual environment |
-| 1. Deploy: `azd up` | 15 minutes 10 seconds, RequestHub included: its PostgreSQL server took 6 minutes 39 seconds and its Container Apps environment 7 minutes 2 seconds, side by side, and the agent 1 minute 19 seconds; azd counted 12 minutes 7 seconds of provisioning and 2 minutes 45 seconds of deploying |
-| 1. Deploy: the two labels | 2 seconds |
-| 2. Open the agent once | 1 minute 54 seconds, from loading its page to the *Team onboarding* chat |
-| 3. Connect GitHub: the token and **Add repository** | a few minutes for a person |
-| 3. Connect GitHub: `python configure_sre_agent.py` | 36.5 seconds |
-
-#### 1. Deploy
-
-From the folder you copied:
-
-```powershell
-pip install -r requirements.txt
-az login
-azd auth login
-azd env new <environment name> --subscription (az account show --query id -o tsv) --location <region>
-azd up
-```
-
-`--subscription` deploys to the subscription that `az` signed in to, where `incident.py` and this README's `az` commands look for the resources: `az account show` names it, and `az account set --subscription <name or id>` changes it. Without it, `azd env new` stores no subscription, and `azd up` asks you to pick one of yours. Run azd in the shell where `pip install` ran, with the same virtual environment active if you use one: its `postprovision` hook runs that `python`.
-
-**What you should see:** `azd up` ends with `SUCCESS: Your application was provisioned and deployed to Azure`. Once the resources are provisioned, the `postprovision` hook lists every item it applied to the agent with `ok`, and ends with `SRE Agent configured.` and `... every GitHub write tool is denied.` A file that breaks the solution's rules stops the hook before anything reaches the agent. You get the **SRE Agent Administrator** role on the agent.
-
-Then create the labels your record asks for, as RequestHub's are created:
-
-```powershell
-gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
-gh label create phase:operate --color C5DEF5 --description "SDLC phase 7: Operate" --force
-```
-
-#### 2. Open the agent once
-
-Open the URL from `azd env get-value SRE_AGENT_PORTAL_URL` and sign in.
-
-**What you should see:** the first visit shows a setup checklist (2 log providers, 1 resource group, Azure Monitor connected) and starts a *Team onboarding* chat, which **Done and go to agent** opens. In it, the agent reads the resource group and writes notes about it to its memory; that uses a few AAUs and changes nothing. Under **Incidents**, **Triggers & response plans** lists your response plan: On, your custom agent, your severity, Review.
-
-This first visit also adds the one role that isn't in the Bicep: Monitoring Contributor on the subscription for the agent's identity, to acknowledge and close alerts. In our fresh setup, `azd up` didn't add it: the Activity Log recorded the assignment 21 seconds after the agent's page began to load, made with the account that opened it. So the person who opens the agent first needs the right to assign roles on the subscription, for example as Owner; if the role is missing, a banner in the portal asks for it ([Learn](https://learn.microsoft.com/azure/sre-agent/diagnose-azure-observability#azure-monitor-metrics)). The tool policy denies `az monitor` writes, and [Clean up](#clean-up) removes the role.
-
-#### 3. Connect GitHub
-
-A person does this once, because it gives an Azure service access to GitHub. The agent reads the repository's code through **Code access**; it never writes to GitHub.
-
-1. In GitHub, open **Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained tokens**, and select **Generate new token**:
-   - **Token name:** for example `sre-agent-code-access`. **Expiration:** 30 days.
-   - **Repository access:** Only select repositories, and pick your repository.
-   - **Permissions:** Repository permissions, **Contents: Read-only**: Code access clones the repository to connect it ([Learn](https://learn.microsoft.com/azure/sre-agent/github-connector#permissions-by-auth-type)). GitHub adds **Metadata: Read-only** by itself. Nothing else.
-
-   Select **Generate token** and copy it.
-2. In the [SRE Agent portal](https://sre.azure.com), open your agent, then **Build + setup**, **Code access**, the **GitHub** tab, and **Add repository**. In *Add repositories*, GitHub is selected:
-   - **Repository URL:** your repository's URL, `https://github.com/<owner>/<repo>`.
-   - **Connection method:** **Personal access token (PAT)**. Paste the token under **Provide PAT** and select **Connect**. A *Connected* card appears.
-
-   Select **Next**, then **Save**.
-3. Check the connection, from the folder you copied:
-
-   ```powershell
-   python configure_sre_agent.py
-   ```
-
-**What you should see:** the repository is listed under **Code access** with a green connection and a **Last synced** time, and the script's `Tools` section reports `GitHub: <owner>/<repo> is connected, credential healthy, code ready; the agent can read its code and has no GitHub tool that writes`. The script applies the configuration again, unchanged.
-
-A token that allows more, for example one you share with other tools, still doesn't let the agent write: the custom agent has no GitHub tool, and the tool policy denies every GitHub tool that writes, Issue writes included, and the terminal, shell, and Python tools, which could use the token. Two choices in the portal would widen the access: **OAuth** in that dialog applies to every repository your GitHub account can reach, and the **GitHub** card under **Build + setup**, **Connectors** is GitHub's MCP server, with GitHub's whole tool catalog. When the token expires, create a new one the same way, then select the repository under **Code access** and connect again with the new token.
-
-### Use it the first time
-
-Let your alert fire once in a test environment: inject a fault with an expiry, the way `incident.py` does on RequestHub, or lower the alert's threshold for a while.
-
-**What you should see:** within about a minute of the alert, the SRE Agent portal's **Incidents** lists it, with the agent *In progress*, then *Pending user input* when its proposal waits for approval. Open it to follow the investigation and read the report. Approve the command only if it is the change you would make: **Allow once**, then **Grant permissions**, as in [step 5 of the copy](#5-approve-the-fix). After the recovery, the agent's last reply holds the draft: read it, then file it, as in [step 7 of the copy](#7-file-the-record). On RequestHub, the report came 2 minutes 34 seconds after the alert (1 minute 54 seconds in a fresh setup on 12 November 2026), and the whole drill took about 25 minutes.
-
-Then make it part of your workflow:
-
-- **Keep a person in the loop.** Leave the response plan in **Review** mode, so every proposal waits for an SRE Agent Administrator, and keep the deny lists: `configure_sre_agent.py --check` fails if a change sets the plan to Autonomous, allows writes without approval, allows `az monitor` writes, gives the agent a GitHub tool, stops denying a GitHub write tool, the terminal, or the Azure DevOps pipeline, repository, and MCP tools, or weakens the guard hook.
-- **Change the agent in a pull request.** Edit `sre-agent/`, run `python configure_sre_agent.py --check`, and open the pull request. When it merges, `azd provision`, or only `python configure_sre_agent.py`, applies the change and reads it back.
-- **Keep the evidence of an incident you want to show.** Export the alert's history, the Activity Log, and the queries behind your numbers with only the fields you need, as [`evidence/`](evidence/) does here, and check the export for host names, GUIDs, and e-mail addresses before you commit it. Application Insights keeps the telemetry only as long as your workspace's retention.
-
-### What it costs
-
-Your service bills as it already does. The agent's always-on flow costs 4 Azure Agent Units (AAUs) an hour, at $0.10 per AAU, for as long as the agent exists: about $292 a month. A new customer's [30-day evaluation](https://learn.microsoft.com/azure/sre-agent/evaluate) waives it. Each investigation adds active flow, roughly 10 to 35 AAUs ($1 to $3.50; our drills used 15 to 25), and about $1 of log ingestion; the Bicep caps active flow at 1,000 AAUs a month. See [pricing](https://learn.microsoft.com/azure/sre-agent/pricing-billing), and the root README's [what the Microsoft solutions cost](../../README.md#what-the-microsoft-solutions-cost).
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on RequestHub, before you adapt anything. It needs the [prerequisites](#prerequisites), with RequestHub in place of your service, a region that also offers PostgreSQL Flexible Server (the examples use `centralus`), and permission to create Microsoft Entra app registrations: RequestHub signs in with its own.
@@ -332,6 +491,8 @@ Optional: the same solution on RequestHub, before you adapt anything. It needs t
 Use a subscription where no other environment of this solution runs, or switch the other environment's response plan Off while you run the steps. Every agent reads the Azure Monitor alerts of its whole subscription, and the two plans pick the same title, so the agent that sees the alert first investigates it: in our fresh setup, another environment's agent acknowledged the copy's alert 49 seconds after it fired, and the copy's agent never listed it. [Check the starting state](#check-the-starting-state) shows how to find another agent.
 
 In the copy, the other solutions' workflows also see step 7's Issue: in our fresh setup, filing it started *Operate · GitHub · agentic incident triage* twice, which skipped every job in 1 to 2 seconds. No model ran.
+
+The copy also has the files of this folder that belong to the demo: [`incident.py`](incident.py), the drill, `start` (a fault with an expiry, synthetic requests) and `reset`; [`evidence/`](evidence/), what Azure recorded during the run in See it work, exported for anyone to check, and a setup from scratch that followed only this README, timed step by step; and [`images/`](images/), the screenshots of the run in See it work, and of an earlier run on 30 October. RequestHub lives in [`app/`](../../app/README.md). Its notification worker already supports the fault used here: `Faults__WorkerDelayMs` slows every delivery, and `Faults__ExpiresAtUtc` switches the fault off at a fixed time even if nobody cleans up.
 
 ### Quick start
 
@@ -471,82 +632,26 @@ gh issue close <number>
 
 `reset` removes the fault if it is still set, and reseeds RequestHub's demo data. Close the Issue you filed once you no longer need it. The next run can start when every row of the workbook's **Ready for a drill** table says **Ready**: the alert row does about 5 minutes after the backlog drains. The investigation threads stay in the agent's history, as the record of past drills.
 
-## Clean up
+When you no longer need the copy, follow [Clean up](#clean-up), and also delete the Microsoft Entra app registration that RequestHub signs in with. `azd down` doesn't remove it (Entra objects live outside resource groups), and a deleted app that is not purged stops a new `azd up` with the same environment name from creating it again for 30 days. Read its id and its service principal's before `azd down`, which removes the deployment's outputs, `API_CLIENT_ID` among them, from the azd environment. Then delete the app and purge both, since Entra moves the service principal to its recycle bin with the app. From `solutions/07-operate-microsoft`, run these lines instead of Clean up's:
 
-When you no longer need the solution, first remove the agent's access to GitHub: in the SRE Agent portal, select the repository under **Build + setup**, **Code access**, **GitHub**, and select **Delete**, which asks no confirmation. Then delete the token in GitHub (**Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained tokens**), which revokes it at once. Then, from the solution's folder:
-
-- **In your repository:** remove the Monitoring Contributor role that the platform gave the agent's identity on the subscription, which `azd down` leaves because it isn't in the resource group. Then `azd down --purge --force` deletes the solution's resource group, with the agent, which stops its charges, the alert, and the workbook. Your service stays as it is.
-
-  ```powershell
-  $sre = (az identity list -g (azd env get-value AZURE_RESOURCE_GROUP) -o json | ConvertFrom-Json | Where-Object name -like 'id-sre-*').principalId
-  az role assignment delete --assignee $sre --role "Monitoring Contributor" --scope "/subscriptions/$(azd env get-value AZURE_SUBSCRIPTION_ID)"
-  azd down --purge --force
-  ```
-
-- **In the copy:** the same, and also the Microsoft Entra app registration that RequestHub signs in with. `azd down` doesn't remove it (Entra objects live outside resource groups), and a deleted app that is not purged stops a new `azd up` with the same environment name from creating it again for 30 days. Read its id and its service principal's before `azd down`, which removes the deployment's outputs, `API_CLIENT_ID` among them, from the azd environment. Then delete the app and purge both, since Entra moves the service principal to its recycle bin with the app:
-
-  ```powershell
-  $sre = (az identity list -g (azd env get-value AZURE_RESOURCE_GROUP) -o json | ConvertFrom-Json | Where-Object name -like 'id-sre-*').principalId
-  az role assignment delete --assignee $sre --role "Monitoring Contributor" --scope "/subscriptions/$(azd env get-value AZURE_SUBSCRIPTION_ID)"
-  $app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-  $sp = az ad sp show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
-  azd down --purge --force
-  az ad app delete --id $app
-  az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
-  az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$sp"
-  ```
-
-Without `--force`, `azd down` lists what it will delete and asks you to confirm; without a terminal to ask in, it stops there and deletes nothing. In the copy, it deletes the group with RequestHub's platform and app too, and `--purge` purges the Log Analytics workspace, so that its name can be used again at once. `az ad app delete` removes RequestHub's app registration, Entra moves its service principal to the recycle bin with it, and the two `az rest` calls empty both from the recycle bin. Deleting the group also moves the service principals of its managed identities there: RequestHub's two, and the agent's two. Entra refused to purge such principals in the fresh setups of [04-test-microsoft](../04-test-microsoft/evidence/2026-11-11-fresh-setup.md#the-clean-up-and-what-is-left) and [06-release-microsoft](../06-release-microsoft/evidence/2026-11-12-fresh-setup.md#the-clean-up-and-what-is-left); it removes them after 30 days.
-
-Allow about half an hour: `azd down --purge --force` took 29 minutes 49 seconds in our fresh setup, most of it for the Container Apps environment. Afterwards nothing of the copy's environment was left in Azure, and in Microsoft Entra ID only those principals in the recycle bin ([the evidence](evidence/2026-11-12-fresh-setup.md#the-clean-up-and-what-is-left)).
-
-## What's in this folder
-
-```text
-07-operate-microsoft/
-├── README.md
-├── evidence/
-│   ├── 2026-11-10-recorded-run.md     what Azure recorded during the run in See it work, exported for anyone to check
-│   └── 2026-11-12-fresh-setup.md      a setup from scratch that followed only this README, timed step by step
-├── images/                            screenshots of the run in See it work, and of an earlier run on 30 October
-├── incident.py                        RequestHub only: the drill, start (a fault with an expiry, synthetic requests) and reset
-├── configure_sre_agent.py             applies sre-agent/ to the live agent, or checks it offline (--check)
-├── test_configure_sre_agent.py        offline tests: the incident record's facts, the Azure DevOps denials, and retries
-├── azd_env.py                         reads settings from this solution's azd environment
-├── requirements.txt                   Python packages
-├── azure.yaml                         azd project: infra, the shared app's api and worker, and the postprovision hook
-├── sre-agent/                         Azure SRE Agent configuration, versioned
-│   ├── agent.yaml                     custom agent, skills, the GitHub write tools it denies, guard hook, response plan, tool policy
-│   ├── instructions.md                how the custom agent investigates, and the only change it may propose
-│   ├── skills/                        investigate-notification-backlog, verify-worker-recovery, draft-incident-record
-│   ├── knowledge/                     requesthub-worker-runbook.md, the team's runbook
-│   └── hooks/
-│       ├── evidence-checklist.md      Stop hook: evidence, facts versus hypotheses, rollback, approval
-│       └── no-identifiers.py          guard hook (backstop): blocks GitHub write tools, and identifiers in GitHub Issue calls
-└── infra/
-    ├── main.bicep                     resource group, RequestHub platform (app/infra), monitoring, SRE Agent
-    ├── monitoring.bicep               the backlog metric alert and the workbook
-    ├── workbook.json                  the workbook: readiness table (Azure Resource Graph) and KQL charts
-    ├── sre-agent.bicep                the agent, its identities and read-only roles, telemetry connectors, AAU cap
-    └── main.parameters.json
+```powershell
+$sre = (az identity list -g (azd env get-value AZURE_RESOURCE_GROUP) -o json | ConvertFrom-Json | Where-Object name -like 'id-sre-*').principalId
+az role assignment delete --assignee $sre --role "Monitoring Contributor" --scope "/subscriptions/$(azd env get-value AZURE_SUBSCRIPTION_ID)"
+$app = az ad app show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
+$sp = az ad sp show --id (azd env get-value API_CLIENT_ID) --query id -o tsv
+azd down --purge --force
+az ad app delete --id $app
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$app"
+az rest --method delete --url "https://graph.microsoft.com/v1.0/directory/deletedItems/$sp"
 ```
 
-RequestHub lives in [`app/`](../../app/README.md). Its notification worker already supports the fault used here: `Faults__WorkerDelayMs` slows every delivery, and `Faults__ExpiresAtUtc` switches the fault off at a fixed time even if nobody cleans up. This folder has no `.github/` files: everything runs in Azure.
+In the copy, `azd down` deletes the group with RequestHub's platform and app too, and `--purge` purges the Log Analytics workspace, so that its name can be used again at once. `az ad app delete` removes RequestHub's app registration, Entra moves its service principal to the recycle bin with it, and the two `az rest` calls empty both from the recycle bin. Deleting the group also moves the service principals of its managed identities there: RequestHub's two, and the agent's two.
 
-## Troubleshooting
+Allow about half an hour: `azd down --purge --force` took 29 minutes 49 seconds in our fresh setup, most of it for the Container Apps environment. Afterwards nothing of the copy's environment was left in Azure, and in Microsoft Entra ID only those principals in the recycle bin ([the evidence](evidence/2026-11-12-fresh-setup.md#the-clean-up-and-what-is-left)). The [root README](../../README.md#try-it-in-a-copy-of-this-repository) then says how to delete the copy itself.
 
-- **`azd up` shows nothing that its `postprovision` hook prints.** azd shows a hook that isn't `interactive` in a small pane that it clears once the hook succeeds, and without a terminal it shows nothing at all. Since 12 November 2026, this folder's [`azure.yaml`](azure.yaml) makes the hook interactive. With an older copy, `python configure_sre_agent.py` prints the same report: it applies the configuration again, unchanged, and reads it back.
+### Troubleshooting the copy
+
 - **The workbook shows the database `Stopped`, or `incident.py start` cannot read the backlog.** A governance automation in some subscriptions stops PostgreSQL servers overnight. Start it with the command in [Check the starting state](#check-the-starting-state), wait about 3 minutes, then a minute more for the API to reconnect.
-- **The agent says it got an authorization error after you approved.** That is the design: its identities have no right to change the worker. Select **Grant permissions** on the next card to run the command with your permissions, or run it yourself.
-- **Grant permissions does not respond.** Reload the thread and select it again. If nothing happens, select **Cancel** on that card and run the command from the agent's report yourself; the workbook's worker fault row turns **None**.
-- **After Grant permissions, the run fails with "containerapp does not exist".** The command did not name its subscription, and your sign-in's default subscription is another one. The instructions in this folder include `--subscription`; keep it if you change them. The agent reads the fault settings again and asks for approval once more; if it stops instead, reply *Submit the same command again with --subscription for this resource group.*
-- **The approved command fails with "OBO sandbox CLI dispatched but response failed".** The platform's on-behalf-of run failed, possibly before the command reached Azure. The workbook's worker fault row shows whether the fault is still set. If it is, the agent submits the command again for approval; if it stops instead, reply *Approved, but the run failed and the fault is still set. Submit the command again.* You can also run the command from its report yourself.
-- **Why doesn't the agent file the Issue itself?** Don't give it `CreateGithubIssue`, SRE Agent's own tool for filing Issues. After a person allows the call, the tool appends a footer: the agent's instance name, and a link to the thread with the subscription ID and the thread GUID. Neither the guard hook nor the approval card shows that footer, and the Issue's edit history keeps it even after someone edits it out. So the agent drafts the record and a person files it, and `python configure_sre_agent.py --check` fails unless the tool is denied by name.
-- **The agent asks to create an Issue, or says a GitHub call was blocked.** That is the backstop working: the guard hook and the tool policy block every GitHub write tool. File the record from the agent's reply yourself, as in [File the record](#7-file-the-record).
-- **The repository's row under Code access shows Failed.** The token can't read the repository's contents. Create a token with **Contents: Read-only**, as in [Connect GitHub](#3-connect-github), and connect again.
 - **A RequestHub button fails with HTTP 403 and no body.** The API was deployed before the fix that lets the app's own origin send requests through Container Apps authentication (#134). Run `azd deploy api` from `main`.
 - **The alert takes several minutes to fire.** The worker reports its backlog after each batch of up to 20 notifications, so at 10 seconds per delivery the gauge updates every few minutes.
-- **No investigation appears after the alert fires.** In the SRE Agent portal, **Incidents**, **Triggers & response plans**: the plan must be On, Sev2, with the title containing "notification backlog". Run `python configure_sre_agent.py` again to restore it. If the plan is right and the alert reads *Acknowledged* in Azure Monitor, another agent in the subscription took it: its history says *Acknowledged by SRE Agent*, and the Activity Log names that agent's identity. Switch the other agent's plan Off, as in [Check the starting state](#check-the-starting-state), reset, and start again once the alert has resolved.
 - **`LocationIsOfferRestricted` for PostgreSQL during `azd up`.** Your subscription cannot create PostgreSQL Flexible Server in that region. Create a new azd environment in another region that also offers Azure SRE Agent.
-- **`AzureCLICredential: exit status 1` during `azd up`.** azd could not get a token from the Azure CLI. Run `az account get-access-token`, then run `azd up` again.
-- **A multi-line KQL query returns the whole table from `az monitor app-insights query`.** On Windows, `az` cuts an argument at its first line break. Put the query on one line.

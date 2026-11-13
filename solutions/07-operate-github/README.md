@@ -4,11 +4,29 @@ After an incident, the follow-up is where teams lose the most. The timeline gets
 
 ![The agentic workflow's triage comment on the incident: severity 3 in the worker area, a timeline in which every row names its source in the report, then the observed facts](images/03-triage-timeline.png)
 
+- **Install it in your repository:** [copy 13 files, edit them for your code, and set them up once](#install-it-in-your-repository), with the commands in order in [Getting started](#getting-started). Copying took 5 to 7 seconds when this README was checked; the rest is a token, 14 labels, a settings page, and a pull request, plus the changes your stack needs.
+- **Files to edit to tweak it:** [the triage's prompt and labels, the agent's instructions, the severity rubric, and the proof script](#files-to-edit-to-tweak-it).
 - **See it work:** [a real run on this repository](#see-it-work), step by step. An incident report became an evidence-based triage in under 5 minutes, then a follow-up Issue, then a pull request from Copilot whose new tests the proof showed failing without its one-line fix, with a screenshot and a link anyone can open for every step.
-- **Add it to your repository:** [copy 12 files, adapt them to your code, and set them up once](#add-it-to-your-repository). Copying the files took 12 seconds when this README was checked; the rest is a token, 14 labels, a settings page, and a pull request, plus the changes your stack needs.
 - **Try it first in a copy of this repository:** [a token and 14 labels to set up](#try-it-first-in-a-copy-of-this-repository), in the copy that the [root README](../../README.md#try-it-in-a-copy-of-this-repository) makes once for every solution; the label commands take seconds. A run then needs about 12 minutes of the workflow, Copilot, and the checks working on their own, plus a few minutes of yours.
 
-## Why it matters
+## Technologies used
+
+| Technology | What it does here |
+| --- | --- |
+| [GitHub Agentic Workflows](https://github.github.com/gh-aw/) (gh-aw v1.2.2), with the Copilot engine | Option A: triages an incident Issue when it gets the `incident` label. Copilot reads the incident and the code with read-only tools, behind a firewall; threat detection checks what it asks for, and a separate job applies it: one comment, labels from an allow-list, and one follow-up Issue |
+| [GitHub Copilot CLI](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-cli) | Option B, without a token: drafts the same triage on your machine, with file tools only, for you to read and file |
+| [Copilot cloud agent](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github) | Works on the follow-up unattended, in a session on GitHub Actions: a regression test that fails on the current code, then the smallest fix, in a pull request |
+| A [custom agent](https://docs.github.com/en/copilot/concepts/customizations/custom-agents) and two [agent skills](https://docs.github.com/en/copilot/concepts/customizations/agent-skills) | `operate-github`, with `incident-evidence`, the triage method and its severity and area rubric, and `regression-followup`: test first, watch it fail, smallest fix, prove |
+| GitHub Issues, with an [issue form](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms) and labels | Hold the incident, its triage comment and labels, and the follow-up, a sub-issue of the incident |
+| [GitHub Actions](https://docs.github.com/en/actions) | Runs the triage, the regression proof on Copilot's pull request, the checks of the triage and proof tooling, and Copilot's session, which `copilot-setup-steps.yml` prepares |
+| Python 3.12, standard library only | The proof script, `prove_regression.py`, and the unit tests |
+| GitHub CLI and PowerShell 7 | The commands in this README |
+
+The files are written for RequestHub's stack: a .NET 10 API and worker, xUnit v3 integration tests, and PostgreSQL. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for yours.
+
+## What it does and how it works
+
+### What it does
 
 **Phase 7 of 7: Operate and improve.** Today, once the service is back, the follow-up waits. Someone rebuilds the timeline from chat and dashboards, the first plausible cause becomes the root cause, and "add a test" goes to the backlog. With this solution the evidence is gathered while the incident is fresh, every claim names its source, and the follow-up ends in a test that is proven to fail without its fix.
 
@@ -20,16 +38,11 @@ After an incident, the follow-up is where teams lose the most. The timeline gets
 | Proof | Nobody checks that the new test would have caught the incident. | A check shows which tests fail on the old code and pass with the fix. |
 | Decision | Implicit: whoever has time picks the follow-up up. | A person decides whether the follow-up goes to Copilot, starts the checks on its pull request, and reviews it. |
 
-The value: an incident becomes a proven regression test in minutes of machine time, and every step leaves evidence that a reviewer can check rather than a summary to trust. The run in [See it work](#see-it-work), on 28 October 2026, measured:
-
-- **4 minutes 52 seconds** from filing the incident to the triage comment: nine timeline rows, each with its source, three hypotheses with their confidence and code references, and one follow-up Issue.
-- **4 minutes 2 seconds** of Copilot's session, from the follow-up to a pull request with three new tests and a one-line fix, 7 seconds after a person assigned it.
-- **PROVEN in 2 minutes 9 seconds:** two of Copilot's new tests failed on the code before the change, and all 63 tests passed with it. The proof also showed that Copilot's own summary overstated its result ([step 7](#7-the-proof-showed-which-tests-catch-the-defect)).
-- **1 hour 14 minutes** from filing the incident to PROVEN, 59 minutes 48 seconds of it while the checks waited for a person to start them.
+The value: an incident becomes a proven regression test in minutes of machine time, and every step leaves evidence that a reviewer can check rather than a summary to trust. [Results and value](#results-and-value) has what the recorded run measured.
 
 The Microsoft counterpart, [07-operate-microsoft](../07-operate-microsoft/), starts an Azure SRE Agent investigation from an alert. The [Operate combo](../../PRESENTING.md#operate-azure-recovers-a-person-files-copilot-proves-the-follow-up) uses both on one incident: Azure SRE Agent recovers the service and drafts the incident record, a person files it as an `incident` Issue, and this solution turns it into a proven regression test.
 
-## How it works
+### How it works
 
 ```mermaid
 flowchart LR
@@ -56,6 +69,292 @@ flowchart LR
 - **People** file the incident, decide whether the follow-up goes to Copilot, start the workflow runs on Copilot's pull request, and review it.
 
 **Outside contributions.** On a public repository anyone can file an incident with this solution's form, and the form applies the `incident` label for them. The triage still does not start. Before anything else, the workflow checks that the incident's author is the owner, a member, or a collaborator (its `author_association`). gh-aw then checks that whoever applied the label has write access (the role admin, maintainer, or write). So an outside report reaches no model, and applying the label again doesn't change that: a maintainer who decides it is an incident files it again in their own words. On a public repository, gh-aw also hides content from anyone else from the agent's GitHub tools, such as comments on the incident. Only people with write access can assign the follow-up to Copilot or mention `@copilot`. The regression proof runs a fork's pull request once someone with write access approves the run, with a read-only token and no secrets. A dispatched run of the proof refuses a fork's pull request: it would build that code with this repository's cache access.
+
+## Install it in your repository
+
+[Getting started](#getting-started) lists the commands in order, and the sections after it explain each step and what you should see. [Files to edit to tweak it](#files-to-edit-to-tweak-it) names what to change for your code. The commands are the ones this repository uses. The solution has run end to end only in this repository; the copy, the unit tests, and the compiler below were also checked in an empty repository.
+
+### Prerequisites
+
+- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, signed in with the `workflow` scope, and PowerShell 7.4 or later. Python 3.12 or later runs the proof and the unit tests on your machine; both use only Python's standard library.
+- **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your repository. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)).
+- **A Copilot session on GitHub Actions.** Copilot runs your tests in its session, with the services that `copilot-setup-steps.yml` starts ([this repository's](../../.github/workflows/copilot-setup-steps.yml) starts PostgreSQL). Cloud sandboxes don't run setup steps, and cloud is the default where GitHub offers a choice of environment ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)), so pick GitHub Actions.
+- **For option A, the agentic workflow:** [GitHub Agentic Workflows](https://github.github.com/gh-aw/), [generally available](https://github.blog/changelog/2026-10-28-github-agentic-workflows-generally-available) since 28 October 2026, and its `gh aw` extension, to compile the workflow: `gh extension install github/gh-aw --pin v1.2.2`. Its Copilot engine authenticates with a `COPILOT_GITHUB_TOKEN` secret, a fine-grained personal access token with **Copilot Requests: Read** ([one-time step 3](#one-time-setup)). In an organization with a Copilot subscription and centralized billing, gh-aw recommends `copilot-requests: write` in the workflow's `permissions:` instead, with no token.
+- **For option B, Copilot CLI:** [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli) (`copilot`; last tested with 1.0.109: [its transcript](evidence/copilot-cli-1.0.109.md)). It needs no token or secret.
+- **Tests that a GitHub-hosted runner can run,** with your database as a service: the proof runs them twice on every follow-up's pull request.
+
+### Getting started
+
+From the root of your repository, in PowerShell 7. Each step links to its details and to what you should see.
+
+1. **Check the tools.** `gh auth status` must list `workflow` among the token's scopes, Python must be 3.12 or later, and PowerShell 7.4 or later. For option A, `gh aw version` must print `v1.2.2`; for option B, Copilot CLI was last tested with 1.0.109 ([Prerequisites](#prerequisites)).
+
+   ```powershell
+   gh --version; gh auth status
+   python --version; $PSVersionTable.PSVersion.ToString()
+   gh aw version
+   copilot --version
+   ```
+
+2. **Copy the files on a new branch.** The copy adds the licence that must travel with the files, as `.github/LICENSE-ai-sdlc`, and prints the commit it copied from: keep it to [take updates later](../../README.md#take-updates-later).
+
+   ```powershell
+   git switch -c add-operate-github
+   $src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-07-operate-github'
+   git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
+   "Copying from ai-sdlc commit $(git -C $src rev-parse --short HEAD)"
+   New-Item -ItemType Directory -Force .github, tests | Out-Null
+   Copy-Item -Recurse -Force (Join-Path $src 'solutions/07-operate-github/.github/*') .github
+   Copy-Item -Force (Join-Path $src 'solutions/07-operate-github/tests/test_operate_tooling.py') tests
+   Copy-Item -Force (Join-Path $src 'LICENSE') .github/LICENSE-ai-sdlc
+   Remove-Item -Recurse -Force $src
+   git status --short --untracked-files=all
+   ```
+
+   What you should see: the commit, then 13 new files, in 5 to 7 seconds when this README was checked; the other files in `.github/` and `tests/` stay. GitHub reads a repository's own licence only from its root, so yours doesn't change.
+
+3. **Edit the files for your code,** as [Files to edit to tweak it](#files-to-edit-to-tweak-it) lists, `README` in the unit tests included. Then run the unit tests. The first line keeps Python from writing a `__pycache__` folder into `tests/`, which you commit:
+
+   ```powershell
+   $env:PYTHONDONTWRITEBYTECODE = '1'
+   python -m unittest discover -s tests
+   ```
+
+   They end with `OK`; without bash and jq, the scope tests are skipped ([one-time step 1](#one-time-setup)).
+
+4. **Set it up once.** Give Copilot and the proof your test services ([one-time step 2](#one-time-setup)). For option A, create the token and store it as a secret, then compile the triage after your changes to it ([one-time steps 3 and 4](#one-time-setup)); option B needs no token. Create the labels, and allow the Copilot cloud agent in your repository ([one-time steps 5 and 6](#one-time-setup)):
+
+   ```powershell
+   gh secret set COPILOT_GITHUB_TOKEN    # paste the token when prompted
+   gh aw compile operate-github-incident-triage
+   gh label create incident --color b60205 --description "Operate: incident report; starts the agentic triage" --force
+   gh label create incident-followup --color 0e8a16 --description "Operate: follow-up opened by an incident triage" --force
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:operate --color C5DEF5 --description "SDLC phase 7: Operate" --force
+   foreach ($name in "severity:1", "severity:2", "severity:3", "severity:4", "area:worker", "area:api", "area:web", "area:database", "area:infrastructure", "needs-info") {
+     gh label create $name --color ededed --force
+   }
+   ```
+
+5. **Merge it into your default branch,** where GitHub runs the triage and offers the issue form, and the cloud agent loads custom agents ([one-time step 7](#one-time-setup)). Replace `<commit>` with the one step 2 printed:
+
+   ```powershell
+   git add .github tests/test_operate_tooling.py
+   git commit -m "Add 07-operate-github from ai-sdlc <commit>"
+   git push -u origin add-operate-github
+   gh pr create --fill
+   ```
+
+   If the compiler wrote `.gitattributes` in step 4, which marks lock files as generated, add it too. Merge the pull request as you merge any change.
+
+6. **Use it on your next incident.** File it with the *Operate: report an incident* form: its `incident` label starts the triage. Without the token, draft the triage with Copilot CLI instead, as in [Use it the first time](#use-it-the-first-time), step 2B. Then decide whether the follow-up goes to Copilot, and assign it (replace `<followup>`, and `main` if your base branch differs):
+
+   ```powershell
+   $repo = gh repo view --json nameWithOwner --jq .nameWithOwner
+   "{""assignees"":[""copilot-swe-agent[bot]""],""agent_assignment"":{""target_repo"":""$repo"",""base_branch"":""main"",""custom_agent"":""operate-github""}}" |
+     gh api -X POST "repos/$repo/issues/<followup>/assignees" --input - --jq '[.assignees[].login] | join(", ")'
+   ```
+
+   Then start its checks, read the proof, and decide, as [Use it the first time](#use-it-the-first-time) describes.
+
+### One-time setup
+
+1. **Copy the files and make the changes in [Files to edit to tweak it](#files-to-edit-to-tweak-it),** on a branch, as in [Getting started](#getting-started). What you should see: with `README` pointed at a runbook that holds the Copilot CLI command, `python -m unittest discover -s tests` ends with `OK`. The scope tests need bash and jq, as on GitHub's Ubuntu runners, and are skipped without them.
+2. **Give Copilot and the proof your test services.** Before Copilot starts, GitHub runs the job named `copilot-setup-steps` in `.github/workflows/copilot-setup-steps.yml`. Start your database there as a service and install your toolchain, as [this repository's](../../.github/workflows/copilot-setup-steps.yml) does for PostgreSQL and .NET, and give `operate-github-regression-proof.yml` the same service. What you should see: once the file is on your default branch, `gh workflow run copilot-setup-steps.yml` starts it (it needs a `workflow_dispatch` trigger, as this repository's has), and `gh run list --workflow copilot-setup-steps.yml --limit 1` then shows it `completed` with `success`.
+3. **Option A: give the agentic workflow access to Copilot.** Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new?name=COPILOT_GITHUB_TOKEN&description=Agentic+workflow+Copilot+engine&user_copilot_requests=read). Set the resource owner to your user account, and under **Account permissions** set **Copilot Requests** to **Read**. Nothing else is needed. Store it as a repository secret:
+
+   ```powershell
+   gh secret set COPILOT_GITHUB_TOKEN    # paste the token when prompted
+   ```
+
+   What you should see: `gh secret list` shows `COPILOT_GITHUB_TOKEN`. The triage's AI credits count against the token owner's Copilot plan. In an organization with centralized Copilot billing, add `copilot-requests: write` under `permissions:` in the workflow's frontmatter instead, and recompile.
+4. **Compile the triage workflow** after any change to its `.md` file, with the pinned compiler, from the root of your repository:
+
+   ```powershell
+   gh aw compile operate-github-incident-triage
+   ```
+
+   What you should see: `✓ Compiled 1 workflow: 1 succeeded, 0 warnings`. It may also print a tip about `copilot-requests: write`. In a repository that hasn't used gh-aw before, it also writes `.gitattributes`, which marks lock files as generated, and `.github/aw/actions-lock.json`, a compile-time cache that this repository leaves out of git. Commit the `.md` file and its `.lock.yml` together: the checks workflow fails a pull request whose lock file doesn't match what the pinned compiler makes of its source. The lock file's header also lists every custom agent in your repository's `.github/agents/`, by name and tools, so compile again after you add an agent or change one's frontmatter.
+5. **Create the labels the triage uses.** The severity and area labels come from the [rubric](.github/skills/incident-evidence/severity-rubric.md). `--force` makes the commands safe to run again.
+
+   ```powershell
+   gh label create incident --color b60205 --description "Operate: incident report; starts the agentic triage" --force
+   gh label create incident-followup --color 0e8a16 --description "Operate: follow-up opened by an incident triage" --force
+   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
+   gh label create phase:operate --color C5DEF5 --description "SDLC phase 7: Operate" --force
+   foreach ($name in "severity:1", "severity:2", "severity:3", "severity:4", "area:worker", "area:api", "area:web", "area:database", "area:infrastructure", "needs-info") {
+     gh label create $name --color ededed --force
+   }
+   ```
+
+   What you should see: `gh label list --search incident` lists `incident` and `incident-followup`.
+6. **Allow the Copilot cloud agent** in the repository, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**.
+7. **Merge it into your default branch.** GitHub runs the triage and offers the issue form from the default branch, and the cloud agent loads custom agents from it. What you should see:
+
+   ```powershell
+   gh api 'repos/{owner}/{repo}/contents/.github/agents/operate-github.agent.md' --jq .path
+   ```
+
+   prints `.github/agents/operate-github.agent.md`, **New issue** offers *Operate: report an incident*, and `gh workflow list` lists *Operate · GitHub · agentic incident triage* as `active`.
+
+### Use it the first time
+
+On your own incident, the steps are those of [See it work](#see-it-work):
+
+1. **File the incident** with the *Operate: report an incident* form, as the owner, a member, or a collaborator: the triage reads no one else's report. When someone outside the team reports an incident, a maintainer files it again in their own words.
+2. **Triage it.**
+
+   **A. With the agentic workflow.** The form's `incident` label starts it. What you should see: within a minute or two, an 👀 reaction and a status comment that links to the run; about 5 minutes after the filing, the triage comment, a severity label and an area label, and one follow-up Issue under the incident's **Sub-issues**, as in [steps 2 to 4](#2-the-agentic-workflow-triaged-it).
+
+   **B. Without the token, with Copilot CLI.** File the incident without the `incident` label, which would start the agentic workflow, and set `$incident` to its number, for example `$incident = 42`. Then, from the root of your repository, check the incident's author, export it, and let Copilot draft the triage:
+
+   ```powershell
+   Remove-Item -Recurse -Force out/operate -ErrorAction SilentlyContinue; New-Item -ItemType Directory out/operate | Out-Null
+   if ((gh api "repos/{owner}/{repo}/issues/$incident" --jq .author_association) -in 'OWNER', 'MEMBER', 'COLLABORATOR') {
+     gh issue view $incident --json number,title,body,url > out/operate/incident.json
+   } else { Write-Warning "Incident #$incident was not filed by the owner, a member, or a collaborator. File it again in your own words." }
+   copilot --agent operate-github --available-tools 'view,glob,grep,skill,create,edit,apply_patch' --disable-builtin-mcps `
+     --disallow-temp-dir --deny-tool 'read(.env)' --allow-tool 'write(followup-issue.md)' --allow-tool 'write(triage-comment.md)' `
+     -p "Draft the triage of the incident in out/operate/incident.json with the incident-evidence skill."
+   ```
+
+   Only an incident filed by the owner, a member, or a collaborator reaches Copilot: the `if` exports it only then, and only its title and description, never its comments. Copilot runs unattended, signed in as you, so the command gives it file tools only:
+   - `--available-tools` leaves it no shell, no web access, and no subagents.
+   - `--disable-builtin-mcps` removes the GitHub tools.
+   - It reads only the repository: no temp directory, and no `.env` file, where an azd environment can keep a token.
+   - It can write only the two drafts.
+
+   What you should see: Copilot reads the skill, the exported incident, and the code, then writes the follow-up to `out/operate/followup-issue.md` (its first line is the title) and the triage comment to `out/operate/triage-comment.md`. Keep `out/` out of git, as this repository's `.gitignore` does. In a run on 1 November 2026, on incident [#252](https://github.com/melabadi/adept-assessment-northstars/issues/252), Copilot wrote the two drafts in 1 minute 30 seconds, for 10.64 AI credits:
+
+   ![Copilot CLI drafting the triage of incident 252 in the terminal: the commands check the incident's author and export it, Copilot starts with 165 tools disabled, among them the shell and web access, reads the skill, the incident, and the code, and creates only the two drafts. Nothing was filed on GitHub](images/02b-copilot-cli.png)
+
+   Then read both drafts: you publish them under your name. File them with the three `gh` commands below. `severity:3` and `area:worker` are the sample incident's labels: use the ones Copilot gives in its summary and on the first line of the comment.
+
+   ```powershell
+   Get-Content out/operate/followup-issue.md, out/operate/triage-comment.md
+   $followup = Get-Content out/operate/followup-issue.md
+   $followup | Select-Object -Skip 2 | Set-Content out/operate/followup-body.md
+   gh issue create --title $followup[0] --label incident-followup --label ai-sdlc --label phase:operate --parent $incident --body-file out/operate/followup-body.md
+   gh issue edit $incident --add-label severity:3 --add-label area:worker   # the sample incident's labels: use the ones Copilot gives
+   gh issue comment $incident --body-file out/operate/triage-comment.md
+   ```
+
+   In the run of 1 November, the three commands filed follow-up [#253](https://github.com/melabadi/adept-assessment-northstars/issues/253) at 05:40:11 UTC and the [triage comment](https://github.com/melabadi/adept-assessment-northstars/issues/252#issuecomment-6554020278) at 05:40:16. Copilot did the analysis, but it couldn't act on GitHub: nothing reached GitHub until a person had read the drafts and filed them under their own name.
+
+3. **Decide whether the follow-up goes to Copilot.** Read the triage and the follow-up: does the evidence support the failure mode, and is the scope small? Then assign the follow-up to **Copilot**, with the **operate-github** agent and the branch your fixes go into as the base branch. From a terminal instead (replace `<followup>` with its number, and `main` with your base branch if it differs; it prints `Copilot` and your login):
+
+   ```powershell
+   $repo = gh repo view --json nameWithOwner --jq .nameWithOwner
+   "{""assignees"":[""copilot-swe-agent[bot]""],""agent_assignment"":{""target_repo"":""$repo"",""base_branch"":""main"",""custom_agent"":""operate-github""}}" |
+     gh api -X POST "repos/$repo/issues/<followup>/assignees" --input - --jq '[.assignees[].login] | join(", ")'
+   ```
+
+   What you should see: within seconds Copilot opens a draft pull request that will close the follow-up. Select **View session** on it to watch Copilot work; when it finishes, it asks for your review, as in [step 5](#5-copilot-wrote-the-tests-and-the-fix).
+4. **Start its checks:** select **Approve workflows to run** in the pull request's merge box, or start every waiting run of its latest commit from a terminal:
+
+   ```powershell
+   $head = gh pr view <pr> --json headRefOid -q .headRefOid
+   gh run list --commit $head --json databaseId,conclusion -q '.[] | select(.conclusion == "action_required") | .databaseId' | ForEach-Object { gh run rerun $_ }
+   ```
+
+   See [step 6](#6-a-person-started-the-checks).
+5. **Read the proof:** `gh pr checks <pr> --watch`. What you should see: **Prove the regression test** passes, and its summary reads `Regression proof: PROVEN`, with a table of the tests that fail on the code before the change and pass with it, as in [step 7](#7-the-proof-showed-which-tests-catch-the-defect). The check passes only for PROVEN. When the follow-up asks for a guard that the code already has, the proof reports COVERAGE and stays red: no defect was demonstrated, Copilot should say so in its pull request, and a person decides.
+6. **Review and decide.** Read the tests: do they reproduce the follow-up's failure mode? Is the fix the smallest one, with no test weakened? Check what Copilot's summary claims against the proof's table, as in [step 7](#7-the-proof-showed-which-tests-catch-the-defect). Then approve or request changes as a GitHub review, and merge the fix as you merge any change.
+
+Then make it part of your workflow: file each incident with the form while it is fresh, send Copilot only the follow-ups whose evidence supports the failure mode and whose scope is small, and trust the proof's table over Copilot's summary.
+
+**The metric to track when you adopt it:** time from an incident to a proven regression test: from the incident Issue's creation (`gh issue view <incident> --json createdAt`) to the proof check's success on its follow-up's pull request (`gh pr checks <pr> --json name,completedAt`), which passes only for PROVEN. The recorded run measured 1 hour 14 minutes, 59 minutes 48 seconds of them waiting for a person to start the checks. The 10 November run, from incident [#294](https://github.com/melabadi/adept-assessment-northstars/issues/294) through follow-up [#295](https://github.com/melabadi/adept-assessment-northstars/issues/295) to pull request [#296](https://github.com/melabadi/adept-assessment-northstars/pull/296), measured 15 minutes 42 seconds. Track alongside it the share of incidents that get a follow-up at all, and the share of follow-ups whose proof reports PROVEN rather than COVERAGE, which means the new tests passed on the old code too. Compare both with incidents handled before you adopted it. A target such as "a proven regression test within a day of every severity 1 or 2 incident" is your team's goal, never a result to report.
+
+### What it costs
+
+Setting it up uses no AI credits. Each incident draws on Copilot's AI credits and on GitHub Actions. In the recorded run, the agentic triage used 23.84 AI credits for the agent and 0.58 for detection, Copilot's session on the follow-up reported 20.3, and Copilot CLI's drafts in option B reported 10.64 in a run on 1 November 2026, and 9.72 with Copilot CLI 1.0.109 on 11 November.
+
+The triage caps its own spending. Each run stops at 60 AI credits for the agent (`max-ai-credits`) and 10 for threat detection, and gh-aw warns the agent from 80% of its cap. The triage comments of the nine runs in this repository before these caps report 17 to 24 AI credits for the agent and about 1 for detection, so the agent's cap is 2.5 times the most a run used. The first run under the caps, on 11 November 2026, used 23.22 for the agent and 0.87 for detection ([evidence](evidence/triage-run-43040562679.md#ai-credits)). gh-aw also skips the agent of any new run once the workflow's runs have used 5000 AI credits in 24 hours, unless you set another limit with `max-daily-ai-credits`.
+
+The recorded run used 14.4 minutes of standard GitHub-hosted runners: 5.2 for the triage, 3.9 for Copilot's session, 2.2 for the proof, 2.9 for CI, and 0.1 for this repository's feature bounds check. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 23 minutes for the recorded run, because each job is rounded up to a whole minute. The length of your test suite changes the proof and CI minutes ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
+
+## Files to edit to tweak it
+
+The copy adds the agent, two skills, the triage, proof, and checks workflows, and the issue form to your `.github/` folder, with the licence, `.github/LICENSE-ai-sdlc`, and the unit tests to `tests/`. The solution also relies on a file of your own, `copilot-setup-steps.yml`, which prepares Copilot's session ([one-time step 2](#one-time-setup)). The sample incident, [`incidents/inc-2041-notification-backlog.md`](incidents/inc-2041-notification-backlog.md), stays behind, because it describes RequestHub's defect: use it as an example of a report.
+
+### Edit to fit your code
+
+Change what assumes RequestHub:
+
+| File, under `.github/` unless named | As shipped, for RequestHub | Change it to |
+| --- | --- | --- |
+| [`skills/incident-evidence/severity-rubric.md`](.github/skills/incident-evidence/severity-rubric.md) | Four severities in RequestHub's terms, and five areas with their code paths, such as `area:worker` for `app/src/RequestHub.Worker/` | Your severities, your areas, and their code paths. Keep the label names in step with `add-labels.allowed` in the triage workflow and with the labels you create. |
+| [`workflows/operate-github-incident-triage.md`](.github/workflows/operate-github-incident-triage.md) | The prompt's description of RequestHub, its code map ("The code is in `app/src/` (API, Core, Worker) and the tests are in `app/tests/RequestHub.Tests/`"), its rule about who approves, and the frontmatter's `add-labels.allowed` | Your system, your code map, your rules, and your labels. Keep the `if:` author check, `threat-detection: continue-on-error: false`, `max-issue-artifacts: 0`, and the follow-up's `incident-followup` label, which the proof looks for. The firewall allows only gh-aw's baseline hosts (`network: defaults`), which since v1.2.0 include no package registries: add a host or an ecosystem under `network.allowed` only if your agent needs one. Each run stops at `max-ai-credits` (60): set it from your own runs' usage. After any change to the file, recompile it ([one-time step 4](#one-time-setup)) and commit both files: the workflow reads the prompt when it runs, but the lock file records a hash of it too, and the checks workflow compares the whole lock file. |
+| [`workflows/operate-github-incident-triage.lock.yml`](.github/workflows/operate-github-incident-triage.lock.yml) | Compiled from the `.md` file by `gh aw` v1.2.2 | Nothing by hand: the compiler regenerates it. |
+| [`agents/operate-github.agent.md`](.github/agents/operate-github.agent.md) | Where the tests live (`app/tests/RequestHub.Tests/`), how to run them (`dotnet test --solution app/RequestHub.slnx`), PostgreSQL on `localhost:5432`, and RequestHub's rules: approval authority, and the contract in `app/contracts/openapi.json` | Your test folder and command, your services, and the rules Copilot must never break in your code. Keep the order (the test first, then the smallest fix, then the proof), and keep it working from the follow-up and the triage comment only. |
+| [`skills/regression-followup/SKILL.md`](.github/skills/regression-followup/SKILL.md) and [`followup-template.md`](.github/skills/regression-followup/followup-template.md) | RequestHub's code and test folders and its test command | Yours. |
+| [`skills/regression-followup/prove_regression.py`](.github/skills/regression-followup/prove_regression.py) | .NET and xUnit v3: `TEST_PROJECT`, `SOURCE_PREFIX`, and `TEST_PREFIX` say where the tests and the production code live, and `run_tests` builds the test project with `dotnet build` and runs `RequestHub.Tests.dll`, whose xUnit v3 runner writes a [CTRF](https://ctrf.io/) report | Your folders, and a test command that writes a CTRF report. |
+| [`workflows/operate-github-regression-proof.yml`](.github/workflows/operate-github-regression-proof.yml) | Pull requests that change `app/src/**` or `app/tests/**`, a PostgreSQL 16 service with RequestHub's test user, .NET 10, and Python 3.12 | Your source and test paths, your database service, and your toolchain. |
+| [`workflows/operate-github-checks.yml`](.github/workflows/operate-github-checks.yml) | This solution's folder: it watches `solutions/07-operate-github/**`, the root copies of its files, and every custom agent in `.github/agents/`, whose names, models, and tools the lock file records. It runs `solutions/07-operate-github/tests`, and its error message names this repository's `tools/sync_solutions.py`. | Watch `tests/test_operate_tooling.py`, the files you copied, and `.github/agents/**`, and run `tests`. |
+| [`ISSUE_TEMPLATE/07-operate-github-incident.yml`](.github/ISSUE_TEMPLATE/07-operate-github-incident.yml) | RequestHub's report: status, environment, detection time, impact, recent changes, timeline, signals and logs, mitigation, and evidence links, with the labels `incident`, `ai-sdlc`, and `phase:operate` | Your fields and labels. Keep the note that an outsider's report is filed again by a maintainer, in their own words. If you use only option B, take `incident` out of the form's labels, because the label starts the agentic workflow. |
+| [`tests/test_operate_tooling.py`](tests/test_operate_tooling.py), copied to `tests/` | `README` names this solution's README, which holds option B's Copilot CLI command | The file where you keep that command, such as your incident runbook. If you don't use option B, delete the `CopilotCliTests` class and `test_the_readme_says_the_same`. |
+
+### Edit to tune it
+
+These settings change how the solution behaves, whatever your code. After a change to the triage's `.md` file or to the agent's front matter, compile the triage again ([one-time step 4](#one-time-setup)):
+
+| To change | Edit | As shipped |
+| --- | --- | --- |
+| The tools Copilot may use | `tools` in the front matter of [`agents/operate-github.agent.md`](.github/agents/operate-github.agent.md) | `read`, `edit`, `search`, `execute`, and `github/*` |
+| What the triage may read on GitHub | `tools.github.toolsets` in [`workflows/operate-github-incident-triage.md`](.github/workflows/operate-github-incident-triage.md) | `issues` and `repos` |
+| The commands the triage may run | `tools.bash` in the same file | `cat`, `grep`, `head`, `tail`, `ls`, `wc`, and `sort` |
+| What threat detection may spend | `threat-detection.max-ai-credits` in the same file | 10 AI credits a run |
+| How long the triage and the proof may run | `timeout-minutes` in the same file, and in the `prove` job of [`workflows/operate-github-regression-proof.yml`](.github/workflows/operate-github-regression-proof.yml) | 15 and 30 minutes |
+
+### What the copy adds
+
+```text
+.github/
+├── agents/operate-github.agent.md                  the custom Copilot agent: the test, the smallest fix, the proof; Copilot CLI drafts
+├── skills/
+│   ├── incident-evidence/                          the triage method, the severity and area rubric, the Copilot CLI drafting steps
+│   └── regression-followup/                        the follow-up template, the procedure, and prove_regression.py
+├── workflows/
+│   ├── operate-github-incident-triage.md           the agentic workflow: triggers, author check, permissions, safe outputs, prompt
+│   ├── operate-github-incident-triage.lock.yml     the GitHub Actions workflow that gh aw v1.2.2 compiled from it (generated: don't edit)
+│   ├── operate-github-regression-proof.yml         proves that a follow-up's test fails without its fix
+│   └── operate-github-checks.yml                   runs the unit tests and checks the lock file on pull requests
+├── ISSUE_TEMPLATE/07-operate-github-incident.yml   the incident report form
+└── LICENSE-ai-sdlc                                 the licence that travels with the files, added by the copy
+tests/test_operate_tooling.py                       unit tests: who can start the triage and the proof, what Copilot CLI can do (offline)
+```
+
+### After you edit
+
+Run the unit tests as in [Getting started](#getting-started) step 3. After a change to the triage's `.md` file or to a custom agent's front matter, compile the triage again ([one-time step 4](#one-time-setup)) and commit the `.md` file and its `.lock.yml` together. Then merge your change: GitHub runs the triage, and the cloud agent loads custom agents, from your default branch, and the proof takes its script from a pull request's base branch.
+
+## Clean up
+
+Remove what you copied, the labels, the secret, and any service you added to `copilot-setup-steps.yml` only for this solution:
+
+```powershell
+Remove-Item -Recurse -Force .github/agents/operate-github.agent.md, .github/skills/incident-evidence, .github/skills/regression-followup, .github/workflows/operate-github-incident-triage.md, .github/workflows/operate-github-incident-triage.lock.yml, .github/workflows/operate-github-regression-proof.yml, .github/workflows/operate-github-checks.yml, .github/ISSUE_TEMPLATE/07-operate-github-incident.yml, tests/test_operate_tooling.py
+Remove-Item -Force .github/LICENSE-ai-sdlc    # unless you keep another solution from this repository
+foreach ($name in "incident", "incident-followup", "phase:operate", "severity:1", "severity:2", "severity:3", "severity:4", "area:worker", "area:api", "area:web", "area:database", "area:infrastructure", "needs-info") {
+  gh label delete $name --yes
+}
+gh label delete ai-sdlc --yes    # unless other Issues carry it
+gh secret delete COPILOT_GITHUB_TOKEN    # unless another agentic workflow uses it
+```
+
+gh-aw labels the Issues it opens, such as **[aw] Detection Runs**, with `agentic-workflows`: delete that label too once nothing uses it. Then revoke the token: delete it in your account's **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** (`github.com/settings/personal-access-tokens`). With `copilot-requests: write` there is no token to revoke.
+
+## Troubleshooting
+
+- **The triage run fails at "Validate COPILOT_GITHUB_TOKEN secret", and an Issue whose title starts with "[aw] Operate · GitHub · agentic incident triage:" appears.** The secret is missing or empty, so the agentic workflow is blocked. gh-aw files that Issue (label `agentic-workflows`) with the reason. Close the failure Issue, then either create the secret as in [one-time step 3](#one-time-setup) and apply the `incident` label again, or remove the `incident` label and draft the triage with Copilot CLI: set `$incident` to the incident's number and run [Use it the first time](#use-it-the-first-time), step 2B.
+- **`gh aw compile` fails, or the lock-file check fails after you compile.** Your gh-aw isn't the pinned version: `gh aw version` must print `v1.2.2`, the `GH_AW_VERSION` in `operate-github-checks.yml`. When this README was checked, v0.92.0 refused the source with `Unknown property: max-issue-artifacts`. Run `gh extension remove gh-aw`, then `gh extension install github/gh-aw --pin v1.2.2`, and compile again. The check also fails when the repository's custom agents changed since the lock file was compiled: compile again and commit the lock file.
+- **Applying `incident` did nothing.** The run was skipped. One of three reasons applies:
+  - The incident's author is not the owner, a member, or a collaborator: every job is skipped. File the report again in your own words.
+  - The person who applied the label does not have write access: `pre_activation` runs, and the rest is skipped.
+  - An open follow-up for this incident already exists: close it to triage again.
+- **The triage run failed at `detection`, and the incident's status comment says "Security scanning failed".** The detection job flagged the agent's output, usually because the report contains instructions, as in [Optional: hide an instruction in the report](#optional-hide-an-instruction-in-the-report), or the detector itself could not run. Either way the run applies nothing: no triage comment, no labels, no follow-up. Open the run's `detection` job to read why. If the report is sound, remove the `incident` label and apply it again.
+- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run** in the merge box, or run `gh run rerun <run-id>`.
+- **The proof check is skipped.** It only runs on pull requests that resolve an Issue labeled `incident-followup`. Make sure the pull request links the follow-up (for example `Fixes #<number>`), or add the `incident-followup` label to the pull request. Then re-run the pull request's own run of **Operate · GitHub · prove the regression test**: select **Re-run all jobs** on its run, or use `gh run rerun <run-id>`. For a pull request from a branch of this repository, such as Copilot's, `gh workflow run operate-github-regression-proof.yml -f pr=<number>` works too. A dispatched run refuses a fork's pull request: it runs on `main`, so it would build that code with this repository's cache access.
 
 ## See it work
 
@@ -198,167 +497,11 @@ The owner recorded no GitHub review in this run. At 17:06 UTC they closed the pu
 - **Evidence a reviewer or auditor can follow.** The incident links its triage and its follow-up, the follow-up links Copilot's pull request, and the proof shows which tests fail without the fix, at the merge base and at the head. Every timeline row and every observed fact in the triage names its source.
 - **People stay in charge.** A person decides whether an incident goes to the triage, whether the follow-up goes to Copilot, when the checks run, and whether the change merges.
 
-**The metric to track when you adopt it:** time from an incident to a proven regression test: from the incident Issue's creation (`gh issue view <incident> --json createdAt`) to the proof check's success on its follow-up's pull request (`gh pr checks <pr> --json name,completedAt`), which passes only for PROVEN. The recorded run measured 1 hour 14 minutes, 59 minutes 48 seconds of them waiting for a person to start the checks. The 10 November run, from incident [#294](https://github.com/melabadi/adept-assessment-northstars/issues/294) through follow-up [#295](https://github.com/melabadi/adept-assessment-northstars/issues/295) to pull request [#296](https://github.com/melabadi/adept-assessment-northstars/pull/296), measured 15 minutes 42 seconds. Track alongside it the share of incidents that get a follow-up at all, and the share of follow-ups whose proof reports PROVEN rather than COVERAGE, which means the new tests passed on the old code too. Compare both with incidents handled before you adopted it. A target such as "a proven regression test within a day of every severity 1 or 2 incident" is your team's goal, never a result to report.
-
-## Add it to your repository
-
-The files are written for RequestHub's stack: a .NET 10 API and worker, xUnit v3 integration tests, and PostgreSQL. [What to copy and what to change](#what-to-copy-and-what-to-change) names each setting to adapt for yours. The commands are the ones this repository uses. The solution has run end to end only in this repository; the copy, the unit tests, and the compiler below were also checked in an empty repository.
-
-### Prerequisites
-
-- **The tools every solution needs,** in the root README's [Before you start](../../README.md#before-you-start): GitHub CLI, signed in with the `workflow` scope, and PowerShell 7.4 or later. Python 3.12 or later runs the proof and the unit tests on your machine; both use only Python's standard library.
-- **A paid GitHub Copilot plan** that lets you assign Issues to Copilot, with the Copilot cloud agent allowed in your repository. For a repository you own, turn it on in your account's Copilot settings, under **Features** (`github.com/settings/copilot/features`); in an organization, an owner allows it ([why Copilot may be missing from an Issue's assignees](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/troubleshoot-cloud-agent)).
-- **A Copilot session on GitHub Actions.** Copilot runs your tests in its session, with the services that `copilot-setup-steps.yml` starts ([this repository's](../../.github/workflows/copilot-setup-steps.yml) starts PostgreSQL). Cloud sandboxes don't run setup steps, and cloud is the default where GitHub offers a choice of environment ([Copilot's environments](https://docs.github.com/en/copilot/concepts/copilot-surfaces/copilot-on-github#comparison-of-github-actions-based-sessions-and-cloud-sandboxes)), so pick GitHub Actions. Assigning the follow-up started a GitHub Actions-based session in the recorded run.
-- **For option A, the agentic workflow:** [GitHub Agentic Workflows](https://github.github.com/gh-aw/), [generally available](https://github.blog/changelog/2026-10-28-github-agentic-workflows-generally-available) since 28 October 2026, and its `gh aw` extension, to compile the workflow: `gh extension install github/gh-aw --pin v1.2.2`. Its Copilot engine authenticates with a `COPILOT_GITHUB_TOKEN` secret, a fine-grained personal access token with **Copilot Requests: Read** ([one-time step 3](#one-time-setup)). In an organization with a Copilot subscription and centralized billing, gh-aw recommends `copilot-requests: write` in the workflow's `permissions:` instead, with no token. This repository belongs to a personal account and uses the token.
-- **For option B, Copilot CLI:** [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli) (`copilot`; last tested with 1.0.109, the latest stable release on 11 November 2026: [its transcript](evidence/copilot-cli-1.0.109.md)). It needs no token or secret.
-- **Tests that a GitHub-hosted runner can run,** with your database as a service: the proof runs them twice on every follow-up's pull request.
-
-### What to copy and what to change
-
-From the root of your repository, in PowerShell 7, copy the agent, the skills, the workflows, the issue form, and the unit tests:
-
-```powershell
-$src = Join-Path ([IO.Path]::GetTempPath()) 'ai-sdlc-07-operate-github'
-git clone --quiet --depth 1 https://github.com/melabadi/adept-assessment-northstars.git $src
-New-Item -ItemType Directory -Force .github, tests | Out-Null
-Copy-Item -Recurse -Force (Join-Path $src 'solutions/07-operate-github/.github/*') .github
-Copy-Item -Force (Join-Path $src 'solutions/07-operate-github/tests/test_operate_tooling.py') tests
-Remove-Item -Recurse -Force $src
-git status --short --untracked-files=all
-```
-
-What you should see: 12 new files, in 12 seconds when this README was checked; the other files in `.github/` and `tests/` stay. The sample incident stays behind, because it describes RequestHub's defect: use it as an example of a report. Then change what assumes RequestHub:
-
-| File, under `.github/` unless named | As shipped, for RequestHub | Change it to |
-| --- | --- | --- |
-| [`skills/incident-evidence/severity-rubric.md`](.github/skills/incident-evidence/severity-rubric.md) | Four severities in RequestHub's terms, and five areas with their code paths, such as `area:worker` for `app/src/RequestHub.Worker/` | Your severities, your areas, and their code paths. Keep the label names in step with `add-labels.allowed` in the triage workflow and with the labels you create. |
-| [`workflows/operate-github-incident-triage.md`](.github/workflows/operate-github-incident-triage.md) | The prompt's description of RequestHub, its code map ("The code is in `app/src/` (API, Core, Worker) and the tests are in `app/tests/RequestHub.Tests/`"), its rule about who approves, and the frontmatter's `add-labels.allowed` | Your system, your code map, your rules, and your labels. Keep the `if:` author check, `threat-detection: continue-on-error: false`, `max-issue-artifacts: 0`, and the follow-up's `incident-followup` label, which the proof looks for. The firewall allows only gh-aw's baseline hosts (`network: defaults`), which since v1.2.0 include no package registries: add a host or an ecosystem under `network.allowed` only if your agent needs one. Each run stops at `max-ai-credits` (60): set it from your own runs' usage. After any change to the file, recompile it ([one-time step 4](#one-time-setup)) and commit both files: the workflow reads the prompt when it runs, but the lock file records a hash of it too, and the checks workflow compares the whole lock file. |
-| [`workflows/operate-github-incident-triage.lock.yml`](.github/workflows/operate-github-incident-triage.lock.yml) | Compiled from the `.md` file by `gh aw` v1.2.2 | Nothing by hand: the compiler regenerates it. |
-| [`agents/operate-github.agent.md`](.github/agents/operate-github.agent.md) | Where the tests live (`app/tests/RequestHub.Tests/`), how to run them (`dotnet test --solution app/RequestHub.slnx`), PostgreSQL on `localhost:5432`, and RequestHub's rules: approval authority, and the contract in `app/contracts/openapi.json` | Your test folder and command, your services, and the rules Copilot must never break in your code. Keep the order (the test first, then the smallest fix, then the proof), and keep it working from the follow-up and the triage comment only. |
-| [`skills/regression-followup/SKILL.md`](.github/skills/regression-followup/SKILL.md) and [`followup-template.md`](.github/skills/regression-followup/followup-template.md) | RequestHub's code and test folders and its test command | Yours. |
-| [`skills/regression-followup/prove_regression.py`](.github/skills/regression-followup/prove_regression.py) | .NET and xUnit v3: `TEST_PROJECT`, `SOURCE_PREFIX`, and `TEST_PREFIX` say where the tests and the production code live, and `run_tests` builds the test project with `dotnet build` and runs `RequestHub.Tests.dll`, whose xUnit v3 runner writes a [CTRF](https://ctrf.io/) report | Your folders, and a test command that writes a CTRF report. |
-| [`workflows/operate-github-regression-proof.yml`](.github/workflows/operate-github-regression-proof.yml) | Pull requests that change `app/src/**` or `app/tests/**`, a PostgreSQL 16 service with RequestHub's test user, .NET 10, and Python 3.12 | Your source and test paths, your database service, and your toolchain. |
-| [`workflows/operate-github-checks.yml`](.github/workflows/operate-github-checks.yml) | This solution's folder: it watches `solutions/07-operate-github/**`, the root copies of its files, and every custom agent in `.github/agents/`, whose names, models, and tools the lock file records. It runs `solutions/07-operate-github/tests`, and its error message names this repository's `tools/sync_solutions.py`. | Watch `tests/test_operate_tooling.py`, the files you copied, and `.github/agents/**`, and run `tests`. |
-| [`ISSUE_TEMPLATE/07-operate-github-incident.yml`](.github/ISSUE_TEMPLATE/07-operate-github-incident.yml) | RequestHub's report: status, environment, detection time, impact, recent changes, timeline, signals and logs, mitigation, and evidence links, with the labels `incident`, `ai-sdlc`, and `phase:operate` | Your fields and labels. Keep the note that an outsider's report is filed again by a maintainer, in their own words. If you use only option B, take `incident` out of the form's labels, because the label starts the agentic workflow. |
-| [`tests/test_operate_tooling.py`](tests/test_operate_tooling.py), copied to `tests/` | `README` names this solution's README, which holds option B's Copilot CLI command | The file where you keep that command, such as your incident runbook. If you don't use option B, delete the `CopilotCliTests` class and `test_the_readme_says_the_same`. |
-
-### One-time setup
-
-1. **Copy the files and make the changes above,** on a branch. What you should see: `python -m unittest discover -s tests` ends with `OK`. With `README` pointed at a runbook that holds the Copilot CLI command, its 26 tests took 4 seconds when this README was checked. The scope tests need bash and jq, as on GitHub's Ubuntu runners, and are skipped without them.
-2. **Give Copilot and the proof your test services.** Before Copilot starts, GitHub runs the job named `copilot-setup-steps` in `.github/workflows/copilot-setup-steps.yml`. Start your database there as a service and install your toolchain, as [this repository's](../../.github/workflows/copilot-setup-steps.yml) does for PostgreSQL and .NET, and give `operate-github-regression-proof.yml` the same service. What you should see: once the file is on your default branch, `gh workflow run copilot-setup-steps.yml` starts it (it needs a `workflow_dispatch` trigger, as this repository's has), and `gh run list --workflow copilot-setup-steps.yml --limit 1` then shows it `completed` with `success`.
-3. **Option A: give the agentic workflow access to Copilot.** Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new?name=COPILOT_GITHUB_TOKEN&description=Agentic+workflow+Copilot+engine&user_copilot_requests=read). Set the resource owner to your user account, and under **Account permissions** set **Copilot Requests** to **Read**. Nothing else is needed. Store it as a repository secret:
-
-   ```powershell
-   gh secret set COPILOT_GITHUB_TOKEN    # paste the token when prompted
-   ```
-
-   What you should see: `gh secret list` shows `COPILOT_GITHUB_TOKEN`. The triage's AI credits count against the token owner's Copilot plan. In an organization with centralized Copilot billing, add `copilot-requests: write` under `permissions:` in the workflow's frontmatter instead, and recompile.
-4. **Compile the triage workflow** after any change to its `.md` file, with the pinned compiler, from the root of your repository:
-
-   ```powershell
-   gh aw compile operate-github-incident-triage
-   ```
-
-   What you should see: `✓ Compiled 1 workflow: 1 succeeded, 0 warnings`, in 3 seconds with v1.2.2 when this README was checked. It may also print a tip about `copilot-requests: write`. In a repository that hasn't used gh-aw before, it also writes `.gitattributes`, which marks lock files as generated, and `.github/aw/actions-lock.json`, a compile-time cache that this repository leaves out of git. Commit the `.md` file and its `.lock.yml` together: the checks workflow fails a pull request whose lock file doesn't match what the pinned compiler makes of its source. The lock file's header also lists every custom agent in your repository's `.github/agents/`, by name and tools, so compile again after you add an agent or change one's frontmatter.
-5. **Create the labels the triage uses.** The severity and area labels come from the [rubric](.github/skills/incident-evidence/severity-rubric.md). `--force` makes the commands safe to run again.
-
-   ```powershell
-   gh label create incident --color b60205 --description "Operate: incident report; starts the agentic triage" --force
-   gh label create incident-followup --color 0e8a16 --description "Operate: follow-up opened by an incident triage" --force
-   gh label create ai-sdlc --color 1D76DB --description "AI-SDLC demo work" --force
-   gh label create phase:operate --color C5DEF5 --description "SDLC phase 7: Operate" --force
-   foreach ($name in "severity:1", "severity:2", "severity:3", "severity:4", "area:worker", "area:api", "area:web", "area:database", "area:infrastructure", "needs-info") {
-     gh label create $name --color ededed --force
-   }
-   ```
-
-   What you should see: `gh label list --search incident` lists `incident` and `incident-followup`.
-6. **Allow the Copilot cloud agent** in the repository, as in the [prerequisites](#prerequisites). What you should see: on any Issue, **Assignees** lists **Copilot**.
-7. **Merge it into your default branch.** GitHub runs the triage and offers the issue form from the default branch, and the cloud agent loads custom agents from it. What you should see:
-
-   ```powershell
-   gh api 'repos/{owner}/{repo}/contents/.github/agents/operate-github.agent.md' --jq .path
-   ```
-
-   prints `.github/agents/operate-github.agent.md`, **New issue** offers *Operate: report an incident*, and `gh workflow list` lists *Operate · GitHub · agentic incident triage* as `active`.
-
-### Use it the first time
-
-On your own incident, the steps are those of [See it work](#see-it-work):
-
-1. **File the incident** with the *Operate: report an incident* form, as the owner, a member, or a collaborator: the triage reads no one else's report. When someone outside the team reports an incident, a maintainer files it again in their own words.
-2. **Triage it.**
-
-   **A. With the agentic workflow.** The form's `incident` label starts it. What you should see: within a minute or two, an 👀 reaction and a status comment that links to the run; about 5 minutes after the filing, the triage comment, a severity label and an area label, and one follow-up Issue under the incident's **Sub-issues**, as in [steps 2 to 4](#2-the-agentic-workflow-triaged-it).
-
-   **B. Without the token, with Copilot CLI.** File the incident without the `incident` label, which would start the agentic workflow, and set `$incident` to its number, for example `$incident = 42`. Then, from the root of your repository, check the incident's author, export it, and let Copilot draft the triage:
-
-   ```powershell
-   Remove-Item -Recurse -Force out/operate -ErrorAction SilentlyContinue; New-Item -ItemType Directory out/operate | Out-Null
-   if ((gh api "repos/{owner}/{repo}/issues/$incident" --jq .author_association) -in 'OWNER', 'MEMBER', 'COLLABORATOR') {
-     gh issue view $incident --json number,title,body,url > out/operate/incident.json
-   } else { Write-Warning "Incident #$incident was not filed by the owner, a member, or a collaborator. File it again in your own words." }
-   copilot --agent operate-github --available-tools 'view,glob,grep,skill,create,edit,apply_patch' --disable-builtin-mcps `
-     --disallow-temp-dir --deny-tool 'read(.env)' --allow-tool 'write(followup-issue.md)' --allow-tool 'write(triage-comment.md)' `
-     -p "Draft the triage of the incident in out/operate/incident.json with the incident-evidence skill."
-   ```
-
-   Only an incident filed by the owner, a member, or a collaborator reaches Copilot: the `if` exports it only then, and only its title and description, never its comments. Copilot runs unattended, signed in as you, so the command gives it file tools only:
-   - `--available-tools` leaves it no shell, no web access, and no subagents.
-   - `--disable-builtin-mcps` removes the GitHub tools.
-   - It reads only the repository: no temp directory, and no `.env` file, where an azd environment can keep a token.
-   - It can write only the two drafts.
-
-   What you should see: Copilot reads the skill, the exported incident, and the code, then writes the follow-up to `out/operate/followup-issue.md` (its first line is the title) and the triage comment to `out/operate/triage-comment.md`. Keep `out/` out of git, as this repository's `.gitignore` does. In a run on 1 November 2026, on incident [#252](https://github.com/melabadi/adept-assessment-northstars/issues/252), Copilot wrote the two drafts in 1 minute 30 seconds, for 10.64 AI credits:
-
-   ![Copilot CLI drafting the triage of incident 252 in the terminal: the commands check the incident's author and export it, Copilot starts with 165 tools disabled, among them the shell and web access, reads the skill, the incident, and the code, and creates only the two drafts. Nothing was filed on GitHub](images/02b-copilot-cli.png)
-
-   On 11 November 2026, Copilot CLI 1.0.109 drafted the same incident's triage again, with the same commands: in 2 minutes 3 seconds, for 9.72 AI credits, with the same labels ([its transcript and drafts](evidence/copilot-cli-1.0.109.md)).
-
-   Then read both drafts: you publish them under your name. File them with the three `gh` commands below. `severity:3` and `area:worker` are the sample incident's labels: use the ones Copilot gives in its summary and on the first line of the comment.
-
-   ```powershell
-   Get-Content out/operate/followup-issue.md, out/operate/triage-comment.md
-   $followup = Get-Content out/operate/followup-issue.md
-   $followup | Select-Object -Skip 2 | Set-Content out/operate/followup-body.md
-   gh issue create --title $followup[0] --label incident-followup --label ai-sdlc --label phase:operate --parent $incident --body-file out/operate/followup-body.md
-   gh issue edit $incident --add-label severity:3 --add-label area:worker   # the sample incident's labels: use the ones Copilot gives
-   gh issue comment $incident --body-file out/operate/triage-comment.md
-   ```
-
-   In the run of 1 November, the three commands filed follow-up [#253](https://github.com/melabadi/adept-assessment-northstars/issues/253) at 05:40:11 UTC and the [triage comment](https://github.com/melabadi/adept-assessment-northstars/issues/252#issuecomment-6554020278) at 05:40:16. Copilot did the analysis, but it couldn't act on GitHub: nothing reached GitHub until a person had read the drafts and filed them under their own name.
-
-3. **Decide whether the follow-up goes to Copilot.** Read the triage and the follow-up: does the evidence support the failure mode, and is the scope small? Then assign the follow-up to **Copilot**, with the **operate-github** agent and the branch your fixes go into as the base branch. From a terminal instead (replace `<followup>` with its number, and `main` with your base branch if it differs; it prints `Copilot` and your login):
-
-   ```powershell
-   $repo = gh repo view --json nameWithOwner --jq .nameWithOwner
-   "{""assignees"":[""copilot-swe-agent[bot]""],""agent_assignment"":{""target_repo"":""$repo"",""base_branch"":""main"",""custom_agent"":""operate-github""}}" |
-     gh api -X POST "repos/$repo/issues/<followup>/assignees" --input - --jq '[.assignees[].login] | join(", ")'
-   ```
-
-   What you should see: within seconds Copilot opens a draft pull request that will close the follow-up. Select **View session** on it to watch Copilot work; when it finishes, it asks for your review, as in [step 5](#5-copilot-wrote-the-tests-and-the-fix).
-4. **Start its checks:** select **Approve workflows to run** in the pull request's merge box, or start every waiting run of its latest commit from a terminal:
-
-   ```powershell
-   $head = gh pr view <pr> --json headRefOid -q .headRefOid
-   gh run list --commit $head --json databaseId,conclusion -q '.[] | select(.conclusion == "action_required") | .databaseId' | ForEach-Object { gh run rerun $_ }
-   ```
-
-   See [step 6](#6-a-person-started-the-checks).
-5. **Read the proof:** `gh pr checks <pr> --watch`. What you should see: **Prove the regression test** passes, and its summary reads `Regression proof: PROVEN`, with a table of the tests that fail on the code before the change and pass with it, as in [step 7](#7-the-proof-showed-which-tests-catch-the-defect). The check passes only for PROVEN. When the follow-up asks for a guard that the code already has, the proof reports COVERAGE and stays red: no defect was demonstrated, Copilot should say so in its pull request, and a person decides. That happened on 10 November 2026, in pull request [#303](https://github.com/melabadi/adept-assessment-northstars/pull/303).
-6. **Review and decide.** Read the tests: do they reproduce the follow-up's failure mode? Is the fix the smallest one, with no test weakened? Check what Copilot's summary claims against the proof's table, as in [step 7](#7-the-proof-showed-which-tests-catch-the-defect). Then approve or request changes as a GitHub review, and merge the fix as you merge any change.
-
-### What it costs
-
-Setting it up uses no AI credits. Each incident draws on Copilot's AI credits and on GitHub Actions. In the recorded run, the agentic triage used 23.84 AI credits for the agent and 0.58 for detection, Copilot's session on the follow-up reported 20.3, and Copilot CLI's drafts in option B reported 10.64 in a run on 1 November 2026, and 9.72 with Copilot CLI 1.0.109 on 11 November.
-
-The triage caps its own spending. Each run stops at 60 AI credits for the agent (`max-ai-credits`) and 10 for threat detection, and gh-aw warns the agent from 80% of its cap. The triage comments of the nine runs in this repository before these caps report 17 to 24 AI credits for the agent and about 1 for detection, so the agent's cap is 2.5 times the most a run used. The first run under the caps, on 11 November 2026, used 23.22 for the agent and 0.87 for detection ([evidence](evidence/triage-run-43040562679.md#ai-credits)). gh-aw also skips the agent of any new run once the workflow's runs have used 5000 AI credits in 24 hours, unless you set another limit with `max-daily-ai-credits`.
-
-The recorded run used 14.4 minutes of standard GitHub-hosted runners: 5.2 for the triage, 3.9 for Copilot's session, 2.2 for the proof, 2.9 for CI, and 0.1 for this repository's feature bounds check. Those minutes are free in a public repository. In a private one they count against your plan's included usage: 23 minutes for the recorded run, because each job is rounded up to a whole minute. The length of your test suite changes the proof and CI minutes ([GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage)).
-
 ## Try it first in a copy of this repository
 
 Optional: the same solution on RequestHub, before you adapt anything. You repeat the run in [See it work](#see-it-work) in your own copy, and it costs what [What it costs](#what-it-costs) lists for the recorded run.
+
+The copy also has the files of this folder that belong to the demo: [`incidents/inc-2041-notification-backlog.md`](incidents/inc-2041-notification-backlog.md), the sample incident report, in the form's format, which becomes the incident Issue; [`evidence/`](evidence/), the recorded run's triage jobs and tool calls and its proof, exported from GitHub, with the first run on gh-aw v1.2.2 and Copilot CLI 1.0.109's drafts; and [`images/`](images/), the screenshots from the runs in this README, and from the Operate combo (`combo-*`).
 
 ### Quick start
 
@@ -482,54 +625,4 @@ Remove-Item -Recurse -Force out/operate -ErrorAction SilentlyContinue   # option
 
 Never merge Copilot's pull request in the copy: the defect must stay on `main` for the next run. Closing the follow-up also lets a new triage of the same incident open a new follow-up. The fourth command is for the instruction check: when threat detection flags a run, gh-aw opens an **[aw] Detection Runs** Issue, or comments on the one already open. Closing it is safe: gh-aw opens a new one the next time it needs one. What you should see: the two `gh issue list` checks of the [quick start](#quick-start) print `0`.
 
-## Clean up
-
-**In your repository,** remove what you copied, the labels, the secret, and any service you added to `copilot-setup-steps.yml` only for this solution:
-
-```powershell
-Remove-Item -Recurse -Force .github/agents/operate-github.agent.md, .github/skills/incident-evidence, .github/skills/regression-followup, .github/workflows/operate-github-incident-triage.md, .github/workflows/operate-github-incident-triage.lock.yml, .github/workflows/operate-github-regression-proof.yml, .github/workflows/operate-github-checks.yml, .github/ISSUE_TEMPLATE/07-operate-github-incident.yml, tests/test_operate_tooling.py
-foreach ($name in "incident", "incident-followup", "phase:operate", "severity:1", "severity:2", "severity:3", "severity:4", "area:worker", "area:api", "area:web", "area:database", "area:infrastructure", "needs-info") {
-  gh label delete $name --yes
-}
-gh label delete ai-sdlc --yes    # unless other Issues carry it
-gh secret delete COPILOT_GITHUB_TOKEN
-```
-
-gh-aw labels the Issues it opens, such as **[aw] Detection Runs**, with `agentic-workflows`: delete that label too once nothing uses it. Then revoke the token: delete it in your account's **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** (`github.com/settings/personal-access-tokens`). With `copilot-requests: write` there is no token to revoke.
-
-**In the copy,** [reset it](#reset-the-copy-for-another-run). Delete the secret and revoke the token once neither this solution nor 06-release-github needs them. The [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
-
-## What's in this folder
-
-```text
-07-operate-github/
-├── README.md
-├── evidence/                                       the recorded run's triage jobs and tool calls and its proof, exported from GitHub; the first run on gh-aw v1.2.2; Copilot CLI 1.0.109's drafts
-├── images/                                         screenshots from the runs in this README, and from the Operate combo (combo-*)
-├── incidents/
-│   └── inc-2041-notification-backlog.md            the sample incident report, in the form's format: becomes the incident Issue
-├── tests/test_operate_tooling.py                   unit tests: who can start the triage and the proof, what Copilot CLI can do (offline)
-└── .github/
-    ├── agents/operate-github.agent.md              the custom Copilot agent: the test, the smallest fix, the proof; Copilot CLI drafts
-    ├── skills/
-    │   ├── incident-evidence/                      the triage method, the severity and area rubric, the Copilot CLI drafting steps
-    │   └── regression-followup/                    the follow-up template, the procedure, and prove_regression.py
-    ├── workflows/
-    │   ├── operate-github-incident-triage.md       the agentic workflow: triggers, author check, permissions, safe outputs, prompt
-    │   ├── operate-github-incident-triage.lock.yml the GitHub Actions workflow that gh aw v1.2.2 compiled from it (generated: don't edit)
-    │   ├── operate-github-regression-proof.yml     proves that a follow-up's test fails without its fix
-    │   └── operate-github-checks.yml               runs the unit tests and checks the lock file on pull requests
-    └── ISSUE_TEMPLATE/07-operate-github-incident.yml   the incident report form
-```
-
-## Troubleshooting
-
-- **The triage run fails at "Validate COPILOT_GITHUB_TOKEN secret", and an Issue whose title starts with "[aw] Operate · GitHub · agentic incident triage:" appears.** The secret is missing or empty, so the agentic workflow is blocked. gh-aw files that Issue (label `agentic-workflows`) with the reason. Close the failure Issue, then either create the secret as in [one-time step 3](#one-time-setup) and apply the `incident` label again, or remove the `incident` label and draft the triage with Copilot CLI: set `$incident` to the incident's number and run [Use it the first time](#use-it-the-first-time), step 2B.
-- **`gh aw compile` fails, or the lock-file check fails after you compile.** Your gh-aw isn't the pinned version: `gh aw version` must print `v1.2.2`, the `GH_AW_VERSION` in `operate-github-checks.yml`. When this README was checked, v0.92.0 refused the source with `Unknown property: max-issue-artifacts`. Run `gh extension remove gh-aw`, then `gh extension install github/gh-aw --pin v1.2.2`, and compile again. The check also fails when the repository's custom agents changed since the lock file was compiled: compile again and commit the lock file.
-- **Applying `incident` did nothing.** The run was skipped. One of three reasons applies:
-  - The incident's author is not the owner, a member, or a collaborator: every job is skipped. File the report again in your own words.
-  - The person who applied the label does not have write access: `pre_activation` runs, and the rest is skipped.
-  - An open follow-up for this incident already exists: close it to triage again.
-- **The triage run failed at `detection`, and the incident's status comment says "Security scanning failed".** The detection job flagged the agent's output, usually because the report contains instructions, as in [Optional: hide an instruction in the report](#optional-hide-an-instruction-in-the-report), or the detector itself could not run. Either way the run applies nothing: no triage comment, no labels, no follow-up. Open the run's `detection` job to read why. If the report is sound, remove the `incident` label and apply it again.
-- **No checks on Copilot's pull request.** Workflows on pull requests from the cloud agent wait for a person. Select **Approve workflows to run** in the merge box, or run `gh run rerun <run-id>`.
-- **The proof check is skipped.** It only runs on pull requests that resolve an Issue labeled `incident-followup`. Make sure the pull request links the follow-up (for example `Fixes #<number>`), or add the `incident-followup` label to the pull request. Then re-run the pull request's own run of **Operate · GitHub · prove the regression test**: select **Re-run all jobs** on its run, or use `gh run rerun <run-id>`. For a pull request from a branch of this repository, such as Copilot's, `gh workflow run operate-github-regression-proof.yml -f pr=<number>` works too. A dispatched run refuses a fork's pull request: it runs on `main`, so it would build that code with this repository's cache access.
+When you no longer need the copy, delete the secret and revoke the token once neither this solution nor 06-release-github needs them, as in [Clean up](#clean-up). The [root README](../../README.md#try-it-in-a-copy-of-this-repository) says how to delete the copy itself.
