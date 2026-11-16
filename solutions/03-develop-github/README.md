@@ -172,7 +172,7 @@ From the root of your repository, in PowerShell 7. Each step links to its detail
    ```
 
    prints `.github/agents/develop-github.agent.md`, and **New issue** offers *Develop: bounded feature for Copilot*.
-6. **Make the checks a gate.** In a branch ruleset on your default branch, require the status check *Feature stays within its bounds* and your test jobs, so a red check blocks the merge. A required check must report on every pull request, and one skipped by a `paths` filter stays pending: that is why the bounds workflow has none, and passes every other pull request in seconds (6 to 8 in this repository). What you should see: `gh api 'repos/{owner}/{repo}/rules/branches/<default branch>' --jq '.[].type'` lists `required_status_checks`.
+6. **Make the checks a gate.** In a branch ruleset on your default branch, require the status check *Feature stays within its bounds* and your test jobs, so a red check blocks the merge. A required check must report on every pull request, and one skipped by a `paths` filter stays pending: that is why the bounds workflow has none, and passes every other pull request in seconds (6 to 8 in this repository). The same goes for your CI: RequestHub's [`ci.yml`](../../.github/workflows/ci.yml) filters its `pull_request` runs by path, so remove that filter before you require its jobs, as the [landing zone](https://github.com/melabadi/ai-sdlc-landing-zone/pull/8) did. What you should see: `gh api 'repos/{owner}/{repo}/rules/branches/<default branch>' --jq '.[].type'` lists `required_status_checks`.
 
 ### Use it the first time
 

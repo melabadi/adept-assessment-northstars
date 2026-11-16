@@ -146,10 +146,10 @@ From the root of your repository, in PowerShell 7. Each step links to its detail
 
    Then allow Copilot in your repository, as in the [prerequisites](#prerequisites) ([one-time step 6](#one-time-setup)).
 
-5. **Merge it into your default branch,** where the Copilot cloud agent finds custom agents, GitHub offers issue forms, and comment-triggered workflows run ([one-time step 7](#one-time-setup)). Replace `<commit>` with the one step 2 printed:
+5. **Merge it into your default branch,** where the Copilot cloud agent finds custom agents, GitHub offers issue forms, and comment-triggered workflows run ([one-time step 7](#one-time-setup)). Add `.gitattributes`, where the compiler marked the lock file as generated, and replace `<commit>` with the one step 2 printed:
 
    ```powershell
-   git add .github docs/architecture
+   git add .github docs/architecture .gitattributes
    git commit -m "Add 02-design-github from ai-sdlc <commit>"
    git push -u origin add-design-github
    gh pr create --fill
