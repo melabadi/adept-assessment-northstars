@@ -133,10 +133,10 @@ From the root of your repository, in PowerShell 7. Each step links to its detail
    gh aw compile test-github-ci-investigation --strict
    ```
 
-5. **Merge it into your default branch,** where the cloud agent finds custom agents, GitHub offers issue forms, and the CI failure investigation runs ([one-time step 8](#one-time-setup)). Replace `<commit>` with the one step 2 printed:
+5. **Merge it into your default branch,** where the cloud agent finds custom agents, GitHub offers issue forms, and the CI failure investigation runs ([one-time step 8](#one-time-setup)). Add `.gitattributes`, where the compiler marked the lock file as generated, and replace `<commit>` with the one step 2 printed:
 
    ```powershell
-   git add .github tests
+   git add .github tests .gitattributes
    git commit -m "Add 04-test-github from ai-sdlc <commit>"
    git push -u origin add-test-github
    gh pr create --fill

@@ -20,7 +20,7 @@ That is about 15 minutes a solution. Whatever you show, tell the same story: one
 | Format | Length | What to show |
 | --- | --- | --- |
 | **Full show** | About 4 hours with breaks, or two sessions of about 2 hours | All fourteen solutions, phase by phase: the GitHub solution, then the Microsoft one. |
-| **One track** | About 2 hours | The seven GitHub solutions or the seven Microsoft solutions, in phase order. |
+| **One track** | About 2 hours | The seven GitHub solutions or the seven Microsoft solutions, in phase order. For the GitHub track, open with the [landing zone](https://github.com/melabadi/ai-sdlc-landing-zone): the seven installed together in one repository, what they share, and the governance around them. |
 | **One phase, side by side** | About 30 minutes | The two solutions of one phase, for a team that cares about that phase. |
 | **Highlights** | About 1¼ hours | One solution per phase: the [suggested set](#a-highlights-run) below. |
 | **Solution combo** | About 20 minutes | Both solutions of one phase on one change: each track does its part, they pass one artifact, and a person decides. See [Solution combos](#solution-combos). |
@@ -697,7 +697,7 @@ flowchart LR
 
 ## After you present: hand it over
 
-Customers add a solution to their own repository from its README's *Install it in your repository*, whose *Getting started* lists the commands in order, after the root README's [Getting started](README.md#getting-started). To try it first, the root README's [Try it in a copy of this repository](README.md#try-it-in-a-copy-of-this-repository) makes a copy for every solution. Leave them those links and [what the Microsoft solutions cost](README.md#what-the-microsoft-solutions-cost).
+Customers add a solution to their own repository from its README's *Install it in your repository*, whose *Getting started* lists the commands in order, after the root README's [Getting started](README.md#getting-started). To try it first, the root README's [Try it in a copy of this repository](README.md#try-it-in-a-copy-of-this-repository) makes a copy for every solution. Customers who want all seven GitHub solutions can follow the landing zone's [Build your own landing zone](https://github.com/melabadi/ai-sdlc-landing-zone#build-your-own-landing-zone). Leave them those links and [what the Microsoft solutions cost](README.md#what-the-microsoft-solutions-cost).
 
 ## Run it live
 

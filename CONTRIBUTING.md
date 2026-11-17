@@ -140,7 +140,7 @@ Change these yourself when you make a copy public. Nothing in the repository cha
 | --- | --- | --- |
 | Approval for running fork pull request workflows from contributors | **Settings** → **Actions** → **General** | **Require approval for all external contributors**. A fork's runs get a read-only token and no secrets either way; this keeps strangers from running code on GitHub's runners at will. |
 | Workflow permissions | **Settings** → **Actions** → **General** | **Read repository contents and packages permissions**, with **Allow GitHub Actions to create and approve pull requests** off. |
-| Only allow Copilot code review to be triggered by authorized users | **Settings** → **Copilot** → **Code review** | On: in a personal repository, only you and direct collaborators can request a review. |
+| Block reviews requested with an external Copilot license | **Settings** → **Copilot** → **Code review** | On: in a personal repository, only you and direct collaborators can request a review. |
 | Required reviewers on the `release-github` environment | **Settings** → **Environments** | Yourself, or a team. Free on public repositories. |
 | Private vulnerability reporting | **Settings** → **Advanced Security** | **Enable**, so a finding reaches you before it reaches an Issue. |
 | Dependabot alerts | **Settings** → **Advanced Security** | **Enable**, so a vulnerable dependency reaches you too. Only people with access to the alerts see them. |

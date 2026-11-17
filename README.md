@@ -5,7 +5,7 @@ Fourteen working solutions add AI to each phase of the software development life
 - **GitHub**: GitHub Copilot, with GitHub Enterprise.
 - **Microsoft**: AI that runs in Azure, with Microsoft Foundry, Azure Copilot, and Azure services. GitHub only holds the code, pull requests, and Issues.
 
-In every solution, AI does the tedious part and a person keeps the decision. Each solution's README says what it uses, what it does and how it works, how to install it in your repository, and which files to edit to tweak it, then shows a real run.
+In every solution, AI does the tedious part and a person keeps the decision. Each solution's README says what it uses, what it does and how it works, how to install it in your repository, and which files to edit to tweak it, then shows a real run. The [AI-SDLC landing zone](https://github.com/melabadi/ai-sdlc-landing-zone) shows the seven GitHub solutions installed together in one repository, with what they share set up once.
 
 ## Technologies used
 
@@ -155,12 +155,15 @@ Each row links to the solution's install steps. *Setup* is what its README measu
 
 ### Adopt several solutions
 
-Each solution works on its own, and several can share one repository. They share these pieces:
+Each solution works on its own, and several can share one repository. The [AI-SDLC landing zone](https://github.com/melabadi/ai-sdlc-landing-zone) has all seven GitHub solutions installed together on RequestHub, each with its README's *Getting started*, the pieces below set up once, and a script that checks the wiring. They share these pieces:
 
 - **Labels.** The GitHub solutions, and 07-operate-microsoft, create `ai-sdlc` with the same command, and each phase adds its own `phase:<phase>` label. `gh label create --force` updates a label that already exists.
 - **One token for the agentic workflows,** `COPILOT_GITHUB_TOKEN`: see [what they need](#the-agentic-workflows).
+- **The agentic workflows' lock files.** Every lock file records every custom agent in `.github/agents/`, and each solution's checks compare its lock file with a fresh compile. Each GitHub solution adds an agent, so once you have an agentic workflow, compile them all again whenever you copy another solution, and commit the lock files: `gh aw compile --strict --validate`, with gh-aw v1.2.2. Otherwise the lock-file checks of the solutions you already have fail on its pull request.
 - **Skills.** `contract-impact` comes with 02-design-github, 03-develop-github, and 04-test-github, and `regression-validation` with 03-develop-github and 04-test-github. The copies are identical, so copying a second solution writes the same files again.
+- **Unit tests.** 04-test-github, 06-release-github, and 07-operate-github copy their scripts' unit tests into `tests/`, and each one's checks run the whole folder.
 - **Copilot's environment.** 03-develop-github, 04-test-github, 05-secure-github, and 07-operate-github run your tests in Copilot's session, which one `copilot-setup-steps.yml` prepares for all of them.
+- **Required checks.** A ruleset can require only checks that report on every pull request: 03-develop-github's bounds check does, 02-design-github's ADR checks do once you remove their `paths` filter, and your CI does once its `pull_request` trigger has no `paths` filter.
 
 The two solutions of a phase can also work on one change: [Solution combos](PRESENTING.md#solution-combos) lists what passes between them and who decides. [Follow one requirement from Plan to Test](PRESENTING.md#follow-one-requirement-from-plan-to-test) takes one decision from a stakeholder's notes through Develop and Test.
 
